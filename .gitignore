@@ -1,0 +1,10 @@
+node_modules/
+lib/
+coverage/
+*.log
+.env
+.env.*
+.DS_Store
+.vscode/
+.idea/
+.patrol-local/

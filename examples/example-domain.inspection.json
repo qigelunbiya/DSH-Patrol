@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "0.1",
+  "id": "example-domain",
+  "name": "Example Domain 页面巡检",
+  "description": "确认 example.com 可以访问并出现 Example Domain 文本。",
+  "status": "ready",
+  "target": {
+    "type": "browser",
+    "url": "https://example.com"
+  },
+  "expectedResult": "页面成功打开，正文包含 Example Domain。",
+  "artifacts": [
+    "markdown-report",
+    "raw-tool-output"
+  ],
+  "auth": {
+    "mode": "none"
+  },
+  "schedule": null,
+  "steps": [
+    {
+      "id": "step-001",
+      "kind": "tool",
+      "name": "打开目标页面",
+      "tool": "browser_navigate",
+      "arguments": {
+        "url": "https://example.com"
+      },
+      "recordedAt": "2026-08-26T00:00:00.000Z"
+    },
+    {
+      "id": "step-002",
+      "kind": "tool",
+      "name": "读取页面文本并验证",
+      "tool": "browser_get_text",
+      "arguments": {},
+      "expectation": {
+        "mode": "contains",
+        "value": "Example Domain",
+        "caseSensitive": false
+      },
+      "recordedAt": "2026-08-26T00:00:01.000Z"
+    }
+  ],
+  "metadata": {
+    "createdAt": "2026-08-26T00:00:00.000Z",
+    "updatedAt": "2026-08-26T00:00:01.000Z",
+    "validatedAt": "2026-08-26T00:00:01.000Z"
+  }
+}

@@ -1,0 +1,12 @@
+# DSH Patrol plugin layer.
+# After the package is published/linked, `dsh plugin --profile web add dsh-patrol`
+# can use this bundle patch to mount the plugin without modifying Harness core.
+
+- insert:
+    - id: dsh-patrol
+      name: 'dsh-patrol'
+      config:
+        allowedToolPrefixes:
+          - 'browser_'
+        maxSteps: 200
+        reportMaxChars: 30000
