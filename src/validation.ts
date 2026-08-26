@@ -24,7 +24,13 @@ export function assertInspectionDefinition(value: unknown): asserts value is Ins
   if (typeof candidate.name !== 'string' || candidate.name.trim().length === 0) throw new Error('inspection.name is required')
   if (candidate.status !== 'draft' && candidate.status !== 'ready') throw new Error('inspection.status is invalid')
   if (!Array.isArray(candidate.steps)) throw new Error('inspection.steps must be an array')
-  if (candidate.target === undefined || candidate.target.type !== 'browser' || typeof candidate.target.url !== 'string') {
+
+  const target = candidate.target as unknown
+  if (target === null || typeof target !== 'object') {
+    throw new Error('inspection.target must be a browser target with url')
+  }
+  const targetRecord = target as Record<string, unknown>
+  if (targetRecord.type !== 'browser' || typeof targetRecord.url !== 'string' || targetRecord.url.length === 0) {
     throw new Error('inspection.target must be a browser target with url')
   }
 }
