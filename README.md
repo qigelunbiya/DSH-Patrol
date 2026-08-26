@@ -48,10 +48,11 @@ Agent 使用浏览器执行一次
 - ✅ 基础敏感字段持久化拦截、报告文本脱敏、`patrol_*` 递归保护。
 - ✅ 默认 Runner 只允许 `browser_*`，避免第一版无边界执行任意 Harness 工具。
 - ✅ 示例巡检与基础单元测试脚手架。
+- ✅ GitHub Actions CI：自动执行 `typecheck`、`test`、`build`，便于尽快发现 Harness API 兼容问题。
 
 ## 当前尚未完成 / 需要验证
 
-- 🚧 **与 DeepSeek Harness 最新发行版的端到端安装验证**：代码按 Harness 当前 Cordis/ToolRuntime API 搭建，但仓库刚初始化，还需要在真实 DSH 环境执行 `pnpm install / build / plugin add` 全链路测试。
+- 🚧 **与 DeepSeek Harness 最新发行版的端到端安装验证**：代码按 Harness 当前 Cordis/ToolRuntime API 搭建，并已接入 CI；仍需要在真实 DSH 环境执行 `plugin add` 与浏览器巡检全链路测试。
 - 🚧 **浏览器 Provider 实机验证**：v0.1 默认期待已有插件提供 `browser_*` 工具；优先计划与 `Lum1104/dsh-browser` 联调。
 - 🚧 **录制步骤编辑器**：当前错误录制建议重新创建 draft；还没有删除/重排/修改步骤工具。
 - 🚧 **截图产物**：`artifacts` 可以声明 screenshot，但 Runner 暂时只保证 JSON/Markdown 报告。
@@ -225,6 +226,7 @@ dsh plugin --profile web add dsh-patrol
 
 ```text
 DSH-Patrol/
+├── .github/workflows/ci.yml
 ├── src/
 │   ├── index.ts          # Cordis 插件入口
 │   ├── prompt.ts         # Patrol Agent 工作流提示词
