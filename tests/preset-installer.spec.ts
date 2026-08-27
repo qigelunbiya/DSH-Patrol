@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { apply } from '../src/preset-installer.js'
+import { apply } from '../src/preset-installer.ts'
 
 const cleanup = []
 const previousDshHome = process.env.DSH_HOME
