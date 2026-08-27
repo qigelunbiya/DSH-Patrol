@@ -125,7 +125,7 @@ async function wait(args) {
     }
     await sleep(150)
   }
-  return { ok: true, found: false, selector: args.selector, timeoutMs }
+  return { ok: false, found: false, selector: args.selector, timeoutMs, error: `timed out waiting for ${condition} condition: ${args.selector}` }
 }
 
 function selectRoot(selector) {
