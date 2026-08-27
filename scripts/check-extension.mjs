@@ -37,11 +37,13 @@ if (!runtimeIndex.includes('chrome-extension:')) throw new Error('browser websoc
 if (!runtimeIndex.includes('trusted-extension-origin.txt')) throw new Error('browser extension origin pairing is missing')
 if (runtimeIndex.indexOf('handleUpgrade(req, socket, head') > runtimeIndex.indexOf('authorizeOrigin(originTrustFile')) throw new Error('extension origin must not be persisted before a valid WebSocket handshake')
 if (!runtimeIndex.includes("export const inject = ['webServer']")) throw new Error('browser transport must be host-plane and inject only webServer')
+if (/^\s*export\s+default\b/m.test(runtimeIndex)) throw new Error('host browser transport must not default-export apply: Harness Loader would drop inject metadata')
 if (runtimeIndex.includes('registerTools(')) throw new Error('host browser transport must not register agent browser tools')
 if (!runtimeIndex.includes("ctx.provide('patrolBrowserBridge'")) throw new Error('host browser transport must provide patrolBrowserBridge')
 
 const toolPlugin = readFileSync(join(runtimeRoot, 'tools-plugin.js'), 'utf8')
 if (!toolPlugin.includes("export const inject = ['tools', 'patrolBrowserBridge']")) throw new Error('browser tools plugin must consume the host patrolBrowserBridge service')
+if (/^\s*export\s+default\b/m.test(toolPlugin)) throw new Error('browser tools plugin must not default-export apply: Harness Loader would drop inject metadata')
 if (!toolPlugin.includes('registerTools(ctx, service.bridge')) throw new Error('browser tools plugin must register scoped tools from the host bridge')
 
 const preset = readFileSync(join(projectRoot, 'presets', 'patrol', 'agent.cordis.yml'), 'utf8')
