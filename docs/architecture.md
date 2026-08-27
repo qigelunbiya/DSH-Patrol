@@ -2,17 +2,28 @@
 
 ## 1. Host plane vs Agent plane
 
-Bundle 的 `cordis.patch.yml` 只挂载 `dsh-patrol/preset-installer`。它负责把随包的 `presets/patrol` 写入 Harness 用户 preset root。Patrol Agent 与 Browser Provider 都在 `patrol` preset 的 standing scope 中，因此不会作为全局 Agent 能力注入标准模式。
+DSH Patrol 明确拆成两层，避免把进程级 WebServer 能力塞进 Agent Preset：
+
+- **Host plane**：`dsh-patrol/browser-bridge-host`。只创建一个 Browser Bridge transport，注册 `/patrol-browser-bridge` WebSocket/HTTP route，并提供进程共享的 `patrolBrowserBridge` service。
+- **Agent plane**：`patrol` preset。`dsh-patrol/browser-tools` 消费 Host 的 `patrolBrowserBridge` service，只把 `browser_*` schemas 注册到该 preset 的 scoped ToolRuntime layer；`dsh-patrol` 负责教学、录制、Runner 和报告。
+
+这遵循 Harness Agent Preset 的 composition contract：跨 session / process-global 的 service 和 route 属于 Host；某个 Agent 暴露给模型的 tool/prompt 属于 preset。
 
 ```text
 Host composition
-└── dsh-patrol/preset-installer
+├── dsh-patrol/browser-bridge-host
+│   ├── /patrol-browser-bridge (WebSocket)
+│   ├── /patrol-browser-bridge/info (HTTP)
+│   └── patrolBrowserBridge service
+└── dsh-patrol/preset-installer        # package/bundle install path
 
 Agent preset: patrol
 ├── persona
-├── dsh-patrol/browser-bridge
-└── dsh-patrol
+├── dsh-patrol/browser-tools           # scoped browser_* schemas only
+└── dsh-patrol                         # patrol_* orchestration + runner
 ```
+
+本地源码安装时，`scripts/install-local.ps1` 会把 Host bridge 的绝对 `file:///.../browser-bridge-runtime/index.js` 作为一个带 BEGIN/END marker 的 managed block 写进 `profiles/<profile>/cordis.patch.yml`；Agent preset 则引用 `tools-plugin.js` 和 `lib/index.js`。因此正常启动仍然只需要 `pnpm dsh web`。
 
 ## 2. Browser dispatch boundary
 
@@ -73,7 +84,6 @@ checkpoint 不是“结束这次 run 再新建一次”。Runner 会把 `runId +
 ## 8. Page prompt-injection boundary
 
 read/snapshot 的 model-visible output 用 BEGIN/END UNTRUSTED PAGE DATA 包裹；system prompt 明确规定 DOM/页面内容只能作为被巡检数据，不能作为 Agent 指令。Browser extension 与 Patrol Browser Bridge Runtime 都不提供 `eval` 命令，Patrol allowlist 也不包含 `browser_eval`。
-
 
 ## Replay stability
 

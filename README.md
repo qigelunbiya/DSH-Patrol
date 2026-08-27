@@ -10,6 +10,8 @@ v0.2 针对真实联调中暴露的问题做了完整收口：
 
 - 提供独立的 **「巡检模式」** Agent Preset，不再依赖在标准模式里说“请使用 Patrol”。
 - 内置经过加固的 Patrol Browser Bridge Runtime 与 Chromium 扩展；协议实现基于 MIT 许可的 `dsh-browser-bridge` 思路并做了安全收口。
+- Browser Bridge 的 WebSocket/HTTP transport 固定运行在 **Host plane**；巡检 preset 只注册 Agent-scoped `browser_*` 工具，避免 process-global WebServer 能力进入 preset。
+- 两个 Cordis Browser 插件都使用 namespace plugin 形式（`name` / `inject` / `apply`），**禁止 `export default apply`**。Harness Loader 会优先 unwrap default export，若保留 default export 会丢掉 `inject`，表现为 `cannot get property "webServer" without inject` 或 preset 挂载失败。
 - `patrol_doctor` 检查真实 Browser Provider 与连接状态；Agent 不再猜 `browser_*` 工具名。
 - 录制 API 使用 canonical action 枚举；Runner 只允许固定的安全浏览器工具集合，`browser_eval` 不在允许列表。
 - Browser Provider 的模型直调会被 Guard 拒绝；只有当前 `patrol_*` composite 所属的嵌套调用才能执行浏览器工具。
@@ -25,6 +27,11 @@ v0.2 针对真实联调中暴露的问题做了完整收口：
 
 ```text
 DeepSeek Harness
+├── Host plane
+│   └── dsh-patrol/browser-bridge-host
+│       ├── Patrol Browser Bridge Runtime
+│       └── Chromium extension → 当前真实浏览器会话
+│
 └── 巡检模式 (Agent Preset)
     ├── dsh-patrol
     │   ├── patrol_doctor
@@ -36,9 +43,8 @@ DeepSeek Harness
     │   ├── patrol_confirm
     │   ├── patrol_run / patrol_resume
     │   └── report / repair / management tools
-    └── dsh-patrol/browser-bridge
-        └── Patrol Browser Bridge Runtime
-            └── Chromium extension → 当前真实浏览器会话
+    └── dsh-patrol/browser-tools
+        └── browser_* tool schemas
 ```
 
 Patrol 的原则仍然是：**Agent 用于教学、解释和修复；Runner 用于重复执行。**
@@ -61,12 +67,15 @@ pnpm build
 .\scripts\install-local.ps1 -HarnessRoot "E:\path\to\deepseek-harness"
 ```
 
-脚本会把本地源码构建后的 `file:///.../lib/index.js` 与 `file:///.../browser-bridge-runtime/index.js` 写入：
+脚本会把本地源码构建后的 Patrol preset 写入用户 preset root，并把 Browser Host Bridge 的 `file:///.../browser-bridge-runtime/index.js` 作为一个受管理块写入所选 profile 的 `cordis.patch.yml`：
 
 ```text
 $DSH_HOME/.agent-presets/patrol/
 ├── agent.cordis.yml
 └── preset.yml
+
+$DSH_HOME/profiles/<profile>/cordis.patch.yml
+└── # BEGIN/END DSH-PATROL MANAGED HOST BRIDGE
 ```
 
 之后正常启动 Harness 即可，不需要 `--patch`：
@@ -78,7 +87,7 @@ pnpm dsh web
 
 新建会话，选择 **巡检模式**。
 
-如果之前把 `dsh-patrol` 直接写进 `profiles/web/cordis.patch.yml` 做了全局加载，请删除那一块旧配置；本地安装脚本会检测并提醒，但不会擅自修改你的其他 profile patch。
+如果之前把 `dsh-patrol` 主 Agent 插件直接写进 `profiles/web/cordis.patch.yml` 做了全局加载，请删除那一块旧配置；本地安装脚本会检测并提醒，但不会擅自修改你的其他 profile patch。
 
 ## 作为 Bundle 安装
 
@@ -97,7 +106,7 @@ allowBuilds:
 pnpm dsh plugin --profile web add github:qigelunbiya/DSH-Patrol#<commit-sha>
 ```
 
-Bundle 本身只加载 `preset-installer`。第一次 `pnpm dsh web` 时，它会安装/更新 `$DSH_HOME/.agent-presets/patrol`；Patrol Agent 不会被全局加入标准模式。
+Bundle 的 Host patch 会加载 `dsh-patrol/browser-bridge-host` 与 `preset-installer`。Browser transport 是进程级共享能力，但 `browser_*` tool schemas 与 Patrol orchestration 只进入 Patrol preset，不会注入标准模式。
 
 ## 浏览器扩展
 
@@ -217,22 +226,3 @@ patrol_abort_run
 patrol_delete
 patrol_execute_and_record   # v0.1 兼容入口，已弃用
 ```
-
-## 状态
-
-v0.2 聚焦网页巡检闭环。SSH/API/进程/文件巡检、定时调度 UI、完整 Repair Mode 等仍属于后续方向，不在当前版本里冒充已经完成。
-
-更多细节见：
-
-- `docs/architecture.md`
-- `docs/inspection-schema.md`
-- `docs/browser-provider.md`
-
-## Third-party notice
-
-Patrol Browser Bridge Runtime 的部分实现思路与代码派生自 MIT 许可的 `dsh-browser-bridge`；完整许可文本见 `THIRD_PARTY_NOTICES.md`。
-
-
-### Runbook 的标签页稳定性
-
-Runbook 不持久化 Chromium `tabId`，也不录制 `list-tabs` / `activate-tab` / 浏览历史 back/forward 等会随会话变化的动作。巡检导航使用当前活动标签页中的显式 URL，避免下一次运行因临时标签页编号或历史栈变化而失效。

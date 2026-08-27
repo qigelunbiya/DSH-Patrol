@@ -15,6 +15,12 @@
     "./browser-bridge": {
       "default": "./browser-bridge-runtime/index.js"
     },
+    "./browser-bridge-host": {
+      "default": "./browser-bridge-runtime/index.js"
+    },
+    "./browser-tools": {
+      "default": "./browser-bridge-runtime/tools-plugin.js"
+    },
     "./preset-installer": {
       "types": "./lib/preset-installer.d.ts",
       "default": "./lib/preset-installer.js"
@@ -30,6 +36,7 @@
     "presets/**/*",
     "browser-extension/**/*",
     "scripts/install-local.ps1",
+    "scripts/uninstall-local.ps1",
     "README.md",
     "LICENSE",
     "browser-bridge-runtime/**/*",
@@ -46,7 +53,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check:extension": "node scripts/check-extension.mjs",
+    "check:extension": "node scripts/check-extension.mjs && node scripts/check-managed-browser.mjs",
     "check:encoding": "node scripts/check-encoding.mjs"
   },
   "peerDependencies": {
@@ -58,7 +65,8 @@
     "@deepseek-ai/dsh-tools": "^0.1.1-rc.2"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "^3.18.1"
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "puppeteer-core": "25.9.0"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1",

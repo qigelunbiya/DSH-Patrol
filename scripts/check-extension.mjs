@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+const projectRoot = fileURLToPath(new URL('../', import.meta.url))
 const extensionRoot = fileURLToPath(new URL('../browser-extension/', import.meta.url))
 const runtimeRoot = fileURLToPath(new URL('../browser-bridge-runtime/', import.meta.url))
 const manifest = JSON.parse(readFileSync(join(extensionRoot, 'manifest.json'), 'utf8'))
@@ -14,7 +15,7 @@ if (manifest.content_scripts?.some(item => item.all_frames === true)) throw new 
 for (const file of ['background.js', 'content.js', 'popup.js', 'options.js']) {
   checkSyntax(join(extensionRoot, file), file)
 }
-for (const file of ['index.js', 'bridge.js', 'tools.js', 'ws.js']) {
+for (const file of ['index.js', 'bridge.js', 'tools.js', 'tools-plugin.js', 'ws.js']) {
   checkSyntax(join(runtimeRoot, file), `browser-bridge-runtime/${file}`)
 }
 
@@ -22,20 +23,40 @@ const content = readFileSync(join(extensionRoot, 'content.js'), 'utf8')
 if (/\beval\s*\(/.test(content) || /new\s+Function\s*\(/.test(content)) throw new Error('page eval is forbidden in Patrol extension')
 if (!content.includes("input.type === 'password'")) throw new Error('password-field redaction guard missing')
 if (!content.includes('return { ok: false, found: false, selector: args.selector')) throw new Error('selector wait timeout must fail closed')
+
 const runtimeTools = readFileSync(join(runtimeRoot, 'tools.js'), 'utf8')
 if (/name:\s*['"]browser_eval['"]/.test(runtimeTools)) throw new Error('browser_eval must not be registered by Patrol')
 if (!runtimeTools.includes("name: 'browser_type_credential'")) throw new Error('credential-reference browser tool is missing')
-const runtimeIndex = readFileSync(join(runtimeRoot, 'index.js'), 'utf8')
-if (!runtimeIndex.includes('chrome-extension:')) throw new Error('browser websocket origin restriction is missing')
-if (!runtimeIndex.includes('trusted-extension-origin.txt')) throw new Error('browser extension origin pairing is missing')
-if (runtimeIndex.indexOf('handleUpgrade(req, socket, head') > runtimeIndex.indexOf('authorizeOrigin(originTrustFile')) throw new Error('extension origin must not be persisted before a valid WebSocket handshake')
-const background = readFileSync(join(extensionRoot, 'background.js'), 'utf8')
-if (!background.includes('value.ok === false')) throw new Error('extension must convert in-band DOM failures into bridge failures')
 if (!runtimeTools.includes('function requireOk')) throw new Error('runtime must fail closed on in-band browser errors')
 if (runtimeTools.includes('text: resolved.value') && !runtimeTools.includes("run(bridge, exec, 'type'")) {
   throw new Error('credential resolution must only feed the direct bridge request')
 }
-console.log('browser extension/runtime checks passed')
+
+const runtimeIndex = readFileSync(join(runtimeRoot, 'index.js'), 'utf8')
+if (!runtimeIndex.includes('chrome-extension:')) throw new Error('browser websocket origin restriction is missing')
+if (!runtimeIndex.includes('trusted-extension-origin.txt')) throw new Error('browser extension origin pairing is missing')
+if (runtimeIndex.indexOf('handleUpgrade(req, socket, head') > runtimeIndex.indexOf('authorizeOrigin(originTrustFile')) throw new Error('extension origin must not be persisted before a valid WebSocket handshake')
+if (!runtimeIndex.includes("export const inject = ['webServer']")) throw new Error('browser transport must be host-plane and inject only webServer')
+if (/^\s*export\s+default\b/m.test(runtimeIndex)) throw new Error('host browser transport must not default-export apply: Harness Loader would drop inject metadata')
+if (runtimeIndex.includes('registerTools(')) throw new Error('host browser transport must not register agent browser tools')
+if (!runtimeIndex.includes("ctx.provide('patrolBrowserBridge'")) throw new Error('host browser transport must provide patrolBrowserBridge')
+
+const toolPlugin = readFileSync(join(runtimeRoot, 'tools-plugin.js'), 'utf8')
+if (!toolPlugin.includes("export const inject = ['tools', 'patrolBrowserBridge']")) throw new Error('browser tools plugin must consume the host patrolBrowserBridge service')
+if (/^\s*export\s+default\b/m.test(toolPlugin)) throw new Error('browser tools plugin must not default-export apply: Harness Loader would drop inject metadata')
+if (!toolPlugin.includes('registerTools(ctx, service.bridge')) throw new Error('browser tools plugin must register scoped tools from the host bridge')
+
+const preset = readFileSync(join(projectRoot, 'presets', 'patrol', 'agent.cordis.yml'), 'utf8')
+if (!preset.includes("name: 'dsh-patrol/browser-tools'")) throw new Error('Patrol preset must load the agent-scoped browser tools plugin')
+if (preset.includes("name: 'dsh-patrol/browser-bridge'")) throw new Error('Patrol preset must not own the process-global browser transport')
+
+const hostPatch = readFileSync(join(projectRoot, 'cordis.patch.yml'), 'utf8')
+if (!hostPatch.includes("name: 'dsh-patrol/browser-bridge-host'")) throw new Error('DSH Patrol host patch must load the browser transport')
+
+const background = readFileSync(join(extensionRoot, 'background.js'), 'utf8')
+if (!background.includes('value.ok === false')) throw new Error('extension must convert in-band DOM failures into bridge failures')
+
+console.log('browser extension/runtime and host/agent plane checks passed')
 
 function checkSyntax(path, label) {
   const result = spawnSync(process.execPath, ['--check', path], { encoding: 'utf8' })

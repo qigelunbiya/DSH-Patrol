@@ -1,5 +1,13 @@
-# DSH Patrol host layer. The Patrol agent itself is NOT global: this host-only
-# installer writes the dedicated `patrol` Agent Preset under $DSH_HOME.
+# DSH Patrol host layer. Host-plane transport owns the process-global WebServer
+# routes; the Patrol agent and browser tool schemas remain scoped to the patrol
+# Agent Preset.
 - insert:
+    - id: dsh-patrol-browser-host
+      name: 'dsh-patrol/browser-bridge-host'
+      config:
+        path: /patrol-browser-bridge
+        commandTimeoutMs: 60000
+        maxMessageBytes: 8388608
+
     - id: dsh-patrol-preset-installer
       name: 'dsh-patrol/preset-installer'
