@@ -21,8 +21,10 @@ if (typeof manifest.key !== 'string' || manifest.key.length < 100) {
 if (!managed.includes("from 'puppeteer-core'")) errors.push('managed browser must use puppeteer-core')
 if (!managed.includes('pipe: true')) errors.push('managed browser must use CDP pipe transport')
 if (!managed.includes('enableExtensions: true')) errors.push('managed browser must enable extensions explicitly')
-if (!managed.includes('installExtension(extensionPath)')) errors.push('managed browser must install the bundled extension programmatically')
-if (managed.includes('--load-extension')) errors.push('managed browser must not use deprecated --load-extension')
+if (!managed.includes('installExtension(extensionPath)')) errors.push('managed browser must try the Chromium runtime extension API first')
+if (!managed.includes('isExtensionApiUnavailable')) errors.push('managed browser must detect unsupported runtime extension APIs')
+if (!managed.includes('legacyExtensionLoad: true')) errors.push('managed browser must have an automatic compatibility fallback for older Chromium builds')
+if (!managed.includes('`--load-extension=${extensionPath}`')) errors.push('legacy compatibility fallback must load only the bundled extension path')
 if (!managed.includes("'browser-profile'")) errors.push('managed browser must use an isolated persistent Patrol profile')
 if (!toolsPlugin.includes('service.ensureBrowser')) errors.push('Patrol preset must trigger managed browser provisioning automatically')
 if (toolsPlugin.includes('chrome://extensions') || toolsPlugin.includes('Load unpacked')) {
