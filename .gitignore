@@ -1,6 +1,8 @@
 node_modules/
 lib/
+lib-smoke/
 coverage/
+.pack-check/
 *.log
 .env
 .env.*

@@ -13,13 +13,15 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "composite": true,
-    "allowImportingTsExtensions": true,
-    "rewriteRelativeImportExtensions": true,
     "skipLibCheck": true,
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "rootDir": "src",
-    "outDir": "lib/types"
+    "outDir": "lib",
+    "noEmitOnError": true
   },
-  "include": ["src"]
+  "include": [
+    "src"
+  ]
 }

@@ -1,0 +1,3 @@
+name: 巡检模式
+description: 专用于创建、验证、执行和恢复 DSH Patrol 网页巡检 Runbook；浏览器动作通过 Patrol 录制，不作为普通对话工具直接调用。
+order: 5

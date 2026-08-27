@@ -35,5 +35,14 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Check browser extension
+        run: pnpm check:extension
+
       - name: Build
         run: pnpm build
+
+      - name: Pack smoke test
+        run: |
+          mkdir -p .pack-check
+          pnpm pack --pack-destination .pack-check
+          test -n "$(find .pack-check -name 'dsh-patrol-*.tgz' -print -quit)"

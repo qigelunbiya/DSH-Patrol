@@ -1,42 +1,44 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import z from '@deepseek-ai/schemastery'
+import type {} from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
-import { PATROL_SYSTEM_PROMPT } from './prompt.ts'
-import { PatrolRunner } from './runner.ts'
-import { PatrolStore } from './store.ts'
-import { registerPatrolTools } from './tools.ts'
+import { PATROL_SYSTEM_PROMPT } from './prompt.js'
+import { PatrolRunner } from './runner.js'
+import { PatrolStore } from './store.js'
+import { registerPatrolTools } from './tools.js'
 
-export * from './types.ts'
-export { PatrolStore } from './store.ts'
-export { PatrolRunner, evaluateExpectation } from './runner.ts'
+export * from './types.js'
+export * from './browser.js'
+export * from './security.js'
+export { PatrolStore } from './store.js'
+export { PatrolRunner, conditionMatches, evaluateExpectation } from './runner.js'
 
 export const name = 'dsh-patrol'
 export const inject = ['tools']
 
 const DEFAULT_STORAGE_PATH = dshHomePath('patrol')
-const DEFAULT_ALLOWED_TOOL_PREFIXES = ['browser_']
 const DEFAULT_MAX_STEPS = 200
 const DEFAULT_REPORT_MAX_CHARS = 30_000
 
 export interface Config {
   storagePath?: string
-  allowedToolPrefixes?: string[]
   maxSteps?: number
   reportMaxChars?: number
+  /** Deprecated v0.1 compatibility; Patrol v0.2 uses an exact safe-browser allowlist. */
+  allowedToolPrefixes?: string[]
 }
 
 export const Config: z<Config> = z.object({
   storagePath: z.string().default(DEFAULT_STORAGE_PATH),
-  allowedToolPrefixes: z.array(z.string()).default(DEFAULT_ALLOWED_TOOL_PREFIXES),
   maxSteps: z.number().step(1).min(1).default(DEFAULT_MAX_STEPS),
   reportMaxChars: z.number().step(1).min(1000).default(DEFAULT_REPORT_MAX_CHARS),
+  allowedToolPrefixes: z.array(z.string()).default(['browser_']),
 })
 
 interface ResolvedConfig {
   storagePath: string
-  allowedToolPrefixes: string[]
   maxSteps: number
   reportMaxChars: number
 }
@@ -44,18 +46,15 @@ interface ResolvedConfig {
 export function resolveConfig(config: Config): ResolvedConfig {
   const resolved: ResolvedConfig = {
     storagePath: config.storagePath ?? DEFAULT_STORAGE_PATH,
-    allowedToolPrefixes: [...(config.allowedToolPrefixes ?? DEFAULT_ALLOWED_TOOL_PREFIXES)],
     maxSteps: config.maxSteps ?? DEFAULT_MAX_STEPS,
     reportMaxChars: config.reportMaxChars ?? DEFAULT_REPORT_MAX_CHARS,
   }
-  if (resolved.allowedToolPrefixes.length === 0 || resolved.allowedToolPrefixes.some(prefix => prefix.length === 0)) {
-    throw new Error('dsh-patrol: allowedToolPrefixes must contain at least one non-empty prefix')
-  }
-  if (resolved.allowedToolPrefixes.some(prefix => 'patrol_'.startsWith(prefix) || prefix.startsWith('patrol_'))) {
-    throw new Error('dsh-patrol: allowedToolPrefixes must not permit patrol_* recursion')
-  }
   if (!Number.isInteger(resolved.maxSteps) || resolved.maxSteps < 1) throw new Error('dsh-patrol: maxSteps must be a positive integer')
   if (!Number.isInteger(resolved.reportMaxChars) || resolved.reportMaxChars < 1000) throw new Error('dsh-patrol: reportMaxChars must be an integer >= 1000')
+  if (config.allowedToolPrefixes !== undefined
+    && (config.allowedToolPrefixes.length !== 1 || config.allowedToolPrefixes[0] !== 'browser_')) {
+    throw new Error('dsh-patrol: allowedToolPrefixes is deprecated and may only remain ["browser_"]; v0.2 uses an exact internal allowlist')
+  }
   return resolved
 }
 
@@ -63,14 +62,22 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const resolved = resolveConfig(config)
   const store = new PatrolStore(resolved.storagePath)
   await store.init()
-  const runner = new PatrolRunner(ctx, store, {
-    allowedToolPrefixes: resolved.allowedToolPrefixes,
-    reportMaxChars: resolved.reportMaxChars,
-  })
+  const runner = new PatrolRunner(ctx, store, { reportMaxChars: resolved.reportMaxChars })
 
   ctx.effect(
-    () => registerPatrolTools(ctx, store, runner, { maxSteps: resolved.maxSteps }),
+    () => registerPatrolTools(ctx, store, runner, {
+      maxSteps: resolved.maxSteps,
+      reportMaxChars: resolved.reportMaxChars,
+    }),
     'dsh-patrol: patrol tools',
+  )
+
+  // Browser provider tools live in the Patrol preset so nested dispatch can use
+  // them, but model-direct browser calls would bypass recording. Deny only root
+  // calls; Patrol's nested calls carry the outer patrol_* execution token.
+  ctx.effect(
+    () => ctx.tools.guard(execution => runner.browserGuard(execution.name, execution.parent)),
+    'dsh-patrol: deny direct model browser calls',
   )
 
   const systemPrompt = ctx.get('systemPrompt')
@@ -82,5 +89,5 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     }), 'dsh-patrol: agent workflow prompt')
   }
 
-  ctx.logger.info(`dsh-patrol ready; storage=${resolved.storagePath}; allowlist=${resolved.allowedToolPrefixes.join(',')}`)
+  ctx.logger.info(`dsh-patrol ready; storage=${resolved.storagePath}; exact browser allowlist enabled`)
 }

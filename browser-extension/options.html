@@ -1,0 +1,12 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>DSH Patrol Browser Bridge Options</title>
+<style>body{font:14px system-ui,sans-serif;max-width:620px;margin:30px auto;padding:0 18px}label{display:block;font-weight:600;margin-top:14px}input[type=text]{width:100%;box-sizing:border-box;padding:8px;margin-top:5px}button{margin-top:16px;padding:8px 14px}#msg{margin-top:12px;white-space:pre-wrap}</style>
+<h1>DSH Patrol Browser Bridge</h1>
+<p>The default URL matches the Patrol preset on <code>dsh web</code> port 3080.</p>
+<label>Bridge WebSocket URL <input id="bridgeUrl" type="text"></label>
+<label><input id="autoConnect" type="checkbox"> Auto-connect</label>
+<button id="save">Save</button>
+<button id="test">Test HTTP endpoint</button>
+<div id="msg"></div>
+<script src="options.js"></script>

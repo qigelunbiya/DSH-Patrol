@@ -1,72 +1,80 @@
-# inspection.json v0.1
+# inspection.json schema notes (v0.2)
 
-`inspection.json` 是 DSH Patrol 的稳定输入，而不是对话记录。
+v0.2 新建 definition 使用 `schemaVersion: "0.2"`；读取仍接受已有 v0.1 基础 definition，下一次编辑/确认会升级为 v0.2。
 
-## 顶层字段
-
-| 字段 | 说明 |
-| --- | --- |
-| `schemaVersion` | 当前固定为 `0.1`。 |
-| `id` | 目录和运行历史使用的稳定 ID。 |
-| `name` / `description` | 人类可读信息。 |
-| `status` | `draft` 或 `ready`。 |
-| `target` | v0.1 固定为 browser + URL。 |
-| `expectedResult` | 整体巡检成功的自然语言定义。 |
-| `artifacts` | 用户希望获得的产物；v0.1 实际保证 report.json/report.md，截图尚未实现。 |
-| `auth` | 认证策略。禁止保存明文凭证。 |
-| `schedule` | 预留字段；v0.1 尚未启用调度器。 |
-| `steps` | 可重放工具步骤和人工 checkpoint。 |
-| `metadata` | 创建、修改、确认时间。 |
-
-## Tool Step
+核心结构：
 
 ```json
 {
-  "id": "step-002",
+  "schemaVersion": "0.2",
+  "id": "portal-workorders",
+  "status": "ready",
+  "target": { "type": "browser", "url": "https://portal.example.test/" },
+  "artifacts": ["markdown-report", "json-report", "screenshot", "page-summary"],
+  "auth": { "mode": "secret-ref" },
+  "steps": []
+}
+```
+
+Tool step：
+
+```json
+{
+  "id": "step-004",
   "kind": "tool",
-  "name": "读取服务状态",
-  "tool": "browser_get_text",
+  "name": "输入密码",
+  "tool": "browser_type_credential",
   "arguments": {
-    "selector": "#service-status"
+    "selector": "#password",
+    "credentialRef": "${credential:PATROL_PORTAL_PASSWORD}",
+    "clear": true
   },
-  "expectation": {
+  "sensitive": true,
+  "when": {
+    "sourceStepId": "step-002",
     "mode": "contains",
-    "value": "正常",
+    "value": "登录",
     "caseSensitive": false
   },
-  "recordedAt": "2026-08-26T00:00:00.000Z"
+  "recordedAt": "..."
 }
 ```
 
-`expectation` 是 v0.1 的最小机器断言，只支持 `contains` 和 `not-contains`。后续会扩展数值阈值、正则、结构化 JSONPath、截图视觉比较等。
-
-## Checkpoint Step
+点击 step 可额外保存：
 
 ```json
-{
-  "id": "step-003",
-  "kind": "checkpoint",
-  "name": "完成短信二次验证",
-  "prompt": "请在当前浏览器完成短信验证码，然后继续。",
-  "reason": "otp",
-  "recordedAt": "2026-08-26T00:00:00.000Z"
+"locator": {
+  "text": "全部工单",
+  "role": "button",
+  "tag": "button"
 }
 ```
 
-Runner 到 checkpoint 会停止并生成 `waiting` 报告。完成人工动作后，可使用 `patrol_run(startAtStepId=下一步骤)` 继续。
-
-## Secret 原则
-
-不要这样写：
+read-page step 可设置：
 
 ```json
-{ "password": "123456" }
+"artifact": "page-text"
 ```
 
-未来允许的形态会类似：
+screenshot step 会使用：
 
 ```json
-{ "password": "${secret:prod-console.password}" }
+"artifact": "screenshot"
 ```
 
-但 v0.1 还没有 SecretResolver，所以推荐使用已登录浏览器 Session 或人工 checkpoint。
+Checkpoint step 同样可以带 `when`，用于只在某个状态下要求人工操作。
+
+## 禁止持久化
+
+- 明文 password/token/API key/cookie/session id/OTP/captcha。
+- 带 `user:password@host` 的 URL。
+- URL 中 `password=...`、`token=...` 等敏感 query 参数。
+
+Credential placeholder 必须使用 Harness reference name grammar：`[A-Za-z_][A-Za-z0-9_]*`。
+
+
+## 条件引用规则
+
+`when.sourceStepId` 必须引用当前 step **之前已经存在** 的 step，禁止前向/自引用；否则 deterministic Runner 无法在执行时得到条件源。
+
+`browser_type_credential` 是唯一允许持久化 `${credential:REF}` 的工具；其他 tool step 出现 credential placeholder 会被校验拒绝。
