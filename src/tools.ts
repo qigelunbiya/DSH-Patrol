@@ -1,4 +1,3 @@
-import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { defineTool, type ToolDefinition } from '@deepseek-ai/dsh-tools'
@@ -42,8 +41,6 @@ const TEXT_OUTPUT = {
   render: (_args: unknown, value: string) => [{ type: 'text' as const, text: value }],
 }
 
-const BROWSER_EXTENSION_PATH = fileURLToPath(new URL('../browser-extension', import.meta.url))
-
 export interface PatrolToolsOptions {
   maxSteps: number
   reportMaxChars: number
@@ -63,21 +60,21 @@ export function registerPatrolTools(
 function createDefinitions(ctx: Context, store: PatrolStore, runner: PatrolRunner, options: PatrolToolsOptions): ToolDefinition[] {
   const doctor = defineTool({
     name: 'patrol_doctor',
-    description: 'Diagnose DSH Patrol browser capabilities and credential-reference readiness. Always use this instead of guessing browser_* tool names.',
+    description: 'Diagnose DSH Patrol managed-browser capabilities and credential-reference readiness. Always use this instead of guessing browser_* tool names.',
     parameters: {
-      inspectionId: { type: 'string', description: 'Optional inspection whose credential references should be checked.' },
+      inspectionId: { type: 'string', description: 'Optional existing inspection whose credential references should be checked.' },
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
       const missing = SAFE_BROWSER_TOOLS.filter(name => ctx.tools.get(name, exec.agent) === undefined)
       const lines = [
         'DSH Patrol doctor',
-        `browser extension path: ${BROWSER_EXTENSION_PATH}`,
+        'browser provisioning: automatic managed Chromium profile + bundled extension',
         `expected browser tools: ${SAFE_BROWSER_TOOLS.join(', ')}`,
       ]
       if (missing.length > 0) {
         lines.push(`browser provider: MISSING (${missing.join(', ')})`)
-        lines.push('Fix: ensure the Patrol preset contains dsh-patrol/browser-bridge, then start a new Patrol-mode session.')
+        lines.push('Fix: restart Harness after installing/updating DSH Patrol. The host must load dsh-patrol/browser-bridge-host and Patrol mode must load dsh-patrol/browser-tools. Do not install the extension manually.')
       } else {
         const status = await runner.dispatch('browser_status', {}, exec)
         if (!status.ok) {
@@ -88,18 +85,22 @@ function createDefinitions(ctx: Context, store: PatrolStore, runner: PatrolRunne
       }
 
       if (args.inspectionId !== undefined) {
-        const definition = await store.load(args.inspectionId)
-        const refs = collectInspectionCredentialRefs(definition)
-        if (refs.size === 0) {
-          lines.push('credentials: no credential references used by this inspection')
+        if (!(await store.exists(args.inspectionId))) {
+          lines.push(`inspection ${args.inspectionId}: not found; browser diagnosis above is still valid`)
         } else {
-          const credentials = ctx.get('credentials')
-          if (credentials === undefined) {
-            lines.push('credentials: Harness credential service is unavailable')
+          const definition = await store.load(args.inspectionId)
+          const refs = collectInspectionCredentialRefs(definition)
+          if (refs.size === 0) {
+            lines.push('credentials: no credential references used by this inspection')
           } else {
-            for (const ref of [...refs].sort()) {
-              const info = await credentials.describe(credentialRef(ref))
-              lines.push(`credential ${ref}: ${info.configured ? `configured (${info.source ?? 'source hidden'})` : 'NOT configured'}`)
+            const credentials = ctx.get('credentials')
+            if (credentials === undefined) {
+              lines.push('credentials: Harness credential service is unavailable')
+            } else {
+              for (const ref of [...refs].sort()) {
+                const info = await credentials.describe(credentialRef(ref))
+                lines.push(`credential ${ref}: ${info.configured ? `configured (${info.source ?? 'source hidden'})` : 'NOT configured'}`)
+              }
             }
           }
         }
@@ -712,7 +713,6 @@ function runResultText(definition: InspectionDefinition, report: Awaited<ReturnT
   const lines = [summarizeReport(report), `Markdown report: ${paths.markdown}`, `JSON report: ${paths.json}`]
   const waiting = report.results.find(item => item.status === 'waiting')
   if (waiting !== undefined) lines.push(`Checkpoint waiting: ${waiting.output ?? waiting.name}\nAfter completing it, call patrol_resume with inspectionId=${definition.id}.`)
-  if (report.summary !== undefined) lines.push(`Page summary:
-${report.summary}`)
+  if (report.summary !== undefined) lines.push(`Page summary:\n${report.summary}`)
   return lines.join('\n')
 }
