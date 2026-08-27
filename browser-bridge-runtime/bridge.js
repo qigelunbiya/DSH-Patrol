@@ -24,6 +24,7 @@ export class BrowserBridge {
     this.screenshotDir = options.screenshotDir || defaultScreenshotDir()
     this.logger = options.logger ?? null
     this.client = null
+    this.clientOrigin = null
     this.extensionInfo = null
     this.pending = new Map()
     this.seq = 0
@@ -32,23 +33,26 @@ export class BrowserBridge {
   }
 
   get connected() { return this.client !== null }
+  get origin() { return this.clientOrigin }
 
-  attach(connection) {
+  attach(connection, metadata = {}) {
     if (this.client && this.client !== connection) {
       try { this.client.close(4000, 'replaced by newer Patrol browser connection') } catch {}
     }
     this.client = connection
+    this.clientOrigin = typeof metadata.origin === 'string' ? metadata.origin : null
     this.extensionInfo = null
     connection.onMessage(text => this.onMessage(text))
     connection.onClose(() => {
       if (this.client !== connection) return
       this.client = null
+      this.clientOrigin = null
       this.extensionInfo = null
       this.failAll(new BridgeError('DISCONNECTED', 'The Patrol browser extension disconnected while a command was in flight.'))
     })
     connection.onError(error => this.logger?.warn?.(`[dsh-patrol/browser-bridge] connection error: ${error?.message ?? error}`))
     this.startPing()
-    this.logger?.info?.('[dsh-patrol/browser-bridge] browser extension connected')
+    this.logger?.info?.(`[dsh-patrol/browser-bridge] browser extension connected${this.clientOrigin ? ` from ${this.clientOrigin}` : ''}`)
   }
 
   request(cmd, args = {}, options = {}) {
@@ -112,7 +116,7 @@ export class BrowserBridge {
   }
 
   status() {
-    return { connected: this.connected, extension: this.extensionInfo, pending: this.pending.size }
+    return { connected: this.connected, origin: this.clientOrigin, extension: this.extensionInfo, pending: this.pending.size }
   }
 
   onMessage(text) {
@@ -155,6 +159,7 @@ export class BrowserBridge {
     this.failAll(new BridgeError('SHUTDOWN', 'Patrol browser bridge is shutting down.'))
     try { this.client?.close(1001, 'server shutting down') } catch {}
     this.client = null
+    this.clientOrigin = null
   }
 }
 
