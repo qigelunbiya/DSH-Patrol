@@ -16,6 +16,11 @@ function Write-Utf8NoBom {
     [System.IO.File]::WriteAllText($Path, $Content, $encoding)
 }
 
+function ConvertTo-YamlSingleQuoted {
+    param([Parameter(Mandatory = $true)][string]$Value)
+    return $Value.Replace("'", "''")
+}
+
 function Install-ManagedHostBridgePatch {
     param(
         [Parameter(Mandatory = $true)][string]$PatchPath,
@@ -43,6 +48,38 @@ $begin
         managedBrowser: true
         browserStartTimeoutMs: 30000
         browserConnectTimeoutMs: 15000
+$end
+"@
+
+    $next = if ($clean.Length -gt 0) { "$clean`r`n`r`n$block`r`n" } else { "$block`r`n" }
+    Write-Utf8NoBom -Path $PatchPath -Content $next
+}
+
+function Install-ManagedCleanupPatch {
+    param(
+        [Parameter(Mandatory = $true)][string]$PatchPath,
+        [Parameter(Mandatory = $true)][string]$CleanupUri,
+        [Parameter(Mandatory = $true)][string]$ProfileName
+    )
+
+    $patchDir = Split-Path -Parent $PatchPath
+    New-Item -ItemType Directory -Force -Path $patchDir | Out-Null
+
+    $begin = "# BEGIN DSH-PATROL MANAGED CLEANUP"
+    $end = "# END DSH-PATROL MANAGED CLEANUP"
+    $existing = if (Test-Path $PatchPath) { [System.IO.File]::ReadAllText($PatchPath) } else { "" }
+    $pattern = "(?ms)^" + [regex]::Escape($begin) + "\r?\n.*?^" + [regex]::Escape($end) + "\r?\n?"
+    $clean = [regex]::Replace($existing, $pattern, "").TrimEnd()
+    $safeUri = ConvertTo-YamlSingleQuoted -Value $CleanupUri
+    $safeProfile = ConvertTo-YamlSingleQuoted -Value $ProfileName
+
+    $block = @"
+$begin
+- insert:
+    - id: dsh-patrol-cleanup
+      name: '$safeUri'
+      config:
+        profile: '$safeProfile'
 $end
 "@
 
@@ -78,7 +115,7 @@ $BridgeHostIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot 
 $BrowserToolsIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "browser-bridge-runtime\tools-plugin.js")))).AbsoluteUri
 
 # Keep this PowerShell source ASCII-only for Windows PowerShell 5.1 compatibility.
-# Copy the UTF-8 preset bytes directly instead of embedding Chinese literals here.
+# Copy the UTF-8 preset bytes directly instead of embedding non-ASCII literals here.
 $PresetSource = Join-Path $ProjectRoot "presets\patrol\preset.yml"
 $PresetTarget = Join-Path $PresetDir "preset.yml"
 Copy-Item -LiteralPath $PresetSource -Destination $PresetTarget -Force
@@ -112,8 +149,19 @@ $AgentYaml = @"
 Write-Utf8NoBom -Path (Join-Path $PresetDir "agent.cordis.yml") -Content $AgentYaml
 Write-Utf8NoBom -Path (Join-Path $PresetDir ".managed-by-dsh-patrol") -Content "managed by dsh-patrol local installer`n"
 
+# Copy a self-contained cleanup plugin outside the source checkout. If the
+# local Patrol source is later uninstalled, this small Node-only plugin can
+# remove stale preset/browser integration on the next Harness boot.
+$PatrolRuntimeDir = Join-Path $DshHome "patrol"
+New-Item -ItemType Directory -Force -Path $PatrolRuntimeDir | Out-Null
+$CleanupSource = Join-Path $ProjectRoot "cleanup-runtime\index.js"
+$CleanupTarget = Join-Path $PatrolRuntimeDir "integration-cleanup.mjs"
+Copy-Item -LiteralPath $CleanupSource -Destination $CleanupTarget -Force
+$CleanupUri = (New-Object System.Uri((Resolve-Path $CleanupTarget))).AbsoluteUri
+
 $WebPatch = Join-Path $DshHome "profiles\$Profile\cordis.patch.yml"
 Install-ManagedHostBridgePatch -PatchPath $WebPatch -BridgeHostUri $BridgeHostIndex
+Install-ManagedCleanupPatch -PatchPath $WebPatch -CleanupUri $CleanupUri -ProfileName $Profile
 
 if (Test-Path $WebPatch) {
     $oldGlobal = Select-String -Path $WebPatch -Pattern "^\s*-?\s*id:\s*dsh-patrol\s*$|DSH-Patrol/lib/index" -Quiet
@@ -125,6 +173,7 @@ if (Test-Path $WebPatch) {
 Write-Host ""
 Write-Host "Local Patrol preset installed and UTF-8 verified: $PresetDir" -ForegroundColor Green
 Write-Host "Host browser bridge patch installed: $WebPatch" -ForegroundColor Green
+Write-Host "Lifecycle cleanup coordinator installed: $CleanupTarget" -ForegroundColor Green
 Write-Host "Browser provisioning: automatic managed Chromium profile; no manual extension installation is required." -ForegroundColor Green
 if ($HarnessRoot) {
     Write-Host "Start Harness with:" -ForegroundColor Cyan
