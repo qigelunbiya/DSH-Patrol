@@ -58,20 +58,22 @@ function assertStringSafeForStorage(value: string, path: string): void {
     throw new Error(`${path} looks like a bearer credential. DSH Patrol refuses to persist it.`)
   }
   if (!/^https?:\/\//i.test(value)) return
+  let url: URL
   try {
-    const url = new URL(value)
-    for (const [key, child] of url.searchParams) {
-      if (SENSITIVE_KEY.test(key) && child.length > 0 && !isSecretReference(child)) {
-        throw new Error(`${path} URL contains sensitive query parameter ${key}; store a credential reference outside the URL instead.`)
-      }
+    url = new URL(value)
+  } catch {
+    return
+  }
+  for (const [key, child] of url.searchParams) {
+    if (SENSITIVE_KEY.test(key) && child.length > 0 && !isSecretReference(child)) {
+      throw new Error(`${path} URL contains sensitive query parameter ${key}; store a credential reference outside the URL instead.`)
     }
-    if (/(?:password|passwd|pwd|secret|token|api[-_]?key|authorization|cookie|session[-_]?id|otp|captcha)\s*(?:=|:)/i.test(url.hash)) {
-      throw new Error(`${path} URL fragment appears to contain sensitive data; do not persist secrets in URLs.`)
-    }
-  } catch (error: unknown) {
-    if (error instanceof Error && /sensitive query parameter/.test(error.message)) throw error
+  }
+  if (/(?:password|passwd|pwd|secret|token|api[-_]?key|authorization|cookie|session[-_]?id|otp|captcha)\s*(?:=|:)/i.test(url.hash)) {
+    throw new Error(`${path} URL fragment appears to contain sensitive data; do not persist secrets in URLs.`)
   }
 }
+
 
 export function assertSafePersistentText(text: string, path = 'text'): void {
   if (/\bBearer\s+\S+/i.test(text)) throw new Error(`${path} contains a bearer credential and cannot be persisted`)
