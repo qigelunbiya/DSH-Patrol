@@ -3,6 +3,10 @@
 // The WebSocket/HTTP transport is host-owned by browser-bridge-runtime/index.js.
 // This plugin belongs in the Patrol Agent Preset and contributes only browser_*
 // tool schemas to that preset's scoped ToolRuntime layer.
+//
+// Keep this as a namespace Cordis plugin: do NOT add `export default apply`.
+// Harness Loader prefers a module's default export and would otherwise discard
+// the sibling `inject` metadata before the preset is mounted.
 import { registerTools } from './tools.js'
 
 export const name = 'dsh-patrol-browser-tools'
@@ -19,5 +23,3 @@ export function apply(ctx, config = {}) {
     bridgeUrlHint: typeof service.bridgeUrlHint === 'function' ? service.bridgeUrlHint : () => '',
   }), 'dsh-patrol/browser-tools: scoped browser tools')
 }
-
-export default apply
