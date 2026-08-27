@@ -317,17 +317,25 @@ async function waitForBridge(bridge, timeoutMs, extensionId) {
     if (bridge.connected === true && originMatches(bridge, extensionId)) return
     await delay(100)
   }
-  const actualOrigin = bridge.status?.().origin ?? bridge.origin
+  const status = typeof bridge.status === 'function' ? bridge.status() : undefined
+  const actualOrigin = status?.origin ?? bridge.origin
   throw new Error(`Patrol extension did not connect to the local bridge within ${timeoutMs}ms${expectedOrigin ? ` (expected ${expectedOrigin}, got ${actualOrigin || 'no extension connection'})` : ''}`)
 }
 
 function originMatches(bridge, extensionId) {
   if (!extensionId) return bridge.connected === true
+  const expected = `chrome-extension://${extensionId}`
   const status = typeof bridge.status === 'function' ? bridge.status() : undefined
-  const origin = status?.origin ?? bridge.origin
-  // Test doubles and older bridge objects may not expose origin; the real
-  // BrowserBridge does. Preserve compatibility while enforcing it when known.
-  return origin === undefined || origin === null || origin === `chrome-extension://${extensionId}`
+  if (status !== undefined && Object.prototype.hasOwnProperty.call(status, 'origin')) {
+    return status.origin === expected
+  }
+  if (Object.prototype.hasOwnProperty.call(bridge, 'origin') || 'origin' in bridge) {
+    return bridge.origin === expected
+  }
+  // Lightweight test doubles and older bridge implementations have no origin
+  // field at all. The real BrowserBridge always exposes it and is therefore
+  // checked strictly above.
+  return bridge.connected === true
 }
 
 async function safeClose(browser, logger) {
