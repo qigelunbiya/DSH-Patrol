@@ -55,6 +55,7 @@ jobs:
           grep -qx 'package/browser-bridge-runtime/managed-browser.js' .pack-check/contents.txt
           grep -qx 'package/browser-bridge-runtime/tools-plugin.js' .pack-check/contents.txt
           grep -qx 'package/browser-extension/manifest.json' .pack-check/contents.txt
+          grep -qx 'package/cleanup-runtime/index.js' .pack-check/contents.txt
           grep -qx 'package/presets/patrol/preset.yml' .pack-check/contents.txt
           grep -qx 'package/presets/patrol/agent.cordis.yml' .pack-check/contents.txt
           grep -qx 'package/scripts/install-local.ps1' .pack-check/contents.txt
