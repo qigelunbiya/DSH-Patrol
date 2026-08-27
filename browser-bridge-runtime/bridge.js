@@ -54,7 +54,7 @@ export class BrowserBridge {
   request(cmd, args = {}, options = {}) {
     const client = this.client
     if (!client) {
-      return Promise.reject(new BridgeError('NOT_CONNECTED', 'Patrol browser extension is not connected. Load the DSH Patrol browser-extension folder and connect it, then retry patrol_doctor.'))
+      return Promise.reject(new BridgeError('NOT_CONNECTED', 'Patrol managed browser is not connected. Automatic provisioning should start or repair it; run patrol_doctor and inspect the managed-browser error if it remains unavailable.'))
     }
     const id = `r${++this.seq}`
     return new Promise((resolve, reject) => {
