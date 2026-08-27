@@ -48,4 +48,14 @@ jobs:
         run: |
           mkdir -p .pack-check
           pnpm pack --pack-destination .pack-check
-          test -n "$(find .pack-check -name 'dsh-patrol-*.tgz' -print -quit)"
+          PKG="$(find .pack-check -name 'dsh-patrol-*.tgz' -print -quit)"
+          test -n "$PKG"
+          tar -tzf "$PKG" > .pack-check/contents.txt
+          grep -qx 'package/browser-bridge-runtime/index.js' .pack-check/contents.txt
+          grep -qx 'package/browser-bridge-runtime/managed-browser.js' .pack-check/contents.txt
+          grep -qx 'package/browser-bridge-runtime/tools-plugin.js' .pack-check/contents.txt
+          grep -qx 'package/browser-extension/manifest.json' .pack-check/contents.txt
+          grep -qx 'package/presets/patrol/preset.yml' .pack-check/contents.txt
+          grep -qx 'package/presets/patrol/agent.cordis.yml' .pack-check/contents.txt
+          grep -qx 'package/scripts/install-local.ps1' .pack-check/contents.txt
+          grep -qx 'package/scripts/uninstall-local.ps1' .pack-check/contents.txt
