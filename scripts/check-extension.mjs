@@ -15,7 +15,7 @@ if (manifest.content_scripts?.some(item => item.all_frames === true)) throw new 
 for (const file of ['background.js', 'content.js', 'popup.js', 'options.js']) {
   checkSyntax(join(extensionRoot, file), file)
 }
-for (const file of ['index.js', 'bridge.js', 'tools.js', 'tools-plugin.js', 'ws.js']) {
+for (const file of ['index.js', 'bridge.js', 'managed-browser.js', 'tools.js', 'tools-plugin.js', 'ws.js']) {
   checkSyntax(join(runtimeRoot, file), `browser-bridge-runtime/${file}`)
 }
 
@@ -40,11 +40,14 @@ if (!runtimeIndex.includes("export const inject = ['webServer']")) throw new Err
 if (/^\s*export\s+default\b/m.test(runtimeIndex)) throw new Error('host browser transport must not default-export apply: Harness Loader would drop inject metadata')
 if (runtimeIndex.includes('registerTools(')) throw new Error('host browser transport must not register agent browser tools')
 if (!runtimeIndex.includes("ctx.provide('patrolBrowserBridge'")) throw new Error('host browser transport must provide patrolBrowserBridge')
+if (!runtimeIndex.includes('ensureBrowser:')) throw new Error('host browser transport must expose zero-config managed browser provisioning')
 
 const toolPlugin = readFileSync(join(runtimeRoot, 'tools-plugin.js'), 'utf8')
 if (!toolPlugin.includes("export const inject = ['tools', 'patrolBrowserBridge']")) throw new Error('browser tools plugin must consume the host patrolBrowserBridge service')
 if (/^\s*export\s+default\b/m.test(toolPlugin)) throw new Error('browser tools plugin must not default-export apply: Harness Loader would drop inject metadata')
-if (!toolPlugin.includes('registerTools(ctx, service.bridge')) throw new Error('browser tools plugin must register scoped tools from the host bridge')
+if (!toolPlugin.includes('service.ensureBrowser')) throw new Error('browser tools plugin must request managed browser provisioning')
+if (!toolPlugin.includes('service.bridge.request')) throw new Error('browser tools plugin wrapper must delegate requests to the host bridge')
+if (!/registerTools\(ctx,\s*bridge,/.test(toolPlugin)) throw new Error('browser tools plugin must register scoped tools through the managed bridge wrapper')
 
 const preset = readFileSync(join(projectRoot, 'presets', 'patrol', 'agent.cordis.yml'), 'utf8')
 if (!preset.includes("name: 'dsh-patrol/browser-tools'")) throw new Error('Patrol preset must load the agent-scoped browser tools plugin')
