@@ -28,7 +28,7 @@ function Install-ManagedHostBridgePatch {
     $begin = "# BEGIN DSH-PATROL MANAGED HOST BRIDGE"
     $end = "# END DSH-PATROL MANAGED HOST BRIDGE"
     $existing = if (Test-Path $PatchPath) { [System.IO.File]::ReadAllText($PatchPath) } else { "" }
-    $pattern = "(?ms)^\Q$begin\E\r?\n.*?^\Q$end\E\r?\n?"
+    $pattern = "(?ms)^" + [regex]::Escape($begin) + "\r?\n.*?^" + [regex]::Escape($end) + "\r?\n?"
     $clean = [regex]::Replace($existing, $pattern, "").TrimEnd()
 
     $block = @"
