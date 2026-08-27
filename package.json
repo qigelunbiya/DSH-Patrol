@@ -46,7 +46,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check:extension": "node scripts/check-extension.mjs"
+    "check:extension": "node scripts/check-extension.mjs",
+    "check:encoding": "node scripts/check-encoding.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
