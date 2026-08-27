@@ -6,6 +6,16 @@ param(
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 
+function Write-Utf8NoBom {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Content
+    )
+
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, $Content, $encoding)
+}
+
 Write-Host "===== Build and verify DSH Patrol =====" -ForegroundColor Cyan
 Push-Location $ProjectRoot
 try {
@@ -17,6 +27,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "tests failed" }
     pnpm check:extension
     if ($LASTEXITCODE -ne 0) { throw "extension checks failed" }
+    pnpm check:encoding
+    if ($LASTEXITCODE -ne 0) { throw "encoding checks failed" }
     pnpm build
     if ($LASTEXITCODE -ne 0) { throw "build failed" }
 } finally {
@@ -30,11 +42,17 @@ New-Item -ItemType Directory -Force -Path $PresetDir | Out-Null
 $PatrolIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "lib\index.js")))).AbsoluteUri
 $BridgeIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "browser-bridge-runtime\index.js")))).AbsoluteUri
 
-@'
-name: 巡检模式
-description: 专用于创建、验证、执行和恢复 DSH Patrol 网页巡检 Runbook；浏览器动作通过 Patrol 录制，不作为普通对话工具直接调用。
-order: 5
-'@ | Set-Content -Path (Join-Path $PresetDir "preset.yml") -Encoding utf8
+# Keep this PowerShell source ASCII-only for Windows PowerShell 5.1 compatibility.
+# Copy the UTF-8 preset bytes directly instead of embedding Chinese literals here.
+$PresetSource = Join-Path $ProjectRoot "presets\patrol\preset.yml"
+$PresetTarget = Join-Path $PresetDir "preset.yml"
+Copy-Item -LiteralPath $PresetSource -Destination $PresetTarget -Force
+
+$SourceHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $PresetSource).Hash
+$TargetHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $PresetTarget).Hash
+if ($SourceHash -ne $TargetHash) {
+    throw "preset.yml copy verification failed"
+}
 
 $AgentYaml = @"
 - id: persona
@@ -58,18 +76,19 @@ $AgentYaml = @"
     maxSteps: 200
     reportMaxChars: 30000
 "@
-$AgentYaml | Set-Content -Path (Join-Path $PresetDir "agent.cordis.yml") -Encoding utf8
+Write-Utf8NoBom -Path (Join-Path $PresetDir "agent.cordis.yml") -Content $AgentYaml
+Write-Utf8NoBom -Path (Join-Path $PresetDir ".managed-by-dsh-patrol") -Content "managed by dsh-patrol local installer`n"
 
 $WebPatch = Join-Path $DshHome "profiles\$Profile\cordis.patch.yml"
 if (Test-Path $WebPatch) {
     $oldGlobal = Select-String -Path $WebPatch -Pattern "id:\s*dsh-patrol|DSH-Patrol/lib/index" -Quiet
     if ($oldGlobal) {
-        Write-Warning "The profile patch still appears to contain an old global DSH Patrol row: $WebPatch. Remove that old row so Patrol is available only in 巡检模式."
+        Write-Warning "The profile patch still appears to contain an old global DSH Patrol row: $WebPatch. Remove that old row so Patrol is available only in the dedicated Patrol preset."
     }
 }
 
-Write-Host "" 
-Write-Host "Local Patrol preset installed: $PresetDir" -ForegroundColor Green
+Write-Host ""
+Write-Host "Local Patrol preset installed and UTF-8 verified: $PresetDir" -ForegroundColor Green
 Write-Host "Browser extension folder: $(Join-Path $ProjectRoot 'browser-extension')" -ForegroundColor Green
 if ($HarnessRoot) {
     Write-Host "Start Harness with:" -ForegroundColor Cyan
@@ -78,4 +97,4 @@ if ($HarnessRoot) {
 } else {
     Write-Host "Start your Harness normally with: pnpm dsh web" -ForegroundColor Cyan
 }
-Write-Host "Then open a NEW session and choose 巡检模式." -ForegroundColor Cyan
+Write-Host "Then open a NEW session and choose the Patrol preset." -ForegroundColor Cyan
