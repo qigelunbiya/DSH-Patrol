@@ -169,11 +169,9 @@ export function resolveBrowserExecutable(explicit) {
     if (found !== undefined) return found
   }
 
-  try {
-    const chrome = puppeteer.executablePath('chrome')
-    if (chrome && existsSync(chrome)) return chrome
-  } catch {}
-
+  // puppeteer-core intentionally does not provision a browser. Keep discovery
+  // synchronous and explicit instead of falling back to Puppeteer's v25 async
+  // executablePath() API, which may point at a non-existent download cache.
   throw new Error('No supported Chromium browser was found. Install Google Chrome, Microsoft Edge, Chromium, or configure DSH_PATROL_BROWSER.')
 }
 
@@ -188,18 +186,18 @@ export function defaultStatePath() {
 function browserCandidates() {
   if (process.platform === 'win32') {
     const roots = [process.env.LOCALAPPDATA, process.env.PROGRAMFILES, process.env['PROGRAMFILES(X86)']].filter(Boolean)
-    const candidates = []
-    for (const root of roots) {
-      candidates.push(join(root, 'Google', 'Chrome', 'Application', 'chrome.exe'))
-      candidates.push(join(root, 'Microsoft', 'Edge', 'Application', 'msedge.exe'))
-    }
-    return candidates
+    // Prefer Chrome across all install roots before Edge. Puppeteer guarantees
+    // Chrome compatibility; Edge remains a useful Chromium fallback on Windows.
+    return [
+      ...roots.map(root => join(root, 'Google', 'Chrome', 'Application', 'chrome.exe')),
+      ...roots.map(root => join(root, 'Microsoft', 'Edge', 'Application', 'msedge.exe')),
+    ]
   }
   if (process.platform === 'darwin') {
     return [
       '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-      '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
       '/Applications/Chromium.app/Contents/MacOS/Chromium',
+      '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
     ]
   }
   return [
