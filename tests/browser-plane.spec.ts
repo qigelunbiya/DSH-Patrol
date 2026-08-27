@@ -45,6 +45,7 @@ describe('browser host/agent plane split', () => {
       path: '/patrol-browser-bridge',
       commandTimeoutMs: 1000,
       maxMessageBytes: 1024 * 1024,
+      managedBrowser: false,
       originTrustFile: '/tmp/dsh-patrol-test-origin-that-does-not-exist.txt',
     })
 
@@ -56,16 +57,19 @@ describe('browser host/agent plane split', () => {
     expect(service).toBeDefined()
     expect(service.bridge).toBeDefined()
     expect(typeof service.bridgeUrlHint).toBe('function')
+    expect(typeof service.ensureBrowser).toBe('function')
   })
 
-  it('agent plugin registers browser tools without owning any WebServer route', () => {
+  it('agent plugin registers browser tools without owning any WebServer route', async () => {
     const definitions = []
     const bridge = {
+      connected: false,
       request: async () => ({ ok: true }),
       status: () => ({ connected: false, pending: 0 }),
       saveScreenshot: () => '/tmp/screenshot.png',
     }
     const ctx = {
+      logger: { warn() {} },
       tools: {
         register(definition) {
           definitions.push(definition)
@@ -83,7 +87,7 @@ describe('browser host/agent plane split', () => {
       },
     }
 
-    applyBrowserTools(ctx, { commandTimeoutMs: 1000 })
+    await applyBrowserTools(ctx, { commandTimeoutMs: 1000 })
 
     const names = definitions.map(definition => definition.name)
     expect(names).toContain('browser_status')
@@ -94,13 +98,13 @@ describe('browser host/agent plane split', () => {
     expect(names).not.toContain('browser_eval')
   })
 
-  it('agent plugin fails closed when the host bridge was not installed', () => {
+  it('agent plugin fails closed when the host bridge was not installed', async () => {
     const ctx = {
       tools: { register() { return () => {} } },
       get() { return undefined },
       effect(factory) { return factory() },
     }
 
-    expect(() => applyBrowserTools(ctx)).toThrow(/host patrolBrowserBridge service is unavailable/)
+    await expect(applyBrowserTools(ctx)).rejects.toThrow(/host patrolBrowserBridge service is unavailable/)
   })
 })
