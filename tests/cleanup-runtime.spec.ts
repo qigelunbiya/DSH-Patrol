@@ -1,13 +1,15 @@
 // @ts-nocheck
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { apply, CLEANUP_BEGIN, CLEANUP_END } from '../cleanup-runtime/index.js'
 
 const cleanup = []
 const previousDshHome = process.env.DSH_HOME
+const runtimeSource = join(dirname(dirname(fileURLToPath(import.meta.url))), 'cleanup-runtime', 'index.js')
 
 afterEach(() => {
   if (previousDshHome === undefined) delete process.env.DSH_HOME
@@ -16,6 +18,16 @@ afterEach(() => {
 })
 
 describe('persistent Patrol cleanup coordinator', () => {
+  it('loads from an isolated temp directory without the dsh-patrol package', async () => {
+    const root = makeHome()
+    const isolated = join(root, 'standalone-cleanup.mjs')
+    copyFileSync(runtimeSource, isolated)
+
+    const module = await import(`${pathToFileURL(isolated).href}?isolated=${Date.now()}`)
+    expect(module.name).toBe('dsh-patrol-integration-cleanup')
+    expect(typeof module.cleanupOrphanedIntegration).toBe('function')
+  })
+
   it('does nothing while the target profile still depends on dsh-patrol', async () => {
     const root = makeHome()
     writeProfile(root, 'web', { 'dsh-patrol': 'github:qigelunbiya/DSH-Patrol#main' }, cleanupBlock('web'))
