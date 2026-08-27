@@ -27,6 +27,7 @@ export function createManagedBrowserController(options = {}) {
   let lastError
   let lastExecutable
   let extensionId
+  let extensionLoadMode
 
   const controller = {
     get status() {
@@ -38,6 +39,7 @@ export function createManagedBrowserController(options = {}) {
         extensionPath,
         executable: lastExecutable,
         extensionId,
+        extensionLoadMode,
         error: lastError,
       }
     },
@@ -68,9 +70,11 @@ export function createManagedBrowserController(options = {}) {
   return controller
 
   async function startOrRepair() {
+    let launchedHere = false
     try {
       if (browser !== undefined && browser.connected !== false) {
-        await configureExtension(browser)
+        extensionId = await configureRuntimeExtension(browser)
+        extensionLoadMode = 'runtime'
         await waitForBridge(bridge, connectTimeoutMs)
         lastError = undefined
         return controller.status
@@ -81,55 +85,108 @@ export function createManagedBrowserController(options = {}) {
       lastExecutable = resolveBrowserExecutable(executable)
       logger.info?.(`[dsh-patrol/managed-browser] launching ${lastExecutable} with isolated profile ${profilePath}`)
 
-      browser = await launchBrowser({
+      let active = await launchBrowser({
         executablePath: lastExecutable,
         profilePath,
         extensionPath,
         startTimeoutMs,
+        legacyExtensionLoad: false,
       })
-      browser.on?.('disconnected', () => {
-        browser = undefined
-        removeStateFile(statePath)
-      })
+      launchedHere = true
 
-      extensionId = await configureExtension(browser)
+      try {
+        extensionId = await configureRuntimeExtension(active)
+        extensionLoadMode = 'runtime'
+      } catch (error) {
+        if (!isExtensionApiUnavailable(error)) throw error
+        logger.warn?.(`[dsh-patrol/managed-browser] runtime extension API unavailable; retrying with automatic legacy launch loading: ${errorMessage(error)}`)
+        await safeClose(active, logger)
+        active = await launchBrowser({
+          executablePath: lastExecutable,
+          profilePath,
+          extensionPath,
+          startTimeoutMs,
+          legacyExtensionLoad: true,
+        })
+        extensionId = await configureLegacyExtension(active)
+        extensionLoadMode = 'legacy-launch'
+      }
+
+      attachBrowser(active)
+      browser = active
       writeStateFile(statePath, {
-        pid: browser.process?.()?.pid,
+        pid: active.process?.()?.pid,
         executable: lastExecutable,
         profilePath,
         extensionPath,
         extensionId,
+        extensionLoadMode,
       })
       await waitForBridge(bridge, connectTimeoutMs)
       lastError = undefined
-      logger.info?.(`[dsh-patrol/managed-browser] ready; extension=${extensionId}`)
+      logger.info?.(`[dsh-patrol/managed-browser] ready; extension=${extensionId}; mode=${extensionLoadMode}`)
       return controller.status
     } catch (error) {
       lastError = errorMessage(error)
       logger.warn?.(`[dsh-patrol/managed-browser] automatic browser setup failed: ${lastError}`)
+      if (launchedHere && browser !== undefined) {
+        const failed = browser
+        browser = undefined
+        await safeClose(failed, logger)
+      }
+      removeStateFile(statePath)
       throw error
     }
   }
 
-  async function configureExtension(activeBrowser) {
-    const id = await activeBrowser.installExtension(extensionPath)
+  function attachBrowser(active) {
+    active.on?.('disconnected', () => {
+      if (browser !== active) return
+      browser = undefined
+      removeStateFile(statePath)
+    })
+  }
+
+  async function configureRuntimeExtension(activeBrowser) {
+    const existing = await findInstalledExtension(activeBrowser, extensionPath)
+    const id = existing?.id ?? await activeBrowser.installExtension(extensionPath)
     extensionId = id
     options.onExtensionReady?.(id)
+    const extension = existing?.extension ?? (await activeBrowser.extensions()).get(id)
+    const worker = await waitForExtensionWorker(activeBrowser, extension, id, startTimeoutMs)
+    await configureWorker(worker)
+    return id
+  }
+
+  async function configureLegacyExtension(activeBrowser) {
+    const located = await waitForAnyPatrolExtensionWorker(activeBrowser, startTimeoutMs)
+    extensionId = located.id
+    options.onExtensionReady?.(located.id)
+    await configureWorker(located.worker)
+    return located.id
+  }
+
+  async function configureWorker(worker) {
     const bridgeUrl = String(options.bridgeUrlHint?.() ?? '')
     if (bridgeUrl.length === 0) throw new Error('Patrol browser bridge URL is not ready')
-
-    const extension = (await activeBrowser.extensions()).get(id)
-    if (!extension) throw new Error(`Patrol extension ${id} was installed but is not visible to the browser`)
-    const worker = await waitForExtensionWorker(activeBrowser, extension, id, startTimeoutMs)
     await worker.evaluate(async (url) => {
       await chrome.storage.local.set({ bridgeUrl: url, autoConnect: true })
       try { await chrome.runtime.sendMessage({ type: 'bridge:connect' }) } catch {}
     }, bridgeUrl)
-    return id
   }
 }
 
-export async function defaultLaunchBrowser({ executablePath, profilePath, startTimeoutMs }) {
+export async function defaultLaunchBrowser({ executablePath, profilePath, extensionPath, startTimeoutMs, legacyExtensionLoad = false }) {
+  const args = [
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--start-maximized',
+  ]
+  if (legacyExtensionLoad) {
+    args.push(`--disable-extensions-except=${extensionPath}`)
+    args.push(`--load-extension=${extensionPath}`)
+  }
+
   return await puppeteer.launch({
     browser: 'chrome',
     executablePath,
@@ -142,11 +199,7 @@ export async function defaultLaunchBrowser({ executablePath, profilePath, startT
     handleSIGTERM: false,
     handleSIGHUP: false,
     timeout: startTimeoutMs,
-    args: [
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--start-maximized',
-    ],
+    args,
   })
 }
 
@@ -170,7 +223,7 @@ export function resolveBrowserExecutable(explicit) {
   }
 
   // puppeteer-core intentionally does not provision a browser. Keep discovery
-  // synchronous and explicit instead of falling back to Puppeteer's v25 async
+  // synchronous and explicit instead of falling back to Puppeteer's async
   // executablePath() API, which may point at a non-existent download cache.
   throw new Error('No supported Chromium browser was found. Install Google Chrome, Microsoft Edge, Chromium, or configure DSH_PATROL_BROWSER.')
 }
@@ -186,8 +239,6 @@ export function defaultStatePath() {
 function browserCandidates() {
   if (process.platform === 'win32') {
     const roots = [process.env.LOCALAPPDATA, process.env.PROGRAMFILES, process.env['PROGRAMFILES(X86)']].filter(Boolean)
-    // Prefer Chrome across all install roots before Edge. Puppeteer guarantees
-    // Chrome compatibility; Edge remains a useful Chromium fallback on Windows.
     return [
       ...roots.map(root => join(root, 'Google', 'Chrome', 'Application', 'chrome.exe')),
       ...roots.map(root => join(root, 'Microsoft', 'Edge', 'Application', 'msedge.exe')),
@@ -219,9 +270,21 @@ function findOnPath(command) {
   return undefined
 }
 
+async function findInstalledExtension(browser, extensionPath) {
+  const extensions = await browser.extensions()
+  for (const [id, extension] of extensions) {
+    try {
+      if (extension?.path && resolve(extension.path) === extensionPath) return { id, extension }
+    } catch {}
+  }
+  return undefined
+}
+
 async function waitForExtensionWorker(browser, extension, extensionId, timeoutMs) {
-  const existing = await extension.workers()
-  if (existing.length > 0) return existing[0]
+  if (extension?.workers) {
+    const existing = await extension.workers()
+    if (existing.length > 0) return existing[0]
+  }
   const target = await browser.waitForTarget(
     candidate => candidate.type() === 'service_worker' && candidate.url().startsWith(`chrome-extension://${extensionId}/`),
     { timeout: timeoutMs },
@@ -231,6 +294,17 @@ async function waitForExtensionWorker(browser, extension, extensionId, timeoutMs
   return worker
 }
 
+async function waitForAnyPatrolExtensionWorker(browser, timeoutMs) {
+  const target = await browser.waitForTarget(
+    candidate => candidate.type() === 'service_worker' && /^chrome-extension:\/\/[a-p]{32}\//.test(candidate.url()),
+    { timeout: timeoutMs },
+  )
+  const match = /^chrome-extension:\/\/([a-p]{32})\//.exec(target.url())
+  const worker = await target.worker()
+  if (!match?.[1] || !worker) throw new Error('Patrol legacy-loaded extension did not expose a valid service worker')
+  return { id: match[1], worker }
+}
+
 async function waitForBridge(bridge, timeoutMs) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -238,6 +312,19 @@ async function waitForBridge(bridge, timeoutMs) {
     await delay(100)
   }
   throw new Error(`Patrol extension did not connect to the local bridge within ${timeoutMs}ms`)
+}
+
+async function safeClose(browser, logger) {
+  try {
+    if (browser !== undefined && browser.connected !== false) await browser.close()
+  } catch (error) {
+    logger.warn?.(`[dsh-patrol/managed-browser] browser close failed during repair: ${errorMessage(error)}`)
+  }
+}
+
+function isExtensionApiUnavailable(error) {
+  const message = errorMessage(error)
+  return /Extensions\.loadUnpacked|Method not available|method.*not found|wasn't found|method.*unsupported/i.test(message)
 }
 
 function writeStateFile(path, value) {
