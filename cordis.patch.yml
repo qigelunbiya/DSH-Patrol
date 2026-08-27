@@ -1,12 +1,5 @@
-# DSH Patrol plugin layer.
-# After the package is published/linked, `dsh plugin --profile web add dsh-patrol`
-# can use this bundle patch to mount the plugin without modifying Harness core.
-
+# DSH Patrol host layer. The Patrol agent itself is NOT global: this host-only
+# installer writes the dedicated `patrol` Agent Preset under $DSH_HOME.
 - insert:
-    - id: dsh-patrol
-      name: 'dsh-patrol'
-      config:
-        allowedToolPrefixes:
-          - 'browser_'
-        maxSteps: 200
-        reportMaxChars: 30000
+    - id: dsh-patrol-preset-installer
+      name: 'dsh-patrol/preset-installer'
