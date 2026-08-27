@@ -4,6 +4,10 @@
 // the HOST composition. Agent presets consume the provided patrolBrowserBridge
 // service through browser-bridge-runtime/tools-plugin.js; they do not register
 // HTTP/WebSocket routes themselves.
+//
+// Keep this as a namespace Cordis plugin: do NOT add `export default apply`.
+// Harness Loader prefers a module's default export and would otherwise discard
+// the sibling `inject` metadata, causing `ctx.webServer` to fail at load time.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -125,5 +129,3 @@ function authorizeOrigin(path, current, candidate) {
     return existing
   }
 }
-
-export default apply
