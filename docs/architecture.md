@@ -1,103 +1,80 @@
-# DSH Patrol 架构说明
+# DSH Patrol v0.2 Architecture
 
-## v0.1 目标
+## 1. Host plane vs Agent plane
 
-DSH Patrol 不重新发明浏览器自动化，而是把 DeepSeek Harness 已有工具组织成“教一次、重复巡检”的 Runbook。
+Bundle 的 `cordis.patch.yml` 只挂载 `dsh-patrol/preset-installer`。它负责把随包的 `presets/patrol` 写入 Harness 用户 preset root。Patrol Agent 与 Browser Provider 都在 `patrol` preset 的 standing scope 中，因此不会作为全局 Agent 能力注入标准模式。
 
 ```text
-用户描述巡检
-  ↓
-Patrol Agent Prompt：补齐需求 / 安全约束
-  ↓
-patrol_create_draft → inspection.json
-  ↓
-patrol_execute_and_record
-  ├─ 调用 ctx.tools.execute(browser_*)
-  └─ 成功后记录同一工具调用
-  ↓
-用户确认
-  ↓
-patrol_confirm → status=ready
-  ↓
-patrol_run
-  ├─ 不让 LLM 重新规划
-  ├─ 顺序 replay 记录的工具调用
-  ├─ 执行文本断言
-  └─ report.json + report.md
+Host composition
+└── dsh-patrol/preset-installer
+
+Agent preset: patrol
+├── persona
+├── dsh-patrol/browser-bridge
+└── dsh-patrol
 ```
 
-## 为什么不是“直接把对话保存成脚本”
+## 2. Browser dispatch boundary
 
-对话不可执行、不可验证，也很难做兼容层。v0.1 把 Runbook 的最小执行单元定义为 Harness Tool Call：
+Patrol 自带的 Browser Bridge Runtime 提供固定 browser_* 工具，但 Patrol 不把“任意字符串工具名”当作运行时协议。
+
+`patrol_browser_step` 接受 canonical action enum，并映射到固定工具表。`PatrolRunner.isToolAllowed()` 再做精确 allowlist 检查。
+
+此外，Patrol 注册 Tool Guard。一个 browser_* 调用只有在它的 `parent` execution token 当前被 `PatrolRunner.dispatch()` 授权时才通过。这样不仅阻止模型直接调用，也阻止其他 composite transport 借“nested”身份绕过 Patrol。
+
+Browser Bridge 的 WebSocket 只接受 Chromium extension Origin，并在 `$DSH_HOME/patrol/trusted-extension-origin.txt` 做首次配对；不同扩展 Origin 后续被拒绝。扩展后台与 Provider 都会把 DOM 返回的 `ok:false` 升格为失败，防止页面桥错误被 Runner 误记为成功。
+
+## 3. Credentials
+
+Runbook 使用 `${credential:NAME}`，并且只允许它出现在 `browser_type_credential.arguments.credentialRef`。Runner 只把 placeholder 转为引用名，**不会解析明文**。
+
+`browser_type_credential` Provider 的 execute body 才调用 Harness `ctx.credentials.resolve(credentialRef(NAME))`，然后直接通过 WebSocket 给浏览器扩展发送 type command。这样明文不会成为 Patrol 参数，也不会成为嵌套 ToolRuntime 参数；definition、resume state 和 report 始终只保存引用或脱敏内容。
+
+## 4. Conditional login
+
+每个 ToolStep / CheckpointStep 可以带 `when`：
 
 ```json
 {
-  "tool": "browser_get_text",
-  "arguments": {},
-  "expectation": {
-    "mode": "contains",
-    "value": "运行正常",
-    "caseSensitive": false
-  }
+  "sourceStepId": "step-002",
+  "mode": "contains",
+  "value": "登录",
+  "caseSensitive": false
 }
 ```
 
-这样 Patrol 只负责生命周期、录制、断言、重放和报告；浏览器、SSH、API 等执行能力由各自插件负责。
+Runner 只基于已完成 prior step 的 output 做判断。条件不满足时记录 `skipped`，不会当作失败。
 
-## 组件
+## 5. Checkpoint resume
 
-### Agent Prompt
+checkpoint 不是“结束这次 run 再新建一次”。Runner 会把 `runId + startedAt + definitionUpdatedAt + prior results + nextStepIndex` 写进 `resumes/<inspection>.json`。
 
-`src/prompt.ts` 规定 Patrol Agent 的工作流程。它要求先补齐需求，并明确禁止把密码、Cookie、Token、OTP 写进 Runbook。
+`patrol_resume` 先验证暂停时的 `definitionUpdatedAt` 仍等于当前 Runbook；不一致时 fail closed，避免在已修改步骤上继续旧 run。验证通过后 waiting checkpoint 转为 passed（表示用户已完成该人工操作），继续同一个 run，并保留 checkpoint 之前的 condition source output。用户可显式 `patrol_abort_run` 放弃 pending resume。
 
-### Patrol Tools
+## 6. Artifacts
 
-- `patrol_create_draft`：创建巡检定义。
-- `patrol_execute_and_record`：教学模式中的“执行 + 成功后录制”事务边界。
-- `patrol_add_checkpoint`：记录登录、OTP、审批等人工步骤。
-- `patrol_confirm`：用户确认后冻结为 ready。
-- `patrol_run`：确定性回放并生成报告。
-- `patrol_show` / `patrol_list`：查看本地 Runbook。
+- `browser_screenshot` 的 Provider path 被复制到 Patrol run 的 `artifacts/`。
+- `browser_read_page` 可配置 `artifact: page-text`，把脱敏后的页面文本写入 `artifacts/`。
+- requested screenshot/page-text 如果没有实际生成，最终 artifact check 会把 run 标记为 failed。
+- `page-summary` 默认由 deterministic Runner 从最后一次成功的 read-page 输出生成安全摘录并直接写入 report；交互 Agent 可在用户明确要求时通过 `patrol_get_run_page_data` 读取标记为 UNTRUSTED 的页面数据，再用 `patrol_save_summary` 覆盖为更自然的脱敏总结。
 
-### Store
+## 7. Conservative locator healing
 
-默认目录：`~/.dsh/patrol/`
+点击 step 可以保存 `{text, role, tag}` semantic locator。如果原 CSS selector 失败：
 
-```text
-~/.dsh/patrol/
-├── inspections/
-│   └── <inspection-id>/inspection.json
-└── runs/
-    └── <inspection-id>/<run-id>/
-        ├── report.json
-        └── report.md
-```
+1. Runner 调 `browser_snapshot`。
+2. 只接受同时满足已记录 semantic fields 的候选。
+3. 必须恰好一个候选。
+4. 用候选 selector 重试一次。
+5. 报告记录 `healedSelector`，但不自动修改 Runbook。
 
-写入采用临时文件 + rename，减少中途崩溃导致 JSON 半写入的问题。
+显式修复用 `patrol_update_selector`，并让 Runbook 回到 DRAFT。
 
-### Runner
+## 8. Page prompt-injection boundary
 
-Runner 通过 `ctx.tools.execute()` 回放步骤，因而仍然经过 Harness 的工具校验、guard、approval、timeout、post-execute 等流水线，而不是绕过安全策略直接调用第三方代码。
+read/snapshot 的 model-visible output 用 BEGIN/END UNTRUSTED PAGE DATA 包裹；system prompt 明确规定 DOM/页面内容只能作为被巡检数据，不能作为 Agent 指令。Browser extension 与 Patrol Browser Bridge Runtime 都不提供 `eval` 命令，Patrol allowlist 也不包含 `browser_eval`。
 
-## 浏览器 Provider
 
-v0.1 不绑定具体浏览器实现，只约定默认允许 `browser_*` 工具前缀。因此可优先复用 `Lum1104/dsh-browser` 一类已经实现的浏览器桥接插件。只要其他 Provider 注册兼容工具名，Patrol 无需修改核心 Runner。
+## Replay stability
 
-当前索引式浏览器工具存在一个天然问题：页面 DOM 改版后，录制的元素 index 可能漂移。v0.1 会明确失败并保留报告；未来 Repair Mode 会让 Agent 分析失败位置并更新 Runbook。
-
-## 安全边界
-
-1. `patrol_*` 永远不能被 Runner 自己重放，避免递归。
-2. 默认只能重放 `browser_*`，未来接 SSH/API 时必须显式扩展 allowlist。
-3. 常见敏感字段名如果包含明文，会被拒绝持久化。
-4. 敏感交互应该转为 checkpoint，而不是记录真实密码/OTP。
-5. 报告会对常见 `Bearer`、token/password/cookie 文本进行基础脱敏；这不是完整 DLP，后续还需要 Secret Store 集成。
-
-## 下一阶段接口方向
-
-- BrowserProvider/Locator abstraction：从 index 重放升级为 semantic locator + fallback。
-- SecretResolver：只存 `secret://` 引用，运行时短暂解析。
-- SchedulerAdapter：复用 dsh-automation 的 Cron/运行历史思想。
-- SSH Provider：复用 dsh-ssh 执行服务器巡检。
-- Sentinel Adapter：条件触发巡检或失败后告警。
-- Repair Mode：失败时由 Agent 接管，并以 diff 形式提议更新 inspection.json。
+Patrol 不把 Chromium `tabId`、标签页列表/激活操作或 back/forward 历史导航固化进 Runbook。重复执行只使用显式 URL 与可重放 DOM 动作，避免依赖浏览器进程内的临时标识和历史状态。
