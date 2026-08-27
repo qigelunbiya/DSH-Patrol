@@ -34,7 +34,7 @@ export function createManagedBrowserController(options = {}) {
       return {
         running: browser !== undefined && browser.connected !== false,
         starting: starting !== undefined,
-        connected: bridge.connected === true,
+        connected: bridge.connected === true && originMatches(bridge, extensionId),
         profilePath,
         extensionPath,
         executable: lastExecutable,
@@ -46,7 +46,10 @@ export function createManagedBrowserController(options = {}) {
 
     async ensureStarted() {
       if (disposed) throw new Error('managed Patrol browser is disposed')
-      if (bridge.connected === true && browser !== undefined && browser.connected !== false) {
+      if (bridge.connected === true
+        && browser !== undefined
+        && browser.connected !== false
+        && originMatches(bridge, extensionId)) {
         return this.status
       }
       if (starting !== undefined) return await starting
@@ -56,13 +59,13 @@ export function createManagedBrowserController(options = {}) {
 
     async dispose() {
       disposed = true
+      const pending = starting
+      if (pending !== undefined) {
+        try { await pending } catch {}
+      }
       const active = browser
       browser = undefined
-      try {
-        if (active !== undefined && active.connected !== false) await active.close()
-      } catch (error) {
-        logger.warn?.(`[dsh-patrol/managed-browser] browser close failed: ${errorMessage(error)}`)
-      }
+      await safeClose(active, logger)
       removeStateFile(statePath)
     },
   }
@@ -70,12 +73,13 @@ export function createManagedBrowserController(options = {}) {
   return controller
 
   async function startOrRepair() {
+    let active
     let launchedHere = false
     try {
       if (browser !== undefined && browser.connected !== false) {
         extensionId = await configureRuntimeExtension(browser)
         extensionLoadMode = 'runtime'
-        await waitForBridge(bridge, connectTimeoutMs)
+        await waitForBridge(bridge, connectTimeoutMs, extensionId)
         lastError = undefined
         return controller.status
       }
@@ -85,7 +89,7 @@ export function createManagedBrowserController(options = {}) {
       lastExecutable = resolveBrowserExecutable(executable)
       logger.info?.(`[dsh-patrol/managed-browser] launching ${lastExecutable} with isolated profile ${profilePath}`)
 
-      let active = await launchBrowser({
+      active = await launchBrowser({
         executablePath: lastExecutable,
         profilePath,
         extensionPath,
@@ -101,6 +105,7 @@ export function createManagedBrowserController(options = {}) {
         if (!isExtensionApiUnavailable(error)) throw error
         logger.warn?.(`[dsh-patrol/managed-browser] runtime extension API unavailable; retrying with automatic legacy launch loading: ${errorMessage(error)}`)
         await safeClose(active, logger)
+        active = undefined
         active = await launchBrowser({
           executablePath: lastExecutable,
           profilePath,
@@ -122,17 +127,17 @@ export function createManagedBrowserController(options = {}) {
         extensionId,
         extensionLoadMode,
       })
-      await waitForBridge(bridge, connectTimeoutMs)
+      await waitForBridge(bridge, connectTimeoutMs, extensionId)
+      if (disposed) throw new Error('managed Patrol browser was disposed while provisioning')
       lastError = undefined
       logger.info?.(`[dsh-patrol/managed-browser] ready; extension=${extensionId}; mode=${extensionLoadMode}`)
       return controller.status
     } catch (error) {
       lastError = errorMessage(error)
       logger.warn?.(`[dsh-patrol/managed-browser] automatic browser setup failed: ${lastError}`)
-      if (launchedHere && browser !== undefined) {
-        const failed = browser
-        browser = undefined
-        await safeClose(failed, logger)
+      if (launchedHere && active !== undefined) {
+        if (browser === active) browser = undefined
+        await safeClose(active, logger)
       }
       removeStateFile(statePath)
       throw error
@@ -305,13 +310,24 @@ async function waitForAnyPatrolExtensionWorker(browser, timeoutMs) {
   return { id: match[1], worker }
 }
 
-async function waitForBridge(bridge, timeoutMs) {
+async function waitForBridge(bridge, timeoutMs, extensionId) {
+  const expectedOrigin = extensionId ? `chrome-extension://${extensionId}` : undefined
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    if (bridge.connected === true) return
+    if (bridge.connected === true && originMatches(bridge, extensionId)) return
     await delay(100)
   }
-  throw new Error(`Patrol extension did not connect to the local bridge within ${timeoutMs}ms`)
+  const actualOrigin = bridge.status?.().origin ?? bridge.origin
+  throw new Error(`Patrol extension did not connect to the local bridge within ${timeoutMs}ms${expectedOrigin ? ` (expected ${expectedOrigin}, got ${actualOrigin || 'no extension connection'})` : ''}`)
+}
+
+function originMatches(bridge, extensionId) {
+  if (!extensionId) return bridge.connected === true
+  const status = typeof bridge.status === 'function' ? bridge.status() : undefined
+  const origin = status?.origin ?? bridge.origin
+  // Test doubles and older bridge objects may not expose origin; the real
+  // BrowserBridge does. Preserve compatibility while enforcing it when known.
+  return origin === undefined || origin === null || origin === `chrome-extension://${extensionId}`
 }
 
 async function safeClose(browser, logger) {
