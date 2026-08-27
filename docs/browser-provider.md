@@ -1,6 +1,11 @@
 # Browser Provider
 
-DSH Patrol v0.2 自带 `dsh-patrol/browser-bridge` Runtime。它不再把外部 Browser Provider 作为运行时依赖；核心 WebSocket/协议实现基于 MIT 许可的 `dsh-browser-bridge` 派生并经过 Patrol 安全加固。
+DSH Patrol v0.2 自带 Browser Bridge，但运行时明确分成两个插件：
+
+- `dsh-patrol/browser-bridge-host`：Host-plane transport。注册 WebSocket/HTTP route，并提供进程共享的 `patrolBrowserBridge` service。
+- `dsh-patrol/browser-tools`：Agent-plane tool registrar。只在「巡检模式」的 scoped ToolRuntime layer 中注册 `browser_*` 工具。
+
+这样进程级 WebServer route 不会随着 Agent Preset mount/unmount，也不会因为切换模式而重复注册；标准模式同时看不到 Patrol 的 browser tool schemas。核心 WebSocket/协议实现基于 MIT 许可的 `dsh-browser-bridge` 派生并经过 Patrol 安全加固。
 
 Patrol 使用的工具集合：
 
