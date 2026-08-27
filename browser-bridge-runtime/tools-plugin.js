@@ -33,9 +33,13 @@ export async function apply(ctx, config = {}) {
 
   // Re-check managed browser availability before every real browser request so
   // closing the Patrol browser window does not permanently break the session.
+  // Keep non-request bridge capabilities (notably screenshot persistence) on
+  // this scoped facade too: registerTools intentionally receives the facade,
+  // not the host BrowserBridge object directly.
   const bridge = {
     get connected() { return service.bridge.connected },
     status: (...args) => service.bridge.status(...args),
+    saveScreenshot: (...args) => service.bridge.saveScreenshot(...args),
     async request(...args) {
       if (!service.bridge.connected && typeof service.ensureBrowser === 'function') {
         await service.ensureBrowser()

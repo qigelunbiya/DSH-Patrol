@@ -47,6 +47,7 @@ if (!toolPlugin.includes("export const inject = ['tools', 'patrolBrowserBridge']
 if (/^\s*export\s+default\b/m.test(toolPlugin)) throw new Error('browser tools plugin must not default-export apply: Harness Loader would drop inject metadata')
 if (!toolPlugin.includes('service.ensureBrowser')) throw new Error('browser tools plugin must request managed browser provisioning')
 if (!toolPlugin.includes('service.bridge.request')) throw new Error('browser tools plugin wrapper must delegate requests to the host bridge')
+if (!toolPlugin.includes('service.bridge.saveScreenshot')) throw new Error('browser tools plugin wrapper must delegate screenshot persistence to the host bridge')
 if (!/registerTools\(ctx,\s*bridge,/.test(toolPlugin)) throw new Error('browser tools plugin must register scoped tools through the managed bridge wrapper')
 
 const preset = readFileSync(join(projectRoot, 'presets', 'patrol', 'agent.cordis.yml'), 'utf8')
