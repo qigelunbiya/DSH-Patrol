@@ -1,17 +1,20 @@
 {
-  "schemaVersion": "0.1",
+  "schemaVersion": "0.2",
   "id": "example-domain",
-  "name": "Example Domain 页面巡检",
-  "description": "确认 example.com 可以访问并出现 Example Domain 文本。",
+  "name": "Example Domain 巡检",
+  "description": "打开 Example Domain，确认页面文本并保存截图与页面文本。",
   "status": "ready",
   "target": {
     "type": "browser",
     "url": "https://example.com"
   },
-  "expectedResult": "页面成功打开，正文包含 Example Domain。",
+  "expectedResult": "页面包含 Example Domain",
   "artifacts": [
     "markdown-report",
-    "raw-tool-output"
+    "json-report",
+    "screenshot",
+    "page-text",
+    "page-summary"
   ],
   "auth": {
     "mode": "none"
@@ -21,30 +24,45 @@
     {
       "id": "step-001",
       "kind": "tool",
-      "name": "打开目标页面",
+      "name": "打开页面",
       "tool": "browser_navigate",
       "arguments": {
-        "url": "https://example.com"
+        "url": "https://example.com",
+        "action": "navigate"
       },
-      "recordedAt": "2026-08-26T00:00:00.000Z"
+      "recordedAt": "2026-08-27T00:00:00.000Z"
     },
     {
       "id": "step-002",
       "kind": "tool",
-      "name": "读取页面文本并验证",
-      "tool": "browser_get_text",
-      "arguments": {},
+      "name": "读取页面",
+      "tool": "browser_read_page",
+      "arguments": {
+        "maxChars": 20000
+      },
       "expectation": {
         "mode": "contains",
         "value": "Example Domain",
         "caseSensitive": false
       },
-      "recordedAt": "2026-08-26T00:00:01.000Z"
+      "artifact": "page-text",
+      "recordedAt": "2026-08-27T00:00:01.000Z"
+    },
+    {
+      "id": "step-003",
+      "kind": "tool",
+      "name": "保存截图",
+      "tool": "browser_screenshot",
+      "arguments": {
+        "format": "png"
+      },
+      "artifact": "screenshot",
+      "recordedAt": "2026-08-27T00:00:02.000Z"
     }
   ],
   "metadata": {
-    "createdAt": "2026-08-26T00:00:00.000Z",
-    "updatedAt": "2026-08-26T00:00:01.000Z",
-    "validatedAt": "2026-08-26T00:00:01.000Z"
+    "createdAt": "2026-08-27T00:00:00.000Z",
+    "updatedAt": "2026-08-27T00:00:02.000Z",
+    "validatedAt": "2026-08-27T00:00:02.000Z"
   }
 }
