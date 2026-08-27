@@ -40,6 +40,9 @@ $begin
         path: /patrol-browser-bridge
         commandTimeoutMs: 60000
         maxMessageBytes: 8388608
+        managedBrowser: true
+        browserStartTimeoutMs: 30000
+        browserConnectTimeoutMs: 15000
 $end
 "@
 
@@ -122,7 +125,7 @@ if (Test-Path $WebPatch) {
 Write-Host ""
 Write-Host "Local Patrol preset installed and UTF-8 verified: $PresetDir" -ForegroundColor Green
 Write-Host "Host browser bridge patch installed: $WebPatch" -ForegroundColor Green
-Write-Host "Browser extension folder: $(Join-Path $ProjectRoot 'browser-extension')" -ForegroundColor Green
+Write-Host "Browser provisioning: automatic managed Chromium profile; no manual extension installation is required." -ForegroundColor Green
 if ($HarnessRoot) {
     Write-Host "Start Harness with:" -ForegroundColor Cyan
     Write-Host "  cd $HarnessRoot"
@@ -130,4 +133,4 @@ if ($HarnessRoot) {
 } else {
     Write-Host "Start your Harness normally with: pnpm dsh web" -ForegroundColor Cyan
 }
-Write-Host "Then open a NEW session and choose the Patrol preset." -ForegroundColor Cyan
+Write-Host "Then open a NEW session and choose the Patrol preset. Patrol will launch the managed browser and load the bundled extension automatically." -ForegroundColor Cyan
