@@ -397,7 +397,7 @@ function createDefinitions(ctx: Context, store: PatrolStore, runner: PatrolRunne
       if (report.status === 'waiting') throw new Error('cannot read final page data while the run is waiting at a checkpoint')
       const source = [...report.results].reverse().find(item => item.tool === 'browser_read_page' && item.status === 'passed' && item.output !== undefined)
       if (source?.output === undefined) throw new Error(`run ${args.runId} has no successful browser_read_page output`)
-      const maxChars = Math.max(1000, Math.min(Number.isInteger(args.maxChars) ? args.maxChars : 8000, 12000))
+      const maxChars = Math.max(1000, Math.min(typeof args.maxChars === 'number' && Number.isInteger(args.maxChars) ? args.maxChars : 8000, 12000))
       const text = redactLikelySecrets(source.output).slice(0, maxChars)
       return text.startsWith('--- BEGIN UNTRUSTED PAGE DATA ---') ? text : untrustedPageData(text)
     },
@@ -712,6 +712,7 @@ function runResultText(definition: InspectionDefinition, report: Awaited<ReturnT
   const lines = [summarizeReport(report), `Markdown report: ${paths.markdown}`, `JSON report: ${paths.json}`]
   const waiting = report.results.find(item => item.status === 'waiting')
   if (waiting !== undefined) lines.push(`Checkpoint waiting: ${waiting.output ?? waiting.name}\nAfter completing it, call patrol_resume with inspectionId=${definition.id}.`)
-  if (report.summary !== undefined) lines.push(`Page summary:\n${report.summary}`)
+  if (report.summary !== undefined) lines.push(`Page summary:
+${report.summary}`)
   return lines.join('\n')
 }
