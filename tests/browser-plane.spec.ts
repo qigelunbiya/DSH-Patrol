@@ -98,6 +98,49 @@ describe('browser host/agent plane split', () => {
     expect(names).not.toContain('browser_eval')
   })
 
+  it('browser_screenshot keeps host screenshot persistence available through the scoped bridge facade', async () => {
+    const definitions = []
+    const dataUrl = 'data:image/png;base64,AA=='
+    let savedPayload
+    const bridge = {
+      connected: true,
+      request: async (cmd) => cmd === 'screenshot'
+        ? { ok: true, dataUrl, bytes: 1 }
+        : { ok: true },
+      status: () => ({ connected: true, pending: 0 }),
+      saveScreenshot(payload) {
+        savedPayload = payload
+        return '/tmp/patrol-screenshot.png'
+      },
+    }
+    const ctx = {
+      logger: { warn() {} },
+      tools: {
+        register(definition) {
+          definitions.push(definition)
+          return () => {}
+        },
+      },
+      get(name) {
+        if (name === 'patrolBrowserBridge') {
+          return { bridge, bridgeUrlHint: () => 'ws://127.0.0.1:3080/patrol-browser-bridge' }
+        }
+        return undefined
+      },
+      effect(factory) {
+        return factory()
+      },
+    }
+
+    await applyBrowserTools(ctx, { commandTimeoutMs: 1000 })
+    const screenshot = definitions.find(definition => definition.name === 'browser_screenshot')
+    expect(screenshot).toBeDefined()
+
+    const value = await screenshot.execute({}, {})
+    expect(savedPayload).toBe(dataUrl)
+    expect(value).toEqual({ ok: true, path: '/tmp/patrol-screenshot.png', bytes: 1 })
+  })
+
   it('agent plugin fails closed when the host bridge was not installed', async () => {
     const ctx = {
       tools: { register() { return () => {} } },
