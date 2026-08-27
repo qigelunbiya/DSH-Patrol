@@ -1,13 +1,17 @@
-// Patrol-scoped browser bridge. Derived in part from dsh-browser-bridge (MIT).
+// Host-plane browser transport for DSH Patrol. Derived in part from dsh-browser-bridge (MIT).
+//
+// IMPORTANT: this plugin owns process-global WebServer routes, so it must run in
+// the HOST composition. Agent presets consume the provided patrolBrowserBridge
+// service through browser-bridge-runtime/tools-plugin.js; they do not register
+// HTTP/WebSocket routes themselves.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { BrowserBridge } from './bridge.js'
-import { registerTools } from './tools.js'
 import { handleUpgrade } from './ws.js'
 
-export const name = 'dsh-patrol-browser-bridge'
-export const inject = ['webServer', 'tools']
+export const name = 'dsh-patrol-browser-bridge-host'
+export const inject = ['webServer']
 
 export function apply(ctx, config = {}) {
   const bridge = new BrowserBridge({
@@ -20,10 +24,13 @@ export function apply(ctx, config = {}) {
   let trustedOrigin = readTrustedOrigin(originTrustFile)
   let urlHint = ''
 
-  ctx.effect(() => registerTools(ctx, bridge, {
-    commandTimeoutMs: config.commandTimeoutMs ?? 60000,
+  // Host-plane service: one transport instance for the process. Agent-preset
+  // browser tool rows resolve this service and register only tool schemas into
+  // their own scoped ToolRuntime layer.
+  ctx.provide('patrolBrowserBridge', {
+    bridge,
     bridgeUrlHint: () => urlHint,
-  }), 'dsh-patrol/browser-bridge: tools')
+  })
 
   const upgradeDispose = ctx.webServer.registerUpgrade({
     path,
@@ -75,7 +82,7 @@ export function apply(ctx, config = {}) {
   const host = ctx.webServer.host ?? '127.0.0.1'
   const normalizedHost = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host
   urlHint = `ws://${normalizedHost}:${ctx.webServer.port ?? 3080}${path}`
-  ctx.logger.info(`[dsh-patrol/browser-bridge] ready at ${urlHint}; extension origin pairing=${trustedOrigin === undefined ? 'awaiting first TOFU connection' : 'configured'}`)
+  ctx.logger.info(`[dsh-patrol/browser-bridge] host ready at ${urlHint}; extension origin pairing=${trustedOrigin === undefined ? 'awaiting first TOFU connection' : 'configured'}`)
   ctx.effect(() => () => bridge.dispose(), 'dsh-patrol/browser-bridge: dispose')
 }
 
