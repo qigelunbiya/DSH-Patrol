@@ -35,11 +35,12 @@
     "cordis.patch.yml",
     "presets/**/*",
     "browser-extension/**/*",
+    "browser-bridge-runtime/**/*",
+    "cleanup-runtime/**/*",
     "scripts/install-local.ps1",
     "scripts/uninstall-local.ps1",
     "README.md",
     "LICENSE",
-    "browser-bridge-runtime/**/*",
     "THIRD_PARTY_NOTICES.md"
   ],
   "dsh": {

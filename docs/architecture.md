@@ -33,7 +33,7 @@ Patrol 自带的 Browser Bridge Runtime 提供固定 browser_* 工具，但 Patr
 
 此外，Patrol 注册 Tool Guard。一个 browser_* 调用只有在它的 `parent` execution token 当前被 `PatrolRunner.dispatch()` 授权时才通过。这样不仅阻止模型直接调用，也阻止其他 composite transport 借“nested”身份绕过 Patrol。
 
-Browser Bridge 的 WebSocket 只接受 Chromium extension Origin，并在 `$DSH_HOME/patrol/trusted-extension-origin.txt` 做首次配对；不同扩展 Origin 后续被拒绝。扩展后台与 Provider 都会把 DOM 返回的 `ok:false` 升格为失败，防止页面桥错误被 Runner 误记为成功。
+Browser Bridge 的 WebSocket 只接受 Chromium extension Origin。Managed Browser 在启动扩展后把**实际 provision 的精确 Extension ID**交给 Host；ID 未确定时 Host 不接受任何扩展连接，确定后只允许对应的 `chrome-extension://<id>`，并把该 Origin 同步写入 `$DSH_HOME/patrol/trusted-extension-origin.txt`。扩展后台与 Provider 都会把 DOM 返回的 `ok:false` 升格为失败，防止页面桥错误被 Runner 误记为成功。
 
 ## 3. Credentials
 
@@ -84,6 +84,47 @@ checkpoint 不是“结束这次 run 再新建一次”。Runner 会把 `runId +
 ## 8. Page prompt-injection boundary
 
 read/snapshot 的 model-visible output 用 BEGIN/END UNTRUSTED PAGE DATA 包裹；system prompt 明确规定 DOM/页面内容只能作为被巡检数据，不能作为 Agent 指令。Browser extension 与 Patrol Browser Bridge Runtime 都不提供 `eval` 命令，Patrol allowlist 也不包含 `browser_eval`。
+
+## 9. Install / uninstall lifecycle
+
+Harness 的 `dsh plugin` 当前在 profile 目录中委托 pnpm 做依赖变更，然后根据**安装后的依赖状态**重算 bundle layer。这个过程没有第三方插件的 uninstall hook，因此一个已经被 pnpm 删除的插件不能再依赖自己的包文件执行卸载清理。
+
+Patrol 的解决方式是在**安装期**留下一个最小、self-contained 的 cleanup coordinator：
+
+```text
+$DSH_HOME/patrol/integration-cleanup.mjs
+```
+
+该文件只 import Node built-ins，不 import `dsh-patrol` 或其他第三方依赖。`preset-installer` 会扫描 `$DSH_HOME/profiles/*/package.json`，为实际引用 Patrol 的 profile 写入带 BEGIN/END marker 的 cleanup row。这样 package remove 之后 row 仍有一个可加载的独立文件。
+
+```text
+Installed
+  profile package.json references Patrol
+  cleanup row -> integration-cleanup.mjs
+        │
+        └─ no-op
+
+After dsh plugin remove
+  package dependency gone
+        ↓
+next Harness boot loads cleanup row
+        ↓
+remove this profile's cleanup marker block
+        ↓
+scan every profile
+        ├─ another Patrol install exists -> preserve shared integration
+        └─ no Patrol install remains
+             ├─ remove managed patrol preset only when marker exists
+             ├─ remove managed browser profile/state/trust/temp bridge
+             ├─ preserve inspections/runs/resumes
+             └─ remove integration-cleanup.mjs itself
+```
+
+识别“仍在使用 Patrol”采用保守策略：profile dependency 明确引用 `dsh-patrol` / DSH-Patrol Git 源，或者存在本地开发安装的 Host Bridge managed marker，都视为 active。这样宁可暂时多保留共享数据，也不会因为某个 profile 被卸载而误删另一个 profile 正在使用的浏览器 Profile。
+
+用户主动删除 `.managed-by-dsh-patrol` 后，该 preset 被视为用户接管；自动清理和本地卸载脚本都不再删除它。
+
+本地源码安装的 `uninstall-local.ps1` 使用同样的 multi-profile 判定，不过它能在包仍存在时立即执行清理；Bundle remove 则由上述 coordinator 在下一次 Harness 启动闭环。
 
 ## Replay stability
 

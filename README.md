@@ -18,6 +18,7 @@ v0.2 的核心目标是把真实联调里暴露的问题收口，并把使用门
 - 使用 Harness 原生 `ctx.credentials`，Runbook 只保存 `${credential:REF}`，不保存明文密码、Token、OTP、Cookie。
 - 支持条件登录、checkpoint/resume、截图、页面文本、确定性 page-summary、保守 selector 自愈与显式修复。
 - 网页内容始终按 **UNTRUSTED DATA** 处理，不能反向改变 Agent/Tool 规则。
+- 安装/卸载生命周期闭环：Bundle 被移除后，预先安装到 `$DSH_HOME` 的自清理协调器会在下一次 Harness 启动时移除残留 Patrol preset、浏览器集成和自身 managed patch；多 profile 场景不会误删仍在使用的共享 Patrol 数据。
 
 ## 运行结构
 
@@ -87,7 +88,7 @@ cd E:\path\to\DSH-Patrol
 .\scripts\install-local.ps1 -HarnessRoot "E:\path\to\deepseek-harness"
 ```
 
-`install-local.ps1` 会自动执行依赖安装、类型检查、测试、扩展检查、UTF-8 检查和构建，然后安装 Patrol preset 与 Host Bridge 配置。
+`install-local.ps1` 会自动执行依赖安装、类型检查、测试、扩展检查、UTF-8 检查和构建，然后安装 Patrol preset、Host Bridge 配置以及生命周期清理协调器。
 
 启动 Harness：
 
@@ -108,6 +109,14 @@ dsh-patrol/preset-installer
 ```
 
 `preset-installer` 自动把「巡检模式」写入 `$DSH_HOME/.agent-presets/patrol`；Managed Browser 在第一次选择巡检模式时按需启动。
+
+为了让 Harness 当前没有第三方 uninstall hook 的情况下也能完整卸载，`preset-installer` 还会把一个**只依赖 Node 内置模块**的清理协调器复制到：
+
+```text
+$DSH_HOME/patrol/integration-cleanup.mjs
+```
+
+并在安装了 `dsh-patrol` 的 profile `cordis.patch.yml` 中维护一个带明确 BEGIN/END marker 的 cleanup row。这个文件不是 Patrol 主运行时；正常安装存在时它只做一次轻量存在性检查。包被移除后，它仍能独立运行一次完成残留清理并删除自己的 managed row。
 
 当前从 Git 源安装仍使用 TypeScript `prepare` 构建，因此 pnpm 对 Git build script 的信任策略可能要求 profile 允许 `dsh-patrol` 执行构建。后续发布预构建包后，这一步可以进一步收口。
 
@@ -143,31 +152,65 @@ DSH_PATROL_BROWSER=<browser executable path>
 
 ## 卸载
 
+### 本地源码安装
+
 本地源码安装可使用：
 
 ```powershell
-.\scripts\uninstall-local.ps1
+.\scripts\uninstall-local.ps1 -Profile web
 ```
 
-它会清理：
+它会立即移除当前 profile 的 Host Bridge managed patch 与 cleanup managed patch。如果没有其他 Harness profile 仍在使用 DSH Patrol，还会清理：
 
 ```text
-巡检模式 preset
-本地 Host Bridge managed patch
+DSH Patrol 管理的「巡检模式」preset
 $DSH_HOME/patrol/browser-profile
 managed-browser.json
 trusted-extension-origin.txt
+browser-bridge 临时文件
+integration-cleanup.mjs
 ```
 
-因为扩展只存在于 Patrol 专用 Profile 中，删除该 Profile 就同时删除扩展注册，不会碰用户日常浏览器。
+如果另一个 profile 仍安装了 `dsh-patrol`，或仍存在本地源码安装的 managed Host Bridge，卸载脚本只移除当前 profile 的配置，**不会删除共享的 Patrol preset、浏览器 Profile 或清理协调器**。
 
-默认保留 inspection definitions 与历史报告；如果确定连巡检数据一起删除：
+如果 `patrol` preset 的 `.managed-by-dsh-patrol` marker 已被用户主动删除，卸载会把这个 preset 视为用户已接管并保留，不会误删。
+
+默认保留 inspection definitions 与历史报告；如果确定连巡检数据一起删除，并且已经没有其他 profile 使用 Patrol：
 
 ```powershell
-.\scripts\uninstall-local.ps1 -PurgePatrolData
+.\scripts\uninstall-local.ps1 -Profile web -PurgePatrolData
 ```
 
-**当前限制：** DeepSeek Harness 的 `dsh plugin remove` 当前本质上由 pnpm 移除依赖并重算 bundle layer，没有第三方插件 uninstall lifecycle hook。因此“任意 `dsh plugin remove` 命令都自动执行 DSH Patrol 的 Profile 清理”还需要 Harness 提供卸载生命周期，或 Patrol 增加独立的持久清理协调层。在此之前，源码安装使用上面的单条 uninstall 脚本完成彻底清理。
+### Bundle / `dsh plugin remove`
+
+Bundle 可以直接使用 Harness 原生命令移除：
+
+```powershell
+pnpm dsh plugin --profile web remove dsh-patrol
+```
+
+Harness 会移除依赖并重算 bundle layer。由于 Harness 当前没有第三方插件 uninstall lifecycle hook，包本身不能在“文件已经被 pnpm 删除之后”再执行代码；DSH Patrol 用预先写入 `$DSH_HOME` 的 cleanup coordinator 补上这个生命周期：
+
+```text
+dsh plugin remove dsh-patrol
+        ↓
+包与 bundle layer 被移除
+        ↓
+下一次 pnpm dsh web 启动
+        ↓
+profile 中的 self-contained cleanup row 先运行
+        ↓
+确认该 profile 已不再引用 Patrol
+        ↓
+删除该 profile 自己的 cleanup row
+        ↓
+若没有其他 profile 仍使用 Patrol：
+  删除 managed preset / browser profile / state / trust / 临时 bridge 文件
+  保留 inspections / runs / resumes
+  删除 integration-cleanup.mjs 自身
+```
+
+因此不需要额外的手工“卸载后清残留”步骤；下一次 Harness 启动时，清理会在正常 UI 使用之前完成。多 profile 场景下，协调器会先扫描其他 profile 的 package dependency 与本地 Host Bridge marker，只有最后一个 Patrol 安装消失时才删除共享集成。
 
 ## Credential 规则
 
@@ -239,6 +282,7 @@ $DSH_HOME/patrol/resumes/<inspection-id>.json
 - URL 中敏感 query/fragment 参数和 userinfo 会被拒绝持久化。
 - Managed Browser 使用 DSH-owned 专用 Profile，不修改日常浏览器 Profile。
 - Browser Bridge 只监听本机，并限制 Chromium Extension Origin。
+- 自动卸载只删除带 DSH Patrol managed marker 的 preset/integration；用户接管的 preset 与 inspection 历史默认保留。
 - 自愈只允许唯一精确语义匹配做一次重试；真正修改 selector 必须显式更新并重新确认。
 
 ## 当前工具

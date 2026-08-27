@@ -55,7 +55,58 @@ jobs:
           grep -qx 'package/browser-bridge-runtime/managed-browser.js' .pack-check/contents.txt
           grep -qx 'package/browser-bridge-runtime/tools-plugin.js' .pack-check/contents.txt
           grep -qx 'package/browser-extension/manifest.json' .pack-check/contents.txt
+          grep -qx 'package/cleanup-runtime/index.js' .pack-check/contents.txt
           grep -qx 'package/presets/patrol/preset.yml' .pack-check/contents.txt
           grep -qx 'package/presets/patrol/agent.cordis.yml' .pack-check/contents.txt
           grep -qx 'package/scripts/install-local.ps1' .pack-check/contents.txt
           grep -qx 'package/scripts/uninstall-local.ps1' .pack-check/contents.txt
+
+  windows-smoke:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Check browser extension
+        run: pnpm check:extension
+
+      - name: Check UTF-8 and Chinese text
+        run: pnpm check:encoding
+
+      - name: Parse PowerShell installers
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($path in @('scripts/install-local.ps1', 'scripts/uninstall-local.ps1')) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path), [ref]$tokens, [ref]$errors)
+            if ($errors.Count -gt 0) {
+              Write-Error "$path has PowerShell syntax errors: $($errors | ForEach-Object Message | Out-String)"
+              $failed = $true
+            }
+          }
+          if ($failed) { exit 1 }
+
+      - name: Build
+        run: pnpm build
