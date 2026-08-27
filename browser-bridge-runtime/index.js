@@ -66,8 +66,18 @@ export function apply(ctx, config = {}) {
         if (!/^chrome-extension:\/\/[a-z0-9-]+$/i.test(origin)) {
           throw new Error(`websocket origin is not an installed Chromium extension: ${origin || '(missing)'}`)
         }
-        if (managedOrigin !== undefined && origin !== managedOrigin) {
-          throw new Error('websocket origin is not the DSH Patrol managed extension')
+        if (managedBrowser !== undefined) {
+          // In zero-config mode no arbitrary Chromium extension gets a TOFU
+          // window before Patrol knows the exact ID it just provisioned. The
+          // managed extension may race one early connection and be rejected;
+          // its reconnect loop / explicit bridge:connect retries after the ID
+          // is known.
+          if (managedOrigin === undefined) {
+            throw new Error('DSH Patrol managed extension is not provisioned yet')
+          }
+          if (origin !== managedOrigin) {
+            throw new Error('websocket origin is not the DSH Patrol managed extension')
+          }
         }
         const connection = handleUpgrade(req, socket, head, { maxMessageBytes: config.maxMessageBytes ?? 8 * 1024 * 1024 })
         try {
@@ -76,7 +86,7 @@ export function apply(ctx, config = {}) {
           try { connection.close(4003, 'extension origin is not paired with DSH Patrol') } catch {}
           throw error
         }
-        bridge.attach(connection)
+        bridge.attach(connection, { origin })
       } catch (error) {
         ctx.logger.warn?.(`[dsh-patrol/browser-bridge] rejected upgrade: ${error?.message ?? error}`)
         socket.destroy()
@@ -99,7 +109,11 @@ export function apply(ctx, config = {}) {
         connected: bridge.connected,
         paired: trustedOrigin !== undefined,
         managedBrowser: managedBrowser !== undefined,
-        ...(managed === undefined ? {} : { managedRunning: managed.running, managedStarting: managed.starting }),
+        ...(managed === undefined ? {} : {
+          managedRunning: managed.running,
+          managedStarting: managed.starting,
+          managedConnected: managed.connected,
+        }),
       })
       res.writeHead(200, {
         'content-type': 'application/json; charset=utf-8',
@@ -115,9 +129,12 @@ export function apply(ctx, config = {}) {
   const normalizedHost = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host
   urlHint = `ws://${normalizedHost}:${ctx.webServer.port ?? 3080}${path}`
   ctx.logger.info(`[dsh-patrol/browser-bridge] host ready at ${urlHint}; managed browser=${managedBrowser === undefined ? 'disabled' : 'on-demand'}; extension origin pairing=${trustedOrigin === undefined ? 'awaiting first connection' : 'configured'}`)
-  ctx.effect(() => () => {
+  ctx.effect(() => async () => {
+    // Cordis awaits async disposers. Keep the bridge alive while a pending
+    // managed-browser startup settles, then close the DSH-owned browser before
+    // tearing down its transport so Harness shutdown does not orphan Chrome.
+    if (managedBrowser !== undefined) await managedBrowser.dispose()
     bridge.dispose()
-    if (managedBrowser !== undefined) void managedBrowser.dispose()
   }, 'dsh-patrol/browser-bridge: dispose')
 }
 
