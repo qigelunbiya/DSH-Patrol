@@ -32,24 +32,41 @@ export async function apply(ctx, config = {}) {
 export async function cleanupOrphanedIntegration({ dshHome, profile, logger = console }) {
   const home = resolve(dshHome)
   const profileDir = join(home, 'profiles', profile)
-  if (await profileHasPatrol(profileDir)) return { active: true, sharedRemoved: false }
+  if (await profileHasPatrol(profileDir)) return { active: true, sharedRemoved: false, retryPending: false }
 
   const profilePatch = join(profileDir, 'cordis.patch.yml')
-  await removeManagedBlock(profilePatch, CLEANUP_BEGIN, CLEANUP_END)
-
-  if (await anyProfileHasPatrol(home)) {
+  if (await anotherProfileHasPatrol(home, profile)) {
+    await removeManagedBlock(profilePatch, CLEANUP_BEGIN, CLEANUP_END)
     logger.info?.(`[dsh-patrol/cleanup] removed stale cleanup row for profile ${profile}; shared Patrol integration is still used by another profile`)
-    return { active: false, sharedRemoved: false }
+    return { active: false, sharedRemoved: false, retryPending: false }
   }
 
-  await removeManagedPreset(home, logger)
-  await safeRemove(join(home, 'patrol', 'browser-profile'), { recursive: true }, logger)
-  await safeRemove(join(home, 'patrol', 'managed-browser.json'), {}, logger)
-  await safeRemove(join(home, 'patrol', 'trusted-extension-origin.txt'), {}, logger)
-  await safeRemove(join(home, 'patrol', 'browser-bridge'), { recursive: true }, logger)
-  await safeRemove(join(home, 'patrol', 'integration-cleanup.mjs'), {}, logger)
+  // Last profile: clean shared assets BEFORE removing the persisted cleanup
+  // row. If Windows/file-lock/permission errors prevent a managed path from
+  // being removed, the row and this standalone runtime remain on disk so the
+  // next Harness boot retries instead of silently stranding partial state.
+  const removals = await Promise.all([
+    removeManagedPreset(home, logger),
+    safeRemove(join(home, 'patrol', 'browser-profile'), { recursive: true }, logger),
+    safeRemove(join(home, 'patrol', 'managed-browser.json'), {}, logger),
+    safeRemove(join(home, 'patrol', 'trusted-extension-origin.txt'), {}, logger),
+    safeRemove(join(home, 'patrol', 'browser-bridge'), { recursive: true }, logger),
+  ])
+  if (removals.some(ok => !ok)) {
+    logger.warn?.('[dsh-patrol/cleanup] managed cleanup is incomplete; keeping the cleanup row/runtime so the next Harness boot can retry')
+    return { active: false, sharedRemoved: false, retryPending: true }
+  }
+
+  await removeManagedBlock(profilePatch, CLEANUP_BEGIN, CLEANUP_END)
+  const runtimeRemoved = await safeRemove(join(home, 'patrol', 'integration-cleanup.mjs'), {}, logger)
+  if (!runtimeRemoved) {
+    // The profile no longer references the file, so this is a harmless orphan
+    // rather than a boot-breaking state. Report it instead of re-adding a row
+    // that would race with deleting its own currently loaded module.
+    logger.warn?.('[dsh-patrol/cleanup] Patrol integration is clean, but the standalone cleanup file could not remove itself; it is no longer referenced by Harness')
+  }
   logger.info?.('[dsh-patrol/cleanup] removed orphaned Patrol preset/browser integration; inspections and historical runs were preserved')
-  return { active: false, sharedRemoved: true }
+  return { active: false, sharedRemoved: true, retryPending: false }
 }
 
 export async function profileHasPatrol(profileDir) {
@@ -61,6 +78,10 @@ export async function profileHasPatrol(profileDir) {
 }
 
 export async function anyProfileHasPatrol(dshHome) {
+  return await anotherProfileHasPatrol(dshHome, undefined)
+}
+
+async function anotherProfileHasPatrol(dshHome, excludedProfile) {
   const profilesDir = join(dshHome, 'profiles')
   let children
   try {
@@ -71,7 +92,7 @@ export async function anyProfileHasPatrol(dshHome) {
   }
 
   for (const child of children) {
-    if (!child.isDirectory()) continue
+    if (!child.isDirectory() || child.name === excludedProfile) continue
     if (await profileHasPatrol(join(profilesDir, child.name))) return true
   }
   return false
@@ -110,16 +131,18 @@ async function removeManagedPreset(home, logger) {
     if (await pathExists(presetDir)) {
       logger.info?.('[dsh-patrol/cleanup] preserving user-owned patrol preset because the DSH Patrol managed marker is absent')
     }
-    return
+    return true
   }
-  await safeRemove(presetDir, { recursive: true }, logger)
+  return await safeRemove(presetDir, { recursive: true }, logger)
 }
 
 async function safeRemove(path, options, logger) {
   try {
     await rm(path, { force: true, ...options })
+    return true
   } catch (error) {
     logger.warn?.(`[dsh-patrol/cleanup] could not remove ${path}: ${errorMessage(error)}`)
+    return false
   }
 }
 
