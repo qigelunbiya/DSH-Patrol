@@ -15,6 +15,12 @@
     "./browser-bridge": {
       "default": "./browser-bridge-runtime/index.js"
     },
+    "./browser-bridge-host": {
+      "default": "./browser-bridge-runtime/index.js"
+    },
+    "./browser-tools": {
+      "default": "./browser-bridge-runtime/tools-plugin.js"
+    },
     "./preset-installer": {
       "types": "./lib/preset-installer.d.ts",
       "default": "./lib/preset-installer.js"
