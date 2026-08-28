@@ -23,6 +23,20 @@ export class PatrolStore {
     return join(this.inspectionDirectory(id), 'inspection.json')
   }
 
+  workspaceInspectionDirectory(id: string, workspaceRoot: string): string {
+    assertInspectionId(id)
+    return join(workspaceRoot, WORKSPACE_OUTPUT_ROOT, id)
+  }
+
+  workspaceRunbookPaths(id: string, workspaceRoot: string): { directory: string; json: string; markdown: string } {
+    const directory = join(this.workspaceInspectionDirectory(id, workspaceRoot), 'runbook')
+    return {
+      directory,
+      json: join(directory, 'inspection.json'),
+      markdown: join(directory, 'runbook.md'),
+    }
+  }
+
   runDirectory(inspectionId: string, runId: string): string {
     assertInspectionId(inspectionId)
     if (!/^[A-Za-z0-9._-]+$/.test(runId)) throw new Error('invalid runId')
@@ -76,6 +90,18 @@ export class PatrolStore {
   async save(definition: InspectionDefinition): Promise<void> {
     assertInspectionDefinition(definition)
     await atomicWrite(this.inspectionPath(definition.id), `${JSON.stringify(definition, null, 2)}\n`)
+    const workspaceRoot = definition.metadata.workspaceRoot
+    if (workspaceRoot !== undefined && workspaceRoot.trim() !== '') {
+      await this.saveWorkspaceRunbook(definition, workspaceRoot)
+    }
+  }
+
+  async saveWorkspaceRunbook(definition: InspectionDefinition, workspaceRoot: string): Promise<{ json: string; markdown: string }> {
+    assertInspectionDefinition(definition)
+    const paths = this.workspaceRunbookPaths(definition.id, workspaceRoot)
+    await atomicWrite(paths.json, `${JSON.stringify(definition, null, 2)}\n`)
+    await atomicWrite(paths.markdown, renderRunbookMarkdown(definition))
+    return { json: paths.json, markdown: paths.markdown }
   }
 
   async load(id: string): Promise<InspectionDefinition> {
@@ -119,6 +145,14 @@ export class PatrolStore {
     const visible = this.workspaceRunPaths(report.inspectionId, report.runId, workspaceRoot)
     await atomicWrite(visible.json, `${JSON.stringify(report, null, 2)}\n`)
     await atomicWrite(visible.markdown, markdown)
+
+    // Keep one canonical complete Runbook at patrol-results/<inspection>/runbook,
+    // and also snapshot the exact Runbook used by this run beside its report.
+    const definition = await this.load(report.inspectionId)
+    await this.saveWorkspaceRunbook(definition, workspaceRoot)
+    const runbookSnapshot = join(visible.directory, 'runbook')
+    await atomicWrite(join(runbookSnapshot, 'inspection.json'), `${JSON.stringify(definition, null, 2)}\n`)
+    await atomicWrite(join(runbookSnapshot, 'runbook.md'), renderRunbookMarkdown(definition))
     return visible
   }
 
@@ -230,6 +264,39 @@ async function atomicWrite(path: string, content: string): Promise<void> {
   const temp = `${path}.${process.pid}.${Date.now()}.tmp`
   await writeFile(temp, content, { encoding: 'utf8', mode: 0o600 })
   await rename(temp, path)
+}
+
+function renderRunbookMarkdown(definition: InspectionDefinition): string {
+  const lines = [
+    `# ${definition.name}`,
+    '',
+    `- Inspection ID: \`${definition.id}\``,
+    `- Status: \`${definition.status}\``,
+    `- Target: ${definition.target.url}`,
+    `- Expected result: ${definition.expectedResult}`,
+    `- Auth mode: \`${definition.auth.mode}\``,
+    `- Updated: ${definition.metadata.updatedAt}`,
+    '',
+    '## Reusable steps',
+    '',
+  ]
+  if (definition.steps.length === 0) lines.push('(no steps recorded)')
+  for (const step of definition.steps) {
+    lines.push(`### ${step.id} — ${step.name}`, '')
+    if (step.kind === 'checkpoint') {
+      lines.push(`- Kind: checkpoint`, `- Reason: ${step.reason}`, `- Prompt: ${step.prompt}`)
+    } else {
+      lines.push(`- Kind: tool`, `- Tool: \`${step.tool}\``, `- Arguments: \`${JSON.stringify(step.arguments)}\``)
+      if (step.expectation !== undefined) lines.push(`- Expectation: ${step.expectation.mode} ${JSON.stringify(step.expectation.value)}`)
+      if (step.locator !== undefined) lines.push(`- Semantic locator: \`${JSON.stringify(step.locator)}\``)
+      if (step.artifact !== undefined) lines.push(`- Artifact: \`${step.artifact}\``)
+    }
+    if (step.when !== undefined) lines.push(`- Condition: ${step.when.sourceStepId} ${step.when.mode} ${JSON.stringify(step.when.value)}`)
+    if (step.notes !== undefined) lines.push(`- Notes: ${step.notes}`)
+    lines.push('')
+  }
+  lines.push('---', '', 'This is the complete reusable Patrol Runbook mirror. Credential steps contain references only; raw passwords, cookies, OTPs, and other session secrets are intentionally not written here.', '')
+  return lines.join('\n')
 }
 
 function sanitizeArtifactName(name: string, fallbackExt: string): string {
