@@ -1,12 +1,19 @@
+const IMAGE_CODE_INPUT_HINT = /(captcha|image[-_ ]?code|img[-_ ]?code|verify[-_ ]?code|verification[-_ ]?code|validation[-_ ]?code|check[-_ ]?code|auth[-_ ]?code|\bcode\b|验证码|校验码|图形码)/i
+
 export async function tryFillImageCode(bridge, tabId, options = {}) {
   if (process.platform !== 'win32') return false
 
   const captured = await bridge.request('captureImageCode', { tabId }, options)
   if (!captured || typeof captured !== 'object' || captured.ok === false) return false
   if (typeof captured.dataUrl !== 'string' || typeof captured.inputSelector !== 'string') return false
+  if (!await isExplicitImageCodeInput(bridge, captured.inputSelector, tabId, options)) return false
 
   const image = decodeDataUrl(captured.dataUrl)
-  const { recognize, OcrAccuracy } = await import('@napi-rs/system-ocr')
+  const systemOcr = await import('@napi-rs/system-ocr')
+  const recognize = systemOcr.recognize ?? systemOcr.default?.recognize
+  const OcrAccuracy = systemOcr.OcrAccuracy ?? systemOcr.default?.OcrAccuracy
+  if (typeof recognize !== 'function' || !OcrAccuracy) throw new Error('Windows system OCR API is unavailable')
+
   const locale = Intl.DateTimeFormat().resolvedOptions().locale || 'en-US'
   const result = await recognize(image, OcrAccuracy.Accurate, [locale], options.signal)
   const code = normalizeImageCodeText(result?.text)
@@ -47,6 +54,26 @@ export function normalizeImageCodeText(value) {
 
   const compact = cleanupLine(String(value || '').replace(/\s+/g, ''))
   return compact.length >= 2 && compact.length <= 16 ? compact : ''
+}
+
+async function isExplicitImageCodeInput(bridge, selector, tabId, options) {
+  let snapshot
+  try {
+    snapshot = await bridge.request('snapshot', {
+      maxElements: 300,
+      includeHidden: false,
+      tabId,
+    }, options)
+  } catch {
+    return false
+  }
+  const elements = Array.isArray(snapshot?.elements) ? snapshot.elements : []
+  const target = elements.find(element => element && typeof element === 'object' && element.selector === selector)
+  if (!target) return false
+  const hint = [target.selector, target.name, target.text, target.type]
+    .filter(value => typeof value === 'string')
+    .join(' ')
+  return IMAGE_CODE_INPUT_HINT.test(hint)
 }
 
 function cleanupLine(value) {
