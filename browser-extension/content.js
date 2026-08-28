@@ -1,5 +1,6 @@
 const SENSITIVE_INPUT = /(pass(word|wd)?|pwd|secret|token|api[-_]?key|authorization|cookie|session[-_]?id|otp|captcha|verification)/i
 const CHALLENGE_SIGNAL = /(captcha|recaptcha|hcaptcha|turnstile|geetest|slider|puzzle|human.?verify|verify.?human|verification.?code|otp|验证码|滑块|拼图|人机验证|机器人验证|二次验证|安全验证)/i
+const IMAGE_CODE_HINT = /(captcha|image[-_ ]?code|img[-_ ]?code|verify[-_ ]?code|verification[-_ ]?code|validation[-_ ]?code|check[-_ ]?code|auth[-_ ]?code|\bcode\b|验证码|校验码|图形码)/i
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== 'dsh-patrol:command') return
@@ -14,6 +15,7 @@ async function handle(cmd, args) {
     case 'snapshot': return snapshot(args)
     case 'readPage': return readPage(args)
     case 'challengeSignals': return challengeSignals()
+    case 'imageCodeTarget': return await imageCodeTarget(args)
     case 'count': return count(args)
     case 'click': return click(args)
     case 'type': return typeText(args)
@@ -74,6 +76,99 @@ function challengeSignals() {
     if (signals.length >= 40) break
   }
   return { ok: true, signals: [...new Set(signals)].slice(0, 40) }
+}
+
+async function imageCodeTarget(args) {
+  const image = args.imageSelector ? requiredElement(args.imageSelector) : pickImageCodeImage()
+  if (!image) throw new Error('no conventional image-code image found')
+
+  const input = args.inputSelector ? requiredElement(args.inputSelector) : pickImageCodeInput(image)
+  if (!input) throw new Error('no conventional image-code input found')
+  if (!isEditableCodeInput(input)) throw new Error('image-code target is not an editable input')
+
+  image.scrollIntoView({ block: 'center', inline: 'center' })
+  await sleep(80)
+  const rect = image.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) throw new Error('image-code image has empty bounds')
+  if (rect.right <= 0 || rect.bottom <= 0 || rect.left >= window.innerWidth || rect.top >= window.innerHeight) {
+    throw new Error('image-code image is outside the visible viewport')
+  }
+
+  return {
+    ok: true,
+    imageSelector: stableSelector(image),
+    inputSelector: stableSelector(input),
+    rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+    viewport: { width: window.innerWidth, height: window.innerHeight },
+  }
+}
+
+function pickImageCodeImage() {
+  const candidates = [...document.querySelectorAll('img,canvas,svg')].filter(isVisible)
+  let best
+  for (let index = 0; index < candidates.length; index += 1) {
+    const element = candidates[index]
+    const score = imageCodeImageScore(element)
+    if (score < 8) continue
+    if (!best || score > best.score) best = { element, score, index }
+  }
+  return best?.element
+}
+
+function imageCodeImageScore(element) {
+  const rect = element.getBoundingClientRect()
+  const attrs = imageCodeAttributes(element)
+  let score = IMAGE_CODE_HINT.test(attrs) ? 10 : 0
+  if (rect.width >= 40 && rect.width <= 500 && rect.height >= 18 && rect.height <= 200) score += 2
+  if (element.tagName.toLowerCase() === 'canvas') score += 1
+  return score
+}
+
+function pickImageCodeInput(image) {
+  const imageRect = image.getBoundingClientRect()
+  const imageForm = image.closest('form')
+  const candidates = [...document.querySelectorAll('input,textarea')]
+    .filter(element => isVisible(element) && isEditableCodeInput(element))
+  let best
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const element = candidates[index]
+    const rect = element.getBoundingClientRect()
+    const attrs = imageCodeAttributes(element)
+    let score = IMAGE_CODE_HINT.test(attrs) ? 10 : 0
+    const maxLength = element instanceof HTMLInputElement ? element.maxLength : -1
+    if (maxLength >= 2 && maxLength <= 12) score += 3
+    if (imageForm && element.closest('form') === imageForm) score += 4
+
+    const verticalDistance = Math.abs((rect.top + rect.height / 2) - (imageRect.top + imageRect.height / 2))
+    const horizontalDistance = Math.abs((rect.left + rect.width / 2) - (imageRect.left + imageRect.width / 2))
+    if (verticalDistance <= 180) score += 4
+    if (horizontalDistance <= 500) score += 1
+    if (score < 7) continue
+    if (!best || score > best.score) best = { element, score, index }
+  }
+
+  return best?.element
+}
+
+function isEditableCodeInput(element) {
+  if (element instanceof HTMLTextAreaElement) return true
+  if (!(element instanceof HTMLInputElement)) return false
+  return !['password', 'hidden', 'submit', 'button', 'checkbox', 'radio', 'file'].includes(element.type)
+}
+
+function imageCodeAttributes(element) {
+  return compactText([
+    element.tagName.toLowerCase(),
+    element.id || '',
+    typeof element.className === 'string' ? element.className : '',
+    element.getAttribute('name') || '',
+    element.getAttribute('placeholder') || '',
+    element.getAttribute('aria-label') || '',
+    element.getAttribute('alt') || '',
+    element.getAttribute('title') || '',
+    safeResourcePath(element.getAttribute('src')),
+  ].join(' '), 500)
 }
 
 function safeResourcePath(value) {

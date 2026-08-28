@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { classifyAuthChallenge } from '../browser-bridge-runtime/challenge-tool.js'
+import { normalizeImageCodeText } from '../browser-bridge-runtime/image-code.js'
 
 describe('auth challenge classification', () => {
   it('returns none for an ordinary login page without secondary verification', () => {
@@ -26,7 +27,7 @@ describe('auth challenge classification', () => {
     expect(result.selectors).toContain('input[name="otp"]')
   })
 
-  it('detects graphical CAPTCHA text without solving it', () => {
+  it('detects graphical CAPTCHA text without solving it in the classifier', () => {
     const result = classifyAuthChallenge({ elements: [] }, 'Security check\nComplete the reCAPTCHA to continue.')
     expect(result.kind).toBe('captcha')
     expect(result.hasChallenge).toBe(true)
@@ -53,5 +54,11 @@ describe('auth challenge classification', () => {
     const result = classifyAuthChallenge({ elements: [] }, 'Use your passkey or security key to approve sign-in.')
     expect(result.kind).toBe('approval')
     expect(result.hasChallenge).toBe(true)
+  })
+
+  it('normalizes a simple locally recognized image code', () => {
+    expect(normalizeImageCodeText('  A B 1 2  \n')).toBe('AB12')
+    expect(normalizeImageCodeText('"x7K9"')).toBe('x7K9')
+    expect(normalizeImageCodeText('')).toBe('')
   })
 })

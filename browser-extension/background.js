@@ -85,6 +85,8 @@ async function handleCommand(cmd, args) {
       return await navigate(args)
     case 'screenshot':
       return await screenshot(args)
+    case 'captureImageCode':
+      return await captureImageCode(args)
     case 'snapshot':
     case 'readPage':
     case 'challengeSignals':
@@ -129,6 +131,83 @@ async function screenshot(args) {
   const format = args.format === 'jpeg' ? 'jpeg' : 'png'
   const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format })
   return { ok: true, dataUrl, bytes: Math.floor(dataUrl.length * 0.75) }
+}
+
+async function captureImageCode(args) {
+  const tabId = await resolveTabId(args.tabId)
+  const target = await sendDomCommand('imageCodeTarget', { ...args, tabId })
+  if (!target || typeof target !== 'object' || target.ok === false) {
+    throw new Error(target?.error || 'image-code target discovery failed')
+  }
+  const shot = await screenshot({ tabId, format: 'png' })
+  const dataUrl = await cropVisibleTabDataUrl(shot.dataUrl, target.rect, target.viewport)
+  return {
+    ok: true,
+    dataUrl,
+    imageSelector: target.imageSelector,
+    inputSelector: target.inputSelector,
+    bytes: Math.floor(dataUrl.length * 0.75),
+  }
+}
+
+async function cropVisibleTabDataUrl(dataUrl, rect, viewport) {
+  const left = Number(rect?.left)
+  const top = Number(rect?.top)
+  const width = Number(rect?.width)
+  const height = Number(rect?.height)
+  const viewportWidth = Number(viewport?.width)
+  const viewportHeight = Number(viewport?.height)
+  if (![left, top, width, height, viewportWidth, viewportHeight].every(Number.isFinite)) {
+    throw new Error('image-code crop geometry is invalid')
+  }
+  if (width <= 0 || height <= 0 || viewportWidth <= 0 || viewportHeight <= 0) {
+    throw new Error('image-code crop geometry is empty')
+  }
+  if (typeof OffscreenCanvas !== 'function' || typeof createImageBitmap !== 'function') {
+    throw new Error('image-code cropping is unavailable in this Chromium runtime')
+  }
+
+  const source = dataUrlToBlob(dataUrl)
+  const bitmap = await createImageBitmap(source)
+  try {
+    const scaleX = bitmap.width / viewportWidth
+    const scaleY = bitmap.height / viewportHeight
+    const padding = 2
+    const sx = Math.max(0, Math.floor(left * scaleX) - padding)
+    const sy = Math.max(0, Math.floor(top * scaleY) - padding)
+    const ex = Math.min(bitmap.width, Math.ceil((left + width) * scaleX) + padding)
+    const ey = Math.min(bitmap.height, Math.ceil((top + height) * scaleY) + padding)
+    const sw = Math.max(1, ex - sx)
+    const sh = Math.max(1, ey - sy)
+
+    const canvas = new OffscreenCanvas(sw, sh)
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('image-code crop canvas context is unavailable')
+    context.drawImage(bitmap, sx, sy, sw, sh, 0, 0, sw, sh)
+    const cropped = await canvas.convertToBlob({ type: 'image/png' })
+    return await blobToDataUrl(cropped)
+  } finally {
+    if (typeof bitmap.close === 'function') bitmap.close()
+  }
+}
+
+function dataUrlToBlob(value) {
+  const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/i.exec(String(value || ''))
+  if (!match) throw new Error('browser screenshot did not return a base64 image')
+  const binary = atob(match[2])
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
+  return new Blob([bytes], { type: match[1] })
+}
+
+async function blobToDataUrl(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer())
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize))
+  }
+  return `data:${blob.type || 'image/png'};base64,${btoa(binary)}`
 }
 
 async function sendDomCommand(cmd, args) {

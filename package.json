@@ -68,6 +68,7 @@
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.1",
+    "@napi-rs/system-ocr": "1.1.0",
     "puppeteer-core": "25.9.0"
   },
   "devDependencies": {

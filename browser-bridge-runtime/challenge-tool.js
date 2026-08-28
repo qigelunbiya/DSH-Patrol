@@ -1,7 +1,9 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import { tryFillImageCode } from './image-code.js'
 
 const reqStr = { type: 'string', required: true }
 const reqBool = { type: 'boolean', required: true }
+const bool = { type: 'boolean' }
 const str = { type: 'string' }
 const optInt = { type: 'integer' }
 
@@ -110,7 +112,7 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
   const timeoutMs = config.commandTimeoutMs ?? 60000
   const definition = defineTool({
     name: 'browser_detect_auth_challenge',
-    description: 'Detect common post-login human-verification challenges from safe DOM signals and visible text. This tool classifies only; it never solves, bypasses, OCRs for an answer, drags, or submits a challenge.',
+    description: 'Detect common post-login human-verification challenges from safe DOM signals and visible text. On Windows, conventional image-code challenges may be locally recognized, filled, and submitted before classification is returned; sliders, OTP, passkeys, reCAPTCHA-style widgets, and unsupported challenges remain human handoffs.',
     parameters: {
       tabId: optInt,
     },
@@ -123,54 +125,87 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
           hasChallenge: reqBool,
           kind: { type: 'string', required: true, enum: CHALLENGE_KINDS },
           selectors: { type: 'array', required: true, items: str },
+          autoFilled: bool,
         },
       },
       render: (_args, value) => [{
         type: 'text',
-        text: `Auth challenge: kind=${value.kind}; hasChallenge=${value.hasChallenge}${value.selectors?.length ? `; selectors=${value.selectors.join(', ')}` : ''}`,
+        text: `Auth challenge: kind=${value.kind}; hasChallenge=${value.hasChallenge}${value.autoFilled ? '; simple image code filled by Windows system text recognition' : ''}${value.selectors?.length ? `; selectors=${value.selectors.join(', ')}` : ''}`,
       }],
     },
     presentCall: args => ({ card: 'generic', title: 'Detect login verification', kind: 'other', rawInput: args }),
     execute: async (args, exec) => {
       const options = { timeoutMs, signal: exec?.signal }
-      const snapshot = await bridge.request('snapshot', {
-        maxElements: 300,
-        includeHidden: false,
-        tabId: args.tabId,
-      }, options)
-      if (!snapshot || typeof snapshot !== 'object' || snapshot.ok === false) {
-        throw new Error(String(snapshot?.error || 'auth challenge snapshot failed'))
-      }
-      const page = await bridge.request('readPage', {
-        maxChars: 12000,
-        tabId: args.tabId,
-      }, options)
-      if (!page || typeof page !== 'object' || page.ok === false) {
-        throw new Error(String(page?.error || 'auth challenge page read failed'))
-      }
+      let classified = await observeAuthChallenge(bridge, args.tabId, options)
+      let autoFilled = false
 
-      let extraSignals = []
-      try {
-        const signalResult = await bridge.request('challengeSignals', { tabId: args.tabId }, options)
-        if (signalResult && typeof signalResult === 'object' && Array.isArray(signalResult.signals)) {
-          extraSignals = signalResult.signals.filter(item => typeof item === 'string').slice(0, 40)
+      if (classified.kind === 'captcha' && process.platform === 'win32') {
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          let filled = false
+          try {
+            filled = await tryFillImageCode(bridge, args.tabId, options)
+          } catch {
+            filled = false
+          }
+          if (!filled) break
+
+          autoFilled = true
+          await sleep(900)
+          try {
+            classified = await observeAuthChallenge(bridge, args.tabId, options)
+          } catch {
+            // Navigation may briefly replace the page bridge after form submit.
+            // Treat a successful local fill as handled and let subsequent login
+            // assertions confirm whether authentication actually completed.
+            classified = { kind: 'none', hasChallenge: false, selectors: [], evidence: [] }
+            break
+          }
+          if (classified.kind !== 'captcha') break
         }
-      } catch {
-        // Backward-compatible fallback for a briefly stale managed extension.
-        // Snapshot + visible text classification still works.
       }
 
-      const signalText = extraSignals.length > 0 ? `\n${extraSignals.join('\n')}` : ''
-      const classified = classifyAuthChallenge(snapshot, `${page.text || ''}${signalText}`)
       return {
         ok: true,
         kind: classified.kind,
         hasChallenge: classified.hasChallenge,
         selectors: classified.selectors,
+        autoFilled,
       }
     },
   })
   return ctx.tools.register(definition)
+}
+
+async function observeAuthChallenge(bridge, tabId, options) {
+  const snapshot = await bridge.request('snapshot', {
+    maxElements: 300,
+    includeHidden: false,
+    tabId,
+  }, options)
+  if (!snapshot || typeof snapshot !== 'object' || snapshot.ok === false) {
+    throw new Error(String(snapshot?.error || 'auth challenge snapshot failed'))
+  }
+  const page = await bridge.request('readPage', {
+    maxChars: 12000,
+    tabId,
+  }, options)
+  if (!page || typeof page !== 'object' || page.ok === false) {
+    throw new Error(String(page?.error || 'auth challenge page read failed'))
+  }
+
+  let extraSignals = []
+  try {
+    const signalResult = await bridge.request('challengeSignals', { tabId }, options)
+    if (signalResult && typeof signalResult === 'object' && Array.isArray(signalResult.signals)) {
+      extraSignals = signalResult.signals.filter(item => typeof item === 'string').slice(0, 40)
+    }
+  } catch {
+    // Backward-compatible fallback for a briefly stale managed extension.
+    // Snapshot + visible text classification still works.
+  }
+
+  const signalText = extraSignals.length > 0 ? `\n${extraSignals.join('\n')}` : ''
+  return classifyAuthChallenge(snapshot, `${page.text || ''}${signalText}`)
 }
 
 function matchesAny(text, rules) {
@@ -180,4 +215,8 @@ function matchesAny(text, rules) {
 function compact(value, max) {
   const text = String(value || '').replace(/\s+/g, ' ').trim()
   return text.length > max ? `${text.slice(0, max)}…` : text
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
 }
