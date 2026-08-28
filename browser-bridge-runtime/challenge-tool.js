@@ -8,7 +8,34 @@ const str = { type: 'string' }
 const optInt = { type: 'integer' }
 
 const CHALLENGE_KINDS = ['none', 'otp', 'captcha', 'slider', 'approval', 'unknown']
+const CHALLENGE_SUBTYPES = ['none', 'otp', 'image-code', 'click-sequence', 'third-party', 'generic-captcha', 'slider', 'approval', 'unknown']
 const KIND_ORDER = ['slider', 'otp', 'captcha', 'approval', 'unknown']
+
+const CLICK_SEQUENCE_RULES = [
+  /依次点击/,
+  /按(?:照|顺序).{0,20}点击/,
+  /请.{0,20}(?:下图|图片).{0,20}点击/,
+  /点击.{0,20}(?:文字|汉字|字符|目标).{0,20}(?:顺序|依次)?/,
+  /click.{0,30}(?:characters?|words?|symbols?).{0,30}(?:order|sequence)/i,
+]
+
+const IMAGE_CODE_RULES = [
+  /图形验证码/,
+  /图片验证码/,
+  /字符验证码/,
+  /验证码图片/,
+  /验证码.{0,20}(?:输入|填写|字符)/,
+  /\bimage[-_ ]?code\b/i,
+  /\b(?:captcha|verify|verification)[-_ ]?(?:code|input)\b/i,
+  /name[=\s"'_-]*captcha/i,
+  /#captcha\b/i,
+]
+
+const THIRD_PARTY_RULES = [
+  /\brecaptcha\b/i,
+  /\bhcaptcha\b/i,
+  /\bturnstile\b/i,
+]
 
 const RULES = {
   slider: [
@@ -34,6 +61,7 @@ const RULES = {
     /安全码/,
   ],
   captcha: [
+    ...CLICK_SEQUENCE_RULES,
     /\bcaptcha\b/i,
     /\brecaptcha\b/i,
     /\bhcaptcha\b/i,
@@ -71,6 +99,7 @@ const RULES = {
 export function classifyAuthChallenge(snapshotValue, pageText = '') {
   const elements = Array.isArray(snapshotValue?.elements) ? snapshotValue.elements : []
   const evidenceByKind = new Map(CHALLENGE_KINDS.map(kind => [kind, []]))
+  const observedText = []
 
   for (const element of elements) {
     if (!element || typeof element !== 'object') continue
@@ -83,6 +112,7 @@ export function classifyAuthChallenge(snapshotValue, pageText = '') {
       selector,
     ].filter(value => typeof value === 'string').join(' '), 320)
     if (!text) continue
+    observedText.push(text)
     for (const kind of KIND_ORDER) {
       if (matchesAny(text, RULES[kind])) evidenceByKind.get(kind).push({ selector, text })
     }
@@ -90,6 +120,7 @@ export function classifyAuthChallenge(snapshotValue, pageText = '') {
 
   const page = String(pageText || '').replace(/\u0000/g, ' ')
   const pageLines = page.split(/\r?\n/).map(line => compact(line, 320)).filter(Boolean)
+  observedText.push(...pageLines)
   for (const kind of KIND_ORDER) {
     for (const line of pageLines) {
       if (matchesAny(line, RULES[kind])) evidenceByKind.get(kind).push({ selector: '', text: line })
@@ -100,8 +131,10 @@ export function classifyAuthChallenge(snapshotValue, pageText = '') {
   const kind = KIND_ORDER.find(item => evidenceByKind.get(item).length > 0) || 'none'
   const evidence = kind === 'none' ? [] : evidenceByKind.get(kind).slice(0, 5)
   const selectors = [...new Set(evidence.map(item => item.selector).filter(Boolean))].slice(0, 5)
+  const subtype = inferChallengeSubtype(kind, observedText.join('\n'))
   return {
     kind,
+    subtype,
     hasChallenge: kind !== 'none',
     selectors,
     evidence: evidence.map(item => compact(item.text, 180)),
@@ -112,7 +145,7 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
   const timeoutMs = config.commandTimeoutMs ?? 60000
   const definition = defineTool({
     name: 'browser_detect_auth_challenge',
-    description: 'Detect common post-login human-verification challenges from safe DOM signals and visible text. On Windows, conventional image-code challenges may be locally recognized, filled, and submitted before classification is returned; sliders, OTP, passkeys, reCAPTCHA-style widgets, and unsupported challenges remain human handoffs.',
+    description: 'Detect common post-login human-verification challenges from safe DOM signals and visible text. The result includes a subtype such as image-code or click-sequence. On Windows, only conventional image-code inputs may be locally recognized, filled, and submitted; click-sequence CAPTCHAs, sliders, OTP, passkeys, reCAPTCHA-style widgets, and unsupported challenges remain human handoffs.',
     parameters: {
       tabId: optInt,
     },
@@ -124,13 +157,14 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
           ok: reqBool,
           hasChallenge: reqBool,
           kind: { type: 'string', required: true, enum: CHALLENGE_KINDS },
+          subtype: { type: 'string', required: true, enum: CHALLENGE_SUBTYPES },
           selectors: { type: 'array', required: true, items: str },
           autoFilled: bool,
         },
       },
       render: (_args, value) => [{
         type: 'text',
-        text: `Auth challenge: kind=${value.kind}; hasChallenge=${value.hasChallenge}${value.autoFilled ? '; simple image code filled by Windows system text recognition' : ''}${value.selectors?.length ? `; selectors=${value.selectors.join(', ')}` : ''}`,
+        text: `Auth challenge: kind=${value.kind}; subtype=${value.subtype}; hasChallenge=${value.hasChallenge}${value.autoFilled ? '; simple image code filled by Windows system text recognition' : ''}${value.selectors?.length ? `; selectors=${value.selectors.join(', ')}` : ''}`,
       }],
     },
     presentCall: args => ({ card: 'generic', title: 'Detect login verification', kind: 'other', rawInput: args }),
@@ -139,7 +173,10 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
       let classified = await observeAuthChallenge(bridge, args.tabId, options)
       let autoFilled = false
 
-      if (classified.kind === 'captcha' && process.platform === 'win32') {
+      if (classified.kind === 'captcha'
+        && classified.subtype !== 'click-sequence'
+        && classified.subtype !== 'third-party'
+        && process.platform === 'win32') {
         for (let attempt = 0; attempt < 2; attempt += 1) {
           let filled = false
           try {
@@ -157,16 +194,19 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
             // Navigation may briefly replace the page bridge after form submit.
             // Treat a successful local fill as handled and let subsequent login
             // assertions confirm whether authentication actually completed.
-            classified = { kind: 'none', hasChallenge: false, selectors: [], evidence: [] }
+            classified = { kind: 'none', subtype: 'none', hasChallenge: false, selectors: [], evidence: [] }
             break
           }
-          if (classified.kind !== 'captcha') break
+          if (classified.kind !== 'captcha'
+            || classified.subtype === 'click-sequence'
+            || classified.subtype === 'third-party') break
         }
       }
 
       return {
         ok: true,
         kind: classified.kind,
+        subtype: classified.subtype,
         hasChallenge: classified.hasChallenge,
         selectors: classified.selectors,
         autoFilled,
@@ -206,6 +246,18 @@ async function observeAuthChallenge(bridge, tabId, options) {
 
   const signalText = extraSignals.length > 0 ? `\n${extraSignals.join('\n')}` : ''
   return classifyAuthChallenge(snapshot, `${page.text || ''}${signalText}`)
+}
+
+function inferChallengeSubtype(kind, text) {
+  if (kind === 'none') return 'none'
+  if (kind === 'otp') return 'otp'
+  if (kind === 'slider') return 'slider'
+  if (kind === 'approval') return 'approval'
+  if (kind === 'unknown') return 'unknown'
+  if (matchesAny(text, CLICK_SEQUENCE_RULES)) return 'click-sequence'
+  if (matchesAny(text, THIRD_PARTY_RULES)) return 'third-party'
+  if (matchesAny(text, IMAGE_CODE_RULES)) return 'image-code'
+  return 'generic-captcha'
 }
 
 function matchesAny(text, rules) {
