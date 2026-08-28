@@ -32,6 +32,15 @@ describe('auth challenge classification', () => {
     expect(result.hasChallenge).toBe(true)
   })
 
+  it('detects an image or iframe CAPTCHA signal even when visible page text is empty', () => {
+    const result = classifyAuthChallenge(
+      { elements: [] },
+      'iframe captcha-frame https://www.google.com/recaptcha/api2/anchor',
+    )
+    expect(result.kind).toBe('captcha')
+    expect(result.hasChallenge).toBe(true)
+  })
+
   it('gives slider verification higher priority than generic captcha wording', () => {
     const result = classifyAuthChallenge({
       elements: [{ selector: '.geetest_slider_button', text: '拖动滑块完成验证', role: 'button' }],
