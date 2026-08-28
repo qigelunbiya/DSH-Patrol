@@ -74,6 +74,20 @@ describe('workspace Excel safety and adaptive updates', () => {
     expect(EXCEL_POWERSHELL).toContain('DSH Patrol Excel bridge failed:')
   })
 
+  it('treats per-cell COM formatting/type mismatches as warnings instead of aborting workbook inspection', () => {
+    expect(EXCEL_POWERSHELL).toContain('function Add-CellWarning')
+    expect(EXCEL_POWERSHELL).toContain('function Get-CellDisplayText')
+    expect(EXCEL_POWERSHELL).toContain('function Get-CellFormulaInfo')
+    expect(EXCEL_POWERSHELL).toContain('function Get-CellMergeInfo')
+    expect(EXCEL_POWERSHELL).toContain('function Get-CellNumberFormat')
+    expect(EXCEL_POWERSHELL).toContain('function Get-CellBold')
+    expect(EXCEL_POWERSHELL).toContain('function Get-CellWrapText')
+    expect(EXCEL_POWERSHELL).toContain("Add-CellWarning $warnings $address 'Cells.Item'")
+    expect(EXCEL_POWERSHELL).toContain('warnings = @($warnings)')
+    expect(PATROL_EXCEL_PROMPT).toContain('best-effort metadata')
+    expect(PATROL_EXCEL_PROMPT).toContain('do NOT invalidate')
+  })
+
   it('parses the embedded Excel PowerShell bridge on Windows', async () => {
     if (process.platform !== 'win32') return
     const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-excel-parse-'))
