@@ -1,4 +1,5 @@
 const SENSITIVE_INPUT = /(pass(word|wd)?|pwd|secret|token|api[-_]?key|authorization|cookie|session[-_]?id|otp|captcha|verification)/i
+const CHALLENGE_SIGNAL = /(captcha|recaptcha|hcaptcha|turnstile|geetest|slider|puzzle|human.?verify|verify.?human|verification.?code|otp|验证码|滑块|拼图|人机验证|机器人验证|二次验证|安全验证)/i
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== 'dsh-patrol:command') return
@@ -12,6 +13,7 @@ async function handle(cmd, args) {
   switch (cmd) {
     case 'snapshot': return snapshot(args)
     case 'readPage': return readPage(args)
+    case 'challengeSignals': return challengeSignals()
     case 'count': return count(args)
     case 'click': return click(args)
     case 'type': return typeText(args)
@@ -50,6 +52,38 @@ function readPage(args) {
   const maxChars = Number.isInteger(args.maxChars) ? Math.max(100, Math.min(args.maxChars, 100000)) : 20000
   const text = String(root.innerText || root.textContent || '').replace(/\u0000/g, '').trim()
   return { ok: true, url: location.href, title: document.title, text: text.slice(0, maxChars), truncated: text.length > maxChars }
+}
+
+function challengeSignals() {
+  const nodes = [...document.querySelectorAll('img,iframe,canvas,[id],[class],[aria-label],[title]')].slice(0, 600)
+  const signals = []
+  for (const element of nodes) {
+    const src = safeResourcePath(element.getAttribute('src'))
+    const raw = compactText([
+      element.tagName.toLowerCase(),
+      element.id || '',
+      typeof element.className === 'string' ? element.className : '',
+      element.getAttribute('name') || '',
+      element.getAttribute('role') || '',
+      element.getAttribute('aria-label') || '',
+      element.getAttribute('alt') || '',
+      element.getAttribute('title') || '',
+      src,
+    ].join(' '), 360)
+    if (raw && CHALLENGE_SIGNAL.test(raw)) signals.push(raw)
+    if (signals.length >= 40) break
+  }
+  return { ok: true, signals: [...new Set(signals)].slice(0, 40) }
+}
+
+function safeResourcePath(value) {
+  if (!value) return ''
+  try {
+    const url = new URL(value, location.href)
+    return `${url.origin}${url.pathname}`
+  } catch {
+    return String(value).split(/[?#]/, 1)[0]
+  }
 }
 
 function count(args) {
