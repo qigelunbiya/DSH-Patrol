@@ -41,7 +41,6 @@ const RULES = {
   slider: [
     /\bslider\b/i,
     /\bdrag\b.{0,30}\b(verify|verification|captcha|puzzle)\b/i,
-    /\bgeetest\b/i,
     /滑块/,
     /拖动.{0,20}(验证|拼图|滑块)/,
     /拼图.{0,20}(验证|滑块)/,
@@ -191,9 +190,6 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
           try {
             classified = await observeAuthChallenge(bridge, args.tabId, options)
           } catch {
-            // Navigation may briefly replace the page bridge after form submit.
-            // Treat a successful local fill as handled and let subsequent login
-            // assertions confirm whether authentication actually completed.
             classified = { kind: 'none', subtype: 'none', hasChallenge: false, selectors: [], evidence: [] }
             break
           }
@@ -240,8 +236,6 @@ async function observeAuthChallenge(bridge, tabId, options) {
       extraSignals = signalResult.signals.filter(item => typeof item === 'string').slice(0, 40)
     }
   } catch {
-    // Backward-compatible fallback for a briefly stale managed extension.
-    // Snapshot + visible text classification still works.
   }
 
   const signalText = extraSignals.length > 0 ? `\n${extraSignals.join('\n')}` : ''
