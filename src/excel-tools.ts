@@ -430,7 +430,7 @@ function Get-A1Address([int]$startRow, [int]$startColumn, [int]$endRow, [int]$en
   $start = "$(ConvertTo-ExcelColumnName $startColumn)$startRow"
   $finish = "$(ConvertTo-ExcelColumnName $endColumn)$endRow"
   if ($startRow -eq $endRow -and $startColumn -eq $endColumn) { return $start }
-  return "$start`:$finish"
+  return ($start + ':' + $finish)
 }
 
 function Inspect-Sheet($sheet, [int]$maxRows, [int]$maxColumns) {
@@ -569,7 +569,7 @@ try {
 } catch {
   $message = [string]$_.Exception.Message
   $position = if ($null -ne $_.InvocationInfo) { [string]$_.InvocationInfo.PositionMessage } else { '' }
-  $bridgeError = if ($position) { "$message`n$position" } else { $message }
+  $bridgeError = if ($position) { ($message + [Environment]::NewLine + $position) } else { $message }
 } finally {
   if ($null -ne $workbook) { try { $workbook.Close($false) } catch {}; Release-ComObject $workbook }
   if ($null -ne $excel) { try { $excel.Quit() } catch {}; Release-ComObject $excel }
