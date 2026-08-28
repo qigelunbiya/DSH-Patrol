@@ -4,6 +4,9 @@ import { assertSafeCheckpointPrompt, assertSafeForStorage, assertSafePersistentT
 
 const INSPECTION_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/
 const STEP_ID = /^step-\d{3,}$/
+const CHALLENGE_KINDS = ['otp', 'captcha', 'slider', 'approval', 'unknown'] as const
+const CHALLENGE_SUBTYPES = ['otp', 'image-code', 'click-sequence', 'third-party', 'generic-captcha', 'slider', 'slider-puzzle', 'rotate', 'approval', 'unknown'] as const
+const CHALLENGE_STRATEGIES = ['windows-system-ocr', 'manual-click-sequence', 'manual-slider', 'manual-third-party', 'manual-otp', 'manual-approval', 'manual-review'] as const
 
 export function assertInspectionId(id: string): void {
   if (!INSPECTION_ID.test(id)) {
@@ -42,6 +45,7 @@ export function assertInspectionDefinition(value: unknown): asserts value is Ins
     if (typeof authRecord.notes !== 'string') throw new Error('inspection.auth.notes must be a string')
     assertSafePersistentText(authRecord.notes, 'inspection.auth.notes')
   }
+  if (authRecord.challengeProfiles !== undefined) assertChallengeProfiles(authRecord.challengeProfiles)
 
   const schedule = candidate.schedule as unknown
   if (schedule !== null) {
@@ -77,6 +81,28 @@ export function assertInspectionDefinition(value: unknown): asserts value is Ins
       throw new Error(`step ${rawStep.id} condition must reference an earlier step; unavailable source ${rawStep.when.sourceStepId}`)
     }
     seen.add(rawStep.id)
+  }
+}
+
+function assertChallengeProfiles(value: unknown): void {
+  if (!Array.isArray(value)) throw new Error('inspection.auth.challengeProfiles must be an array')
+  if (value.length > 8) throw new Error('inspection.auth.challengeProfiles may contain at most 8 learned profiles')
+  const seen = new Set<string>()
+  for (let index = 0; index < value.length; index += 1) {
+    const profile = value[index]
+    if (profile === null || typeof profile !== 'object' || Array.isArray(profile)) throw new Error(`inspection.auth.challengeProfiles[${index}] must be an object`)
+    const record = profile as Record<string, unknown>
+    if (!(CHALLENGE_KINDS as readonly unknown[]).includes(record.kind)) throw new Error(`inspection.auth.challengeProfiles[${index}].kind is invalid`)
+    if (!(CHALLENGE_SUBTYPES as readonly unknown[]).includes(record.subtype)) throw new Error(`inspection.auth.challengeProfiles[${index}].subtype is invalid`)
+    if (!(CHALLENGE_STRATEGIES as readonly unknown[]).includes(record.strategy)) throw new Error(`inspection.auth.challengeProfiles[${index}].strategy is invalid`)
+    if (typeof record.firstObservedAt !== 'string' || typeof record.lastObservedAt !== 'string') throw new Error(`inspection.auth.challengeProfiles[${index}] timestamps are required`)
+    if (!Number.isInteger(record.occurrences) || Number(record.occurrences) < 1) throw new Error(`inspection.auth.challengeProfiles[${index}].occurrences must be a positive integer`)
+    if (!Number.isInteger(record.autoCompletedOccurrences) || Number(record.autoCompletedOccurrences) < 0 || Number(record.autoCompletedOccurrences) > Number(record.occurrences)) {
+      throw new Error(`inspection.auth.challengeProfiles[${index}].autoCompletedOccurrences is invalid`)
+    }
+    const key = `${String(record.kind)}/${String(record.subtype)}`
+    if (seen.has(key)) throw new Error(`inspection.auth.challengeProfiles contains duplicate ${key}`)
+    seen.add(key)
   }
 }
 
