@@ -142,31 +142,35 @@ export class PatrolStore {
     await atomicWrite(internal.json, `${JSON.stringify(report, null, 2)}\n`)
     await atomicWrite(internal.markdown, markdown)
 
-    // Learn only the non-secret challenge family/strategy from deterministic
-    // browser tool output. This lets later runs know which verification family
-    // was seen without persisting answers, screenshots, cookies, OTPs, or raw
-    // challenge payloads. Do not alter metadata.updatedAt: this is operational
-    // learning, not a semantic step edit, so pending resume invariants stay valid.
-    const definition = await this.load(report.inspectionId)
-    let learnedChallenge = false
-    for (const result of report.results) {
-      if (result.tool !== 'browser_detect_auth_challenge' || result.status !== 'passed') continue
-      learnedChallenge = rememberChallengeObservationFromText(definition, result.output, result.finishedAt) || learnedChallenge
+    // A real Patrol run always has a persisted inspection definition. Some
+    // lower-level runner tests deliberately execute an ephemeral definition
+    // without storing it first, so challenge-memory enrichment must remain
+    // optional and must never make report persistence depend on inspection.json.
+    let definition: InspectionDefinition | undefined
+    if (await this.exists(report.inspectionId)) {
+      definition = await this.load(report.inspectionId)
+      let learnedChallenge = false
+      for (const result of report.results) {
+        if (result.tool !== 'browser_detect_auth_challenge' || result.status !== 'passed') continue
+        learnedChallenge = rememberChallengeObservationFromText(definition, result.output, result.finishedAt) || learnedChallenge
+      }
+      if (learnedChallenge) await this.save(definition)
     }
-    if (learnedChallenge) await this.save(definition)
 
     if (workspaceRoot === undefined || workspaceRoot.trim() === '') return internal
     const visible = this.workspaceRunPaths(report.inspectionId, report.runId, workspaceRoot)
     await atomicWrite(visible.json, `${JSON.stringify(report, null, 2)}\n`)
     await atomicWrite(visible.markdown, markdown)
 
-    // Keep one canonical complete Runbook at patrol-results/<inspection>/runbook,
-    // and also snapshot the exact learned Runbook state used/updated by this run
-    // beside its report.
-    await this.saveWorkspaceRunbook(definition, workspaceRoot)
-    const runbookSnapshot = join(visible.directory, 'runbook')
-    await atomicWrite(join(runbookSnapshot, 'inspection.json'), `${JSON.stringify(definition, null, 2)}\n`)
-    await atomicWrite(join(runbookSnapshot, 'runbook.md'), renderRunbookMarkdown(definition))
+    // Runbook mirrors require an authoritative persisted definition. If a
+    // low-level test supplied only an ephemeral definition, keep the reports
+    // usable and simply omit mirrors; normal Patrol runs always take this path.
+    if (definition !== undefined) {
+      await this.saveWorkspaceRunbook(definition, workspaceRoot)
+      const runbookSnapshot = join(visible.directory, 'runbook')
+      await atomicWrite(join(runbookSnapshot, 'inspection.json'), `${JSON.stringify(definition, null, 2)}\n`)
+      await atomicWrite(join(runbookSnapshot, 'runbook.md'), renderRunbookMarkdown(definition))
+    }
     return visible
   }
 
