@@ -10,6 +10,7 @@
 // the sibling `inject` metadata before the preset is mounted.
 import { registerChallengeTool } from './challenge-tool.js'
 import { registerCountTool } from './count-tool.js'
+import { registerLoginStateTool } from './login-state-tool.js'
 import { registerTools } from './tools.js'
 
 export const name = 'dsh-patrol-browser-tools'
@@ -60,4 +61,7 @@ export async function apply(ctx, config = {}) {
   ctx.effect(() => registerChallengeTool(ctx, bridge, {
     commandTimeoutMs: config.commandTimeoutMs ?? 60000,
   }), 'dsh-patrol/browser-tools: scoped auth challenge detector')
+  ctx.effect(() => registerLoginStateTool(ctx, bridge, {
+    commandTimeoutMs: config.commandTimeoutMs ?? 60000,
+  }), 'dsh-patrol/browser-tools: scoped login-state detector')
 }
