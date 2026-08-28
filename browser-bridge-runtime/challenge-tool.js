@@ -110,7 +110,7 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
   const timeoutMs = config.commandTimeoutMs ?? 60000
   const definition = defineTool({
     name: 'browser_detect_auth_challenge',
-    description: 'Detect common post-login human-verification challenges from a safe page snapshot and visible text. This tool classifies only; it never solves, bypasses, OCRs, drags, or submits a challenge.',
+    description: 'Detect common post-login human-verification challenges from safe DOM signals and visible text. This tool classifies only; it never solves, bypasses, OCRs for an answer, drags, or submits a challenge.',
     parameters: {
       tabId: optInt,
     },
@@ -148,7 +148,20 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
       if (!page || typeof page !== 'object' || page.ok === false) {
         throw new Error(String(page?.error || 'auth challenge page read failed'))
       }
-      const classified = classifyAuthChallenge(snapshot, page.text || '')
+
+      let extraSignals = []
+      try {
+        const signalResult = await bridge.request('challengeSignals', { tabId: args.tabId }, options)
+        if (signalResult && typeof signalResult === 'object' && Array.isArray(signalResult.signals)) {
+          extraSignals = signalResult.signals.filter(item => typeof item === 'string').slice(0, 40)
+        }
+      } catch {
+        // Backward-compatible fallback for a briefly stale managed extension.
+        // Snapshot + visible text classification still works.
+      }
+
+      const signalText = extraSignals.length > 0 ? `\n${extraSignals.join('\n')}` : ''
+      const classified = classifyAuthChallenge(snapshot, `${page.text || ''}${signalText}`)
       return {
         ok: true,
         kind: classified.kind,
