@@ -90,7 +90,7 @@ export function registerPatrolHandoffTools(
         `Recorded ${screenshotStep.id} and ${checkpointStep.id}.`,
         `Current verification kind=${kind}; subtype=${subtype}.`,
         path === undefined ? 'Immediate verification screenshot was captured, but the provider returned no path.' : `Verification screenshot: ${path}`,
-        'Complete the verification manually in the managed browser, then resume Patrol.',
+        'Do not solve or submit the challenge automatically. Complete the verification manually in the managed browser, then resume Patrol.',
       ].join('\n')
     },
   })
