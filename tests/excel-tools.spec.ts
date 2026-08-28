@@ -3,10 +3,13 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  EXCEL_POWERSHELL,
   normalizeExcelUpdates,
   normalizeWorkbookLookupKey,
   resolveExistingWorkspaceXlsx,
+  resolveWorkspaceWorkbook,
   resolveWorkspaceXlsx,
+  workbookRefForPath,
 } from '../src/excel-tools.js'
 
 describe('workspace Excel safety and adaptive updates', () => {
@@ -31,6 +34,20 @@ describe('workspace Excel safety and adaptive updates', () => {
     }
   })
 
+  it('resolves Chinese and special-character workbook names through a stable ASCII workbookRef', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-excel-ref-'))
+    const exactName = '开发工作周报-方泽铭-2026年08月24日～2026年08月30日.xlsx'
+    try {
+      const exactPath = join(root, exactName)
+      await writeFile(exactPath, '')
+      const ref = workbookRefForPath(exactName)
+      expect(ref).toMatch(/^xlsx-[0-9a-f]{16}$/)
+      await expect(resolveWorkspaceWorkbook(root, ref)).resolves.toBe(exactPath)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('does not use normalized fallback to escape the current workspace', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-excel-root-'))
     try {
@@ -38,6 +55,12 @@ describe('workspace Excel safety and adaptive updates', () => {
     } finally {
       await rm(root, { recursive: true, force: true })
     }
+  })
+
+  it('avoids COM Range.Address optional-argument calls that can raise type mismatch on Excel hosts', () => {
+    expect(EXCEL_POWERSHELL).toContain('function Get-A1Address')
+    expect(EXCEL_POWERSHELL).not.toContain('.Address(')
+    expect(EXCEL_POWERSHELL).toContain('DSH Patrol Excel bridge failed:')
   })
 
   it('normalizes A1 cells and supports template-driven formatting reuse', () => {
