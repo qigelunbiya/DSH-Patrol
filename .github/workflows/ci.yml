@@ -60,6 +60,7 @@ jobs:
           grep -qx 'package/presets/patrol/agent.cordis.yml' .pack-check/contents.txt
           grep -qx 'package/scripts/install-local.ps1' .pack-check/contents.txt
           grep -qx 'package/scripts/uninstall-local.ps1' .pack-check/contents.txt
+          grep -qx 'package/scripts/set-patrol-credential.ps1' .pack-check/contents.txt
 
   windows-smoke:
     runs-on: windows-latest
@@ -97,7 +98,7 @@ jobs:
         shell: pwsh
         run: |
           $failed = $false
-          foreach ($path in @('scripts/install-local.ps1', 'scripts/uninstall-local.ps1')) {
+          foreach ($path in @('scripts/install-local.ps1', 'scripts/uninstall-local.ps1', 'scripts/set-patrol-credential.ps1')) {
             $tokens = $null
             $errors = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path), [ref]$tokens, [ref]$errors)
