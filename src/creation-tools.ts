@@ -37,7 +37,7 @@ export function registerPatrolCreationTools(ctx: Context, store: PatrolStore): (
       assertSafeForStorage({ url: args.targetUrl })
 
       const now = new Date().toISOString()
-      const workspaceRoot = exec.agent?.session.header.cwd
+      const workspaceRoot = exec?.agent?.session.header.cwd
       const definition: InspectionDefinition = {
         schemaVersion: '0.2',
         id: args.inspectionId,
