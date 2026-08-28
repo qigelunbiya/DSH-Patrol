@@ -141,6 +141,15 @@ New-Item -ItemType Directory -Force -Path $PatrolStorage | Out-Null
 New-Item -ItemType Directory -Force -Path $PatrolScreenshotDir | Out-Null
 Copy-LegacyPatrolData -LegacyRoot (Join-Path $DshHome "patrol") -WorkspaceRoot $PatrolStorage
 
+$CredentialHelperSource = Join-Path $ProjectRoot "scripts\set-patrol-credential.ps1"
+$CredentialHelperTarget = Join-Path $PatrolStorage "set-patrol-credential.ps1"
+Copy-Item -LiteralPath $CredentialHelperSource -Destination $CredentialHelperTarget -Force
+$CredentialHelperSourceHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $CredentialHelperSource).Hash
+$CredentialHelperTargetHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $CredentialHelperTarget).Hash
+if ($CredentialHelperSourceHash -ne $CredentialHelperTargetHash) {
+    throw "credential helper copy verification failed"
+}
+
 $PatrolIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "lib\index.js")))).AbsoluteUri
 $BridgeHostIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "browser-bridge-runtime\index.js")))).AbsoluteUri
 $BrowserToolsIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "browser-bridge-runtime\tools-plugin.js")))).AbsoluteUri
@@ -209,6 +218,7 @@ Write-Host "Host browser bridge patch installed: $WebPatch" -ForegroundColor Gre
 Write-Host "Lifecycle cleanup coordinator installed: $CleanupTarget" -ForegroundColor Green
 Write-Host "Patrol workspace storage: $PatrolStorage" -ForegroundColor Green
 Write-Host "Patrol screenshot temp storage: $PatrolScreenshotDir" -ForegroundColor Green
+Write-Host "Patrol credential helper: $CredentialHelperTarget" -ForegroundColor Green
 Write-Host "Browser provisioning: automatic managed Chromium profile; no manual extension installation is required." -ForegroundColor Green
 if ($HarnessRoot) {
     Write-Host "Start Harness with:" -ForegroundColor Cyan
