@@ -37,7 +37,7 @@ export interface ToolStep {
   expectation?: TextExpectation
   when?: StepCondition
   locator?: SemanticLocator
-  artifact?: StepArtifactKind
+  artifact?: StepArtifactKind | undefined
   sensitive?: boolean
   notes?: string
   recordedAt: string
