@@ -1,7 +1,9 @@
 import { chmod, copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
-import { basename, dirname, extname, join } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { assertInspectionDefinition, assertInspectionId } from './validation.js'
 import type { InspectionDefinition, ResumeState, RunReport, SavedRunPaths } from './types.js'
+
+const WORKSPACE_OUTPUT_ROOT = 'patrol-results'
 
 export class PatrolStore {
   constructor(readonly root: string) {}
@@ -35,14 +37,19 @@ export class PatrolStore {
     return join(this.runDirectory(inspectionId, runId), 'report.md')
   }
 
-  workspaceRunPaths(inspectionId: string, runId: string, workspaceRoot: string): SavedRunPaths {
+  workspaceRunDirectory(inspectionId: string, runId: string, workspaceRoot: string): string {
     assertInspectionId(inspectionId)
     if (!/^[A-Za-z0-9._-]+$/.test(runId)) throw new Error('invalid runId')
-    const stem = `patrol-${inspectionId}-${runId}`
+    return join(workspaceRoot, WORKSPACE_OUTPUT_ROOT, inspectionId, runId)
+  }
+
+  workspaceRunPaths(inspectionId: string, runId: string, workspaceRoot: string): SavedRunPaths {
+    const directory = this.workspaceRunDirectory(inspectionId, runId, workspaceRoot)
+    const reports = join(directory, 'reports')
     return {
-      directory: workspaceRoot,
-      json: join(workspaceRoot, `${stem}-report.json`),
-      markdown: join(workspaceRoot, `${stem}-report.md`),
+      directory,
+      json: join(reports, 'report.json'),
+      markdown: join(reports, 'report.md'),
     }
   }
 
@@ -167,8 +174,9 @@ export class PatrolStore {
     await writeFile(internal, content, { encoding: 'utf8', mode: 0o600 })
     if (workspaceRoot === undefined || workspaceRoot.trim() === '') return internal
 
-    await mkdir(workspaceRoot, { recursive: true })
-    const visible = join(workspaceRoot, visibleArtifactName(inspectionId, runId, safeName))
+    const visibleDirectory = join(this.workspaceRunDirectory(inspectionId, runId, workspaceRoot), 'page-text')
+    await mkdir(visibleDirectory, { recursive: true })
+    const visible = join(visibleDirectory, safeName)
     await writeFile(visible, content, { encoding: 'utf8', mode: 0o600 })
     return visible
   }
@@ -190,10 +198,29 @@ export class PatrolStore {
     await chmod(internal, 0o600)
     if (workspaceRoot === undefined || workspaceRoot.trim() === '') return internal
 
-    await mkdir(workspaceRoot, { recursive: true })
-    const visible = join(workspaceRoot, visibleArtifactName(inspectionId, runId, safeName))
+    const category = imageArtifactExtension(extname(safeName)) ? 'screenshots' : 'artifacts'
+    const visibleDirectory = join(this.workspaceRunDirectory(inspectionId, runId, workspaceRoot), category)
+    await mkdir(visibleDirectory, { recursive: true })
+    const visible = join(visibleDirectory, safeName)
     await copyFile(sourcePath, visible)
     await chmod(visible, 0o600)
+    await cleanupLooseWorkspaceSource(sourcePath, workspaceRoot, visible)
+    return visible
+  }
+
+  async organizeTeachingScreenshot(inspectionId: string, sourcePath: string, workspaceRoot: string): Promise<string> {
+    assertInspectionId(inspectionId)
+    const sourceExt = extname(sourcePath)
+    const fallbackExt = sourceExt.length > 0 ? sourceExt : '.png'
+    const safeName = sanitizeArtifactName(basename(sourcePath), fallbackExt)
+    const directory = join(workspaceRoot, WORKSPACE_OUTPUT_ROOT, inspectionId, 'teaching', 'screenshots')
+    await mkdir(directory, { recursive: true })
+    const visible = join(directory, safeName)
+    if (resolve(sourcePath) !== resolve(visible)) {
+      await copyFile(sourcePath, visible)
+      await chmod(visible, 0o600)
+      await cleanupLooseWorkspaceSource(sourcePath, workspaceRoot, visible)
+    }
     return visible
   }
 }
@@ -205,13 +232,22 @@ async function atomicWrite(path: string, content: string): Promise<void> {
   await rename(temp, path)
 }
 
-function visibleArtifactName(inspectionId: string, runId: string, safeName: string): string {
-  return sanitizeArtifactName(`patrol-${inspectionId}-${runId}-${safeName}`, extname(safeName) || '.bin')
-}
-
 function sanitizeArtifactName(name: string, fallbackExt: string): string {
   const base = basename(name).replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '') || `artifact${fallbackExt}`
   return extname(base).length === 0 ? `${base}${fallbackExt}` : base
+}
+
+function imageArtifactExtension(extension: string): boolean {
+  return ['.png', '.jpg', '.jpeg', '.webp'].includes(extension.toLowerCase())
+}
+
+async function cleanupLooseWorkspaceSource(sourcePath: string, workspaceRoot: string, destinationPath: string): Promise<void> {
+  const root = resolve(workspaceRoot)
+  const source = resolve(sourcePath)
+  if (source === resolve(destinationPath)) return
+  const rel = relative(root, source)
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return
+  await rm(source, { force: true })
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
