@@ -247,6 +247,20 @@ export class PatrolRunner {
       return failedResult(step, startedAt, errorMessage(error))
     }
 
+    const reusedSession = await this.reuseAuthenticatedSession(step, exec)
+    if (reusedSession !== undefined) {
+      return {
+        stepId: step.id,
+        name: step.name,
+        kind: 'tool',
+        tool: step.tool,
+        status: 'passed',
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        output: reusedSession,
+      }
+    }
+
     let dispatched = await this.dispatch(step.tool, runtimeArguments, exec)
     let healedSelector: string | undefined
 
@@ -326,6 +340,15 @@ export class PatrolRunner {
       ...(healedSelector === undefined ? {} : { healedSelector }),
     }
   }
+
+  private async reuseAuthenticatedSession(step: ToolStep, exec: ToolRunContext): Promise<string | undefined> {
+    if (!looksLikeLoginStep(step)) return undefined
+    const tabId = typeof step.arguments.tabId === 'number' ? step.arguments.tabId : undefined
+    const state = await this.dispatch('browser_login_state', tabId === undefined ? {} : { tabId }, exec)
+    if (!state.ok || objectString(state.value, 'state') !== 'authenticated') return undefined
+    const url = objectString(state.value, 'url') ?? '(current application page)'
+    return `Existing authenticated managed-browser session detected at ${url}. Reused the persistent Patrol browser profile and skipped this redundant login step; no cookie value was exposed or rewritten.`
+  }
 }
 
 function prepareRuntimeArguments(step: ToolStep): JsonObject {
@@ -343,6 +366,18 @@ function prepareRuntimeArguments(step: ToolStep): JsonObject {
   const ref = credentialReferenceName(raw) ?? (/^[A-Za-z_][A-Za-z0-9_]*$/.test(raw) ? raw : undefined)
   if (ref === undefined) throw new Error('browser_type_credential credentialRef must be ${credential:REF} or a valid Harness credential reference name')
   return Object.fromEntries(Object.entries(step.arguments).filter(([key]) => key !== 'text').map(([key, value]) => [key, key === 'credentialRef' ? ref : value])) as JsonObject
+}
+
+function looksLikeLoginStep(step: ToolStep): boolean {
+  if (!['browser_type', 'browser_type_credential', 'browser_click'].includes(step.tool)) return false
+  const hint = [
+    step.name,
+    typeof step.arguments.selector === 'string' ? step.arguments.selector : '',
+    step.locator?.text ?? '',
+    step.locator?.role ?? '',
+    step.locator?.tag ?? '',
+  ].join(' ')
+  return /(login|log[-_ ]?in|sign[-_ ]?in|signin|password|passwd|pwd|username|user[-_ ]?name|登录|登陆|用户名|密码)/i.test(hint)
 }
 
 function collectCredentialPlaceholders(value: JsonValue, refs: string[]): void {
