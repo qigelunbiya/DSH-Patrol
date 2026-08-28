@@ -39,6 +39,7 @@
     "cleanup-runtime/**/*",
     "scripts/install-local.ps1",
     "scripts/uninstall-local.ps1",
+    "scripts/set-patrol-credential.ps1",
     "README.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md"
