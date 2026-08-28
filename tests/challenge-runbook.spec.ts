@@ -81,6 +81,8 @@ describe('Runbook verification memory', () => {
     expect(json).toContain('"slider-puzzle"')
     expect(markdown).toContain('Learned verification profiles')
     expect(markdown).toContain('manual-slider')
-    expect(markdown).not.toMatch(/cookie=|otp=|captcha answer/i)
+    // Safety documentation may name these secret classes. What must never
+    // appear is an assignment/value-shaped persisted secret.
+    expect(markdown).not.toMatch(/cookie\s*=|otp\s*=|captcha[-_ ]?answer\s*=/i)
   })
 })
