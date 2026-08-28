@@ -12,6 +12,7 @@ describe('auth challenge classification', () => {
       ],
     }, 'Welcome\nPlease log in to continue.')
     expect(result.kind).toBe('none')
+    expect(result.subtype).toBe('none')
     expect(result.hasChallenge).toBe(false)
   })
 
@@ -23,6 +24,7 @@ describe('auth challenge classification', () => {
       ],
     }, 'Enter the verification code sent to your device.')
     expect(result.kind).toBe('otp')
+    expect(result.subtype).toBe('otp')
     expect(result.hasChallenge).toBe(true)
     expect(result.selectors).toContain('input[name="otp"]')
   })
@@ -30,6 +32,7 @@ describe('auth challenge classification', () => {
   it('detects graphical CAPTCHA text without solving it in the classifier', () => {
     const result = classifyAuthChallenge({ elements: [] }, 'Security check\nComplete the reCAPTCHA to continue.')
     expect(result.kind).toBe('captcha')
+    expect(result.subtype).toBe('third-party')
     expect(result.hasChallenge).toBe(true)
   })
 
@@ -39,7 +42,27 @@ describe('auth challenge classification', () => {
       'iframe captcha-frame https://www.google.com/recaptcha/api2/anchor',
     )
     expect(result.kind).toBe('captcha')
+    expect(result.subtype).toBe('third-party')
     expect(result.hasChallenge).toBe(true)
+  })
+
+  it('recognizes click-sequence CAPTCHA wording as a dedicated human-handoff subtype', () => {
+    const result = classifyAuthChallenge(
+      { elements: [{ selector: '.geetest_panel', text: '请在下图依次点击文字', role: 'dialog' }] },
+      '请在下图依次点击：目标文字，然后点击确认',
+    )
+    expect(result.kind).toBe('captcha')
+    expect(result.subtype).toBe('click-sequence')
+    expect(result.hasChallenge).toBe(true)
+  })
+
+  it('classifies conventional image-code wording separately', () => {
+    const result = classifyAuthChallenge(
+      { elements: [{ selector: 'input[name="captcha_code"]', name: 'captcha_code', type: 'text', text: '' }] },
+      '请输入图形验证码',
+    )
+    expect(result.kind).toBe('captcha')
+    expect(result.subtype).toBe('image-code')
   })
 
   it('gives slider verification higher priority than generic captcha wording', () => {
@@ -47,12 +70,14 @@ describe('auth challenge classification', () => {
       elements: [{ selector: '.geetest_slider_button', text: '拖动滑块完成验证', role: 'button' }],
     }, '人机验证：请拖动滑块完成拼图验证')
     expect(result.kind).toBe('slider')
+    expect(result.subtype).toBe('slider')
     expect(result.selectors).toContain('.geetest_slider_button')
   })
 
   it('detects passkey or device approval flows', () => {
     const result = classifyAuthChallenge({ elements: [] }, 'Use your passkey or security key to approve sign-in.')
     expect(result.kind).toBe('approval')
+    expect(result.subtype).toBe('approval')
     expect(result.hasChallenge).toBe(true)
   })
 
