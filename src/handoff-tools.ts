@@ -21,7 +21,7 @@ export function registerPatrolHandoffTools(
 ): () => void {
   const handoff = defineTool({
     name: 'patrol_prepare_verification_handoff',
-    description: 'Record the standard human-verification handoff after a patrol_detect_auth_challenge step: conditional screenshot, then conditional checkpoint. If a challenge is visible now, also capture an immediate workspace-temp screenshot and return its path. This tool never solves or submits the challenge.',
+    description: 'Record the standard human-verification handoff after a patrol_detect_auth_challenge step: conditional screenshot, then conditional checkpoint. If a challenge is visible now, also capture an immediate workspace screenshot and return its path and detected subtype. This tool never solves or submits the challenge.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       detectorStepId: { type: 'string', required: true, description: 'Existing browser_detect_auth_challenge step id.' },
@@ -49,10 +49,6 @@ export function registerPatrolHandoffTools(
         kind: 'tool',
         name: 'Capture human-verification evidence',
         tool: 'browser_screenshot',
-        // tabId is intentionally NOT persisted. Replays use the active Patrol
-        // tab after the preceding navigation/login steps. A tab id is ephemeral
-        // to one managed-browser session and is valid only for the immediate
-        // teaching-time evidence calls below.
         arguments: { format: 'png' },
         when: condition,
         artifact: 'screenshot',
@@ -80,20 +76,21 @@ export function registerPatrolHandoffTools(
         return `Recorded ${screenshotStep.id} and ${checkpointStep.id}. Current challenge re-check failed: ${detected.error ?? detected.text}`
       }
       const kind = objectString(detected.value, 'kind') ?? challengeKindFromText(detected.text)
+      const subtype = objectString(detected.value, 'subtype') ?? challengeSubtypeFromText(detected.text)
       if (kind === 'none') {
         return `Recorded ${screenshotStep.id} and ${checkpointStep.id}. No human verification is visible right now; future runs will automatically screenshot and pause if one appears.`
       }
 
       const shot = await runner.dispatch('browser_screenshot', compactObject({ tabId: args.tabId, format: 'png' }), exec)
       if (!shot.ok) {
-        return `Recorded ${screenshotStep.id} and ${checkpointStep.id}. Current verification kind=${kind}, but immediate evidence capture failed: ${shot.error ?? shot.text}`
+        return `Recorded ${screenshotStep.id} and ${checkpointStep.id}. Current verification kind=${kind}; subtype=${subtype}, but immediate evidence capture failed: ${shot.error ?? shot.text}`
       }
       const path = objectString(shot.value, 'path')
       return [
         `Recorded ${screenshotStep.id} and ${checkpointStep.id}.`,
-        `Current verification kind=${kind}.`,
-        path === undefined ? 'Immediate verification screenshot was captured, but the provider returned no path.' : `Temporary verification screenshot: ${path}`,
-        'Do not solve or submit the challenge automatically. The user can inspect the saved image and complete the verification in the managed browser, then resume Patrol.',
+        `Current verification kind=${kind}; subtype=${subtype}.`,
+        path === undefined ? 'Immediate verification screenshot was captured, but the provider returned no path.' : `Verification screenshot: ${path}`,
+        'Complete the verification manually in the managed browser, then resume Patrol.',
       ].join('\n')
     },
   })
@@ -130,5 +127,10 @@ function objectString(value: unknown, key: string): string | undefined {
 
 function challengeKindFromText(text: string): string {
   const match = /\bkind=(none|otp|captcha|slider|approval|unknown)\b/i.exec(text)
+  return match?.[1]?.toLowerCase() ?? 'unknown'
+}
+
+function challengeSubtypeFromText(text: string): string {
+  const match = /\bsubtype=([a-z-]+)\b/i.exec(text)
   return match?.[1]?.toLowerCase() ?? 'unknown'
 }
