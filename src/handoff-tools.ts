@@ -25,7 +25,7 @@ export function registerPatrolHandoffTools(
     parameters: {
       inspectionId: { type: 'string', required: true },
       detectorStepId: { type: 'string', required: true, description: 'Existing browser_detect_auth_challenge step id.' },
-      tabId: { type: 'integer' },
+      tabId: { type: 'integer', description: 'Optional current teaching-session tab id. Used only for the immediate evidence re-check/capture and never persisted in the Runbook.' },
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
@@ -49,7 +49,11 @@ export function registerPatrolHandoffTools(
         kind: 'tool',
         name: 'Capture human-verification evidence',
         tool: 'browser_screenshot',
-        arguments: compactObject({ tabId: args.tabId, format: 'png' }),
+        // tabId is intentionally NOT persisted. Replays use the active Patrol
+        // tab after the preceding navigation/login steps. A tab id is ephemeral
+        // to one managed-browser session and is valid only for the immediate
+        // teaching-time evidence calls below.
+        arguments: { format: 'png' },
         when: condition,
         artifact: 'screenshot',
         notes: 'Automatic evidence capture before human verification handoff.',
