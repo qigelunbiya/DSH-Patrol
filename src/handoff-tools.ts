@@ -1,5 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
-import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
+import { defineTool } from '@deepseek-ai/dsh-tools'
 import { PatrolRunner } from './runner.js'
 import { PatrolStore } from './store.js'
 import type { CheckpointStep, InspectionDefinition, InspectionStep, JsonObject, ToolStep } from './types.js'
