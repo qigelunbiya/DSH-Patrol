@@ -44,11 +44,12 @@ async function setup(configured: boolean) {
 describe('Patrol credential setup helper', () => {
   it('does not expose a plaintext secret parameter', async () => {
     const { tool } = await setup(false)
-    expect(tool.parameters.credentialRef).toBeDefined()
-    expect(tool.parameters.password).toBeUndefined()
-    expect(tool.parameters.secret).toBeUndefined()
-    expect(tool.parameters.value).toBeUndefined()
-    expect(tool.parameters.text).toBeUndefined()
+    const schemaText = JSON.stringify(tool.parameters)
+    expect(schemaText).toContain('credentialRef')
+    expect(schemaText).not.toMatch(/"password"\s*:/i)
+    expect(schemaText).not.toMatch(/"secret"\s*:/i)
+    expect(schemaText).not.toMatch(/"value"\s*:/i)
+    expect(schemaText).not.toMatch(/"text"\s*:/i)
   })
 
   it('returns the workspace-local hidden-input helper when a ref is missing', async () => {
