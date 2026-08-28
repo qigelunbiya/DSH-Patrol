@@ -12,14 +12,20 @@ afterEach(async () => {
 })
 
 describe('workspace-visible Patrol outputs', () => {
-  it('keeps an internal run archive while grouping reports under patrol-results/<inspection>/<run>/reports', async () => {
+  it('keeps an internal run archive while grouping reports and teaching screenshots below patrol-results/<inspection>/', async () => {
     const temp = await mkdtemp(join(tmpdir(), 'dsh-patrol-output-'))
     cleanup.push(temp)
     const store = new PatrolStore(join(temp, 'internal'))
     const workspace = join(temp, 'workspace')
     await store.init()
     await mkdir(workspace, { recursive: true })
-    await writeFile(join(workspace, 'screenshot-teaching.png'), Buffer.from([9, 8, 7]))
+    const looseTeaching = join(workspace, 'screenshot-teaching.png')
+    await writeFile(looseTeaching, Buffer.from([9, 8, 7]))
+
+    const teaching = await store.organizeTeachingScreenshot('weekly', looseTeaching, workspace)
+    expect(teaching).toBe(join(workspace, 'patrol-results', 'weekly', 'teaching', 'screenshots', 'screenshot-teaching.png'))
+    expect(await readFile(teaching)).toEqual(Buffer.from([9, 8, 7]))
+    await expect(readFile(looseTeaching)).rejects.toThrow()
 
     const report: RunReport = {
       schemaVersion: '0.2',
@@ -40,8 +46,6 @@ describe('workspace-visible Patrol outputs', () => {
     expect(visible.markdown).toBe(join(runRoot, 'reports', 'report.md'))
     expect(visible.json).toBe(join(runRoot, 'reports', 'report.json'))
     expect(await readFile(visible.markdown, 'utf8')).toBe('# report\n')
-    expect(await readFile(join(runRoot, 'screenshots', 'teaching', 'screenshot-teaching.png'))).toEqual(Buffer.from([9, 8, 7]))
-    await expect(readFile(join(workspace, 'screenshot-teaching.png'))).rejects.toThrow()
     expect(JSON.parse(await readFile(store.runJsonPath('weekly', 'run-001'), 'utf8')).inspectionId).toBe('weekly')
   })
 
