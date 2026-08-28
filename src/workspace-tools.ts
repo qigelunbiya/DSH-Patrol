@@ -12,7 +12,7 @@ const TEXT_OUTPUT = {
 export function registerPatrolWorkspaceTools(ctx: Context, store: PatrolStore): () => void {
   const paths = defineTool({
     name: 'patrol_paths',
-    description: 'Show the current Harness workspace, user-visible Patrol outputs, and separate internal Patrol state paths. Call this before the final reply and whenever a patrol pauses for human verification.',
+    description: 'Show the current Harness workspace, user-visible Patrol outputs, complete reusable Runbook files, and separate internal Patrol state paths. Call this before the final reply and whenever a patrol pauses for human verification.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       runId: { type: 'string', description: 'Optional exact run id. Omit to inspect the latest saved run.' },
@@ -33,6 +33,11 @@ export function registerPatrolWorkspaceTools(ctx: Context, store: PatrolStore): 
 
       const workspaceForRecent = currentWorkspace ?? definition.metadata.workspaceRoot
       if (workspaceForRecent !== undefined) {
+        const runbook = store.workspaceRunbookPaths(definition.id, workspaceForRecent)
+        lines.push(
+          `Reusable Runbook JSON: ${runbook.json}`,
+          `Reusable Runbook Markdown: ${runbook.markdown}`,
+        )
         const recentWorkspaceScreenshots = await latestWorkspaceScreenshots(workspaceForRecent)
         if (recentWorkspaceScreenshots.length > 0) {
           lines.push('Recent screenshots in user workspace:')
@@ -56,6 +61,8 @@ export function registerPatrolWorkspaceTools(ctx: Context, store: PatrolStore): 
             `User-visible output workspace: ${outputWorkspace}`,
             `Markdown report: ${visible.markdown}`,
             `JSON report: ${visible.json}`,
+            `Runbook snapshot JSON: ${join(visible.directory, 'runbook', 'inspection.json')}`,
+            `Runbook snapshot Markdown: ${join(visible.directory, 'runbook', 'runbook.md')}`,
           )
         } else {
           lines.push(
