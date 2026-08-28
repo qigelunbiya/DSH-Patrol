@@ -87,6 +87,7 @@ async function handleCommand(cmd, args) {
       return await screenshot(args)
     case 'snapshot':
     case 'readPage':
+    case 'challengeSignals':
     case 'count':
     case 'click':
     case 'type':
@@ -178,9 +179,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || (!changes.bridgeUrl && !changes.autoConnect)) return
-  try { socket?.close() } catch {}
+  socket?.close()
   socket = null
   connect(false)
 })
 
+chrome.runtime.onStartup.addListener(() => connect(false))
+chrome.runtime.onInstalled.addListener(() => connect(false))
 connect(false)
