@@ -180,6 +180,33 @@ function createDefinitions(store: PatrolStore, runner: PatrolRunner, options: Pa
     },
   })
 
+  const loginState = defineTool({
+    name: 'patrol_login_state',
+    description: 'Detect and record whether the current page already has an authenticated Patrol browser session or visibly requires login. Use immediately after target navigation; condition credential/login-click steps on login-state=login-required so persistent browser cookies are reused instead of logging in repeatedly.',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+      stepName: { type: 'string', required: true },
+      tabId: { type: 'integer' },
+      conditionSourceStepId: { type: 'string' },
+      conditionExpectedText: { type: 'string' },
+      conditionMode: { type: 'string', enum: ['contains', 'not-contains'] },
+      notes: { type: 'string' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      return await recordAction(store, runner, options.maxSteps, exec, {
+        inspectionId: args.inspectionId,
+        stepName: args.stepName,
+        ...(args.conditionSourceStepId === undefined ? {} : { conditionSourceStepId: args.conditionSourceStepId }),
+        ...(args.conditionExpectedText === undefined ? {} : { conditionExpectedText: args.conditionExpectedText }),
+        ...(args.conditionMode === undefined ? {} : { conditionMode: args.conditionMode }),
+        ...(args.notes === undefined ? {} : { notes: args.notes }),
+        tool: 'browser_login_state',
+        browserArgs: compactObject({ tabId: args.tabId }),
+      })
+    },
+  })
+
   const detectAuthChallenge = defineTool({
     name: 'patrol_detect_auth_challenge',
     description: 'Classify whether the current login flow shows secondary human verification and record the classification. It detects only; it does not solve or bypass challenges.',
@@ -354,7 +381,7 @@ function createDefinitions(store: PatrolStore, runner: PatrolRunner, options: Pa
     },
   })
 
-  return [navigate, snapshot, readPage, count, detectAuthChallenge, click, press, scroll, wait, screenshot]
+  return [navigate, snapshot, readPage, count, loginState, detectAuthChallenge, click, press, scroll, wait, screenshot]
 }
 
 async function recordAction(
