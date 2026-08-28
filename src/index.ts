@@ -1,24 +1,27 @@
+import { resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
-import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
 import { PATROL_SYSTEM_PROMPT } from './prompt.js'
 import { PatrolRunner } from './runner.js'
+import { PatrolScheduler, registerPatrolScheduleTools } from './scheduler.js'
 import { PatrolStore } from './store.js'
 import { registerPatrolTools } from './tools.js'
+import { registerPatrolWorkspaceTools } from './workspace-tools.js'
 
 export * from './types.js'
 export * from './browser.js'
 export * from './security.js'
+export * from './scheduler.js'
 export { PatrolStore } from './store.js'
 export { PatrolRunner, conditionMatches, evaluateExpectation } from './runner.js'
 
 export const name = 'dsh-patrol'
 export const inject = ['tools']
 
-const DEFAULT_STORAGE_PATH = dshHomePath('patrol')
+const DEFAULT_STORAGE_PATH = resolve(process.cwd(), '.dsh-patrol')
 const DEFAULT_MAX_STEPS = 200
 const DEFAULT_REPORT_MAX_CHARS = 30_000
 
@@ -45,7 +48,7 @@ interface ResolvedConfig {
 
 export function resolveConfig(config: Config): ResolvedConfig {
   const resolved: ResolvedConfig = {
-    storagePath: config.storagePath ?? DEFAULT_STORAGE_PATH,
+    storagePath: resolve(config.storagePath ?? DEFAULT_STORAGE_PATH),
     maxSteps: config.maxSteps ?? DEFAULT_MAX_STEPS,
     reportMaxChars: config.reportMaxChars ?? DEFAULT_REPORT_MAX_CHARS,
   }
@@ -71,6 +74,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     }),
     'dsh-patrol: patrol tools',
   )
+  ctx.effect(() => registerPatrolWorkspaceTools(ctx, store), 'dsh-patrol: workspace path tools')
+  ctx.effect(() => registerPatrolScheduleTools(ctx, store), 'dsh-patrol: schedule tools')
+
+  const scheduler = new PatrolScheduler(ctx, store)
+  ctx.effect(() => scheduler.start(), 'dsh-patrol: scheduled patrol runner')
 
   // Browser provider tools live in the Patrol preset so nested dispatch can use
   // them, but model-direct browser calls would bypass recording. Deny only root
@@ -89,5 +97,5 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     }), 'dsh-patrol: agent workflow prompt')
   }
 
-  ctx.logger.info(`dsh-patrol ready; storage=${resolved.storagePath}; exact browser allowlist enabled`)
+  ctx.logger.info(`dsh-patrol ready; workspace storage=${resolved.storagePath}; scheduler=enabled; exact browser allowlist enabled`)
 }
