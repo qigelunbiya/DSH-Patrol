@@ -85,7 +85,15 @@ export function registerPatrolHandoffTools(
       if (!shot.ok) {
         return `Recorded ${screenshotStep.id} and ${checkpointStep.id}. Current verification kind=${kind}; subtype=${subtype}, but immediate evidence capture failed: ${shot.error ?? shot.text}`
       }
-      const path = objectString(shot.value, 'path')
+      let path = objectString(shot.value, 'path')
+      const workspaceRoot = exec.agent?.session.header.cwd
+      if (path !== undefined && workspaceRoot !== undefined && workspaceRoot.trim() !== '') {
+        try {
+          path = await store.organizeTeachingScreenshot(args.inspectionId, path, workspaceRoot)
+        } catch {
+          // Keep the provider path as a fallback if workspace organization fails.
+        }
+      }
       return [
         `Recorded ${screenshotStep.id} and ${checkpointStep.id}.`,
         `Current verification kind=${kind}; subtype=${subtype}.`,
