@@ -18,5 +18,6 @@
 - id: dsh-patrol
   name: 'dsh-patrol'
   config:
+    storagePath: .dsh-patrol
     maxSteps: 200
     reportMaxChars: 30000
