@@ -82,9 +82,7 @@ export function classifyAuthChallenge(snapshotValue, pageText = '') {
     ].filter(value => typeof value === 'string').join(' '), 320)
     if (!text) continue
     for (const kind of KIND_ORDER) {
-      if (matchesAny(text, RULES[kind])) {
-        evidenceByKind.get(kind).push({ selector, text })
-      }
+      if (matchesAny(text, RULES[kind])) evidenceByKind.get(kind).push({ selector, text })
     }
   }
 
@@ -125,12 +123,11 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
           hasChallenge: reqBool,
           kind: { type: 'string', required: true, enum: CHALLENGE_KINDS },
           selectors: { type: 'array', required: true, items: str },
-          evidence: { type: 'array', required: true, items: str },
         },
       },
       render: (_args, value) => [{
         type: 'text',
-        text: `Auth challenge: kind=${value.kind}; hasChallenge=${value.hasChallenge}${value.selectors?.length ? `; selectors=${value.selectors.join(', ')}` : ''}${value.evidence?.length ? `; evidence=${value.evidence.join(' | ')}` : ''}`,
+        text: `Auth challenge: kind=${value.kind}; hasChallenge=${value.hasChallenge}${value.selectors?.length ? `; selectors=${value.selectors.join(', ')}` : ''}`,
       }],
     },
     presentCall: args => ({ card: 'generic', title: 'Detect login verification', kind: 'other', rawInput: args }),
@@ -152,7 +149,12 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
         throw new Error(String(page?.error || 'auth challenge page read failed'))
       }
       const classified = classifyAuthChallenge(snapshot, page.text || '')
-      return { ok: true, ...classified }
+      return {
+        ok: true,
+        kind: classified.kind,
+        hasChallenge: classified.hasChallenge,
+        selectors: classified.selectors,
+      }
     },
   })
   return ctx.tools.register(definition)
