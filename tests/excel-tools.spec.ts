@@ -1,6 +1,13 @@
-import { resolve } from 'node:path'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { normalizeExcelUpdates, resolveWorkspaceXlsx } from '../src/excel-tools.js'
+import {
+  normalizeExcelUpdates,
+  normalizeWorkbookLookupKey,
+  resolveExistingWorkspaceXlsx,
+  resolveWorkspaceXlsx,
+} from '../src/excel-tools.js'
 
 describe('workspace Excel safety and adaptive updates', () => {
   it('allows only xlsx files inside the current workspace', () => {
@@ -8,6 +15,29 @@ describe('workspace Excel safety and adaptive updates', () => {
     expect(resolveWorkspaceXlsx(root, 'reports/week.xlsx')).toBe(resolve(root, 'reports/week.xlsx'))
     expect(() => resolveWorkspaceXlsx(root, '../escape.xlsx')).toThrow(/inside the current Harness workspace/)
     expect(() => resolveWorkspaceXlsx(root, 'week.xls')).toThrow(/xlsx/)
+  })
+
+  it('normalizes harmless model filename drift for Chinese weekly-report names', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-excel-path-'))
+    const exactName = '开发工作周报-方泽铭-2026年08月24日~2026年08月30日.xlsx'
+    const rewrittenName = '开发工作周报 - 方泽铭 -2026 年 08 月 24 日\\~2026 年 08 月 30 日.xlsx'
+    try {
+      const exactPath = join(root, exactName)
+      await writeFile(exactPath, '')
+      expect(normalizeWorkbookLookupKey(rewrittenName)).toBe(normalizeWorkbookLookupKey(exactName))
+      await expect(resolveExistingWorkspaceXlsx(root, rewrittenName)).resolves.toBe(exactPath)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('does not use normalized fallback to escape the current workspace', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-excel-root-'))
+    try {
+      await expect(resolveExistingWorkspaceXlsx(root, '../outside.xlsx')).rejects.toThrow(/inside the current Harness workspace/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('normalizes A1 cells and supports template-driven formatting reuse', () => {
