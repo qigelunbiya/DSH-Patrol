@@ -470,7 +470,7 @@ function Add-CellWarning($warnings, [string]$address, [string]$property, $errorR
   if ($null -eq $warnings) { return }
   $message = if ($null -ne $errorRecord -and $null -ne $errorRecord.Exception) { [Convert]::ToString($errorRecord.Exception.Message) } else { [Convert]::ToString($errorRecord) }
   if ($message.Length -gt 180) { $message = $message.Substring(0, 180) + '…' }
-  [void]$warnings.Add("$address $property: $message")
+  [void]$warnings.Add("$address ${property}: $message")
 }
 
 function Get-CellDisplayText($cell, $warnings, [string]$address) {
@@ -573,7 +573,7 @@ function Inspect-Sheet($sheet, [int]$maxRows, [int]$maxColumns) {
     for ($row = $startRow; $row -le $captureEndRow; $row++) {
       for ($column = $startColumn; $column -le $captureEndColumn; $column++) {
         $address = Get-A1Address $row $column $row $column
-        $script:stage = "inspect worksheet '$($sheet.Name)' cell $address: access"
+        $script:stage = "inspect worksheet '$($sheet.Name)' cell ${address}: access"
         $cell = $null
         try {
           $cell = $sheet.Cells.Item([int]$row, [int]$column)
@@ -584,7 +584,7 @@ function Inspect-Sheet($sheet, [int]$maxRows, [int]$maxColumns) {
         try {
           # A single bad optional formatting property must not abort the whole
           # template inspection. Content is preferred; metadata is best effort.
-          $script:stage = "inspect worksheet '$($sheet.Name)' cell $address: content"
+          $script:stage = "inspect worksheet '$($sheet.Name)' cell ${address}: content"
           $text = Get-CellDisplayText $cell $warnings $address
           $formulaInfo = Get-CellFormulaInfo $cell $warnings $address
           $hasFormula = [bool]$formulaInfo.HasFormula
