@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   EXCEL_POWERSHELL,
+  PATROL_EXCEL_PROMPT,
   normalizeExcelUpdates,
   normalizeWorkbookLookupKey,
   resolveExistingWorkspaceXlsx,
@@ -57,10 +58,22 @@ describe('workspace Excel safety and adaptive updates', () => {
     }
   })
 
-  it('avoids COM Range.Address optional-argument calls that can raise type mismatch on Excel hosts', () => {
+  it('avoids fragile optional COM Range/Open arguments and reports the failing bridge stage', () => {
     expect(EXCEL_POWERSHELL).toContain('function Get-A1Address')
+    expect(EXCEL_POWERSHELL).toContain('function ConvertFrom-A1Cell')
+    expect(EXCEL_POWERSHELL).toContain('function Get-WorksheetCell')
     expect(EXCEL_POWERSHELL).not.toContain('.Address(')
+    expect(EXCEL_POWERSHELL).not.toContain('$sheet.Range(')
+    expect(EXCEL_POWERSHELL).not.toContain('Workbooks.Open([string]$payload.filePath, 0, $readOnly)')
+    expect(EXCEL_POWERSHELL).toContain('$workbook = $workbooks.Open([string]$payload.filePath)')
+    expect(EXCEL_POWERSHELL).toContain('stage=$stage;')
     expect(EXCEL_POWERSHELL).toContain('DSH Patrol Excel bridge failed:')
+  })
+
+  it('forbids blind writes when inspect failed', () => {
+    expect(PATROL_EXCEL_PROMPT).toContain('MUST have passed patrol_excel_inspect')
+    expect(PATROL_EXCEL_PROMPT).toContain('do not guess cell addresses')
+    expect(PATROL_EXCEL_PROMPT).toContain('do not call write anyway')
   })
 
   it('normalizes A1 cells and supports template-driven formatting reuse', () => {
