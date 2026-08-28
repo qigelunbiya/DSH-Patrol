@@ -24,7 +24,8 @@ function ConvertTo-YamlSingleQuoted {
 function Install-ManagedHostBridgePatch {
     param(
         [Parameter(Mandatory = $true)][string]$PatchPath,
-        [Parameter(Mandatory = $true)][string]$BridgeHostUri
+        [Parameter(Mandatory = $true)][string]$BridgeHostUri,
+        [Parameter(Mandatory = $true)][string]$ScreenshotDir
     )
 
     $patchDir = Split-Path -Parent $PatchPath
@@ -35,6 +36,7 @@ function Install-ManagedHostBridgePatch {
     $existing = if (Test-Path $PatchPath) { [System.IO.File]::ReadAllText($PatchPath) } else { "" }
     $pattern = "(?ms)^" + [regex]::Escape($begin) + "\r?\n.*?^" + [regex]::Escape($end) + "\r?\n?"
     $clean = [regex]::Replace($existing, $pattern, "").TrimEnd()
+    $safeScreenshotDir = ConvertTo-YamlSingleQuoted -Value $ScreenshotDir
 
     $block = @"
 $begin
@@ -48,6 +50,7 @@ $begin
         managedBrowser: true
         browserStartTimeoutMs: 30000
         browserConnectTimeoutMs: 15000
+        screenshotDir: '$safeScreenshotDir'
 $end
 "@
 
@@ -87,6 +90,24 @@ $end
     Write-Utf8NoBom -Path $PatchPath -Content $next
 }
 
+function Copy-LegacyPatrolData {
+    param(
+        [Parameter(Mandatory = $true)][string]$LegacyRoot,
+        [Parameter(Mandatory = $true)][string]$WorkspaceRoot
+    )
+
+    if (-not (Test-Path -LiteralPath $LegacyRoot)) { return }
+    New-Item -ItemType Directory -Force -Path $WorkspaceRoot | Out-Null
+    foreach ($name in @("inspections", "runs", "resumes")) {
+        $source = Join-Path $LegacyRoot $name
+        $target = Join-Path $WorkspaceRoot $name
+        if ((Test-Path -LiteralPath $source) -and -not (Test-Path -LiteralPath $target)) {
+            Copy-Item -LiteralPath $source -Destination $target -Recurse -Force
+            Write-Host "Migrated legacy Patrol $name into workspace storage." -ForegroundColor Yellow
+        }
+    }
+}
+
 Write-Host "===== Build and verify DSH Patrol =====" -ForegroundColor Cyan
 Push-Location $ProjectRoot
 try {
@@ -110,9 +131,20 @@ $DshHome = if ($env:DSH_HOME) { $env:DSH_HOME } else { Join-Path $HOME ".dsh" }
 $PresetDir = Join-Path $DshHome ".agent-presets\patrol"
 New-Item -ItemType Directory -Force -Path $PresetDir | Out-Null
 
+$WorkspaceRoot = if ($HarnessRoot) { [System.IO.Path]::GetFullPath($HarnessRoot) } else { [System.IO.Path]::GetFullPath((Get-Location).Path) }
+if (-not (Test-Path -LiteralPath $WorkspaceRoot)) {
+    throw "Harness workspace does not exist: $WorkspaceRoot"
+}
+$PatrolStorage = Join-Path $WorkspaceRoot ".dsh-patrol"
+$PatrolScreenshotDir = Join-Path $PatrolStorage "browser-tmp"
+New-Item -ItemType Directory -Force -Path $PatrolStorage | Out-Null
+New-Item -ItemType Directory -Force -Path $PatrolScreenshotDir | Out-Null
+Copy-LegacyPatrolData -LegacyRoot (Join-Path $DshHome "patrol") -WorkspaceRoot $PatrolStorage
+
 $PatrolIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "lib\index.js")))).AbsoluteUri
 $BridgeHostIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "browser-bridge-runtime\index.js")))).AbsoluteUri
 $BrowserToolsIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "browser-bridge-runtime\tools-plugin.js")))).AbsoluteUri
+$SafeStoragePath = ConvertTo-YamlSingleQuoted -Value $PatrolStorage
 
 # Keep this PowerShell source ASCII-only for Windows PowerShell 5.1 compatibility.
 # Copy the UTF-8 preset bytes directly instead of embedding non-ASCII literals here.
@@ -143,6 +175,7 @@ $AgentYaml = @"
 - id: dsh-patrol
   name: '$PatrolIndex'
   config:
+    storagePath: '$SafeStoragePath'
     maxSteps: 200
     reportMaxChars: 30000
 "@
@@ -160,7 +193,7 @@ Copy-Item -LiteralPath $CleanupSource -Destination $CleanupTarget -Force
 $CleanupUri = (New-Object System.Uri((Resolve-Path $CleanupTarget))).AbsoluteUri
 
 $WebPatch = Join-Path $DshHome "profiles\$Profile\cordis.patch.yml"
-Install-ManagedHostBridgePatch -PatchPath $WebPatch -BridgeHostUri $BridgeHostIndex
+Install-ManagedHostBridgePatch -PatchPath $WebPatch -BridgeHostUri $BridgeHostIndex -ScreenshotDir $PatrolScreenshotDir
 Install-ManagedCleanupPatch -PatchPath $WebPatch -CleanupUri $CleanupUri -ProfileName $Profile
 
 if (Test-Path $WebPatch) {
@@ -174,6 +207,8 @@ Write-Host ""
 Write-Host "Local Patrol preset installed and UTF-8 verified: $PresetDir" -ForegroundColor Green
 Write-Host "Host browser bridge patch installed: $WebPatch" -ForegroundColor Green
 Write-Host "Lifecycle cleanup coordinator installed: $CleanupTarget" -ForegroundColor Green
+Write-Host "Patrol workspace storage: $PatrolStorage" -ForegroundColor Green
+Write-Host "Patrol screenshot temp storage: $PatrolScreenshotDir" -ForegroundColor Green
 Write-Host "Browser provisioning: automatic managed Chromium profile; no manual extension installation is required." -ForegroundColor Green
 if ($HarnessRoot) {
     Write-Host "Start Harness with:" -ForegroundColor Cyan

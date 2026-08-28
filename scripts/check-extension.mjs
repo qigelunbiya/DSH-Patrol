@@ -15,7 +15,7 @@ if (manifest.content_scripts?.some(item => item.all_frames === true)) throw new 
 for (const file of ['background.js', 'content.js', 'popup.js', 'options.js']) {
   checkSyntax(join(extensionRoot, file), file)
 }
-for (const file of ['index.js', 'bridge.js', 'managed-browser.js', 'tools.js', 'tools-plugin.js', 'ws.js']) {
+for (const file of ['index.js', 'bridge.js', 'managed-browser.js', 'tools.js', 'count-tool.js', 'tools-plugin.js', 'ws.js']) {
   checkSyntax(join(runtimeRoot, file), `browser-bridge-runtime/${file}`)
 }
 
@@ -23,6 +23,8 @@ const content = readFileSync(join(extensionRoot, 'content.js'), 'utf8')
 if (/\beval\s*\(/.test(content) || /new\s+Function\s*\(/.test(content)) throw new Error('page eval is forbidden in Patrol extension')
 if (!content.includes("input.type === 'password'")) throw new Error('password-field redaction guard missing')
 if (!content.includes('return { ok: false, found: false, selector: args.selector')) throw new Error('selector wait timeout must fail closed')
+if (!content.includes("case 'count': return count(args)")) throw new Error('safe DOM count command is missing')
+if (!content.includes('document.querySelectorAll(args.selector)')) throw new Error('DOM count must be selector-only')
 
 const runtimeTools = readFileSync(join(runtimeRoot, 'tools.js'), 'utf8')
 if (/name:\s*['"]browser_eval['"]/.test(runtimeTools)) throw new Error('browser_eval must not be registered by Patrol')
@@ -31,6 +33,10 @@ if (!runtimeTools.includes('function requireOk')) throw new Error('runtime must 
 if (runtimeTools.includes('text: resolved.value') && !runtimeTools.includes("run(bridge, exec, 'type'")) {
   throw new Error('credential resolution must only feed the direct bridge request')
 }
+
+const countTool = readFileSync(join(runtimeRoot, 'count-tool.js'), 'utf8')
+if (!countTool.includes("name: 'browser_count'")) throw new Error('browser_count tool is missing')
+if (countTool.includes('eval(') || countTool.includes('new Function')) throw new Error('browser_count must not evaluate page code')
 
 const runtimeIndex = readFileSync(join(runtimeRoot, 'index.js'), 'utf8')
 if (!runtimeIndex.includes('chrome-extension:')) throw new Error('browser websocket origin restriction is missing')
@@ -49,16 +55,19 @@ if (!toolPlugin.includes('service.ensureBrowser')) throw new Error('browser tool
 if (!toolPlugin.includes('service.bridge.request')) throw new Error('browser tools plugin wrapper must delegate requests to the host bridge')
 if (!toolPlugin.includes('service.bridge.saveScreenshot')) throw new Error('browser tools plugin wrapper must delegate screenshot persistence to the host bridge')
 if (!/registerTools\(ctx,\s*bridge,/.test(toolPlugin)) throw new Error('browser tools plugin must register scoped tools through the managed bridge wrapper')
+if (!/registerCountTool\(ctx,\s*bridge,/.test(toolPlugin)) throw new Error('browser tools plugin must register scoped browser_count')
 
 const preset = readFileSync(join(projectRoot, 'presets', 'patrol', 'agent.cordis.yml'), 'utf8')
 if (!preset.includes("name: 'dsh-patrol/browser-tools'")) throw new Error('Patrol preset must load the agent-scoped browser tools plugin')
 if (preset.includes("name: 'dsh-patrol/browser-bridge'")) throw new Error('Patrol preset must not own the process-global browser transport')
+if (!preset.includes('storagePath: .dsh-patrol')) throw new Error('Patrol preset must default to workspace-local storage')
 
 const hostPatch = readFileSync(join(projectRoot, 'cordis.patch.yml'), 'utf8')
 if (!hostPatch.includes("name: 'dsh-patrol/browser-bridge-host'")) throw new Error('DSH Patrol host patch must load the browser transport')
 
 const background = readFileSync(join(extensionRoot, 'background.js'), 'utf8')
 if (!background.includes('value.ok === false')) throw new Error('extension must convert in-band DOM failures into bridge failures')
+if (!background.includes("case 'count':")) throw new Error('extension background must route count to the DOM bridge')
 
 console.log('browser extension/runtime and host/agent plane checks passed')
 

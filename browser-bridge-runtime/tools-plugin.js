@@ -8,6 +8,7 @@
 // Keep this as a namespace Cordis plugin: do NOT add `export default apply`.
 // Harness Loader prefers a module's default export and would otherwise discard
 // the sibling `inject` metadata before the preset is mounted.
+import { registerCountTool } from './count-tool.js'
 import { registerTools } from './tools.js'
 
 export const name = 'dsh-patrol-browser-tools'
@@ -52,4 +53,7 @@ export async function apply(ctx, config = {}) {
     commandTimeoutMs: config.commandTimeoutMs ?? 60000,
     bridgeUrlHint: typeof service.bridgeUrlHint === 'function' ? service.bridgeUrlHint : () => '',
   }), 'dsh-patrol/browser-tools: scoped browser tools')
+  ctx.effect(() => registerCountTool(ctx, bridge, {
+    commandTimeoutMs: config.commandTimeoutMs ?? 60000,
+  }), 'dsh-patrol/browser-tools: scoped count tool')
 }

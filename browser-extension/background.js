@@ -87,6 +87,7 @@ async function handleCommand(cmd, args) {
       return await screenshot(args)
     case 'snapshot':
     case 'readPage':
+    case 'count':
     case 'click':
     case 'type':
     case 'press':
