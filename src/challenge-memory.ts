@@ -59,12 +59,52 @@ export function challengeObservationFromValue(value: JsonValue | undefined): Cha
   }
 }
 
+export function challengeObservationFromText(text: string | undefined): ChallengeObservation | undefined {
+  if (text === undefined) return undefined
+  const line = text.split(/\r?\n/).find(item => item.startsWith('Auth challenge:'))
+  if (line === undefined) return undefined
+  const observed = /(?:^|;\s*)observed=([^/;\s]+)\/([^;\s]+)/.exec(line)
+  if (observed === null) return undefined
+  const kind = observed[1]
+  const subtype = observed[2]
+  if (kind === undefined || subtype === undefined || kind === 'none') return undefined
+  if (!CHALLENGE_KINDS.has(kind) || !CHALLENGE_SUBTYPES.has(subtype)) return undefined
+  const strategyMatch = /(?:^|;\s*)strategy=([^;\s]+)/.exec(line)
+  const rawStrategy = strategyMatch?.[1]
+  const strategy = rawStrategy !== undefined && CHALLENGE_STRATEGIES.has(rawStrategy as ChallengeStrategy)
+    ? rawStrategy as ChallengeStrategy
+    : defaultChallengeStrategy(kind, subtype)
+  const autoCompleted = /simple image code filled by Windows system text recognition/.test(line)
+    && /(?:^|;\s*)hasChallenge=false(?:;|$)/.test(line)
+  return {
+    kind: kind as ChallengeProfile['kind'],
+    subtype: subtype as ChallengeProfile['subtype'],
+    strategy,
+    autoCompleted,
+  }
+}
+
 export function rememberChallengeObservation(
   definition: InspectionDefinition,
   value: JsonValue | undefined,
   observedAt = new Date().toISOString(),
 ): boolean {
-  const observation = challengeObservationFromValue(value)
+  return rememberParsedChallengeObservation(definition, challengeObservationFromValue(value), observedAt)
+}
+
+export function rememberChallengeObservationFromText(
+  definition: InspectionDefinition,
+  text: string | undefined,
+  observedAt = new Date().toISOString(),
+): boolean {
+  return rememberParsedChallengeObservation(definition, challengeObservationFromText(text), observedAt)
+}
+
+function rememberParsedChallengeObservation(
+  definition: InspectionDefinition,
+  observation: ChallengeObservation | undefined,
+  observedAt: string,
+): boolean {
   if (observation === undefined) return false
 
   const profiles = [...(definition.auth.challengeProfiles ?? [])]
