@@ -395,7 +395,24 @@ async function recordAction(
   definition.metadata.updatedAt = new Date().toISOString()
   await store.save(definition)
 
-  const output = input.untrustedOutput === true ? untrustedPageData(dispatched.text) : dispatched.text
+  let displayText = dispatched.text
+  if (input.tool === 'browser_screenshot') {
+    const providerPath = objectString(dispatched.value, 'path')
+    const workspaceRoot = exec.agent?.session.header.cwd
+    if (providerPath !== undefined && workspaceRoot !== undefined && workspaceRoot.trim() !== '') {
+      try {
+        const organizedPath = await store.organizeTeachingScreenshot(input.inspectionId, providerPath, workspaceRoot)
+        displayText = displayText.includes(providerPath)
+          ? displayText.split(providerPath).join(organizedPath)
+          : `${displayText}\nPatrol workspace screenshot: ${organizedPath}`
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error)
+        displayText = `${displayText}\nScreenshot organization warning: ${message}`
+      }
+    }
+  }
+
+  const output = input.untrustedOutput === true ? untrustedPageData(displayText) : displayText
   return `Executed and recorded ${step.id} (${input.tool}).\n${output}`
 }
 
@@ -422,6 +439,12 @@ function compactObject(value: Record<string, string | number | boolean | undefin
     if (child !== undefined) out[key] = child
   }
   return out
+}
+
+function objectString(value: unknown, key: string): string | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const child = (value as Record<string, unknown>)[key]
+  return typeof child === 'string' && child.length > 0 ? child : undefined
 }
 
 async function loadEditable(store: PatrolStore, inspectionId: string, maxSteps: number): Promise<InspectionDefinition> {
