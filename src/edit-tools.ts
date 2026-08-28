@@ -1,6 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import { defineTool, type ToolDefinition, type ToolRunContext } from '@deepseek-ai/dsh-tools'
+import { defineTool, type ToolDefinition } from '@deepseek-ai/dsh-tools'
 import {
   BROWSER_ACTIONS,
   assertSafePlainTextInput,
@@ -212,9 +212,14 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       const dispatched = await runner.dispatch('browser_type', browserArgs, exec)
       if (!dispatched.ok) return `Re-teach failed and the stored username/public-text step was NOT changed. ${dispatched.error ?? dispatched.text}`
       const replacement: ToolStep = {
-        ...current,
+        id: current.id,
+        kind: 'tool',
         name: args.stepName ?? current.name,
+        tool: 'browser_type',
         arguments: browserArgs,
+        ...(current.expectation === undefined ? {} : { expectation: current.expectation }),
+        ...(current.when === undefined ? {} : { when: current.when }),
+        ...(current.locator === undefined ? {} : { locator: current.locator }),
         ...updatedNotes(current.notes, args.notes, args.clearNotes),
         recordedAt: new Date().toISOString(),
       }
@@ -255,10 +260,15 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       if (!dispatched.ok) return `Credential re-teach failed and the stored step was NOT changed. ${dispatched.error ?? dispatched.text}`
       const storedArgs: JsonObject = { selector: args.selector, credentialRef: credentialPlaceholder(args.credentialRef), clear: args.clear ?? true }
       const replacement: ToolStep = {
-        ...current,
+        id: current.id,
+        kind: 'tool',
         name: args.stepName ?? current.name,
+        tool: 'browser_type_credential',
         arguments: storedArgs,
         sensitive: true,
+        ...(current.expectation === undefined ? {} : { expectation: current.expectation }),
+        ...(current.when === undefined ? {} : { when: current.when }),
+        ...(current.locator === undefined ? {} : { locator: current.locator }),
         ...updatedNotes(current.notes, args.notes, args.clearNotes),
         recordedAt: new Date().toISOString(),
       }
@@ -295,7 +305,8 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       if (args.conditionExpectedText !== undefined) assertSafePersistentText(args.conditionExpectedText, 'conditionExpectedText')
       if (args.notes !== undefined) assertSafePersistentText(args.notes, 'step notes')
       const replacement: CheckpointStep = {
-        ...current,
+        id: current.id,
+        kind: 'checkpoint',
         name: args.stepName ?? current.name,
         prompt: args.prompt ?? current.prompt,
         reason: (args.reason ?? current.reason) as CheckpointStep['reason'],
@@ -550,7 +561,3 @@ function assertHttpUrl(value: string): void {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('inspection target URL must use http or https')
   if (parsed.username !== '' || parsed.password !== '') throw new Error('inspection target URL must not embed credentials')
 }
-
-// Keep the ToolRunContext type reachable in declarations generated for consumers
-// that compile this registrar in isolation.
-void (undefined as unknown as ToolRunContext | undefined)
