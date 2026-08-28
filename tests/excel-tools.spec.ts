@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import {
   EXCEL_POWERSHELL,
@@ -12,6 +14,8 @@ import {
   resolveWorkspaceXlsx,
   workbookRefForPath,
 } from '../src/excel-tools.js'
+
+const execFileAsync = promisify(execFile)
 
 describe('workspace Excel safety and adaptive updates', () => {
   it('allows only xlsx files inside the current workspace', () => {
@@ -69,6 +73,19 @@ describe('workspace Excel safety and adaptive updates', () => {
     expect(EXCEL_POWERSHELL).toContain('stage=$stage;')
     expect(EXCEL_POWERSHELL).toContain('DSH Patrol Excel bridge failed:')
   })
+
+  it('parses the embedded Excel PowerShell bridge on Windows', async () => {
+    if (process.platform !== 'win32') return
+    const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-excel-parse-'))
+    const script = join(root, 'excel-bridge.ps1')
+    try {
+      await writeFile(script, EXCEL_POWERSHELL, 'utf8')
+      const command = `$errors=$null; [void][System.Management.Automation.Language.Parser]::ParseFile('${script.replace(/'/g, "''")}', [ref]$null, [ref]$errors); if ($errors.Count -gt 0) { $errors | ForEach-Object { [Console]::Error.WriteLine($_.Message) }; exit 1 }`
+      await expect(execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8' })).resolves.toBeDefined()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 30_000)
 
   it('forbids blind writes when inspect failed', () => {
     expect(PATROL_EXCEL_PROMPT).toContain('MUST have passed patrol_excel_inspect')
