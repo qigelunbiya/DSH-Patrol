@@ -33,8 +33,16 @@ export interface ChallengeObservation {
 
 export function challengeObservationFromValue(value: JsonValue | undefined): ChallengeObservation | undefined {
   if (value === undefined || value === null || Array.isArray(value) || typeof value !== 'object') return undefined
-  const kind = typeof value.kind === 'string' ? value.kind : undefined
-  const subtype = typeof value.subtype === 'string' ? value.subtype : undefined
+  // browser_detect_auth_challenge reports both the final state and the initially
+  // observed state. An image code can disappear after local OCR succeeds, so
+  // learned Runbook metadata must remember the observed family, not only the
+  // final kind=none result.
+  const kind = typeof value.observedKind === 'string'
+    ? value.observedKind
+    : typeof value.kind === 'string' ? value.kind : undefined
+  const subtype = typeof value.observedSubtype === 'string'
+    ? value.observedSubtype
+    : typeof value.subtype === 'string' ? value.subtype : undefined
   if (kind === undefined || subtype === undefined || kind === 'none') return undefined
   if (!CHALLENGE_KINDS.has(kind) || !CHALLENGE_SUBTYPES.has(subtype)) return undefined
 
@@ -47,7 +55,7 @@ export function challengeObservationFromValue(value: JsonValue | undefined): Cha
     kind: kind as ChallengeProfile['kind'],
     subtype: subtype as ChallengeProfile['subtype'],
     strategy,
-    autoCompleted: value.autoFilled === true,
+    autoCompleted: value.autoFilled === true && value.hasChallenge === false,
   }
 }
 
