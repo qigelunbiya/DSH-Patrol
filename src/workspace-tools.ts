@@ -33,6 +33,10 @@ export function registerPatrolWorkspaceTools(ctx: Context, store: PatrolStore): 
 
       const workspaceForRecent = currentWorkspace ?? definition.metadata.workspaceRoot
       if (workspaceForRecent !== undefined) {
+        // patrol_paths is also the migration point for inspections created before
+        // workspace-visible Runbook mirrors existed. Merely asking for paths now
+        // guarantees the complete reusable files are present.
+        await store.saveWorkspaceRunbook(definition, workspaceForRecent)
         const runbook = store.workspaceRunbookPaths(definition.id, workspaceForRecent)
         lines.push(
           `Reusable Runbook JSON: ${runbook.json}`,
