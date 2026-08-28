@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { classifyAuthChallenge } from '../browser-bridge-runtime/challenge-tool.js'
 import { normalizeImageCodeText } from '../browser-bridge-runtime/image-code.js'
+import { classifyLoginState } from '../browser-bridge-runtime/login-state-tool.js'
 
 describe('auth challenge classification', () => {
   it('returns none for an ordinary login page without secondary verification', () => {
@@ -85,5 +86,40 @@ describe('auth challenge classification', () => {
     expect(normalizeImageCodeText('  A B 1 2  \n')).toBe('AB12')
     expect(normalizeImageCodeText('"x7K9"')).toBe('x7K9')
     expect(normalizeImageCodeText('')).toBe('')
+  })
+})
+
+describe('login-state classification', () => {
+  it('reports login-required when a visible password field is present', () => {
+    const result = classifyLoginState({
+      url: 'http://10.192.1.121:8069/web/login#action=400',
+      elements: [
+        { selector: '#login', name: 'login', type: 'text' },
+        { selector: '#password', name: 'password', type: 'password' },
+        { selector: 'button[type="submit"]', text: '登录', tag: 'button' },
+      ],
+    })
+    expect(result.state).toBe('login-required')
+    expect(result.reason).toBe('visible-password-field')
+  })
+
+  it('reports authenticated after the application redirects away from the login page', () => {
+    const result = classifyLoginState({
+      url: 'http://10.192.1.121:8069/web#action=400&model=project.task&view_type=list',
+      elements: [
+        { selector: '.o_list_view button', text: '创建', tag: 'button' },
+        { selector: '.o_searchview_input', name: 'search', type: 'text' },
+      ],
+    })
+    expect(result.state).toBe('authenticated')
+    expect(result.reason).toBe('no-login-form-on-application-page')
+  })
+
+  it('does not claim authenticated when still on a login URL without a visible form', () => {
+    const result = classifyLoginState({
+      url: 'http://10.192.1.121:8069/web/login',
+      elements: [],
+    })
+    expect(result.state).toBe('unknown')
   })
 })
