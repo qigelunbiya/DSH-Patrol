@@ -12,6 +12,7 @@ export function renderRunReport(report: RunReport, maxChars: number): string {
     `- 结束：${plainLine(report.finishedAt)}`,
     `- 预期结果：${plainLine(report.expectedResult)}`,
   ]
+  if (report.outputWorkspace !== undefined) lines.push(`- 用户可见输出工作区：${inlineCode(report.outputWorkspace)}`)
 
   if (report.summary !== undefined && report.summary.trim() !== '') {
     lines.push('', '## 页面摘要', '', fencedText(redactLikelySecrets(report.summary)), '')

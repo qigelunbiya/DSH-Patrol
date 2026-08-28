@@ -81,6 +81,8 @@ export interface InspectionDefinition {
     createdAt: string
     updatedAt: string
     validatedAt?: string
+    /** Last interactive Harness workspace used by this inspection. Scheduled runs use it for user-visible outputs. */
+    workspaceRoot?: string
   }
 }
 
@@ -116,6 +118,8 @@ export interface RunReport {
   expectedResult: string
   results: StepRunResult[]
   summary?: string
+  /** Harness session workspace where user-visible reports/artifacts were exported. */
+  outputWorkspace?: string
 }
 
 export interface ResumeState {

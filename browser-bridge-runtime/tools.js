@@ -236,7 +236,7 @@ export function registerTools(ctx, bridge, config = {}) {
     }),
     defineTool({
       name: 'browser_screenshot',
-      description: 'Capture the active tab to a file in the Patrol bridge temporary directory.',
+      description: 'Capture the active tab to the CURRENT Harness workspace. Headless/scheduled executions without a session workspace fall back to the Patrol bridge temporary directory.',
       parameters: { tabId: optInt, format: { type: 'string', enum: ['png', 'jpeg'] } },
       output: {
         schema: { type: 'object', additionalProperties: false, properties: { ok: reqBool, path: reqStr, bytes: int } },
@@ -245,7 +245,8 @@ export function registerTools(ctx, bridge, config = {}) {
       presentCall: args => generic('Take screenshot', args),
       execute: async (args, exec) => {
         const value = requireOk(await run(bridge, exec, 'screenshot', { tabId: args.tabId, format: args.format ?? 'png' }, timeoutMs), 'screenshot')
-        const path = bridge.saveScreenshot(value.dataUrl)
+        const workspaceRoot = exec?.agent?.session?.header?.cwd
+        const path = bridge.saveScreenshot(value.dataUrl, workspaceRoot)
         return { ok: true, path, bytes: value.bytes ?? 0 }
       },
     }),

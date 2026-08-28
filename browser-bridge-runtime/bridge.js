@@ -101,7 +101,7 @@ export class BrowserBridge {
     })
   }
 
-  saveScreenshot(dataUrl) {
+  saveScreenshot(dataUrl, targetDirectory) {
     const match = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl || ''))
     if (!match) throw new BridgeError('BAD_SCREENSHOT', 'The browser extension returned an invalid screenshot payload.')
     const kind = match[1]
@@ -110,7 +110,9 @@ export class BrowserBridge {
     const buffer = Buffer.from(base64, 'base64')
     if (buffer.length > 20 * 1024 * 1024) throw new BridgeError('BAD_SCREENSHOT', 'Screenshot exceeds the 20 MiB Patrol safety limit.')
     const extension = kind === 'jpeg' ? 'jpg' : 'png'
-    const file = join(this.screenshotDir, `screenshot-${new Date().toISOString().replace(/[:.]/g, '-')}-${Math.random().toString(36).slice(2, 8)}.${extension}`)
+    const directory = typeof targetDirectory === 'string' && targetDirectory.trim() !== '' ? targetDirectory : this.screenshotDir
+    mkdirSync(directory, { recursive: true, mode: 0o700 })
+    const file = join(directory, `screenshot-${new Date().toISOString().replace(/[:.]/g, '-')}-${Math.random().toString(36).slice(2, 8)}.${extension}`)
     writeFileSync(file, buffer, { mode: 0o600 })
     return file
   }

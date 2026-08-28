@@ -24,7 +24,7 @@ export function registerPatrolCreationTools(ctx: Context, store: PatrolStore): (
       artifacts: { type: 'array', items: { type: 'string', enum: [...INSPECTION_ARTIFACTS] } },
     },
     output: TEXT_OUTPUT,
-    async execute(args) {
+    async execute(args, exec) {
       assertInspectionId(args.inspectionId)
       if (await store.exists(args.inspectionId)) {
         const existing = await store.load(args.inspectionId)
@@ -37,6 +37,7 @@ export function registerPatrolCreationTools(ctx: Context, store: PatrolStore): (
       assertSafeForStorage({ url: args.targetUrl })
 
       const now = new Date().toISOString()
+      const workspaceRoot = exec.agent?.session.header.cwd
       const definition: InspectionDefinition = {
         schemaVersion: '0.2',
         id: args.inspectionId,
@@ -49,10 +50,14 @@ export function registerPatrolCreationTools(ctx: Context, store: PatrolStore): (
         auth: { mode: args.authMode as AuthMode },
         schedule: null,
         steps: [],
-        metadata: { createdAt: now, updatedAt: now },
+        metadata: {
+          createdAt: now,
+          updatedAt: now,
+          ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
+        },
       }
       await store.create(definition)
-      return `Created DRAFT ${definition.id} without persisting any auth notes or plaintext secret. Next run patrol_doctor, then teach with the flat patrol_* action tools.`
+      return `Created DRAFT ${definition.id} without persisting any auth notes or plaintext secret. User-visible run outputs will default to the current Harness workspace${workspaceRoot === undefined ? '' : `: ${workspaceRoot}`}. Next run patrol_doctor, then teach with the flat patrol_* action tools.`
     },
   })
 

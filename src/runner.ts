@@ -100,6 +100,7 @@ export class PatrolRunner {
     if (pending !== undefined) {
       throw new Error(`inspection ${definition.id} has a pending checkpoint in run ${pending.runId}; use patrol_resume instead of starting a second run`)
     }
+    await this.rememberInteractiveWorkspace(definition, exec)
     const startedAt = new Date().toISOString()
     const runId = `${startedAt.replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`
     return await this.executeFrom(definition, exec, {
@@ -119,10 +120,20 @@ export class PatrolRunner {
     if (state.definitionUpdatedAt !== definition.metadata.updatedAt) {
       throw new Error(`inspection ${definition.id} changed after run ${state.runId} paused; abort the pending run before editing or starting over`)
     }
+    await this.rememberInteractiveWorkspace(definition, exec)
     const results = state.results.map(result => result.status === 'waiting'
       ? { ...result, status: 'passed' as const, finishedAt: new Date().toISOString(), output: 'Checkpoint completed by the user before resume.' }
       : result)
     return await this.executeFrom(definition, exec, { ...state, results })
+  }
+
+  private async rememberInteractiveWorkspace(definition: InspectionDefinition, exec: ToolRunContext): Promise<void> {
+    const workspaceRoot = exec.agent?.session.header.cwd
+    if (workspaceRoot === undefined || workspaceRoot === definition.metadata.workspaceRoot) return
+    definition.metadata.workspaceRoot = workspaceRoot
+    // workspaceRoot is execution metadata, not a semantic Runbook edit. Keep
+    // updatedAt unchanged so pending resume/validation invariants remain intact.
+    await this.store.save(definition)
   }
 
   private async executeFrom(
@@ -132,6 +143,7 @@ export class PatrolRunner {
   ): Promise<{ report: RunReport; paths: SavedRunPaths }> {
     const results = [...state.results]
     let status: RunReport['status'] = 'passed'
+    const outputWorkspace = exec.agent?.session.header.cwd ?? definition.metadata.workspaceRoot
 
     for (let index = state.nextStepIndex; index < definition.steps.length; index += 1) {
       const step = definition.steps[index]
@@ -174,7 +186,7 @@ export class PatrolRunner {
         break
       }
 
-      const result = await this.executeToolStep(definition, state.runId, step, exec, stepStartedAt)
+      const result = await this.executeToolStep(definition, state.runId, step, exec, stepStartedAt, outputWorkspace)
       results.push(result)
       if (result.status === 'failed') {
         status = 'failed'
@@ -213,9 +225,10 @@ export class PatrolRunner {
       expectedResult: definition.expectedResult,
       results,
       ...(summary === undefined ? {} : { summary }),
+      ...(outputWorkspace === undefined ? {} : { outputWorkspace }),
     }
     const markdown = renderRunReport(report, this.options.reportMaxChars)
-    const paths = await this.store.saveRun(report, markdown)
+    const paths = await this.store.saveRun(report, markdown, outputWorkspace)
     return { report, paths }
   }
 
@@ -225,6 +238,7 @@ export class PatrolRunner {
     step: ToolStep,
     exec: ToolRunContext,
     startedAt: string,
+    outputWorkspace: string | undefined,
   ): Promise<StepRunResult> {
     let runtimeArguments: JsonObject
     try {
@@ -277,12 +291,12 @@ export class PatrolRunner {
       if (isScreenshotStep(step)) {
         const providerPath = objectString(dispatched.value, 'path')
         if (providerPath === undefined) throw new Error('browser_screenshot returned no artifact path')
-        const copied = await this.store.copyArtifact(definition.id, runId, providerPath, `${step.id}-screenshot`)
+        const copied = await this.store.copyArtifact(definition.id, runId, providerPath, `${step.id}-screenshot`, outputWorkspace)
         artifacts.push({ kind: 'screenshot', path: copied })
       }
       if (isPageReadStep(step) && step.artifact === 'page-text') {
         const pageText = objectString(dispatched.value, 'text') ?? dispatched.text
-        const saved = await this.store.saveTextArtifact(definition.id, runId, `${step.id}-page.txt`, redactLikelySecrets(pageText))
+        const saved = await this.store.saveTextArtifact(definition.id, runId, `${step.id}-page.txt`, redactLikelySecrets(pageText), outputWorkspace)
         artifacts.push({ kind: 'page-text', path: saved })
       }
     } catch (error: unknown) {
@@ -312,7 +326,6 @@ export class PatrolRunner {
       ...(healedSelector === undefined ? {} : { healedSelector }),
     }
   }
-
 }
 
 function prepareRuntimeArguments(step: ToolStep): JsonObject {

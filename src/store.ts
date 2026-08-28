@@ -35,6 +35,17 @@ export class PatrolStore {
     return join(this.runDirectory(inspectionId, runId), 'report.md')
   }
 
+  workspaceRunPaths(inspectionId: string, runId: string, workspaceRoot: string): SavedRunPaths {
+    assertInspectionId(inspectionId)
+    if (!/^[A-Za-z0-9._-]+$/.test(runId)) throw new Error('invalid runId')
+    const stem = `patrol-${inspectionId}-${runId}`
+    return {
+      directory: workspaceRoot,
+      json: join(workspaceRoot, `${stem}-report.json`),
+      markdown: join(workspaceRoot, `${stem}-report.md`),
+    }
+  }
+
   resumePath(inspectionId: string): string {
     assertInspectionId(inspectionId)
     return join(this.root, 'resumes', `${inspectionId}.json`)
@@ -88,13 +99,20 @@ export class PatrolStore {
     return definitions.sort((a, b) => a.id.localeCompare(b.id))
   }
 
-  async saveRun(report: RunReport, markdown: string): Promise<SavedRunPaths> {
-    const directory = this.runDirectory(report.inspectionId, report.runId)
-    const json = this.runJsonPath(report.inspectionId, report.runId)
-    const markdownPath = this.runMarkdownPath(report.inspectionId, report.runId)
-    await atomicWrite(json, `${JSON.stringify(report, null, 2)}\n`)
-    await atomicWrite(markdownPath, markdown)
-    return { directory, json, markdown: markdownPath }
+  async saveRun(report: RunReport, markdown: string, workspaceRoot?: string): Promise<SavedRunPaths> {
+    const internal: SavedRunPaths = {
+      directory: this.runDirectory(report.inspectionId, report.runId),
+      json: this.runJsonPath(report.inspectionId, report.runId),
+      markdown: this.runMarkdownPath(report.inspectionId, report.runId),
+    }
+    await atomicWrite(internal.json, `${JSON.stringify(report, null, 2)}\n`)
+    await atomicWrite(internal.markdown, markdown)
+
+    if (workspaceRoot === undefined || workspaceRoot.trim() === '') return internal
+    const visible = this.workspaceRunPaths(report.inspectionId, report.runId, workspaceRoot)
+    await atomicWrite(visible.json, `${JSON.stringify(report, null, 2)}\n`)
+    await atomicWrite(visible.markdown, markdown)
+    return visible
   }
 
   async loadRun(inspectionId: string, runId: string): Promise<RunReport> {
@@ -135,23 +153,48 @@ export class PatrolStore {
     await rm(this.resumePath(inspectionId), { force: true })
   }
 
-  async saveTextArtifact(inspectionId: string, runId: string, suggestedName: string, content: string): Promise<string> {
+  async saveTextArtifact(
+    inspectionId: string,
+    runId: string,
+    suggestedName: string,
+    content: string,
+    workspaceRoot?: string,
+  ): Promise<string> {
     const directory = join(this.runDirectory(inspectionId, runId), 'artifacts')
     await mkdir(directory, { recursive: true, mode: 0o700 })
-    const file = join(directory, sanitizeArtifactName(suggestedName, '.txt'))
-    await writeFile(file, content, { encoding: 'utf8', mode: 0o600 })
-    return file
+    const safeName = sanitizeArtifactName(suggestedName, '.txt')
+    const internal = join(directory, safeName)
+    await writeFile(internal, content, { encoding: 'utf8', mode: 0o600 })
+    if (workspaceRoot === undefined || workspaceRoot.trim() === '') return internal
+
+    await mkdir(workspaceRoot, { recursive: true })
+    const visible = join(workspaceRoot, visibleArtifactName(inspectionId, runId, safeName))
+    await writeFile(visible, content, { encoding: 'utf8', mode: 0o600 })
+    return visible
   }
 
-  async copyArtifact(inspectionId: string, runId: string, sourcePath: string, suggestedName: string): Promise<string> {
+  async copyArtifact(
+    inspectionId: string,
+    runId: string,
+    sourcePath: string,
+    suggestedName: string,
+    workspaceRoot?: string,
+  ): Promise<string> {
     const directory = join(this.runDirectory(inspectionId, runId), 'artifacts')
     await mkdir(directory, { recursive: true, mode: 0o700 })
     const sourceExt = extname(sourcePath)
     const fallbackExt = sourceExt.length > 0 ? sourceExt : '.bin'
-    const file = join(directory, sanitizeArtifactName(suggestedName, fallbackExt))
-    await copyFile(sourcePath, file)
-    await chmod(file, 0o600)
-    return file
+    const safeName = sanitizeArtifactName(suggestedName, fallbackExt)
+    const internal = join(directory, safeName)
+    await copyFile(sourcePath, internal)
+    await chmod(internal, 0o600)
+    if (workspaceRoot === undefined || workspaceRoot.trim() === '') return internal
+
+    await mkdir(workspaceRoot, { recursive: true })
+    const visible = join(workspaceRoot, visibleArtifactName(inspectionId, runId, safeName))
+    await copyFile(sourcePath, visible)
+    await chmod(visible, 0o600)
+    return visible
   }
 }
 
@@ -160,6 +203,10 @@ async function atomicWrite(path: string, content: string): Promise<void> {
   const temp = `${path}.${process.pid}.${Date.now()}.tmp`
   await writeFile(temp, content, { encoding: 'utf8', mode: 0o600 })
   await rename(temp, path)
+}
+
+function visibleArtifactName(inspectionId: string, runId: string, safeName: string): string {
+  return sanitizeArtifactName(`patrol-${inspectionId}-${runId}-${safeName}`, extname(safeName) || '.bin')
 }
 
 function sanitizeArtifactName(name: string, fallbackExt: string): string {

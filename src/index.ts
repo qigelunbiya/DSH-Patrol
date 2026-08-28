@@ -8,6 +8,7 @@ import { registerPatrolActionTools } from './action-tools.js'
 import { registerPatrolCreationTools } from './creation-tools.js'
 import { registerPatrolCredentialTools } from './credential-tools.js'
 import { registerPatrolEditTools } from './edit-tools.js'
+import { PATROL_EXCEL_PROMPT, registerPatrolExcelTools } from './excel-tools.js'
 import { registerPatrolHandoffTools } from './handoff-tools.js'
 import { PATROL_SYSTEM_PROMPT } from './prompt.js'
 import { PatrolRunner } from './runner.js'
@@ -24,6 +25,7 @@ export * from './edit-tools.js'
 export * from './action-tools.js'
 export * from './creation-tools.js'
 export * from './credential-tools.js'
+export * from './excel-tools.js'
 export * from './handoff-tools.js'
 export { PatrolStore } from './store.js'
 export { PatrolRunner, conditionMatches, evaluateExpectation } from './runner.js'
@@ -96,6 +98,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   )
   ctx.effect(() => registerPatrolEditTools(ctx, store, runner), 'dsh-patrol: runbook edit and validation tools')
   ctx.effect(() => registerPatrolWorkspaceTools(ctx, store), 'dsh-patrol: workspace path tools')
+  ctx.effect(() => registerPatrolExcelTools(ctx), 'dsh-patrol: adaptive workspace Excel tools')
   ctx.effect(() => registerPatrolScheduleTools(ctx, store), 'dsh-patrol: schedule tools')
 
   const scheduler = new PatrolScheduler(ctx, store)
@@ -116,7 +119,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       order: 130,
       text: PATROL_SYSTEM_PROMPT,
     }), 'dsh-patrol: agent workflow prompt')
+    ctx.effect(() => systemPrompt.section({
+      name: 'agent:dsh-patrol-excel',
+      order: 131,
+      text: PATROL_EXCEL_PROMPT,
+    }), 'dsh-patrol: adaptive Excel workflow prompt')
   }
 
-  ctx.logger.info(`dsh-patrol ready; workspace storage=${resolved.storagePath}; scheduler=enabled; credential helper=enabled; verification handoff=enabled; secret-safe creation=enabled; flat action tools=enabled; editable runbooks=enabled; exact browser allowlist enabled`)
+  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; scheduler=enabled; credential helper=enabled; verification handoff=enabled; secret-safe creation=enabled; flat action tools=enabled; adaptive Excel tools=enabled; editable runbooks=enabled; exact browser allowlist enabled`)
 }

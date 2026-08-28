@@ -12,26 +12,32 @@ const TEXT_OUTPUT = {
 export function registerPatrolWorkspaceTools(ctx: Context, store: PatrolStore): () => void {
   const paths = defineTool({
     name: 'patrol_paths',
-    description: 'Show absolute workspace-local Runbook, credential-helper, browser-temp, and latest (or selected) run report/artifact paths. Call this before the final reply and whenever a patrol pauses for human verification.',
+    description: 'Show the current Harness workspace, user-visible Patrol outputs, and separate internal Patrol state paths. Call this before the final reply and whenever a patrol pauses for human verification.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       runId: { type: 'string', description: 'Optional exact run id. Omit to inspect the latest saved run.' },
     },
     output: TEXT_OUTPUT,
-    async execute(args) {
+    async execute(args, exec) {
       const definition = await store.load(args.inspectionId)
+      const currentWorkspace = exec.agent?.session.header.cwd
       const browserTemp = join(store.root, 'browser-tmp')
       const lines = [
-        `Storage root: ${store.root}`,
-        `Runbook: ${store.inspectionPath(definition.id)}`,
+        `Current session workspace: ${currentWorkspace ?? '(not available in this execution)'}`,
+        `Patrol internal state root: ${store.root}`,
+        `Runbook (internal state): ${store.inspectionPath(definition.id)}`,
         `Runbook status: ${definition.status}`,
-        `Credential helper: ${join(store.root, 'set-patrol-credential.ps1')}`,
-        `Browser temporary artifacts: ${browserTemp}`,
+        `Credential helper (internal state): ${join(store.root, 'set-patrol-credential.ps1')}`,
+        `Browser fallback temporary artifacts: ${browserTemp}`,
       ]
-      const recentTempScreenshots = await latestTempScreenshots(browserTemp)
-      if (recentTempScreenshots.length > 0) {
-        lines.push('Recent browser temporary screenshots:')
-        for (const path of recentTempScreenshots) lines.push(`- ${path}`)
+
+      const workspaceForRecent = currentWorkspace ?? definition.metadata.workspaceRoot
+      if (workspaceForRecent !== undefined) {
+        const recentWorkspaceScreenshots = await latestWorkspaceScreenshots(workspaceForRecent)
+        if (recentWorkspaceScreenshots.length > 0) {
+          lines.push('Recent screenshots in user workspace:')
+          for (const path of recentWorkspaceScreenshots) lines.push(`- ${path}`)
+        }
       }
 
       if (definition.schedule === null) lines.push('Schedule: none')
@@ -42,13 +48,23 @@ export function registerPatrolWorkspaceTools(ctx: Context, store: PatrolStore): 
         lines.push('Runs: none yet')
       } else {
         const report = await store.loadRun(definition.id, runId)
-        lines.push(
-          `Run id: ${runId}`,
-          `Run status: ${report.status}`,
-          `Run directory: ${store.runDirectory(definition.id, runId)}`,
-          `Markdown report: ${store.runMarkdownPath(definition.id, runId)}`,
-          `JSON report: ${store.runJsonPath(definition.id, runId)}`,
-        )
+        const outputWorkspace = report.outputWorkspace ?? currentWorkspace ?? definition.metadata.workspaceRoot
+        lines.push(`Run id: ${runId}`, `Run status: ${report.status}`)
+        if (outputWorkspace !== undefined) {
+          const visible = store.workspaceRunPaths(definition.id, runId, outputWorkspace)
+          lines.push(
+            `User-visible output workspace: ${outputWorkspace}`,
+            `Markdown report: ${visible.markdown}`,
+            `JSON report: ${visible.json}`,
+          )
+        } else {
+          lines.push(
+            'User-visible output workspace: unavailable; this run used the internal fallback',
+            `Markdown report: ${store.runMarkdownPath(definition.id, runId)}`,
+            `JSON report: ${store.runJsonPath(definition.id, runId)}`,
+          )
+        }
+        lines.push(`Run archive directory (internal state): ${store.runDirectory(definition.id, runId)}`)
         const artifacts = report.results.flatMap(result => result.artifacts ?? [])
         if (artifacts.length === 0) lines.push('Artifacts: none')
         else {
@@ -59,7 +75,7 @@ export function registerPatrolWorkspaceTools(ctx: Context, store: PatrolStore): 
       }
 
       const pending = await store.loadResume(definition.id)
-      if (pending !== undefined) lines.push(`Pending resume state: ${store.resumePath(definition.id)} (run ${pending.runId})`)
+      if (pending !== undefined) lines.push(`Pending resume state (internal): ${store.resumePath(definition.id)} (run ${pending.runId})`)
       return lines.join('\n')
     },
   })
@@ -79,11 +95,11 @@ async function latestRunId(store: PatrolStore, inspectionId: string): Promise<st
   }
 }
 
-async function latestTempScreenshots(directory: string): Promise<string[]> {
+async function latestWorkspaceScreenshots(directory: string): Promise<string[]> {
   try {
     const entries = await readdir(directory, { withFileTypes: true })
     return entries
-      .filter(entry => entry.isFile() && /^screenshot-.*\.(?:png|jpe?g)$/i.test(entry.name))
+      .filter(entry => entry.isFile() && /^(?:screenshot-|patrol-.*-screenshot).*\.(?:png|jpe?g)$/i.test(entry.name))
       .map(entry => entry.name)
       .sort()
       .slice(-5)
