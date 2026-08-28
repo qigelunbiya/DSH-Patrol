@@ -15,7 +15,7 @@ if (manifest.content_scripts?.some(item => item.all_frames === true)) throw new 
 for (const file of ['background.js', 'content.js', 'popup.js', 'options.js']) {
   checkSyntax(join(extensionRoot, file), file)
 }
-for (const file of ['index.js', 'bridge.js', 'managed-browser.js', 'tools.js', 'count-tool.js', 'challenge-tool.js', 'image-code.js', 'screenshot-ocr.js', 'tools-plugin.js', 'ws.js']) {
+for (const file of ['index.js', 'bridge.js', 'managed-browser.js', 'tools.js', 'count-tool.js', 'login-state-tool.js', 'challenge-tool.js', 'image-code.js', 'screenshot-ocr.js', 'tools-plugin.js', 'ws.js']) {
   checkSyntax(join(runtimeRoot, file), `browser-bridge-runtime/${file}`)
 }
 
@@ -40,6 +40,12 @@ if (!runtimeTools.includes('UNTRUSTED SCREENSHOT OCR')) throw new Error('screens
 const countTool = readFileSync(join(runtimeRoot, 'count-tool.js'), 'utf8')
 if (!countTool.includes("name: 'browser_count'")) throw new Error('browser_count tool is missing')
 if (countTool.includes('eval(') || countTool.includes('new Function')) throw new Error('browser_count must not evaluate page code')
+
+const loginStateTool = readFileSync(join(runtimeRoot, 'login-state-tool.js'), 'utf8')
+if (!loginStateTool.includes("name: 'browser_login_state'")) throw new Error('browser_login_state tool is missing')
+if (!loginStateTool.includes("bridge.request('snapshot'")) throw new Error('login-state detection must use the safe snapshot provider')
+if (/cookie/i.test(loginStateTool) && /getAll|getCookie|cookies\.get/.test(loginStateTool)) throw new Error('login-state detector must not read raw cookie values')
+if (/\beval\s*\(/.test(loginStateTool) || /new\s+Function\s*\(/.test(loginStateTool)) throw new Error('login-state detector must not evaluate page code')
 
 const challengeTool = readFileSync(join(runtimeRoot, 'challenge-tool.js'), 'utf8')
 if (!challengeTool.includes("name: 'browser_detect_auth_challenge'")) throw new Error('browser_detect_auth_challenge tool is missing')
@@ -72,6 +78,7 @@ if (!toolPlugin.includes('service.bridge.saveScreenshot')) throw new Error('brow
 if (!/registerTools\(ctx,\s*bridge,/.test(toolPlugin)) throw new Error('browser tools plugin must register scoped tools through the managed bridge wrapper')
 if (!/registerCountTool\(ctx,\s*bridge,/.test(toolPlugin)) throw new Error('browser tools plugin must register scoped browser_count')
 if (!/registerChallengeTool\(ctx,\s*bridge,/.test(toolPlugin)) throw new Error('browser tools plugin must register scoped auth challenge detection')
+if (!/registerLoginStateTool\(ctx,\s*bridge,/.test(toolPlugin)) throw new Error('browser tools plugin must register scoped login-state detection')
 
 const preset = readFileSync(join(projectRoot, 'presets', 'patrol', 'agent.cordis.yml'), 'utf8')
 if (!preset.includes("name: 'dsh-patrol/browser-tools'")) throw new Error('Patrol preset must load the agent-scoped browser tools plugin')
