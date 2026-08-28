@@ -119,7 +119,6 @@ export class PatrolStore {
     const visible = this.workspaceRunPaths(report.inspectionId, report.runId, workspaceRoot)
     await atomicWrite(visible.json, `${JSON.stringify(report, null, 2)}\n`)
     await atomicWrite(visible.markdown, markdown)
-    await collectLooseWorkspaceScreenshots(workspaceRoot, join(visible.directory, 'screenshots', 'teaching'))
     return visible
   }
 
@@ -240,26 +239,6 @@ function sanitizeArtifactName(name: string, fallbackExt: string): string {
 
 function imageArtifactExtension(extension: string): boolean {
   return ['.png', '.jpg', '.jpeg', '.webp'].includes(extension.toLowerCase())
-}
-
-async function collectLooseWorkspaceScreenshots(workspaceRoot: string, destinationDirectory: string): Promise<void> {
-  let entries
-  try {
-    entries = await readdir(workspaceRoot, { withFileTypes: true })
-  } catch {
-    return
-  }
-  const loose = entries.filter(entry => entry.isFile() && /^screenshot-.*\.(png|jpe?g)$/i.test(entry.name))
-  if (loose.length === 0) return
-  await mkdir(destinationDirectory, { recursive: true })
-  for (const entry of loose) {
-    const source = join(workspaceRoot, entry.name)
-    const destination = join(destinationDirectory, sanitizeArtifactName(entry.name, extname(entry.name) || '.png'))
-    if (resolve(source) === resolve(destination)) continue
-    await copyFile(source, destination)
-    await chmod(destination, 0o600)
-    await rm(source, { force: true })
-  }
 }
 
 async function cleanupLooseWorkspaceSource(sourcePath: string, workspaceRoot: string, destinationPath: string): Promise<void> {
