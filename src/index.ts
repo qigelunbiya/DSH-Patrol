@@ -13,6 +13,7 @@ import { registerPatrolHandoffTools } from './handoff-tools.js'
 import { PATROL_SYSTEM_PROMPT } from './prompt.js'
 import { PatrolRunner } from './runner.js'
 import { PatrolScheduler, registerPatrolScheduleTools } from './scheduler.js'
+import { PATROL_SESSION_PROMPT } from './session-prompt.js'
 import { PatrolStore } from './store.js'
 import { registerPatrolTools } from './tools.js'
 import { registerPatrolWorkspaceTools } from './workspace-tools.js'
@@ -124,7 +125,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       order: 131,
       text: PATROL_EXCEL_PROMPT,
     }), 'dsh-patrol: adaptive Excel workflow prompt')
+    ctx.effect(() => systemPrompt.section({
+      name: 'agent:dsh-patrol-session',
+      order: 132,
+      text: PATROL_SESSION_PROMPT,
+    }), 'dsh-patrol: authenticated-session reuse prompt')
   }
 
-  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; scheduler=enabled; credential helper=enabled; verification handoff=enabled; secret-safe creation=enabled; flat action tools=enabled; adaptive Excel tools=enabled; editable runbooks=enabled; exact browser allowlist enabled`)
+  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; scheduler=enabled; credential helper=enabled; verification handoff=enabled; secret-safe creation=enabled; flat action tools=enabled; adaptive Excel tools=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled`)
 }
