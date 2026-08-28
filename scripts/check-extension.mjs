@@ -15,7 +15,7 @@ if (manifest.content_scripts?.some(item => item.all_frames === true)) throw new 
 for (const file of ['background.js', 'content.js', 'popup.js', 'options.js']) {
   checkSyntax(join(extensionRoot, file), file)
 }
-for (const file of ['index.js', 'bridge.js', 'managed-browser.js', 'tools.js', 'count-tool.js', 'challenge-tool.js', 'tools-plugin.js', 'ws.js']) {
+for (const file of ['index.js', 'bridge.js', 'managed-browser.js', 'tools.js', 'count-tool.js', 'challenge-tool.js', 'image-code.js', 'screenshot-ocr.js', 'tools-plugin.js', 'ws.js']) {
   checkSyntax(join(runtimeRoot, file), `browser-bridge-runtime/${file}`)
 }
 
@@ -33,6 +33,9 @@ if (!runtimeTools.includes('function requireOk')) throw new Error('runtime must 
 if (runtimeTools.includes('text: resolved.value') && !runtimeTools.includes("run(bridge, exec, 'type'")) {
   throw new Error('credential resolution must only feed the direct bridge request')
 }
+if (!runtimeTools.includes("ocrStatus: ocr.status")) throw new Error('browser_screenshot must return built-in OCR status')
+if (!runtimeTools.includes("status: 'verification-suppressed'")) throw new Error('screenshot OCR must fail closed on human verification')
+if (!runtimeTools.includes('UNTRUSTED SCREENSHOT OCR')) throw new Error('screenshot OCR must be clearly marked as untrusted page data')
 
 const countTool = readFileSync(join(runtimeRoot, 'count-tool.js'), 'utf8')
 if (!countTool.includes("name: 'browser_count'")) throw new Error('browser_count tool is missing')
@@ -43,7 +46,12 @@ if (!challengeTool.includes("name: 'browser_detect_auth_challenge'")) throw new 
 if (!challengeTool.includes("bridge.request('snapshot'")) throw new Error('auth challenge detection must use the safe snapshot provider')
 if (!challengeTool.includes("bridge.request('readPage'")) throw new Error('auth challenge detection must use visible page text only')
 if (/\beval\s*\(/.test(challengeTool) || /new\s+Function\s*\(/.test(challengeTool)) throw new Error('auth challenge detection must not evaluate page code')
-if (/\bocr\b/i.test(challengeTool) || /drag(To)?\s*\(/.test(challengeTool)) throw new Error('auth challenge detector must classify only; no OCR/drag solving logic is allowed')
+if (/drag(To)?\s*\(/.test(challengeTool)) throw new Error('auth challenge detector must not synthesize drag solving logic')
+if (!challengeTool.includes("classified.subtype !== 'click-sequence'")) throw new Error('click-sequence challenges must remain human handoffs')
+
+const screenshotOcr = readFileSync(join(runtimeRoot, 'screenshot-ocr.js'), 'utf8')
+if (/\beval\s*\(/.test(screenshotOcr) || /new\s+Function\s*\(/.test(screenshotOcr)) throw new Error('screenshot OCR must not evaluate page code')
+if (!screenshotOcr.includes("@napi-rs/system-ocr")) throw new Error('screenshot OCR must use the bundled system OCR dependency')
 
 const runtimeIndex = readFileSync(join(runtimeRoot, 'index.js'), 'utf8')
 if (!runtimeIndex.includes('chrome-extension:')) throw new Error('browser websocket origin restriction is missing')
