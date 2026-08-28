@@ -4,6 +4,7 @@ import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
+import { registerPatrolActionTools } from './action-tools.js'
 import { registerPatrolEditTools } from './edit-tools.js'
 import { PATROL_SYSTEM_PROMPT } from './prompt.js'
 import { PatrolRunner } from './runner.js'
@@ -17,6 +18,7 @@ export * from './browser.js'
 export * from './security.js'
 export * from './scheduler.js'
 export * from './edit-tools.js'
+export * from './action-tools.js'
 export { PatrolStore } from './store.js'
 export { PatrolRunner, conditionMatches, evaluateExpectation } from './runner.js'
 
@@ -76,6 +78,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     }),
     'dsh-patrol: patrol tools',
   )
+  ctx.effect(
+    () => registerPatrolActionTools(ctx, store, runner, { maxSteps: resolved.maxSteps }),
+    'dsh-patrol: flat browser action tools',
+  )
   ctx.effect(() => registerPatrolEditTools(ctx, store, runner), 'dsh-patrol: runbook edit and validation tools')
   ctx.effect(() => registerPatrolWorkspaceTools(ctx, store), 'dsh-patrol: workspace path tools')
   ctx.effect(() => registerPatrolScheduleTools(ctx, store), 'dsh-patrol: schedule tools')
@@ -100,5 +106,5 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     }), 'dsh-patrol: agent workflow prompt')
   }
 
-  ctx.logger.info(`dsh-patrol ready; workspace storage=${resolved.storagePath}; scheduler=enabled; editable runbooks=enabled; exact browser allowlist enabled`)
+  ctx.logger.info(`dsh-patrol ready; workspace storage=${resolved.storagePath}; scheduler=enabled; flat action tools=enabled; editable runbooks=enabled; exact browser allowlist enabled`)
 }
