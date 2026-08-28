@@ -12,6 +12,7 @@ async function handle(cmd, args) {
   switch (cmd) {
     case 'snapshot': return snapshot(args)
     case 'readPage': return readPage(args)
+    case 'count': return count(args)
     case 'click': return click(args)
     case 'type': return typeText(args)
     case 'press': return press(args)
@@ -49,6 +50,15 @@ function readPage(args) {
   const maxChars = Number.isInteger(args.maxChars) ? Math.max(100, Math.min(args.maxChars, 100000)) : 20000
   const text = String(root.innerText || root.textContent || '').replace(/\u0000/g, '').trim()
   return { ok: true, url: location.href, title: document.title, text: text.slice(0, maxChars), truncated: text.length > maxChars }
+}
+
+function count(args) {
+  if (typeof args.selector !== 'string' || !args.selector) throw new Error('selector is required')
+  let elements
+  try { elements = [...document.querySelectorAll(args.selector)] } catch { throw new Error(`invalid selector: ${args.selector}`) }
+  const visibleOnly = args.visibleOnly !== false
+  const matched = visibleOnly ? elements.filter(isVisible) : elements
+  return { ok: true, selector: args.selector, count: matched.length, visibleOnly }
 }
 
 function click(args) {
