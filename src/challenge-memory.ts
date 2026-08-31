@@ -76,7 +76,7 @@ export function challengeObservationFromText(text: string | undefined): Challeng
   const strategy = rawStrategy !== undefined && CHALLENGE_STRATEGIES.has(rawStrategy as ChallengeStrategy)
     ? rawStrategy as ChallengeStrategy
     : defaultChallengeStrategy(kind, subtype)
-  const autoCompleted = /verification auto-completed by an authorized local Patrol solver/.test(line)
+  const autoCompleted = /(verification auto-completed by an authorized local Patrol solver|simple image code filled by Windows system text recognition)/.test(line)
     && /(?:^|;\s*)hasChallenge=false(?:;|$)/.test(line)
   return {
     kind: kind as ChallengeProfile['kind'],
