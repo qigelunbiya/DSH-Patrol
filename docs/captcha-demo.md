@@ -1,6 +1,6 @@
 # CAPTCHA demo mode
 
-DSH Patrol keeps normal verification handling conservative. Conventional image-text codes can use the existing Windows system OCR path. Ordered-click and slider-puzzle automation has two cooperative test paths: explicit Patrol markup on any page that exposes `data-dsh-patrol-captcha-*` anchors, and zero-configuration weak DOM discovery on loopback test pages (`localhost`, `127.0.0.1`, or IPv6 loopback). Remote pages may still be weakly detected and classified, but weak unmarked detections do not trigger automatic clicks or drags.
+DSH Patrol keeps verification behavior split into centralized runtime modes. Conventional image-text codes continue to use the existing Windows system OCR path. Ordered-click and slider-puzzle automation always supports explicit Patrol markup; weak unmarked DOM automation is controlled by `DSH_PATROL_CAPTCHA_MODE`.
 
 ## 1. Install the local solver
 
@@ -13,7 +13,63 @@ cd E:\fangzeming\deepseekHarness\DSH-Patrol
 
 This creates `.captcha-demo-venv` locally and installs `ddddocr==1.6.1`. The environment is ignored by Git.
 
-## 2. Ordered text-click demo markup
+## 2. Runtime modes
+
+Mode behavior is centralized in `browser-bridge-runtime/captcha-mode.js` so additional modes can be added in one place later.
+
+### Normal mode
+
+Normal mode is the default:
+
+```powershell
+$env:DSH_PATROL_CAPTCHA_MODE="normal"
+pnpm dsh web
+```
+
+Behavior:
+
+- image-text CAPTCHA: Windows OCR may recognize and fill it;
+- explicit Patrol `click-sequence` / `slider-puzzle` markup: ddddocr automation is allowed;
+- weak unmarked click/slider discovery: detection/classification is allowed, but automatic click/drag is not;
+- reCAPTCHA, hCaptcha, Turnstile, Arkose/FunCaptcha and other protected challenge families: human handoff.
+
+### Test mode
+
+Enable test mode before starting DSH/Harness:
+
+```powershell
+$env:DSH_PATROL_CAPTCHA_MODE="test"
+pnpm dsh web
+```
+
+Test mode removes the previous localhost/loopback restriction for weak unmarked click/slider automation. It does not require an origin allowlist, fixed IP, meta declaration, or Patrol markup.
+
+Behavior:
+
+- exact `click-sequence` / `slider-puzzle` classification + weak DOM candidate: run ddddocr automatically on any origin;
+- weak/none visible-text classification + exactly one weak DOM candidate: the candidate may refine the classification and run ddddocr;
+- multiple competing weak candidates: fail closed and use the handoff path rather than guessing;
+- explicit markup still wins over weak DOM discovery when both are available;
+- third-party reCAPTCHA/hCaptcha/Turnstile/Arkose-style challenges remain human handoffs.
+
+A compatibility toggle is also accepted:
+
+```powershell
+$env:DSH_PATROL_CAPTCHA_TEST_MODE="1"
+pnpm dsh web
+```
+
+If `DSH_PATROL_CAPTCHA_MODE` is explicitly set, it takes precedence over the compatibility toggle.
+
+To return to normal mode:
+
+```powershell
+$env:DSH_PATROL_CAPTCHA_MODE="normal"
+# or remove both variables before restarting
+Remove-Item Env:DSH_PATROL_CAPTCHA_TEST_MODE -ErrorAction SilentlyContinue
+```
+
+## 3. Ordered text-click markup
 
 Mark the challenge root and the image/canvas to analyze. Supply the requested click sequence as page-owned metadata or visible target text.
 
@@ -34,7 +90,7 @@ Instead of `data-target-text`, the target can be provided by a child:
 
 At verification time Patrol captures only that marked image, uses local ddddocr detection/OCR plus local image processing to derive ordered normalized points, dispatches clicks to the marked element, then re-runs challenge detection. Coordinates and challenge images are not written into the Runbook.
 
-## 3. Slider-puzzle demo markup
+## 4. Slider-puzzle markup
 
 For a slider demo, expose the rendered background, puzzle piece, and draggable handle with explicit markers:
 
@@ -48,26 +104,18 @@ For a slider demo, expose the rendered background, puzzle piece, and draggable h
 
 Patrol crops the marked background and piece from the current rendered page, runs ddddocr `slide_match` locally, converts the result to a normalized horizontal position, dispatches a pointer/mouse drag on the marked handle, and then re-detects verification state.
 
-Your demo site's slider implementation should respond to standard pointer/mouse down, move, and up events. If it uses a custom framework event contract, adapt the demo widget to standard pointer events for the presentation.
+## 5. Weak auto-detection
 
-## 4. Weak auto-detection fallback
+When markup is absent, Patrol can still discover ordinary click/slider components heuristically:
 
-On a loopback test page, Patrol can run without any `data-dsh-patrol-*` markup once the normal challenge classifier has already identified an exact `click-sequence` or `slider-puzzle` challenge.
+- ordered-click: find click-order wording around a large visible image/canvas and extract the requested target sequence;
+- slider-puzzle: find slider/puzzle wording around a likely background image, puzzle piece, and draggable handle;
+- explicit markup has priority over weak detection;
+- ambiguous or incomplete DOM falls back to the normal handoff path.
 
-- Ordered-click fallback:
-  Patrol looks for click-order wording near a large visible image or canvas and uses the strongest matching image as the solve target.
-- Slider-puzzle fallback:
-  Patrol looks for slider/puzzle wording near a likely background image, puzzle piece, and draggable handle.
-- Markup still wins:
-  if Patrol markup exists, those explicit anchors are preferred over weak detection.
-- Remote weak detections are observation-only:
-  on non-loopback pages Patrol can use the same heuristics as evidence for detection, but it does not automatically execute weakly discovered click or drag actions.
-- Third-party widgets stay out:
-  reCAPTCHA, hCaptcha, Turnstile, Arkose/FunCaptcha, OTP, passkeys, approvals, rotate challenges, and other unsupported flows remain human handoffs.
+Whether a weak candidate is allowed to execute is decided only by the centralized runtime mode.
 
-Weak auto-detection is intended for quick local testing and is less precise than explicit markup. If Patrol cannot confidently isolate the right DOM, it falls back to the normal handoff path rather than guessing.
-
-## 5. Runbook memory
+## 6. Runbook memory
 
 Successful observations continue to be stored only as non-secret metadata, for example:
 
@@ -85,4 +133,4 @@ A later patrol still runs the detector once because the verification type may ch
 
 ## Scope
 
-The local ddddocr demo solver supports `click-sequence` and `slider-puzzle` through explicit cooperative markup, plus weak unmarked execution on loopback test pages after an exact challenge classification. It does not automate weakly discovered remote challenges, reCAPTCHA, hCaptcha, Cloudflare Turnstile, Arkose/FunCaptcha, OTP, passkeys, device approvals, rotate challenges, or other unsupported third-party verification. Those continue through Patrol's existing human handoff flow.
+The local ddddocr solver supports Patrol's `click-sequence` and `slider-puzzle` families. In `normal` mode weak unmarked candidates remain non-executing; in `test` mode weak unmarked candidates can execute without localhost/IP restrictions. reCAPTCHA, hCaptcha, Cloudflare Turnstile, Arkose/FunCaptcha, OTP, passkeys, device approvals, rotate challenges, and other protected/unsupported verification remain human handoffs in every supported mode.
