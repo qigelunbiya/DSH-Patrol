@@ -16,18 +16,24 @@ export async function probeOwnedSiteChallenge(bridge, tabId, options = {}) {
       ? [...new Set(info.kinds.filter(kind => DEMO_KINDS.has(kind)))]
       : []
     const documentKey = typeof info.documentKey === 'string' ? info.documentKey : ''
+    const origin = typeof info.origin === 'string' ? info.origin : ''
     const challengeKeys = {}
+    const sources = {}
     for (const kind of kinds) {
       const key = info.challengeKeys && typeof info.challengeKeys[kind] === 'string'
         ? info.challengeKeys[kind]
         : ''
       if (key) challengeKeys[kind] = key
+      const source = info.sources && info.sources[kind] === 'weak' ? 'weak' : 'explicit'
+      sources[kind] = source
     }
     return {
       available: info.available === true && kinds.length > 0 && documentKey.length > 0,
       kinds,
       documentKey,
+      origin,
       challengeKeys,
+      sources,
     }
   } catch {
     return emptyProbe()
@@ -69,13 +75,19 @@ export function selectDemoChallenge(classified, info) {
   const exactSubtype = supportsDemoSolve(classified?.kind, classified?.subtype)
     ? classified.subtype
     : ''
-  if (exactSubtype && info.kinds.includes(exactSubtype)) return demoDescriptor(exactSubtype)
+  if (exactSubtype && info.kinds.includes(exactSubtype)) {
+    if (demoSource(info, exactSubtype) === 'weak' && !isLocalTestOrigin(info.origin)) return null
+    return demoDescriptor(exactSubtype)
+  }
 
   const weakClassification = classified?.kind === 'none'
     || (classified?.kind === 'captcha' && classified?.subtype === 'generic-captcha')
     || (classified?.kind === 'slider' && classified?.subtype === 'slider')
-  if (!weakClassification || info.kinds.length !== 1) return null
-  return demoDescriptor(info.kinds[0])
+  if (!weakClassification) return null
+
+  const explicitKinds = info.kinds.filter(kind => demoSource(info, kind) === 'explicit')
+  if (explicitKinds.length !== 1) return null
+  return demoDescriptor(explicitKinds[0])
 }
 
 export function supportsDemoSolve(kind, subtype) {
@@ -91,6 +103,20 @@ export function authorizedCapture(capture, documentKey, challengeKey, kind) {
     && capture.documentKey === documentKey
     && capture.challengeKey === challengeKey
     && capture.kind === kind
+}
+
+export function isLocalTestOrigin(value) {
+  try {
+    const url = new URL(String(value || ''))
+    const host = url.hostname.toLowerCase()
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]'
+  } catch {
+    return false
+  }
+}
+
+function demoSource(info, kind) {
+  return info?.sources?.[kind] === 'weak' ? 'weak' : 'explicit'
 }
 
 function demoDescriptor(subtype) {
@@ -111,7 +137,7 @@ function isProtectedChallenge(classified) {
 }
 
 function emptyProbe() {
-  return { available: false, kinds: [], documentKey: '', challengeKeys: {} }
+  return { available: false, kinds: [], documentKey: '', origin: '', challengeKeys: {}, sources: {} }
 }
 
 async function tryClickSequence(bridge, tabId, documentKey, challengeKey, options) {
