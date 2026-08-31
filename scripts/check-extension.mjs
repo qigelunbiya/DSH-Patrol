@@ -29,8 +29,11 @@ if (!content.includes('document.querySelectorAll(args.selector)')) throw new Err
 
 const captchaDemoContent = readFileSync(join(extensionRoot, 'captcha-demo-content.js'), 'utf8')
 if (/\beval\s*\(/.test(captchaDemoContent) || /new\s+Function\s*\(/.test(captchaDemoContent)) throw new Error('captcha demo content bridge must not evaluate page code')
-if (!captchaDemoContent.includes('hasAnyDemoRoot')) throw new Error('captcha demo availability must be derived from explicit challenge markup')
 if (!captchaDemoContent.includes('data-dsh-patrol-captcha-kind')) throw new Error('captcha demo must require explicit challenge markup')
+if (!captchaDemoContent.includes('visibleDemoEntries') || !captchaDemoContent.includes('findDemoRoot')) throw new Error('captcha demo availability must be derived from visible explicit challenge markup')
+if (!captchaDemoContent.includes('DOCUMENT_KEY') || !captchaDemoContent.includes('assertDocumentKey')) throw new Error('captcha demo page actions must reject stale page instances')
+if (!captchaDemoContent.includes('CHALLENGE_KEYS') || !captchaDemoContent.includes('assertCurrentChallenge')) throw new Error('captcha demo actions must reject stale same-document challenge instances')
+if (!captchaDemoContent.includes('requestedDistance = backgroundRect.width * normalizedX')) throw new Error('captcha slider must use relative puzzle travel distance')
 
 const runtimeTools = readFileSync(join(runtimeRoot, 'tools.js'), 'utf8')
 if (/name:\s*['"]browser_eval['"]/.test(runtimeTools)) throw new Error('browser_eval must not be registered by Patrol')
@@ -63,15 +66,22 @@ if (!challengeTool.includes("classified.subtype === 'image-code'")) throw new Er
 for (const strategy of ['manual-click-sequence', 'manual-slider', 'manual-third-party']) {
   if (!challengeTool.includes(strategy)) throw new Error(`interactive verification must retain deterministic handoff strategy ${strategy}`)
 }
-if (!challengeTool.includes('trySolveOwnedSiteChallenge')) throw new Error('captcha demo solver integration is missing')
+if (!challengeTool.includes('trySolveOwnedSiteChallenge') || !challengeTool.includes('probeOwnedSiteChallenge')) throw new Error('captcha demo solver integration and re-detection are missing')
+if (!challengeTool.includes('ambiguousDemoFallback') || !challengeTool.includes('demo.visibleKinds')) throw new Error('ambiguous visible captcha markup must fail closed to handoff')
 if (!challengeTool.includes('observedKind') || !challengeTool.includes('observedSubtype')) throw new Error('challenge detector must preserve initially observed taxonomy for learned Runbook metadata')
+if (!challengeTool.includes('value.autoFilled && !value.handoffRequired')) throw new Error('challenge renderer must not claim completion while a handoff is still required')
 
 const captchaDemo = readFileSync(join(runtimeRoot, 'captcha-demo.js'), 'utf8')
-if (!captchaDemo.includes('info.available !== true')) throw new Error('captcha demo runtime must require explicit challenge markup')
+if (!captchaDemo.includes("bridge.request('captchaDemoInfo'")) throw new Error('captcha demo runtime must probe explicit challenge markup')
+if (!captchaDemo.includes('info.available === true')) throw new Error('captcha demo runtime must require confirmed visible challenge markup')
 if (!captchaDemo.includes('capture.available === true')) throw new Error('captcha demo runtime must only continue on confirmed demo captures')
-if (!captchaDemo.includes("classified.subtype === 'click-sequence'")) throw new Error('captcha demo ordered-click solver is missing')
-if (!captchaDemo.includes("classified.subtype === 'slider-puzzle'")) throw new Error('captcha demo slider-puzzle solver is missing')
-if (captchaDemo.includes("classified.subtype === 'third-party'") || captchaDemo.includes("operation: 'third-party'") || captchaDemo.includes("kind: 'third-party'")) {
+if (!captchaDemo.includes('capture.documentKey === documentKey')) throw new Error('captcha demo capture must match the discovered page instance')
+if (!captchaDemo.includes('capture.challengeKey === challengeKey')) throw new Error('captcha demo capture must match the discovered challenge instance')
+if (!captchaDemo.includes("classified?.subtype === 'generic-captcha'")) throw new Error('explicit challenge markup must be able to refine weak generic captcha classification')
+if (!captchaDemo.includes('visibleKinds: info.kinds')) throw new Error('captcha demo runtime must expose visible families for ambiguous handoff')
+if (!captchaDemo.includes("subtype === 'click-sequence'")) throw new Error('captcha demo ordered-click solver is missing')
+if (!captchaDemo.includes("subtype === 'slider-puzzle'")) throw new Error('captcha demo slider-puzzle solver is missing')
+if (captchaDemo.includes("operation: 'third-party'") || captchaDemo.includes("kind: 'third-party'")) {
   throw new Error('captcha demo runtime must not implement third-party anti-bot solver paths')
 }
 
@@ -113,6 +123,9 @@ if (!background.includes('value.ok === false')) throw new Error('extension must 
 if (!background.includes("case 'count':")) throw new Error('extension background must route count to the DOM bridge')
 if (!background.includes("case 'captureCaptchaDemo':")) throw new Error('extension background must capture captcha demo assets')
 if (!background.includes("type: 'dsh-patrol:captcha-demo'")) throw new Error('captcha demo commands must use a separate page message channel')
+if (!background.includes('documentKey: target.documentKey')) throw new Error('captcha demo capture must preserve page instance identity')
+if (!background.includes('challengeKey: target.challengeKey')) throw new Error('captcha demo capture must preserve challenge instance identity')
+if (!background.includes('target.imageRect, target.viewport, 0') || !background.includes('target.backgroundRect, target.viewport, 0')) throw new Error('captcha demo solver crops must not add coordinate-shifting padding')
 
 console.log('browser extension/runtime and host/agent plane checks passed')
 

@@ -1,3 +1,9 @@
+const DOCUMENT_KEY = globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function'
+  ? globalThis.crypto.randomUUID()
+  : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+const CHALLENGE_KEYS = new WeakMap()
+let challengeSequence = 0
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== 'dsh-patrol:captcha-demo') return
   Promise.resolve(handleCaptchaDemo(message.cmd, message.args || {}))
@@ -17,28 +23,38 @@ async function handleCaptchaDemo(cmd, args) {
 }
 
 function captchaDemoInfo() {
+  const entries = visibleDemoEntries()
+  const challengeKeys = {}
+  for (const entry of entries) challengeKeys[entry.kind] = challengeKeyFor(entry.root)
   return {
     ok: true,
     origin: location.origin,
-    available: hasAnyDemoRoot(),
+    documentKey: DOCUMENT_KEY,
+    available: entries.length > 0,
+    kinds: entries.map(entry => entry.kind),
+    challengeKeys,
   }
 }
 
 async function captchaDemoTarget(args) {
+  assertDocumentKey(args.documentKey)
   const kind = String(args.kind || '')
-  const root = findDemoRoot(kind)
-  if (!root) throw new Error(`owned-site captcha demo root not found for ${kind}`)
+  const root = findDemoRootByKey(kind, args.challengeKey)
+  if (!root) throw new Error(`captcha challenge changed before capture for ${kind}`)
+  const challengeKey = challengeKeyFor(root)
   root.scrollIntoView({ block: 'center', inline: 'center' })
   await sleep(80)
 
   if (kind === 'click-sequence') {
     const image = root.querySelector('[data-dsh-patrol-captcha-image],img,canvas')
-    if (!image || !isVisible(image)) throw new Error('owned-site click captcha image not found')
+    if (!image || !isVisible(image)) throw new Error('click captcha image not found')
     const targetText = extractTargetText(root)
-    if (!targetText) throw new Error('owned-site click captcha target text not found')
+    if (!targetText) throw new Error('click captcha target text not found')
     return {
       ok: true,
       origin: location.origin,
+      documentKey: DOCUMENT_KEY,
+      challengeKey,
       available: true,
       kind,
       targetText,
@@ -52,11 +68,13 @@ async function captchaDemoTarget(args) {
     const background = root.querySelector('[data-dsh-patrol-captcha-background]')
     const piece = root.querySelector('[data-dsh-patrol-captcha-piece]')
     const handle = root.querySelector('[data-dsh-patrol-captcha-slider-handle]')
-    if (!background || !piece || !handle) throw new Error('owned-site slider demo requires background, piece, and handle markers')
-    if (![background, piece, handle].every(isVisible)) throw new Error('owned-site slider demo assets must be visible')
+    if (!background || !piece || !handle) throw new Error('slider demo requires background, piece, and handle markers')
+    if (![background, piece, handle].every(isVisible)) throw new Error('slider demo assets must be visible')
     return {
       ok: true,
       origin: location.origin,
+      documentKey: DOCUMENT_KEY,
+      challengeKey,
       available: true,
       kind,
       backgroundSelector: stableSelector(background),
@@ -68,10 +86,12 @@ async function captchaDemoTarget(args) {
     }
   }
 
-  throw new Error(`owned-site captcha demo does not support ${kind}`)
+  throw new Error(`captcha demo does not support ${kind}`)
 }
 
 async function captchaDemoClickPoints(args) {
+  assertDocumentKey(args.documentKey)
+  assertCurrentChallenge(args.kind, args.challengeKey)
   const element = requiredElement(args.selector)
   const points = Array.isArray(args.points) ? args.points : []
   if (points.length < 1 || points.length > 12) throw new Error('captcha demo click points must contain 1-12 points')
@@ -89,10 +109,12 @@ async function captchaDemoClickPoints(args) {
     dispatchMouseSequence(element, x, y)
     await sleep(110)
   }
-  return { ok: true, clicks: points.length }
+  return { ok: true, documentKey: DOCUMENT_KEY, challengeKey: args.challengeKey, clicks: points.length }
 }
 
 async function captchaDemoDrag(args) {
+  assertDocumentKey(args.documentKey)
+  assertCurrentChallenge(args.kind, args.challengeKey)
   const handle = requiredElement(args.handleSelector)
   const background = requiredElement(args.backgroundSelector)
   const normalizedX = Number(args.normalizedX)
@@ -104,7 +126,8 @@ async function captchaDemoDrag(args) {
   const backgroundRect = background.getBoundingClientRect()
   const startX = handleRect.left + handleRect.width / 2
   const startY = handleRect.top + handleRect.height / 2
-  const targetX = Math.max(startX, Math.min(backgroundRect.right - 1, backgroundRect.left + backgroundRect.width * normalizedX))
+  const requestedDistance = backgroundRect.width * normalizedX
+  const targetX = Math.max(0, Math.min(window.innerWidth - 1, startX + requestedDistance))
   const distance = targetX - startX
   const steps = Math.max(10, Math.min(36, Math.ceil(Math.abs(distance) / 8)))
 
@@ -122,14 +145,73 @@ async function captchaDemoDrag(args) {
   dispatchPointer(document, 'pointerup', targetX, startY, 0)
   dispatchMouse(document, 'mouseup', targetX, startY, 0)
   handle.dispatchEvent(new Event('change', { bubbles: true }))
-  return { ok: true, normalizedX, distance }
+  return { ok: true, documentKey: DOCUMENT_KEY, challengeKey: args.challengeKey, normalizedX, distance }
+}
+
+function visibleDemoEntries() {
+  const entries = []
+  const clickRoot = findDemoRoot('click-sequence')
+  if (clickRoot) entries.push({ kind: 'click-sequence', root: clickRoot })
+  const sliderRoot = findDemoRoot('slider-puzzle')
+  if (sliderRoot) entries.push({ kind: 'slider-puzzle', root: sliderRoot })
+  return entries
+}
+
+function visibleDemoKinds() {
+  return visibleDemoEntries().map(entry => entry.kind)
 }
 
 function findDemoRoot(kind) {
-  const exact = document.querySelector(`[data-dsh-patrol-captcha-kind="${cssString(kind)}"]`)
-  if (exact) return exact
-  if (kind === 'slider-puzzle') return document.querySelector('[data-dsh-patrol-captcha-kind="slider"]')
-  return null
+  return demoRoots(kind)[0] || null
+}
+
+function findDemoRootByKey(kind, key) {
+  if (typeof key !== 'string' || key.length === 0) return null
+  return demoRoots(kind).find(root => challengeKeyFor(root) === key) || null
+}
+
+function demoRoots(kind) {
+  const selectors = kind === 'slider-puzzle'
+    ? ['[data-dsh-patrol-captcha-kind="slider-puzzle"]', '[data-dsh-patrol-captcha-kind="slider"]']
+    : [`[data-dsh-patrol-captcha-kind="${cssString(kind)}"]`]
+  const seen = new Set()
+  const candidates = []
+  for (const selector of selectors) {
+    for (const element of document.querySelectorAll(selector)) {
+      if (seen.has(element) || !isVisible(element)) continue
+      seen.add(element)
+      candidates.push(element)
+    }
+  }
+  candidates.sort((a, b) => visibleScore(b) - visibleScore(a))
+  return candidates
+}
+
+function visibleScore(element) {
+  const rect = element.getBoundingClientRect()
+  const left = Math.max(0, rect.left)
+  const top = Math.max(0, rect.top)
+  const right = Math.min(window.innerWidth, rect.right)
+  const bottom = Math.min(window.innerHeight, rect.bottom)
+  const width = Math.max(0, right - left)
+  const height = Math.max(0, bottom - top)
+  return width * height
+}
+
+function challengeKeyFor(root) {
+  let key = CHALLENGE_KEYS.get(root)
+  if (!key) {
+    challengeSequence += 1
+    key = `${DOCUMENT_KEY}:${challengeSequence}`
+    CHALLENGE_KEYS.set(root, key)
+  }
+  return key
+}
+
+function assertCurrentChallenge(kind, key) {
+  if (!findDemoRootByKey(String(kind || ''), key)) {
+    throw new Error('captcha challenge changed before the requested action; rediscover the current challenge')
+  }
 }
 
 function extractTargetText(root) {
@@ -148,8 +230,10 @@ function compactTarget(value) {
     .slice(0, 12)
 }
 
-function hasAnyDemoRoot() {
-  return document.querySelector('[data-dsh-patrol-captcha-kind="click-sequence"],[data-dsh-patrol-captcha-kind="slider-puzzle"],[data-dsh-patrol-captcha-kind="slider"]') !== null
+function assertDocumentKey(value) {
+  if (typeof value !== 'string' || value !== DOCUMENT_KEY) {
+    throw new Error('captcha page changed before the requested action; rediscover the current challenge')
+  }
 }
 
 function requiredElement(selector) {
@@ -157,6 +241,7 @@ function requiredElement(selector) {
   let element
   try { element = document.querySelector(selector) } catch { throw new Error(`invalid selector: ${selector}`) }
   if (!element) throw new Error(`element not found: ${selector}`)
+  if (!isVisible(element)) throw new Error(`element is not visible: ${selector}`)
   return element
 }
 

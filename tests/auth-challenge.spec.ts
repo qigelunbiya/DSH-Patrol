@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { classifyAuthChallenge } from '../browser-bridge-runtime/challenge-tool.js'
+import { ambiguousDemoFallback, classifyAuthChallenge } from '../browser-bridge-runtime/challenge-tool.js'
 import { normalizeImageCodeText } from '../browser-bridge-runtime/image-code.js'
 import { classifyLoginState } from '../browser-bridge-runtime/login-state-tool.js'
 
@@ -66,6 +66,15 @@ describe('auth challenge classification', () => {
     expect(result.subtype).toBe('third-party')
   })
 
+  it('keeps third-party CAPTCHA classification above slider wording', () => {
+    const result = classifyAuthChallenge(
+      { elements: [{ selector: 'iframe', text: 'recaptcha challenge slider verification', role: 'dialog' }] },
+      'reCAPTCHA security check: drag the slider to verify you are human',
+    )
+    expect(result.kind).toBe('captcha')
+    expect(result.subtype).toBe('third-party')
+  })
+
   it('classifies conventional image-code wording separately', () => {
     const result = classifyAuthChallenge(
       { elements: [{ selector: 'input[name="captcha_code"]', name: 'captcha_code', type: 'text', text: '' }] },
@@ -103,6 +112,26 @@ describe('auth challenge classification', () => {
     expect(result.kind).toBe('approval')
     expect(result.subtype).toBe('approval')
     expect(result.hasChallenge).toBe(true)
+  })
+
+  it('fails closed when multiple explicit captcha families are visible but text classification is weak', () => {
+    expect(ambiguousDemoFallback(
+      { kind: 'none', subtype: 'none', hasChallenge: false, selectors: [], evidence: [] },
+      { attempted: false, visibleKinds: ['click-sequence', 'slider-puzzle'] },
+    )).toEqual({
+      kind: 'unknown',
+      subtype: 'unknown',
+      hasChallenge: true,
+      selectors: [],
+      evidence: ['multiple explicit captcha families visible: click-sequence, slider-puzzle'],
+    })
+  })
+
+  it('does not replace a strong existing classification with ambiguous markup', () => {
+    expect(ambiguousDemoFallback(
+      { kind: 'captcha', subtype: 'third-party', hasChallenge: true, selectors: [], evidence: [] },
+      { attempted: false, visibleKinds: ['click-sequence', 'slider-puzzle'] },
+    )).toBeNull()
   })
 
   it('normalizes a simple locally recognized image code', () => {
