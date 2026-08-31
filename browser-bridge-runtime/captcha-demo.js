@@ -2,6 +2,10 @@ import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  captchaModeAllowsWeakUnmarkedAutomation,
+  currentCaptchaMode,
+} from './captcha-mode.js'
 
 const runtimeDir = dirname(fileURLToPath(import.meta.url))
 const projectRoot = dirname(runtimeDir)
@@ -44,7 +48,8 @@ export async function trySolveOwnedSiteChallenge(bridge, tabId, classified, opti
   if (!classified || typeof classified !== 'object') return { attempted: false, visibleKinds: [] }
 
   const info = await probeOwnedSiteChallenge(bridge, tabId, options)
-  const selected = selectDemoChallenge(classified, info)
+  const mode = currentCaptchaMode()
+  const selected = selectDemoChallenge(classified, info, mode)
   if (!selected) return { attempted: false, visibleKinds: info.kinds }
   const challengeKey = info.challengeKeys?.[selected.subtype]
   if (typeof challengeKey !== 'string' || challengeKey.length === 0) {
@@ -68,7 +73,7 @@ export async function trySolveOwnedSiteChallenge(bridge, tabId, classified, opti
   }
 }
 
-export function selectDemoChallenge(classified, info) {
+export function selectDemoChallenge(classified, info, mode = currentCaptchaMode()) {
   if (!info?.available || !Array.isArray(info.kinds) || !info.documentKey) return null
   if (isProtectedChallenge(classified)) return null
 
@@ -76,7 +81,7 @@ export function selectDemoChallenge(classified, info) {
     ? classified.subtype
     : ''
   if (exactSubtype && info.kinds.includes(exactSubtype)) {
-    if (demoSource(info, exactSubtype) === 'weak' && !isLocalTestOrigin(info.origin)) return null
+    if (!sourceAllowed(demoSource(info, exactSubtype), mode)) return null
     return demoDescriptor(exactSubtype)
   }
 
@@ -85,9 +90,9 @@ export function selectDemoChallenge(classified, info) {
     || (classified?.kind === 'slider' && classified?.subtype === 'slider')
   if (!weakClassification) return null
 
-  const explicitKinds = info.kinds.filter(kind => demoSource(info, kind) === 'explicit')
-  if (explicitKinds.length !== 1) return null
-  return demoDescriptor(explicitKinds[0])
+  const allowedKinds = info.kinds.filter(kind => sourceAllowed(demoSource(info, kind), mode))
+  if (allowedKinds.length !== 1) return null
+  return demoDescriptor(allowedKinds[0])
 }
 
 export function supportsDemoSolve(kind, subtype) {
@@ -105,14 +110,9 @@ export function authorizedCapture(capture, documentKey, challengeKey, kind) {
     && capture.kind === kind
 }
 
-export function isLocalTestOrigin(value) {
-  try {
-    const url = new URL(String(value || ''))
-    const host = url.hostname.toLowerCase()
-    return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]'
-  } catch {
-    return false
-  }
+function sourceAllowed(source, mode) {
+  if (source === 'explicit') return mode?.explicitDemoAutomation !== false
+  return captchaModeAllowsWeakUnmarkedAutomation(mode)
 }
 
 function demoSource(info, kind) {

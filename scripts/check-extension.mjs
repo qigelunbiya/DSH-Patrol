@@ -16,7 +16,7 @@ if (!manifest.content_scripts?.some(item => Array.isArray(item.js) && item.js.in
 for (const file of ['background.js', 'content.js', 'captcha-demo-content.js', 'popup.js', 'options.js']) {
   checkSyntax(join(extensionRoot, file), file)
 }
-for (const file of ['index.js', 'bridge.js', 'managed-browser.js', 'tools.js', 'count-tool.js', 'login-state-tool.js', 'challenge-tool.js', 'image-code.js', 'captcha-demo.js', 'screenshot-ocr.js', 'tools-plugin.js', 'ws.js']) {
+for (const file of ['index.js', 'bridge.js', 'managed-browser.js', 'tools.js', 'count-tool.js', 'login-state-tool.js', 'challenge-tool.js', 'image-code.js', 'captcha-mode.js', 'captcha-demo.js', 'screenshot-ocr.js', 'tools-plugin.js', 'ws.js']) {
   checkSyntax(join(runtimeRoot, file), `browser-bridge-runtime/${file}`)
 }
 
@@ -62,7 +62,7 @@ const challengeTool = readFileSync(join(runtimeRoot, 'challenge-tool.js'), 'utf8
 if (!challengeTool.includes("name: 'browser_detect_auth_challenge'")) throw new Error('browser_detect_auth_challenge tool is missing')
 if (!challengeTool.includes("bridge.request('snapshot'")) throw new Error('auth challenge detection must use the safe snapshot provider')
 if (!challengeTool.includes("bridge.request('readPage'")) throw new Error('auth challenge detection must use visible page text only')
-if (/\beval\s*\(/.test(challengeTool) || /new\s+Function\s*\(/.test(challengeTool)) throw new Error('auth challenge detection must not evaluate page code')
+if (/\beval\s*\(/.test(challengeTool) || /new\s+Function\s*\(/.test(challengeTool)) throw new Error('auth challenge detector must not evaluate page code')
 if (/bridge\.request\(['"](?:click|drag)/.test(challengeTool)) throw new Error('auth challenge detector must not expose a general direct click/drag solver')
 if (!challengeTool.includes("classified.subtype === 'image-code'")) throw new Error('conventional image-text OCR path is missing')
 for (const strategy of ['manual-click-sequence', 'manual-slider', 'manual-third-party']) {
@@ -73,15 +73,22 @@ if (!challengeTool.includes('ambiguousDemoFallback') || !challengeTool.includes(
 if (!challengeTool.includes('observedKind') || !challengeTool.includes('observedSubtype')) throw new Error('challenge detector must preserve initially observed taxonomy for learned Runbook metadata')
 if (!challengeTool.includes('value.autoFilled && !value.handoffRequired')) throw new Error('challenge renderer must not claim completion while a handoff is still required')
 
+const captchaMode = readFileSync(join(runtimeRoot, 'captcha-mode.js'), 'utf8')
+if (!captchaMode.includes('CAPTCHA_MODES') || !captchaMode.includes("name: 'normal'") || !captchaMode.includes("name: 'test'")) throw new Error('captcha normal/test mode definitions must remain centralized')
+if (!captchaMode.includes('DSH_PATROL_CAPTCHA_MODE') || !captchaMode.includes('DSH_PATROL_CAPTCHA_TEST_MODE')) throw new Error('captcha runtime mode must support the primary mode variable and compatibility test toggle')
+if (!captchaMode.includes('weakUnmarkedAutomation: false') || !captchaMode.includes('weakUnmarkedAutomation: true')) throw new Error('normal/test modes must differ on weak unmarked automation')
+if ((captchaMode.match(/thirdPartyAutomation: false/g) || []).length < 2) throw new Error('third-party CAPTCHA automation must stay disabled in every supported mode')
+
 const captchaDemo = readFileSync(join(runtimeRoot, 'captcha-demo.js'), 'utf8')
 if (!captchaDemo.includes("bridge.request('captchaDemoInfo'")) throw new Error('captcha demo runtime must probe available demo challenge signals')
 if (!captchaDemo.includes('info.available === true')) throw new Error('captcha demo runtime must require a confirmed visible click/slider challenge candidate')
 if (!captchaDemo.includes('capture.available === true')) throw new Error('captcha demo runtime must only continue on confirmed demo captures')
 if (!captchaDemo.includes('capture.documentKey === documentKey')) throw new Error('captcha demo capture must match the discovered page instance')
 if (!captchaDemo.includes('capture.challengeKey === challengeKey')) throw new Error('captcha demo capture must match the discovered challenge instance')
-if (!captchaDemo.includes("classified?.subtype === 'generic-captcha'")) throw new Error('demo challenge probing must retain explicit-markup refinement of weak generic classification')
+if (!captchaDemo.includes("classified?.subtype === 'generic-captcha'")) throw new Error('demo challenge probing must retain refinement of weak generic classification')
 if (!captchaDemo.includes('visibleKinds: info.kinds')) throw new Error('captcha demo runtime must expose visible families for ambiguous handoff')
-if (!captchaDemo.includes('isLocalTestOrigin') || !captchaDemo.includes("demoSource(info, exactSubtype) === 'weak' && !isLocalTestOrigin(info.origin)")) throw new Error('weak unmarked captcha execution must remain limited to loopback test origins')
+if (!captchaDemo.includes('currentCaptchaMode') || !captchaDemo.includes('captchaModeAllowsWeakUnmarkedAutomation') || !captchaDemo.includes('sourceAllowed')) throw new Error('weak unmarked captcha execution must be controlled by the centralized runtime mode')
+if (captchaDemo.includes('isLocalTestOrigin')) throw new Error('weak unmarked captcha execution must not depend on localhost/loopback origin checks')
 if (!captchaDemo.includes("subtype === 'click-sequence'")) throw new Error('captcha demo ordered-click solver is missing')
 if (!captchaDemo.includes("subtype === 'slider-puzzle'")) throw new Error('captcha demo slider-puzzle solver is missing')
 if (captchaDemo.includes("operation: 'third-party'") || captchaDemo.includes("kind: 'third-party'")) {
