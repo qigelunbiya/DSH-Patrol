@@ -31,8 +31,10 @@ const captchaDemoContent = readFileSync(join(extensionRoot, 'captcha-demo-conten
 if (/\beval\s*\(/.test(captchaDemoContent) || /new\s+Function\s*\(/.test(captchaDemoContent)) throw new Error('captcha demo content bridge must not evaluate page code')
 if (!captchaDemoContent.includes('data-dsh-patrol-captcha-kind')) throw new Error('captcha demo content bridge must still recognize explicit challenge markup')
 if (!captchaDemoContent.includes('weakDemoEntries') || !captchaDemoContent.includes('detectWeakClickSequence') || !captchaDemoContent.includes('detectWeakSliderPuzzle')) throw new Error('captcha demo availability must support weak auto-detection for unmarked click and slider challenges')
+if (!captchaDemoContent.includes('function childElements') || !captchaDemoContent.includes('Array.from(node.children)')) throw new Error('weak captcha traversal must support browser HTMLCollection children')
 if (!captchaDemoContent.includes('DOCUMENT_KEY') || !captchaDemoContent.includes('assertDocumentKey')) throw new Error('captcha demo page actions must reject stale page instances')
-if (!captchaDemoContent.includes('CHALLENGE_KEYS') || !captchaDemoContent.includes('assertCurrentChallenge')) throw new Error('captcha demo actions must reject stale same-document challenge instances')
+if (!captchaDemoContent.includes('CHALLENGE_KEYS') || !captchaDemoContent.includes('ELEMENT_KEYS') || !captchaDemoContent.includes('challengeKeyForEntry') || !captchaDemoContent.includes('assertCurrentChallenge')) throw new Error('captcha demo actions must reject stale page and same-root challenge instances')
+if (!captchaDemoContent.includes("source: 'weak'") || !captchaDemoContent.includes("source: 'explicit'") || !captchaDemoContent.includes('sources,')) throw new Error('captcha demo discovery must preserve explicit versus weak source metadata')
 if (!captchaDemoContent.includes('requestedDistance = backgroundRect.width * normalizedX')) throw new Error('captcha slider must use relative puzzle travel distance')
 
 const runtimeTools = readFileSync(join(runtimeRoot, 'tools.js'), 'utf8')
@@ -77,8 +79,9 @@ if (!captchaDemo.includes('info.available === true')) throw new Error('captcha d
 if (!captchaDemo.includes('capture.available === true')) throw new Error('captcha demo runtime must only continue on confirmed demo captures')
 if (!captchaDemo.includes('capture.documentKey === documentKey')) throw new Error('captcha demo capture must match the discovered page instance')
 if (!captchaDemo.includes('capture.challengeKey === challengeKey')) throw new Error('captcha demo capture must match the discovered challenge instance')
-if (!captchaDemo.includes("classified?.subtype === 'generic-captcha'")) throw new Error('demo challenge probing must be able to refine weak generic captcha classification')
+if (!captchaDemo.includes("classified?.subtype === 'generic-captcha'")) throw new Error('demo challenge probing must retain explicit-markup refinement of weak generic classification')
 if (!captchaDemo.includes('visibleKinds: info.kinds')) throw new Error('captcha demo runtime must expose visible families for ambiguous handoff')
+if (!captchaDemo.includes('isLocalTestOrigin') || !captchaDemo.includes("demoSource(info, exactSubtype) === 'weak' && !isLocalTestOrigin(info.origin)")) throw new Error('weak unmarked captcha execution must remain limited to loopback test origins')
 if (!captchaDemo.includes("subtype === 'click-sequence'")) throw new Error('captcha demo ordered-click solver is missing')
 if (!captchaDemo.includes("subtype === 'slider-puzzle'")) throw new Error('captcha demo slider-puzzle solver is missing')
 if (captchaDemo.includes("operation: 'third-party'") || captchaDemo.includes("kind: 'third-party'")) {
