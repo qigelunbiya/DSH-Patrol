@@ -9,15 +9,17 @@ import { registerPatrolCreationTools } from './creation-tools.js'
 import { registerPatrolCredentialTools } from './credential-tools.js'
 import { registerPatrolEditTools } from './edit-tools.js'
 import { PATROL_EXCEL_PROMPT } from './excel-tools.js'
-import { PATROL_EXCEL_V3_PROMPT, registerPatrolExcelToolsV3 } from './excel-tools-v3.js'
+import { PATROL_EXCEL_V4_PROMPT, registerPatrolExcelToolsV4 } from './excel-tools-v4.js'
 import { registerPatrolHandoffTools } from './handoff-tools.js'
 import { PATROL_SYSTEM_PROMPT } from './prompt.js'
 import { createPatrolRecoveryGuard, PATROL_RECOVERY_PROMPT } from './recovery-guard.js'
+import { PATROL_TARGETED_RECOVERY_PROMPT, registerPatrolRecoveryTools } from './recovery-tools.js'
 import { PatrolRunner } from './runner.js'
 import { PatrolScheduler, registerPatrolScheduleTools } from './scheduler.js'
 import { PATROL_SESSION_PROMPT } from './session-prompt.js'
 import { PatrolStore } from './store.js'
 import { registerPatrolTools } from './tools.js'
+import { PATROL_TRANSIENT_INPUT_PROMPT, registerPatrolTransientInputTools } from './transient-input-tools.js'
 import { registerPatrolWorkspaceTools } from './workspace-tools.js'
 
 export * from './types.js'
@@ -31,7 +33,10 @@ export * from './credential-tools.js'
 export * from './excel-tools.js'
 export * from './excel-tools-v2.js'
 export * from './excel-tools-v3.js'
+export * from './excel-tools-v4.js'
 export * from './recovery-guard.js'
+export * from './recovery-tools.js'
+export * from './transient-input-tools.js'
 export * from './handoff-tools.js'
 export { PatrolStore } from './store.js'
 export { PatrolRunner, conditionMatches, evaluateExpectation } from './runner.js'
@@ -100,12 +105,17 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     'dsh-patrol: flat browser action tools',
   )
   ctx.effect(
+    () => registerPatrolTransientInputTools(ctx, store, runner),
+    'dsh-patrol: transient sensitive browser input',
+  )
+  ctx.effect(
     () => registerPatrolHandoffTools(ctx, store, runner, { maxSteps: resolved.maxSteps }),
     'dsh-patrol: human verification handoff tools',
   )
   ctx.effect(() => registerPatrolEditTools(ctx, store, runner), 'dsh-patrol: runbook edit and validation tools')
+  ctx.effect(() => registerPatrolRecoveryTools(ctx, store), 'dsh-patrol: targeted failed-step recovery tools')
   ctx.effect(() => registerPatrolWorkspaceTools(ctx, store), 'dsh-patrol: workspace path tools')
-  ctx.effect(() => registerPatrolExcelToolsV3(ctx), 'dsh-patrol: hybrid resilient workspace Excel tools')
+  ctx.effect(() => registerPatrolExcelToolsV4(ctx), 'dsh-patrol: resilient workspace Excel v4 tools')
   ctx.effect(() => registerPatrolScheduleTools(ctx, store), 'dsh-patrol: schedule tools')
 
   const scheduler = new PatrolScheduler(ctx, store)
@@ -137,21 +147,31 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       text: PATROL_EXCEL_PROMPT,
     }), 'dsh-patrol: adaptive Excel workflow prompt')
     ctx.effect(() => systemPrompt.section({
-      name: 'agent:dsh-patrol-excel-v3',
+      name: 'agent:dsh-patrol-excel-v4',
       order: 132,
-      text: PATROL_EXCEL_V3_PROMPT,
-    }), 'dsh-patrol: hybrid resilient Excel bridge prompt')
+      text: PATROL_EXCEL_V4_PROMPT,
+    }), 'dsh-patrol: resilient Excel v4 bridge prompt')
     ctx.effect(() => systemPrompt.section({
       name: 'agent:dsh-patrol-session',
       order: 133,
       text: PATROL_SESSION_PROMPT,
     }), 'dsh-patrol: authenticated-session reuse prompt')
     ctx.effect(() => systemPrompt.section({
-      name: 'agent:dsh-patrol-recovery',
+      name: 'agent:dsh-patrol-transient-input',
       order: 134,
+      text: PATROL_TRANSIENT_INPUT_PROMPT,
+    }), 'dsh-patrol: transient sensitive-input workflow prompt')
+    ctx.effect(() => systemPrompt.section({
+      name: 'agent:dsh-patrol-recovery',
+      order: 135,
       text: PATROL_RECOVERY_PROMPT,
     }), 'dsh-patrol: bounded recovery prompt')
+    ctx.effect(() => systemPrompt.section({
+      name: 'agent:dsh-patrol-targeted-recovery',
+      order: 136,
+      text: PATROL_TARGETED_RECOVERY_PROMPT,
+    }), 'dsh-patrol: targeted failed-step recovery prompt')
   }
 
-  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; scheduler=enabled; credential helper=enabled; verification handoff=enabled; secret-safe creation=enabled; flat action tools=enabled; resilient Excel v3 tools=enabled; recovery circuit breaker=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled`)
+  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; scheduler=enabled; credential helper=optional; transient sensitive input=enabled; verification handoff=enabled; secret-safe creation=enabled; flat action tools=enabled; resilient Excel v4 tools=enabled; recovery circuit breaker=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled`)
 }
