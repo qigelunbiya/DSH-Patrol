@@ -3,6 +3,9 @@ const DOCUMENT_KEY = globalThis.crypto && typeof globalThis.crypto.randomUUID ==
   : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 const CHALLENGE_KEYS = new WeakMap()
 let challengeSequence = 0
+const CLICK_SEQUENCE_HINT = /依次点击|按(?:照|顺序).{0,20}点击|请.{0,20}(?:下图|图片).{0,20}点击|点击.{0,20}(?:文字|汉字|字符|目标|图标).{0,20}(?:顺序|依次)?|请选择.{0,20}(?:文字|汉字|字符|图标|目标)|选出.{0,20}(?:文字|汉字|字符|图标|目标)|click.{0,30}(?:characters?|words?|symbols?|icons?).{0,30}(?:order|sequence)|select.{0,30}(?:characters?|words?|symbols?|icons?)/i
+const SLIDER_PUZZLE_HINT = /\bgeetest\b|\bjigsaw\b|\bpuzzle\b|拼图|缺口|滑块.{0,20}(?:拼图|缺口)|拖动.{0,20}(?:拼图|缺口)|drag.{0,30}(?:slider|puzzle)|slider.{0,30}(?:verify|puzzle)/i
+const HANDLE_SELECTOR = '[role="slider"],[class*="slider"],[id*="slider"],[class*="drag"],[id*="drag"],[class*="handle"],[id*="handle"],button'
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== 'dsh-patrol:captcha-demo') return
@@ -39,16 +42,17 @@ function captchaDemoInfo() {
 async function captchaDemoTarget(args) {
   assertDocumentKey(args.documentKey)
   const kind = String(args.kind || '')
-  const root = findDemoRootByKey(kind, args.challengeKey)
-  if (!root) throw new Error(`captcha challenge changed before capture for ${kind}`)
+  const entry = findDemoEntryByKey(kind, args.challengeKey)
+  if (!entry) throw new Error(`captcha challenge changed before capture for ${kind}`)
+  const root = entry.root
   const challengeKey = challengeKeyFor(root)
   root.scrollIntoView({ block: 'center', inline: 'center' })
   await sleep(80)
 
   if (kind === 'click-sequence') {
-    const image = root.querySelector('[data-dsh-patrol-captcha-image],img,canvas')
+    const image = root.querySelector('[data-dsh-patrol-captcha-image],img,canvas') || entry.image || findClickImage(root)
     if (!image || !isVisible(image)) throw new Error('click captcha image not found')
-    const targetText = extractTargetText(root)
+    const targetText = entry.targetText || extractTargetText(root)
     if (!targetText) throw new Error('click captcha target text not found')
     return {
       ok: true,
@@ -65,9 +69,15 @@ async function captchaDemoTarget(args) {
   }
 
   if (kind === 'slider-puzzle') {
-    const background = root.querySelector('[data-dsh-patrol-captcha-background]')
-    const piece = root.querySelector('[data-dsh-patrol-captcha-piece]')
-    const handle = root.querySelector('[data-dsh-patrol-captcha-slider-handle]')
+    const assets = entry.assets || {
+      background: root.querySelector('[data-dsh-patrol-captcha-background]'),
+      piece: root.querySelector('[data-dsh-patrol-captcha-piece]'),
+      handle: root.querySelector('[data-dsh-patrol-captcha-slider-handle]'),
+    } || detectSliderAssets(root)
+    const resolvedAssets = assets?.background && assets?.piece && assets?.handle ? assets : detectSliderAssets(root)
+    const background = resolvedAssets?.background || null
+    const piece = resolvedAssets?.piece || null
+    const handle = resolvedAssets?.handle || null
     if (!background || !piece || !handle) throw new Error('slider demo requires background, piece, and handle markers')
     if (![background, piece, handle].every(isVisible)) throw new Error('slider demo assets must be visible')
     return {
@@ -150,10 +160,10 @@ async function captchaDemoDrag(args) {
 
 function visibleDemoEntries() {
   const entries = []
-  const clickRoot = findDemoRoot('click-sequence')
-  if (clickRoot) entries.push({ kind: 'click-sequence', root: clickRoot })
-  const sliderRoot = findDemoRoot('slider-puzzle')
-  if (sliderRoot) entries.push({ kind: 'slider-puzzle', root: sliderRoot })
+  const clickEntry = findDemoEntry('click-sequence')
+  if (clickEntry) entries.push(clickEntry)
+  const sliderEntry = findDemoEntry('slider-puzzle')
+  if (sliderEntry) entries.push(sliderEntry)
   return entries
 }
 
@@ -162,29 +172,207 @@ function visibleDemoKinds() {
 }
 
 function findDemoRoot(kind) {
-  return demoRoots(kind)[0] || null
+  return findDemoEntry(kind)?.root || null
 }
 
 function findDemoRootByKey(kind, key) {
-  if (typeof key !== 'string' || key.length === 0) return null
-  return demoRoots(kind).find(root => challengeKeyFor(root) === key) || null
+  return findDemoEntryByKey(kind, key)?.root || null
 }
 
-function demoRoots(kind) {
+function findDemoEntryByKey(kind, key) {
+  if (typeof key !== 'string' || key.length === 0) return null
+  return demoEntries(kind).find(entry => challengeKeyFor(entry.root) === key) || null
+}
+
+function findDemoEntry(kind) {
+  return demoEntries(kind)[0] || null
+}
+
+function demoEntries(kind) {
+  const explicit = explicitDemoEntries(kind)
+  if (explicit.length > 0) return explicit
+  const weak = weakDemoEntries(kind)
+  weak.sort((a, b) => visibleScore(b.root) - visibleScore(a.root))
+  return weak
+}
+
+function explicitDemoEntries(kind) {
   const selectors = kind === 'slider-puzzle'
     ? ['[data-dsh-patrol-captcha-kind="slider-puzzle"]', '[data-dsh-patrol-captcha-kind="slider"]']
     : [`[data-dsh-patrol-captcha-kind="${cssString(kind)}"]`]
   const seen = new Set()
-  const candidates = []
+  const entries = []
   for (const selector of selectors) {
-    for (const element of document.querySelectorAll(selector)) {
-      if (seen.has(element) || !isVisible(element)) continue
-      seen.add(element)
-      candidates.push(element)
+    for (const root of document.querySelectorAll(selector)) {
+      if (seen.has(root) || !isVisible(root)) continue
+      seen.add(root)
+      entries.push({ kind, root })
     }
   }
-  candidates.sort((a, b) => visibleScore(b) - visibleScore(a))
-  return candidates
+  entries.sort((a, b) => visibleScore(b.root) - visibleScore(a.root))
+  return entries
+}
+
+function weakDemoEntries(kind) {
+  if (kind === 'click-sequence') {
+    const entry = detectWeakClickSequence()
+    return entry ? [entry] : []
+  }
+  if (kind === 'slider-puzzle') {
+    const entry = detectWeakSliderPuzzle()
+    return entry ? [entry] : []
+  }
+  return []
+}
+
+function detectWeakClickSequence() {
+  const images = visibleElements('img,canvas').filter(isLargeImageCandidate)
+  const candidates = []
+  for (const image of images) {
+    const root = findNearestAncestor(image, node => looksLikeChallengeRoot(node, CLICK_SEQUENCE_HINT))
+    if (!root) continue
+    const targetText = extractTargetText(root)
+    if (!targetText) continue
+    candidates.push({ kind: 'click-sequence', root, image, targetText })
+  }
+  candidates.sort((a, b) => weakClickScore(b) - weakClickScore(a))
+  return candidates[0] || null
+}
+
+function detectWeakSliderPuzzle() {
+  const handles = visibleElements(HANDLE_SELECTOR)
+  const candidates = []
+  for (const handle of handles) {
+    const root = findNearestAncestor(handle, node => looksLikeChallengeRoot(node, SLIDER_PUZZLE_HINT))
+    if (!root) continue
+    const assets = detectSliderAssets(root)
+    if (!assets) continue
+    candidates.push({ kind: 'slider-puzzle', root, assets })
+  }
+  candidates.sort((a, b) => weakSliderScore(b) - weakSliderScore(a))
+  return candidates[0] || null
+}
+
+function findClickImage(root) {
+  return firstVisibleDescendant(root, element => {
+    const tag = tagNameOf(element)
+    return (tag === 'img' || tag === 'canvas') && isLargeImageCandidate(element)
+  })
+}
+
+function detectSliderAssets(root) {
+  const images = visibleDescendants(root).filter(element => {
+    const tag = tagNameOf(element)
+    return (tag === 'img' || tag === 'canvas') && isVisible(element)
+  })
+  if (images.length < 2) return null
+  images.sort((a, b) => visibleScore(b) - visibleScore(a))
+  const background = images.find(isWideBackgroundCandidate)
+  if (!background) return null
+  const piece = images.find(image => image !== background && isPieceCandidate(image, background))
+  if (!piece) return null
+  const handles = visibleDescendants(root).filter(element => isHandleCandidate(element, background))
+  const handle = handles.sort((a, b) => visibleScore(b) - visibleScore(a))[0] || null
+  if (!handle) return null
+  return { background, piece, handle }
+}
+
+function visibleElements(selector) {
+  return [...document.querySelectorAll(selector)].filter(isVisible)
+}
+
+function visibleDescendants(root) {
+  const results = []
+  const queue = [...(Array.isArray(root?.children) ? root.children : [])]
+  while (queue.length > 0) {
+    const node = queue.shift()
+    if (!node || node.nodeType !== Node.ELEMENT_NODE) continue
+    if (isVisible(node)) results.push(node)
+    if (Array.isArray(node.children)) queue.push(...node.children)
+  }
+  return results
+}
+
+function firstVisibleDescendant(root, predicate) {
+  return visibleDescendants(root).find(predicate) || null
+}
+
+function findNearestAncestor(element, predicate, maxDepth = 5) {
+  let node = element
+  for (let depth = 0; node && depth <= maxDepth; depth += 1) {
+    if (predicate(node)) return node
+    node = node.parentElement
+  }
+  return null
+}
+
+function looksLikeChallengeRoot(element, hintRule) {
+  if (!element || !isVisible(element)) return false
+  const text = compactText([
+    element.innerText,
+    element.textContent,
+    element.getAttribute?.('class'),
+    element.getAttribute?.('id'),
+    element.getAttribute?.('data-testid'),
+  ].filter(Boolean).join(' '))
+  return hintRule.test(text) || /\bcaptcha\b|\bverify\b|验证码|人机验证|机器人验证/i.test(text)
+}
+
+function isLargeImageCandidate(element) {
+  const rect = element.getBoundingClientRect()
+  return rect.width >= 120 && rect.height >= 80
+}
+
+function isWideBackgroundCandidate(element) {
+  const rect = element.getBoundingClientRect()
+  return rect.width >= 180 && rect.height >= 60 && rect.width >= rect.height * 1.3
+}
+
+function isPieceCandidate(element, background) {
+  const rect = element.getBoundingClientRect()
+  const bg = background.getBoundingClientRect()
+  return rect.width >= 24
+    && rect.height >= 24
+    && rect.width <= bg.width * 0.45
+    && rect.height <= bg.height * 0.65
+    && rect.left >= bg.left - 40
+    && rect.right <= bg.right + 40
+    && rect.top >= bg.top - 40
+    && rect.bottom <= bg.bottom + 80
+}
+
+function isHandleCandidate(element, background) {
+  const rect = element.getBoundingClientRect()
+  const bg = background.getBoundingClientRect()
+  const text = compactText([
+    element.getAttribute?.('class'),
+    element.getAttribute?.('id'),
+    element.getAttribute?.('role'),
+    tagNameOf(element),
+  ].filter(Boolean).join(' '))
+  return rect.width >= 20
+    && rect.width <= Math.max(90, bg.width * 0.35)
+    && rect.height >= 20
+    && rect.height <= Math.max(90, bg.height)
+    && rect.top <= bg.bottom + 160
+    && rect.bottom >= bg.bottom - 40
+    && (/(?:slider|drag|handle|button|knob|thumb|block|滑块|拖动)/i.test(text) || tagNameOf(element) === 'button')
+}
+
+function weakClickScore(entry) {
+  return visibleScore(entry.image || entry.root) + visibleScore(entry.root)
+}
+
+function weakSliderScore(entry) {
+  return visibleScore(entry.root) + visibleScore(entry.assets.background) + visibleScore(entry.assets.handle)
+}
+
+function tagNameOf(element) {
+  return String(element?.tagName || '').toLowerCase()
+}
+
+function compactText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim()
 }
 
 function visibleScore(element) {
