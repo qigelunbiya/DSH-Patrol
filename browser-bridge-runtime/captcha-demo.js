@@ -16,10 +16,18 @@ export async function probeOwnedSiteChallenge(bridge, tabId, options = {}) {
       ? [...new Set(info.kinds.filter(kind => DEMO_KINDS.has(kind)))]
       : []
     const documentKey = typeof info.documentKey === 'string' ? info.documentKey : ''
+    const challengeKeys = {}
+    for (const kind of kinds) {
+      const key = info.challengeKeys && typeof info.challengeKeys[kind] === 'string'
+        ? info.challengeKeys[kind]
+        : ''
+      if (key) challengeKeys[kind] = key
+    }
     return {
       available: info.available === true && kinds.length > 0 && documentKey.length > 0,
       kinds,
       documentKey,
+      challengeKeys,
     }
   } catch {
     return emptyProbe()
@@ -32,12 +40,14 @@ export async function trySolveOwnedSiteChallenge(bridge, tabId, classified, opti
   const info = await probeOwnedSiteChallenge(bridge, tabId, options)
   const selected = selectDemoChallenge(classified, info)
   if (!selected) return { attempted: false }
+  const challengeKey = info.challengeKeys?.[selected.subtype]
+  if (typeof challengeKey !== 'string' || challengeKey.length === 0) return { attempted: false }
 
   let result
   if (selected.subtype === 'click-sequence') {
-    result = await tryClickSequence(bridge, tabId, info.documentKey, options)
+    result = await tryClickSequence(bridge, tabId, info.documentKey, challengeKey, options)
   } else if (selected.subtype === 'slider-puzzle') {
-    result = await trySliderPuzzle(bridge, tabId, info.documentKey, options)
+    result = await trySliderPuzzle(bridge, tabId, info.documentKey, challengeKey, options)
   } else {
     return { attempted: false }
   }
@@ -70,12 +80,13 @@ export function supportsDemoSolve(kind, subtype) {
     || (kind === 'slider' && subtype === 'slider-puzzle')
 }
 
-export function authorizedCapture(capture, documentKey, kind) {
+export function authorizedCapture(capture, documentKey, challengeKey, kind) {
   return !!capture
     && typeof capture === 'object'
     && capture.ok !== false
     && capture.available === true
     && capture.documentKey === documentKey
+    && capture.challengeKey === challengeKey
     && capture.kind === kind
 }
 
@@ -97,17 +108,18 @@ function isProtectedChallenge(classified) {
 }
 
 function emptyProbe() {
-  return { available: false, kinds: [], documentKey: '' }
+  return { available: false, kinds: [], documentKey: '', challengeKeys: {} }
 }
 
-async function tryClickSequence(bridge, tabId, documentKey, options) {
+async function tryClickSequence(bridge, tabId, documentKey, challengeKey, options) {
   try {
     const capture = await bridge.request('captureCaptchaDemo', {
       tabId,
       kind: 'click-sequence',
       documentKey,
+      challengeKey,
     }, options)
-    if (!authorizedCapture(capture, documentKey, 'click-sequence')) {
+    if (!authorizedCapture(capture, documentKey, challengeKey, 'click-sequence')) {
       return { attempted: true, completed: false, strategy: 'ddddocr-click-sequence-demo' }
     }
     if (typeof capture.targetText !== 'string' || capture.targetText.trim() === '') {
@@ -123,7 +135,9 @@ async function tryClickSequence(bridge, tabId, documentKey, options) {
     }
     const result = await bridge.request('captchaDemoClickPoints', {
       tabId,
+      kind: 'click-sequence',
       documentKey,
+      challengeKey,
       selector: capture.imageSelector,
       points: solved.points,
     }, options)
@@ -137,14 +151,15 @@ async function tryClickSequence(bridge, tabId, documentKey, options) {
   }
 }
 
-async function trySliderPuzzle(bridge, tabId, documentKey, options) {
+async function trySliderPuzzle(bridge, tabId, documentKey, challengeKey, options) {
   try {
     const capture = await bridge.request('captureCaptchaDemo', {
       tabId,
       kind: 'slider-puzzle',
       documentKey,
+      challengeKey,
     }, options)
-    if (!authorizedCapture(capture, documentKey, 'slider-puzzle')) {
+    if (!authorizedCapture(capture, documentKey, challengeKey, 'slider-puzzle')) {
       return { attempted: true, completed: false, strategy: 'ddddocr-slider-demo' }
     }
     if (typeof capture.pieceDataUrl !== 'string' || typeof capture.backgroundDataUrl !== 'string') {
@@ -160,7 +175,9 @@ async function trySliderPuzzle(bridge, tabId, documentKey, options) {
     }
     const result = await bridge.request('captchaDemoDrag', {
       tabId,
+      kind: 'slider-puzzle',
       documentKey,
+      challengeKey,
       handleSelector: capture.handleSelector,
       backgroundSelector: capture.backgroundSelector,
       normalizedX: solved.normalizedX,
