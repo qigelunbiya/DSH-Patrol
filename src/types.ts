@@ -9,7 +9,7 @@ export type ExpectationMode = 'contains' | 'not-contains'
 
 export type ChallengeKind = 'otp' | 'captcha' | 'slider' | 'approval' | 'unknown'
 export type ChallengeSubtype = 'otp' | 'image-code' | 'click-sequence' | 'third-party' | 'generic-captcha' | 'slider' | 'slider-puzzle' | 'rotate' | 'approval' | 'unknown'
-export type ChallengeStrategy = 'windows-system-ocr' | 'manual-click-sequence' | 'manual-slider' | 'manual-third-party' | 'manual-otp' | 'manual-approval' | 'manual-review'
+export type ChallengeStrategy = 'windows-system-ocr' | 'ddddocr-click-sequence-demo' | 'ddddocr-slider-demo' | 'manual-click-sequence' | 'manual-slider' | 'manual-third-party' | 'manual-otp' | 'manual-approval' | 'manual-review'
 
 export interface ChallengeProfile {
   kind: ChallengeKind

@@ -15,6 +15,8 @@ const CHALLENGE_SUBTYPES = new Set([
 ])
 const CHALLENGE_STRATEGIES = new Set<ChallengeStrategy>([
   'windows-system-ocr',
+  'ddddocr-click-sequence-demo',
+  'ddddocr-slider-demo',
   'manual-click-sequence',
   'manual-slider',
   'manual-third-party',
@@ -74,7 +76,7 @@ export function challengeObservationFromText(text: string | undefined): Challeng
   const strategy = rawStrategy !== undefined && CHALLENGE_STRATEGIES.has(rawStrategy as ChallengeStrategy)
     ? rawStrategy as ChallengeStrategy
     : defaultChallengeStrategy(kind, subtype)
-  const autoCompleted = /simple image code filled by Windows system text recognition/.test(line)
+  const autoCompleted = /(verification auto-completed by an authorized local Patrol solver|simple image code filled by Windows system text recognition)/.test(line)
     && /(?:^|;\s*)hasChallenge=false(?:;|$)/.test(line)
   return {
     kind: kind as ChallengeProfile['kind'],
