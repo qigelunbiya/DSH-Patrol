@@ -29,9 +29,8 @@ if (!content.includes('document.querySelectorAll(args.selector)')) throw new Err
 
 const captchaDemoContent = readFileSync(join(extensionRoot, 'captcha-demo-content.js'), 'utf8')
 if (/\beval\s*\(/.test(captchaDemoContent) || /new\s+Function\s*\(/.test(captchaDemoContent)) throw new Error('captcha demo content bridge must not evaluate page code')
-if (!captchaDemoContent.includes("const DEMO_MARKER = 'dsh-patrol-captcha-demo'")) throw new Error('captcha demo ownership marker guard is missing')
-if (!captchaDemoContent.includes('requireDemoMarker()')) throw new Error('captcha demo page actions must require the ownership marker')
-if (!captchaDemoContent.includes('data-dsh-patrol-captcha-kind')) throw new Error('captcha demo must require explicit owned-site challenge markup')
+if (!captchaDemoContent.includes('hasAnyDemoRoot')) throw new Error('captcha demo availability must be derived from explicit challenge markup')
+if (!captchaDemoContent.includes('data-dsh-patrol-captcha-kind')) throw new Error('captcha demo must require explicit challenge markup')
 
 const runtimeTools = readFileSync(join(runtimeRoot, 'tools.js'), 'utf8')
 if (/name:\s*['"]browser_eval['"]/.test(runtimeTools)) throw new Error('browser_eval must not be registered by Patrol')
@@ -64,12 +63,12 @@ if (!challengeTool.includes("classified.subtype === 'image-code'")) throw new Er
 for (const strategy of ['manual-click-sequence', 'manual-slider', 'manual-third-party']) {
   if (!challengeTool.includes(strategy)) throw new Error(`interactive verification must retain deterministic handoff strategy ${strategy}`)
 }
-if (!challengeTool.includes('trySolveOwnedSiteChallenge')) throw new Error('owned-site captcha demo solver integration is missing')
+if (!challengeTool.includes('trySolveOwnedSiteChallenge')) throw new Error('captcha demo solver integration is missing')
 if (!challengeTool.includes('observedKind') || !challengeTool.includes('observedSubtype')) throw new Error('challenge detector must preserve initially observed taxonomy for learned Runbook metadata')
 
 const captchaDemo = readFileSync(join(runtimeRoot, 'captcha-demo.js'), 'utf8')
-if (!captchaDemo.includes('DSH_PATROL_CAPTCHA_DEMO_ORIGINS')) throw new Error('captcha demo exact-origin allowlist is missing')
-if (!captchaDemo.includes('info.marker !== true')) throw new Error('captcha demo runtime must require the page ownership marker')
+if (!captchaDemo.includes('info.available !== true')) throw new Error('captcha demo runtime must require explicit challenge markup')
+if (!captchaDemo.includes('capture.available === true')) throw new Error('captcha demo runtime must only continue on confirmed demo captures')
 if (!captchaDemo.includes("classified.subtype === 'click-sequence'")) throw new Error('captcha demo ordered-click solver is missing')
 if (!captchaDemo.includes("classified.subtype === 'slider-puzzle'")) throw new Error('captcha demo slider-puzzle solver is missing')
 if (captchaDemo.includes("classified.subtype === 'third-party'") || captchaDemo.includes("operation: 'third-party'") || captchaDemo.includes("kind: 'third-party'")) {
@@ -112,7 +111,7 @@ if (!hostPatch.includes("name: 'dsh-patrol/browser-bridge-host'")) throw new Err
 const background = readFileSync(join(extensionRoot, 'background.js'), 'utf8')
 if (!background.includes('value.ok === false')) throw new Error('extension must convert in-band DOM failures into bridge failures')
 if (!background.includes("case 'count':")) throw new Error('extension background must route count to the DOM bridge')
-if (!background.includes("case 'captureCaptchaDemo':")) throw new Error('extension background must capture owned-site captcha demo assets')
+if (!background.includes("case 'captureCaptchaDemo':")) throw new Error('extension background must capture captcha demo assets')
 if (!background.includes("type: 'dsh-patrol:captcha-demo'")) throw new Error('captcha demo commands must use a separate page message channel')
 
 console.log('browser extension/runtime and host/agent plane checks passed')
