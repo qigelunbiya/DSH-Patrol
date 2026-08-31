@@ -1,6 +1,6 @@
 # CAPTCHA demo mode
 
-DSH Patrol keeps normal verification handling conservative. Conventional image-text codes can use the existing Windows system OCR path. Ordered-click and slider-puzzle automation becomes available when the page exposes explicit `data-dsh-patrol-captcha-*` challenge markup.
+DSH Patrol keeps normal verification handling conservative. Conventional image-text codes can use the existing Windows system OCR path. Ordered-click and slider-puzzle automation can now run in two modes: explicit Patrol markup when the page exposes `data-dsh-patrol-captcha-*` anchors, or weak auto-detection when Patrol sees an ordinary visible click-sequence or slider-puzzle challenge shape without markup.
 
 ## 1. Install the local solver
 
@@ -50,7 +50,22 @@ Patrol crops the marked background and piece from the current rendered page, run
 
 Your demo site's slider implementation should respond to standard pointer/mouse down, move, and up events. If it uses a custom framework event contract, adapt the demo widget to standard pointer events for the presentation.
 
-## 4. Runbook memory
+## 4. Weak auto-detection fallback
+
+If the page does not expose Patrol markup, DSH Patrol can still try the local ddddocr solver for ordinary visible `click-sequence` and `slider-puzzle` challenges that it already classified from page text and DOM evidence.
+
+- Ordered-click fallback:
+  Patrol looks for click-order wording near a large visible image or canvas and uses that image as the solve target.
+- Slider-puzzle fallback:
+  Patrol looks for slider/puzzle wording near a likely background image, puzzle piece, and draggable handle.
+- Markup still wins:
+  if Patrol markup exists, those explicit anchors are preferred over weak detection.
+- Third-party widgets stay out:
+  reCAPTCHA, hCaptcha, Turnstile, Arkose/FunCaptcha, OTP, passkeys, approvals, rotate challenges, and other unsupported flows still remain human handoffs.
+
+Weak auto-detection is intended for quick testing and ordinary self-hosted challenge widgets. It is less precise than explicit markup and may fall back to human handoff when Patrol cannot confidently isolate the right DOM.
+
+## 5. Runbook memory
 
 Successful observations continue to be stored only as non-secret metadata, for example:
 
@@ -68,4 +83,4 @@ A later patrol still runs the detector once because the verification type may ch
 
 ## Scope
 
-The demo solver supports only the explicitly marked `click-sequence` and `slider-puzzle` families. It does not automate reCAPTCHA, hCaptcha, Cloudflare Turnstile, Arkose/FunCaptcha, OTP, passkeys, device approvals, or unmarked third-party verification. Those continue through Patrol's existing human handoff flow.
+The demo solver supports only `click-sequence` and `slider-puzzle` families, whether they are explicitly marked or weakly auto-detected from an ordinary page. It does not automate reCAPTCHA, hCaptcha, Cloudflare Turnstile, Arkose/FunCaptcha, OTP, passkeys, device approvals, rotate challenges, or other unsupported third-party verification. Those continue through Patrol's existing human handoff flow.
