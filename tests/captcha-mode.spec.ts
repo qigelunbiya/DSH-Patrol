@@ -8,14 +8,18 @@ import {
 } from '../browser-bridge-runtime/captcha-mode.js'
 
 describe('captcha runtime mode', () => {
-  it('defaults to normal mode and fails closed for unknown values', () => {
-    expect(resolveCaptchaMode('')).toBe(CAPTCHA_MODES.normal)
-    expect(resolveCaptchaMode('normal')).toBe(CAPTCHA_MODES.normal)
-    expect(resolveCaptchaMode('unexpected-mode')).toBe(CAPTCHA_MODES.normal)
-    expect(currentCaptchaMode({})).toBe(CAPTCHA_MODES.normal)
+  it('defaults to test mode and treats unknown values as the default mode', () => {
+    expect(resolveCaptchaMode('')).toBe(CAPTCHA_MODES.test)
+    expect(resolveCaptchaMode('unexpected-mode')).toBe(CAPTCHA_MODES.test)
+    expect(currentCaptchaMode({})).toBe(CAPTCHA_MODES.test)
   })
 
-  it('enables weak unmarked automation only in test mode', () => {
+  it('still allows an explicit switch back to normal mode', () => {
+    expect(resolveCaptchaMode('normal')).toBe(CAPTCHA_MODES.normal)
+    expect(currentCaptchaMode({ DSH_PATROL_CAPTCHA_MODE: 'normal' })).toBe(CAPTCHA_MODES.normal)
+  })
+
+  it('enables weak unmarked automation in the default test mode and disables it in normal mode', () => {
     expect(resolveCaptchaMode('test')).toBe(CAPTCHA_MODES.test)
     expect(resolveCaptchaMode('testing')).toBe(CAPTCHA_MODES.test)
     expect(currentCaptchaMode({ DSH_PATROL_CAPTCHA_MODE: 'test' })).toBe(CAPTCHA_MODES.test)
@@ -23,7 +27,7 @@ describe('captcha runtime mode', () => {
     expect(captchaModeAllowsWeakUnmarkedAutomation(CAPTCHA_MODES.test)).toBe(true)
   })
 
-  it('supports the compatibility test-mode toggle without overriding the primary mode setting', () => {
+  it('keeps the compatibility test-mode toggle harmless and does not override an explicit normal mode', () => {
     expect(currentCaptchaMode({ DSH_PATROL_CAPTCHA_TEST_MODE: '1' })).toBe(CAPTCHA_MODES.test)
     expect(currentCaptchaMode({ DSH_PATROL_CAPTCHA_TEST_MODE: 'true' })).toBe(CAPTCHA_MODES.test)
     expect(currentCaptchaMode({
