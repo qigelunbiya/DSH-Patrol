@@ -3,7 +3,11 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createManagedBrowserController } from '../browser-bridge-runtime/managed-browser.js'
+import {
+  createManagedBrowserController,
+  isPrivateNetworkUrl,
+  tryProceedPrivateCertificateInterstitial,
+} from '../browser-bridge-runtime/managed-browser.js'
 
 const cleanup = []
 afterEach(() => {
@@ -207,5 +211,51 @@ describe('managed Patrol browser', () => {
     await expect(controller.ensureStarted()).rejects.toThrow(/synthetic launch failure/)
     expect(controller.status.connected).toBe(false)
     expect(controller.status.error).toMatch(/synthetic launch failure/)
+  })
+
+  it('recognizes private and local navigation targets without treating public sites as internal', () => {
+    expect(isPrivateNetworkUrl('https://10.192.253.133/134')).toBe(true)
+    expect(isPrivateNetworkUrl('https://172.16.5.4/')).toBe(true)
+    expect(isPrivateNetworkUrl('https://172.31.255.254/')).toBe(true)
+    expect(isPrivateNetworkUrl('https://192.168.1.20/')).toBe(true)
+    expect(isPrivateNetworkUrl('https://127.0.0.1/')).toBe(true)
+    expect(isPrivateNetworkUrl('https://localhost:8443/')).toBe(true)
+    expect(isPrivateNetworkUrl('https://8.8.8.8/')).toBe(false)
+    expect(isPrivateNetworkUrl('https://example.com/')).toBe(false)
+    expect(isPrivateNetworkUrl('file:///tmp/example')).toBe(false)
+  })
+
+  it('expands and proceeds through a private-network certificate interstitial', async () => {
+    let expanded = false
+    let detailClicks = 0
+    let proceedClicks = 0
+    const page = {
+      url: () => 'https://10.192.253.133/134',
+      isClosed: () => false,
+      async $(selector) {
+        if (selector === '#proceed-link') {
+          return expanded ? { click: async () => { proceedClicks += 1 } } : null
+        }
+        if (selector === '#details-button') {
+          return { click: async () => { expanded = true; detailClicks += 1 } }
+        }
+        return null
+      },
+    }
+
+    await expect(tryProceedPrivateCertificateInterstitial(page, { info() {}, warn() {} }, { attempts: 3, retryMs: 0 })).resolves.toBe(true)
+    expect(detailClicks).toBe(1)
+    expect(proceedClicks).toBe(1)
+  })
+
+  it('does not bypass certificate warnings for public URLs', async () => {
+    let selectorReads = 0
+    const page = {
+      url: () => 'https://example.com/',
+      async $() { selectorReads += 1; return null },
+    }
+
+    await expect(tryProceedPrivateCertificateInterstitial(page, { info() {}, warn() {} }, { attempts: 1, retryMs: 0 })).resolves.toBe(false)
+    expect(selectorReads).toBe(0)
   })
 })
