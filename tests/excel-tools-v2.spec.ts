@@ -25,7 +25,7 @@ describe('resilient Excel bridge v2', () => {
   })
 
   it('keeps formatting-copy failure non-fatal while preserving the write', () => {
-    expect(EXCEL_POWERSHELL_V2).toContain('copy formatting $sourceAddress -> $address')
+    expect(EXCEL_POWERSHELL_V2).toContain('copy formatting $sourceAddress -> $($address)')
     expect(EXCEL_POWERSHELL_V2).toContain('Add-Warning $warnings')
     expect(PATROL_EXCEL_V2_PROMPT).toContain('formatting-copy failure is non-fatal')
     expect(PATROL_EXCEL_V2_PROMPT).toContain('参数类型不匹配')
