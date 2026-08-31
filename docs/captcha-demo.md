@@ -17,32 +17,20 @@ This creates `.captcha-demo-venv` locally and installs `ddddocr==1.6.1`. The env
 
 Mode behavior is centralized in `browser-bridge-runtime/captcha-mode.js` so additional modes can be added in one place later.
 
-### Normal mode
+### Test mode
 
-Normal mode is the default:
+Test mode is the default:
 
 ```powershell
-$env:DSH_PATROL_CAPTCHA_MODE="normal"
 pnpm dsh web
 ```
 
-Behavior:
-
-- image-text CAPTCHA: Windows OCR may recognize and fill it;
-- explicit Patrol `click-sequence` / `slider-puzzle` markup: ddddocr automation is allowed;
-- weak unmarked click/slider discovery: detection/classification is allowed, but automatic click/drag is not;
-- reCAPTCHA, hCaptcha, Turnstile, Arkose/FunCaptcha and other protected challenge families: human handoff.
-
-### Test mode
-
-Enable test mode before starting DSH/Harness:
+You can also force it explicitly:
 
 ```powershell
 $env:DSH_PATROL_CAPTCHA_MODE="test"
 pnpm dsh web
 ```
-
-Test mode removes the previous localhost/loopback restriction for weak unmarked click/slider automation. It does not require an origin allowlist, fixed IP, meta declaration, or Patrol markup.
 
 Behavior:
 
@@ -61,13 +49,21 @@ pnpm dsh web
 
 If `DSH_PATROL_CAPTCHA_MODE` is explicitly set, it takes precedence over the compatibility toggle.
 
-To return to normal mode:
+### Normal mode
+
+Enable normal mode before starting DSH/Harness:
 
 ```powershell
 $env:DSH_PATROL_CAPTCHA_MODE="normal"
-# or remove both variables before restarting
-Remove-Item Env:DSH_PATROL_CAPTCHA_TEST_MODE -ErrorAction SilentlyContinue
+pnpm dsh web
 ```
+
+Behavior:
+
+- image-text CAPTCHA: Windows OCR may recognize and fill it;
+- explicit Patrol `click-sequence` / `slider-puzzle` markup: ddddocr automation is allowed;
+- weak unmarked click/slider discovery: detection/classification is allowed, but automatic click/drag is not;
+- reCAPTCHA, hCaptcha, Turnstile, Arkose/FunCaptcha and other protected challenge families: human handoff.
 
 ## 3. Ordered text-click markup
 
@@ -133,4 +129,4 @@ A later patrol still runs the detector once because the verification type may ch
 
 ## Scope
 
-The local ddddocr solver supports Patrol's `click-sequence` and `slider-puzzle` families. In `normal` mode weak unmarked candidates remain non-executing; in `test` mode weak unmarked candidates can execute without localhost/IP restrictions. reCAPTCHA, hCaptcha, Cloudflare Turnstile, Arkose/FunCaptcha, OTP, passkeys, device approvals, rotate challenges, and other protected/unsupported verification remain human handoffs in every supported mode.
+The local ddddocr solver supports Patrol's `click-sequence` and `slider-puzzle` families. In the default `test` mode weak unmarked candidates can execute without localhost/IP restrictions; in explicit `normal` mode weak unmarked candidates remain non-executing. reCAPTCHA, hCaptcha, Cloudflare Turnstile, Arkose/FunCaptcha, OTP, passkeys, device approvals, rotate challenges, and other protected/unsupported verification remain human handoffs in every supported mode.
