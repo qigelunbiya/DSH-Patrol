@@ -167,7 +167,7 @@ async function captureCaptchaDemo(args) {
   const shot = await screenshot({ tabId, format: 'png' })
 
   if (kind === 'click-sequence') {
-    const imageDataUrl = await cropVisibleTabDataUrl(shot.dataUrl, target.imageRect, target.viewport)
+    const imageDataUrl = await cropVisibleTabDataUrl(shot.dataUrl, target.imageRect, target.viewport, 0)
     return {
       ok: true,
       origin: target.origin,
@@ -180,8 +180,8 @@ async function captureCaptchaDemo(args) {
     }
   }
 
-  const backgroundDataUrl = await cropVisibleTabDataUrl(shot.dataUrl, target.backgroundRect, target.viewport)
-  const pieceDataUrl = await cropVisibleTabDataUrl(shot.dataUrl, target.pieceRect, target.viewport)
+  const backgroundDataUrl = await cropVisibleTabDataUrl(shot.dataUrl, target.backgroundRect, target.viewport, 0)
+  const pieceDataUrl = await cropVisibleTabDataUrl(shot.dataUrl, target.pieceRect, target.viewport, 0)
   return {
     ok: true,
     origin: target.origin,
@@ -196,7 +196,7 @@ async function captureCaptchaDemo(args) {
   }
 }
 
-async function cropVisibleTabDataUrl(dataUrl, rect, viewport) {
+async function cropVisibleTabDataUrl(dataUrl, rect, viewport, padding = 2) {
   const left = Number(rect?.left)
   const top = Number(rect?.top)
   const width = Number(rect?.width)
@@ -218,11 +218,11 @@ async function cropVisibleTabDataUrl(dataUrl, rect, viewport) {
   try {
     const scaleX = bitmap.width / viewportWidth
     const scaleY = bitmap.height / viewportHeight
-    const padding = 2
-    const sx = Math.max(0, Math.floor(left * scaleX) - padding)
-    const sy = Math.max(0, Math.floor(top * scaleY) - padding)
-    const ex = Math.min(bitmap.width, Math.ceil((left + width) * scaleX) + padding)
-    const ey = Math.min(bitmap.height, Math.ceil((top + height) * scaleY) + padding)
+    const safePadding = Math.max(0, Math.min(8, Number(padding) || 0))
+    const sx = Math.max(0, Math.floor(left * scaleX) - safePadding)
+    const sy = Math.max(0, Math.floor(top * scaleY) - safePadding)
+    const ex = Math.min(bitmap.width, Math.ceil((left + width) * scaleX) + safePadding)
+    const ey = Math.min(bitmap.height, Math.ceil((top + height) * scaleY) + safePadding)
     const sw = Math.max(1, ex - sx)
     const sh = Math.max(1, ey - sy)
 
