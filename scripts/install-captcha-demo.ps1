@@ -50,4 +50,4 @@ if ($LASTEXITCODE -ne 0) { throw "pip install ddddocr==1.6.1 failed" }
 if ($LASTEXITCODE -ne 0) { throw "ddddocr verification failed" }
 
 Write-Host "CAPTCHA demo solver ready: $VenvPython" -ForegroundColor Green
-Write-Host "Ordered-click and slider demos are enabled when the page exposes explicit data-dsh-patrol-captcha-* markup." -ForegroundColor Yellow
+Write-Host "Ordered-click and slider demos prefer explicit data-dsh-patrol-captcha-* markup, but can also weakly auto-detect ordinary non-third-party widgets." -ForegroundColor Yellow
