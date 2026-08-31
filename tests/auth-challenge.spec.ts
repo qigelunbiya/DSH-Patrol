@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { classifyAuthChallenge } from '../browser-bridge-runtime/challenge-tool.js'
+import { ambiguousDemoFallback, classifyAuthChallenge } from '../browser-bridge-runtime/challenge-tool.js'
 import { normalizeImageCodeText } from '../browser-bridge-runtime/image-code.js'
 import { classifyLoginState } from '../browser-bridge-runtime/login-state-tool.js'
 
@@ -112,6 +112,26 @@ describe('auth challenge classification', () => {
     expect(result.kind).toBe('approval')
     expect(result.subtype).toBe('approval')
     expect(result.hasChallenge).toBe(true)
+  })
+
+  it('fails closed when multiple explicit captcha families are visible but text classification is weak', () => {
+    expect(ambiguousDemoFallback(
+      { kind: 'none', subtype: 'none', hasChallenge: false, selectors: [], evidence: [] },
+      { attempted: false, visibleKinds: ['click-sequence', 'slider-puzzle'] },
+    )).toEqual({
+      kind: 'unknown',
+      subtype: 'unknown',
+      hasChallenge: true,
+      selectors: [],
+      evidence: ['multiple explicit captcha families visible: click-sequence, slider-puzzle'],
+    })
+  })
+
+  it('does not replace a strong existing classification with ambiguous markup', () => {
+    expect(ambiguousDemoFallback(
+      { kind: 'captcha', subtype: 'third-party', hasChallenge: true, selectors: [], evidence: [] },
+      { attempted: false, visibleKinds: ['click-sequence', 'slider-puzzle'] },
+    )).toBeNull()
   })
 
   it('normalizes a simple locally recognized image code', () => {
