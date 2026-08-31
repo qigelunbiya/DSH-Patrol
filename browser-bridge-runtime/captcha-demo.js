@@ -7,26 +7,6 @@ const runtimeDir = dirname(fileURLToPath(import.meta.url))
 const projectRoot = dirname(runtimeDir)
 const solverScript = join(runtimeDir, 'captcha-demo-solver.py')
 
-export function parseCaptchaDemoOrigins(value = process.env.DSH_PATROL_CAPTCHA_DEMO_ORIGINS || '') {
-  const origins = new Set()
-  for (const part of String(value).split(/[;,\s]+/)) {
-    const trimmed = part.trim()
-    if (!trimmed) continue
-    try {
-      origins.add(new URL(trimmed).origin)
-    } catch {
-    }
-  }
-  return origins
-}
-
-export function isCaptchaDemoOriginAllowed(origin, value = process.env.DSH_PATROL_CAPTCHA_DEMO_ORIGINS || '') {
-  if (typeof origin !== 'string' || origin.length === 0) return false
-  let normalized
-  try { normalized = new URL(origin).origin } catch { return false }
-  return parseCaptchaDemoOrigins(value).has(normalized)
-}
-
 export async function trySolveOwnedSiteChallenge(bridge, tabId, classified, options = {}) {
   if (!classified || typeof classified !== 'object') return { attempted: false }
   if (!supportsDemoSolve(classified.kind, classified.subtype)) return { attempted: false }
@@ -38,26 +18,26 @@ export async function trySolveOwnedSiteChallenge(bridge, tabId, classified, opti
     return { attempted: false }
   }
   if (!info || typeof info !== 'object' || info.ok === false) return { attempted: false }
-  if (info.marker !== true || !isCaptchaDemoOriginAllowed(info.origin)) return { attempted: false }
+  if (info.available !== true) return { attempted: false }
 
   if (classified.kind === 'captcha' && classified.subtype === 'click-sequence') {
-    return await tryClickSequence(bridge, tabId, info.origin, options)
+    return await tryClickSequence(bridge, tabId, options)
   }
   if (classified.kind === 'slider' && classified.subtype === 'slider-puzzle') {
-    return await trySliderPuzzle(bridge, tabId, info.origin, options)
+    return await trySliderPuzzle(bridge, tabId, options)
   }
   return { attempted: false }
 }
 
-function supportsDemoSolve(kind, subtype) {
+export function supportsDemoSolve(kind, subtype) {
   return (kind === 'captcha' && subtype === 'click-sequence')
     || (kind === 'slider' && subtype === 'slider-puzzle')
 }
 
-async function tryClickSequence(bridge, tabId, origin, options) {
+async function tryClickSequence(bridge, tabId, options) {
   try {
     const capture = await bridge.request('captureCaptchaDemo', { tabId, kind: 'click-sequence' }, options)
-    if (!authorizedCapture(capture, origin)) return { attempted: true, completed: false, strategy: 'ddddocr-click-sequence-demo' }
+    if (!authorizedCapture(capture)) return { attempted: true, completed: false, strategy: 'ddddocr-click-sequence-demo' }
     if (typeof capture.targetText !== 'string' || capture.targetText.trim() === '') {
       return { attempted: true, completed: false, strategy: 'ddddocr-click-sequence-demo' }
     }
@@ -84,10 +64,10 @@ async function tryClickSequence(bridge, tabId, origin, options) {
   }
 }
 
-async function trySliderPuzzle(bridge, tabId, origin, options) {
+async function trySliderPuzzle(bridge, tabId, options) {
   try {
     const capture = await bridge.request('captureCaptchaDemo', { tabId, kind: 'slider-puzzle' }, options)
-    if (!authorizedCapture(capture, origin)) return { attempted: true, completed: false, strategy: 'ddddocr-slider-demo' }
+    if (!authorizedCapture(capture)) return { attempted: true, completed: false, strategy: 'ddddocr-slider-demo' }
     if (typeof capture.pieceDataUrl !== 'string' || typeof capture.backgroundDataUrl !== 'string') {
       return { attempted: true, completed: false, strategy: 'ddddocr-slider-demo' }
     }
@@ -115,13 +95,11 @@ async function trySliderPuzzle(bridge, tabId, origin, options) {
   }
 }
 
-function authorizedCapture(capture, origin) {
+function authorizedCapture(capture) {
   return !!capture
     && typeof capture === 'object'
     && capture.ok !== false
-    && capture.marker === true
-    && capture.origin === origin
-    && isCaptchaDemoOriginAllowed(capture.origin)
+    && capture.available === true
 }
 
 export function captchaDemoPythonPath() {
