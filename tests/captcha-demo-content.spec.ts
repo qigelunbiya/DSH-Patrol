@@ -14,7 +14,7 @@ type FakeElement = {
   attributes: Map<string, string>
   tagName: string
   nodeType: number
-  parentElement: null
+  parentElement: FakeElement | null
   children: FakeElement[]
   textContent: string
   innerText: string
@@ -50,6 +50,12 @@ function element(id: string, bounds: Rect, attributes: Record<string, string> = 
     scrollIntoView() {},
     dispatchEvent() { return true },
   }
+}
+
+function appendChild(parent: FakeElement, child: FakeElement) {
+  child.parentElement = parent
+  parent.children.push(child)
+  return child
 }
 
 function loadContext(options: {
@@ -196,5 +202,101 @@ describe('captcha demo content bridge', () => {
       context,
     ))
     expect(result).toMatchObject({ ok: true, normalizedX: 0.5, distance: 150 })
+  })
+
+  it('auto-detects an unmarked click-sequence captcha from nearby cues and image geometry', async () => {
+    const root = element('weak-click-root', rect(80, 80, 420, 260), {
+      class: 'captcha-panel',
+    })
+    root.innerText = '请在下图依次点击：春山水'
+    root.textContent = root.innerText
+    const image = appendChild(root, element('weak-click-image', rect(110, 140, 320, 180)))
+    image.tagName = 'IMG'
+
+    const context = loadContext({
+      querySelectorAll: selector => {
+        if (selector === '[data-dsh-patrol-captcha-kind="click-sequence"]') return []
+        if (selector === '[data-dsh-patrol-captcha-kind="slider-puzzle"]') return []
+        if (selector === '[data-dsh-patrol-captcha-kind="slider"]') return []
+        if (selector === 'img,canvas') return [image]
+        return []
+      },
+      querySelector: selector => selector === '#weak-click-image' ? image : null,
+    })
+
+    const info = plain(vm.runInContext('captchaDemoInfo()', context)) as {
+      available: boolean
+      kinds: string[]
+      challengeKeys: Record<string, string>
+    }
+    expect(info.available).toBe(true)
+    expect(info.kinds).toContain('click-sequence')
+
+    const target = plain(await vm.runInContext(
+      `captchaDemoTarget({kind:'click-sequence', documentKey:'doc-test', challengeKey:'${info.challengeKeys['click-sequence']}'})`,
+      context,
+    ))
+    expect(target).toMatchObject({
+      available: true,
+      kind: 'click-sequence',
+      targetText: '春山水',
+      imageSelector: '#weak-click-image',
+    })
+  })
+
+  it('auto-detects an unmarked slider puzzle from nearby assets and handle hints', async () => {
+    const root = element('weak-slider-root', rect(60, 60, 460, 280), {
+      class: 'geetest_panel',
+    })
+    root.innerText = '请拖动滑块完成拼图'
+    root.textContent = root.innerText
+    const background = appendChild(root, element('weak-background', rect(110, 120, 320, 160), {
+      class: 'captcha-bg',
+    }))
+    background.tagName = 'IMG'
+    const piece = appendChild(root, element('weak-piece', rect(190, 160, 52, 52), {
+      class: 'captcha-piece',
+    }))
+    piece.tagName = 'IMG'
+    const handle = appendChild(root, element('weak-handle', rect(96, 300, 44, 44), {
+      class: 'geetest_slider_button',
+    }))
+
+    const context = loadContext({
+      querySelectorAll: selector => {
+        if (selector === '[data-dsh-patrol-captcha-kind="click-sequence"]') return []
+        if (selector === '[data-dsh-patrol-captcha-kind="slider-puzzle"]') return []
+        if (selector === '[data-dsh-patrol-captcha-kind="slider"]') return []
+        if (selector === 'img,canvas') return [background, piece]
+        if (selector === '[role="slider"],[class*="slider"],[id*="slider"],[class*="drag"],[id*="drag"],[class*="handle"],[id*="handle"],button') return [handle]
+        return []
+      },
+      querySelector: selector => {
+        if (selector === '#weak-background') return background
+        if (selector === '#weak-piece') return piece
+        if (selector === '#weak-handle') return handle
+        return null
+      },
+    })
+
+    const info = plain(vm.runInContext('captchaDemoInfo()', context)) as {
+      available: boolean
+      kinds: string[]
+      challengeKeys: Record<string, string>
+    }
+    expect(info.available).toBe(true)
+    expect(info.kinds).toContain('slider-puzzle')
+
+    const target = plain(await vm.runInContext(
+      `captchaDemoTarget({kind:'slider-puzzle', documentKey:'doc-test', challengeKey:'${info.challengeKeys['slider-puzzle']}'})`,
+      context,
+    ))
+    expect(target).toMatchObject({
+      available: true,
+      kind: 'slider-puzzle',
+      backgroundSelector: '#weak-background',
+      pieceSelector: '#weak-piece',
+      handleSelector: '#weak-handle',
+    })
   })
 })
