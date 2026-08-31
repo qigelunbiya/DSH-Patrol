@@ -66,6 +66,15 @@ describe('auth challenge classification', () => {
     expect(result.subtype).toBe('third-party')
   })
 
+  it('keeps third-party CAPTCHA classification above slider wording', () => {
+    const result = classifyAuthChallenge(
+      { elements: [{ selector: 'iframe', text: 'recaptcha challenge slider verification', role: 'dialog' }] },
+      'reCAPTCHA security check: drag the slider to verify you are human',
+    )
+    expect(result.kind).toBe('captcha')
+    expect(result.subtype).toBe('third-party')
+  })
+
   it('classifies conventional image-code wording separately', () => {
     const result = classifyAuthChallenge(
       { elements: [{ selector: 'input[name="captcha_code"]', name: 'captcha_code', type: 'text', text: '' }] },
