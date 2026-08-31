@@ -16,9 +16,9 @@ const KIND_ORDER = ['slider', 'otp', 'captcha', 'approval', 'unknown']
 // Patrol recognizes the major verification families used by projects such as
 // Text_select_captcha (ordered text clicking) and ddddocr (image OCR, target
 // detection, slider/jigsaw matching). Conventional image text codes may be
-// filled locally on Windows. Ordered-click and jigsaw auto-completion is gated
-// to an explicitly allowlisted owned-site demo origin that also carries the
-// DSH Patrol ownership marker. Third-party anti-bot widgets remain handoffs.
+// filled locally on Windows. Demo ordered-click and jigsaw auto-completion now
+// keys only off explicit challenge markup. Third-party anti-bot widgets remain
+// handoffs.
 const CLICK_SEQUENCE_RULES = [
   /依次点击/,
   /按(?:照|顺序).{0,20}点击/,
@@ -182,7 +182,7 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
   const timeoutMs = config.commandTimeoutMs ?? 60000
   const definition = defineTool({
     name: 'browser_detect_auth_challenge',
-    description: 'Detect and classify common post-login verification challenges from safe DOM signals and visible text. Conventional image-text codes may be locally recognized on Windows. On an explicitly allowlisted owned test origin that also opts in with the DSH Patrol demo marker, ordered-click and slider/jigsaw demo challenges may be completed locally with ddddocr. OTP, approval, rotate, unsupported challenges, and third-party reCAPTCHA/hCaptcha/Turnstile/Arkose-style widgets remain deterministic human handoffs.',
+    description: 'Detect and classify common post-login verification challenges from safe DOM signals and visible text. Conventional image-text codes may be locally recognized on Windows. When the page exposes explicit DSH Patrol challenge markup, ordered-click and slider/jigsaw demo challenges may also be completed locally with ddddocr. OTP, approval, rotate, unsupported challenges, and third-party reCAPTCHA/hCaptcha/Turnstile/Arkose-style widgets remain deterministic human handoffs.',
     parameters: {
       tabId: optInt,
     },
@@ -205,7 +205,7 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
       },
       render: (_args, value) => [{
         type: 'text',
-        text: `Auth challenge: kind=${value.kind}; subtype=${value.subtype}; observed=${value.observedKind}/${value.observedSubtype}; strategy=${value.strategy}; hasChallenge=${value.hasChallenge}; handoffRequired=${value.handoffRequired}${value.autoFilled ? '; verification auto-completed by an authorized local Patrol solver' : ''}${value.selectors?.length ? `; selectors=${value.selectors.join(', ')}` : ''}`,
+        text: `Auth challenge: kind=${value.kind}; subtype=${value.subtype}; observed=${value.observedKind}/${value.observedSubtype}; strategy=${value.strategy}; hasChallenge=${value.hasChallenge}; handoffRequired=${value.handoffRequired}${value.autoFilled ? '; verification auto-completed by the local Patrol solver' : ''}${value.selectors?.length ? `; selectors=${value.selectors.join(', ')}` : ''}`,
       }],
     },
     presentCall: args => ({ card: 'generic', title: 'Detect login verification', kind: 'other', rawInput: args }),
