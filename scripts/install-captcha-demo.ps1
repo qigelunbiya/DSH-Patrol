@@ -50,5 +50,4 @@ if ($LASTEXITCODE -ne 0) { throw "pip install ddddocr==1.6.1 failed" }
 if ($LASTEXITCODE -ne 0) { throw "ddddocr verification failed" }
 
 Write-Host "CAPTCHA demo solver ready: $VenvPython" -ForegroundColor Green
-Write-Host "To enable owned-site ordered-click/slider demos, set DSH_PATROL_CAPTCHA_DEMO_ORIGINS to exact origins before starting Harness." -ForegroundColor Yellow
-Write-Host "The page must also include: <meta name=\"dsh-patrol-captcha-demo\" content=\"enabled\">" -ForegroundColor Yellow
+Write-Host "Ordered-click and slider demos are enabled when the page exposes explicit data-dsh-patrol-captcha-* markup." -ForegroundColor Yellow
