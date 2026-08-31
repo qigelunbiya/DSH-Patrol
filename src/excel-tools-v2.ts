@@ -451,7 +451,7 @@ try {
             try {
               $source = Get-WorksheetCell $sheet $sourceAddress
               try { [void](Invoke-ComCall $source 'Copy'); [void](Invoke-ComCall $cell 'PasteSpecial' @(-4122)) }
-              catch { Add-Warning $warnings "copy formatting $sourceAddress -> ${address}: $(Error-Text $_)" }
+              catch { Add-Warning $warnings "copy formatting $sourceAddress -> $($address): $(Error-Text $_)" }
             } finally { Release-ComObject $source }
           }
           $stage = "write target cell $address"
