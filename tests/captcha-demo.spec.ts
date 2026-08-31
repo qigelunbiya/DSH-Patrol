@@ -54,15 +54,17 @@ describe('captcha demo challenge support', () => {
     expect(selectDemoChallenge({ kind: 'approval', subtype: 'approval' }, info)).toBeNull()
   })
 
-  it('rejects a capture that comes from another page instance or challenge family', () => {
+  it('rejects a capture that comes from another page, challenge instance, or family', () => {
     const capture = {
       ok: true,
       available: true,
       kind: 'click-sequence',
       documentKey: 'doc-a',
+      challengeKey: 'challenge-a',
     }
-    expect(authorizedCapture(capture, 'doc-a', 'click-sequence')).toBe(true)
-    expect(authorizedCapture(capture, 'doc-b', 'click-sequence')).toBe(false)
-    expect(authorizedCapture(capture, 'doc-a', 'slider-puzzle')).toBe(false)
+    expect(authorizedCapture(capture, 'doc-a', 'challenge-a', 'click-sequence')).toBe(true)
+    expect(authorizedCapture(capture, 'doc-b', 'challenge-a', 'click-sequence')).toBe(false)
+    expect(authorizedCapture(capture, 'doc-a', 'challenge-b', 'click-sequence')).toBe(false)
+    expect(authorizedCapture(capture, 'doc-a', 'challenge-a', 'slider-puzzle')).toBe(false)
   })
 })
