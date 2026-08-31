@@ -82,6 +82,7 @@ function loadContext(options: {
     Promise,
     Set,
     Map,
+    WeakMap,
     Number,
     String,
     Array,
@@ -119,11 +120,17 @@ describe('captcha demo content bridge', () => {
       querySelector: selector => selector === '#captcha-image' ? image : null,
     })
 
-    const info = plain(vm.runInContext('captchaDemoInfo()', context))
+    const info = plain(vm.runInContext('captchaDemoInfo()', context)) as {
+      available: boolean
+      kinds: string[]
+      documentKey: string
+      challengeKeys: Record<string, string>
+    }
     expect(info).toMatchObject({ available: true, kinds: ['click-sequence'], documentKey: 'doc-test' })
+    expect(info.challengeKeys['click-sequence']).toBe('doc-test:1')
 
     const target = plain(await vm.runInContext(
-      "captchaDemoTarget({kind:'click-sequence', documentKey:'doc-test'})",
+      `captchaDemoTarget({kind:'click-sequence', documentKey:'doc-test', challengeKey:'${info.challengeKeys['click-sequence']}'})`,
       context,
     ))
     expect(target).toMatchObject({
@@ -132,30 +139,60 @@ describe('captcha demo content bridge', () => {
       targetText: '春山水',
       imageSelector: '#captcha-image',
       documentKey: 'doc-test',
+      challengeKey: 'doc-test:1',
     })
   })
 
   it('rejects a stale action after the page instance changes', async () => {
     const context = loadContext()
     await expect(vm.runInContext(
-      "captchaDemoTarget({kind:'click-sequence', documentKey:'old-document'})",
+      "captchaDemoTarget({kind:'click-sequence', documentKey:'old-document', challengeKey:'old-challenge'})",
       context,
     )).rejects.toThrow(/page changed/)
   })
 
+  it('rejects coordinates when an SPA replaces the captcha root in the same document', async () => {
+    const firstRoot = element('first-root', rect(100, 100, 320, 220), {
+      'data-dsh-patrol-captcha-kind': 'click-sequence',
+      'data-target-text': '春',
+    })
+    const secondRoot = element('second-root', rect(100, 100, 320, 220), {
+      'data-dsh-patrol-captcha-kind': 'click-sequence',
+      'data-target-text': '夏',
+    })
+    let roots = [firstRoot]
+    const context = loadContext({
+      querySelectorAll: selector => selector.includes('click-sequence') ? roots : [],
+    })
+    const info = plain(vm.runInContext('captchaDemoInfo()', context)) as { challengeKeys: Record<string, string> }
+    const oldKey = info.challengeKeys['click-sequence']
+    roots = [secondRoot]
+
+    await expect(vm.runInContext(
+      `captchaDemoTarget({kind:'click-sequence', documentKey:'doc-test', challengeKey:'${oldKey}'})`,
+      context,
+    )).rejects.toThrow(/challenge changed/)
+  })
+
   it('drags by the matched relative puzzle distance instead of subtracting the handle start offset', async () => {
+    const root = element('slider-root', rect(80, 80, 360, 220), {
+      'data-dsh-patrol-captcha-kind': 'slider-puzzle',
+    })
     const handle = element('handle', rect(100, 100, 40, 40))
     const background = element('background', rect(100, 100, 300, 160))
     const context = loadContext({
+      querySelectorAll: selector => selector === '[data-dsh-patrol-captcha-kind="slider-puzzle"]' ? [root] : [],
       querySelector: selector => {
         if (selector === '#handle') return handle
         if (selector === '#background') return background
         return null
       },
     })
+    const info = plain(vm.runInContext('captchaDemoInfo()', context)) as { challengeKeys: Record<string, string> }
+    const challengeKey = info.challengeKeys['slider-puzzle']
 
     const result = plain(await vm.runInContext(
-      "captchaDemoDrag({documentKey:'doc-test', handleSelector:'#handle', backgroundSelector:'#background', normalizedX:0.5})",
+      `captchaDemoDrag({kind:'slider-puzzle', documentKey:'doc-test', challengeKey:'${challengeKey}', handleSelector:'#handle', backgroundSelector:'#background', normalizedX:0.5})`,
       context,
     ))
     expect(result).toMatchObject({ ok: true, normalizedX: 0.5, distance: 150 })
