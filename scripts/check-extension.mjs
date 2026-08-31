@@ -11,11 +11,12 @@ if (manifest.manifest_version !== 3) throw new Error('browser extension must be 
 if (!String(manifest.content_security_policy?.extension_pages ?? '').includes("script-src 'self'")) throw new Error('extension CSP must restrict scripts to self')
 if (String(manifest.content_security_policy?.extension_pages ?? '').includes('unsafe-eval')) throw new Error('unsafe-eval is forbidden')
 if (manifest.content_scripts?.some(item => item.all_frames === true)) throw new Error('Patrol extension content scripts must not run in every frame')
+if (!manifest.content_scripts?.some(item => Array.isArray(item.js) && item.js.includes('captcha-demo-content.js'))) throw new Error('owned-site captcha demo content bridge is missing from the extension manifest')
 
-for (const file of ['background.js', 'content.js', 'popup.js', 'options.js']) {
+for (const file of ['background.js', 'content.js', 'captcha-demo-content.js', 'popup.js', 'options.js']) {
   checkSyntax(join(extensionRoot, file), file)
 }
-for (const file of ['index.js', 'bridge.js', 'managed-browser.js', 'tools.js', 'count-tool.js', 'login-state-tool.js', 'challenge-tool.js', 'image-code.js', 'screenshot-ocr.js', 'tools-plugin.js', 'ws.js']) {
+for (const file of ['index.js', 'bridge.js', 'managed-browser.js', 'tools.js', 'count-tool.js', 'login-state-tool.js', 'challenge-tool.js', 'image-code.js', 'captcha-demo.js', 'screenshot-ocr.js', 'tools-plugin.js', 'ws.js']) {
   checkSyntax(join(runtimeRoot, file), `browser-bridge-runtime/${file}`)
 }
 
@@ -25,6 +26,12 @@ if (!content.includes("input.type === 'password'")) throw new Error('password-fi
 if (!content.includes('return { ok: false, found: false, selector: args.selector')) throw new Error('selector wait timeout must fail closed')
 if (!content.includes("case 'count': return count(args)")) throw new Error('safe DOM count command is missing')
 if (!content.includes('document.querySelectorAll(args.selector)')) throw new Error('DOM count must be selector-only')
+
+const captchaDemoContent = readFileSync(join(extensionRoot, 'captcha-demo-content.js'), 'utf8')
+if (/\beval\s*\(/.test(captchaDemoContent) || /new\s+Function\s*\(/.test(captchaDemoContent)) throw new Error('captcha demo content bridge must not evaluate page code')
+if (!captchaDemoContent.includes("const DEMO_MARKER = 'dsh-patrol-captcha-demo'")) throw new Error('captcha demo ownership marker guard is missing')
+if (!captchaDemoContent.includes('requireDemoMarker()')) throw new Error('captcha demo page actions must require the ownership marker')
+if (!captchaDemoContent.includes('data-dsh-patrol-captcha-kind')) throw new Error('captcha demo must require explicit owned-site challenge markup')
 
 const runtimeTools = readFileSync(join(runtimeRoot, 'tools.js'), 'utf8')
 if (/name:\s*['"]browser_eval['"]/.test(runtimeTools)) throw new Error('browser_eval must not be registered by Patrol')
@@ -52,12 +59,20 @@ if (!challengeTool.includes("name: 'browser_detect_auth_challenge'")) throw new 
 if (!challengeTool.includes("bridge.request('snapshot'")) throw new Error('auth challenge detection must use the safe snapshot provider')
 if (!challengeTool.includes("bridge.request('readPage'")) throw new Error('auth challenge detection must use visible page text only')
 if (/\beval\s*\(/.test(challengeTool) || /new\s+Function\s*\(/.test(challengeTool)) throw new Error('auth challenge detection must not evaluate page code')
-if (/drag(To)?\s*\(/.test(challengeTool) || /bridge\.request\(['"](?:click|drag)/.test(challengeTool)) throw new Error('auth challenge detector must not synthesize click/drag solving logic')
-if (!challengeTool.includes("classified.subtype === 'image-code'")) throw new Error('automatic challenge handling must be limited to conventional image-text codes')
+if (/bridge\.request\(['"](?:click|drag)/.test(challengeTool)) throw new Error('auth challenge detector must not expose a general direct click/drag solver')
+if (!challengeTool.includes("classified.subtype === 'image-code'")) throw new Error('conventional image-text OCR path is missing')
 for (const strategy of ['manual-click-sequence', 'manual-slider', 'manual-third-party']) {
-  if (!challengeTool.includes(strategy)) throw new Error(`interactive verification must expose deterministic handoff strategy ${strategy}`)
+  if (!challengeTool.includes(strategy)) throw new Error(`interactive verification must retain deterministic handoff strategy ${strategy}`)
 }
+if (!challengeTool.includes('trySolveOwnedSiteChallenge')) throw new Error('owned-site captcha demo solver integration is missing')
 if (!challengeTool.includes('observedKind') || !challengeTool.includes('observedSubtype')) throw new Error('challenge detector must preserve initially observed taxonomy for learned Runbook metadata')
+
+const captchaDemo = readFileSync(join(runtimeRoot, 'captcha-demo.js'), 'utf8')
+if (!captchaDemo.includes('DSH_PATROL_CAPTCHA_DEMO_ORIGINS')) throw new Error('captcha demo exact-origin allowlist is missing')
+if (!captchaDemo.includes('info.marker !== true')) throw new Error('captcha demo runtime must require the page ownership marker')
+if (!captchaDemo.includes("classified.subtype === 'click-sequence'")) throw new Error('captcha demo ordered-click solver is missing')
+if (!captchaDemo.includes("classified.subtype === 'slider-puzzle'")) throw new Error('captcha demo slider-puzzle solver is missing')
+if (/recaptcha|hcaptcha|turnstile|arkose/i.test(captchaDemo)) throw new Error('captcha demo runtime must not implement third-party anti-bot solvers')
 
 const screenshotOcr = readFileSync(join(runtimeRoot, 'screenshot-ocr.js'), 'utf8')
 if (/\beval\s*\(/.test(screenshotOcr) || /new\s+Function\s*\(/.test(screenshotOcr)) throw new Error('screenshot OCR must not evaluate page code')
@@ -95,6 +110,8 @@ if (!hostPatch.includes("name: 'dsh-patrol/browser-bridge-host'")) throw new Err
 const background = readFileSync(join(extensionRoot, 'background.js'), 'utf8')
 if (!background.includes('value.ok === false')) throw new Error('extension must convert in-band DOM failures into bridge failures')
 if (!background.includes("case 'count':")) throw new Error('extension background must route count to the DOM bridge')
+if (!background.includes("case 'captureCaptchaDemo':")) throw new Error('extension background must capture owned-site captcha demo assets')
+if (!background.includes("type: 'dsh-patrol:captcha-demo'")) throw new Error('captcha demo commands must use a separate page message channel')
 
 console.log('browser extension/runtime and host/agent plane checks passed')
 
