@@ -6,7 +6,7 @@ const INSPECTION_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/
 const STEP_ID = /^step-\d{3,}$/
 const CHALLENGE_KINDS = ['otp', 'captcha', 'slider', 'approval', 'unknown'] as const
 const CHALLENGE_SUBTYPES = ['otp', 'image-code', 'click-sequence', 'third-party', 'generic-captcha', 'slider', 'slider-puzzle', 'rotate', 'approval', 'unknown'] as const
-const CHALLENGE_STRATEGIES = ['windows-system-ocr', 'manual-click-sequence', 'manual-slider', 'manual-third-party', 'manual-otp', 'manual-approval', 'manual-review'] as const
+const CHALLENGE_STRATEGIES = ['windows-system-ocr', 'ddddocr-click-sequence-demo', 'ddddocr-slider-demo', 'manual-click-sequence', 'manual-slider', 'manual-third-party', 'manual-otp', 'manual-approval', 'manual-review'] as const
 
 export function assertInspectionId(id: string): void {
   if (!INSPECTION_ID.test(id)) {
