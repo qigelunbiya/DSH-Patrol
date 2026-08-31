@@ -192,7 +192,7 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
   const timeoutMs = config.commandTimeoutMs ?? 60000
   const definition = defineTool({
     name: 'browser_detect_auth_challenge',
-    description: 'Detect and classify common post-login verification challenges from safe DOM signals and visible text. Conventional image-text codes may be locally recognized on Windows. When the page exposes explicit DSH Patrol challenge markup, ordered-click and slider/jigsaw demo challenges may also be completed locally with ddddocr, including when visible-text classification is weak. OTP, approval, rotate, unsupported challenges, and third-party reCAPTCHA/hCaptcha/Turnstile/Arkose-style widgets remain deterministic human handoffs.',
+    description: 'Detect and classify common post-login verification challenges from safe DOM signals and visible text. Conventional image-text codes may be locally recognized on Windows. Ordered-click and slider/jigsaw demo challenges may also be completed locally with ddddocr, preferring explicit DSH Patrol challenge markup and otherwise falling back to weak DOM discovery for ordinary non-third-party widgets, including when visible-text classification is weak. OTP, approval, rotate, unsupported challenges, and third-party reCAPTCHA/hCaptcha/Turnstile/Arkose-style widgets remain deterministic human handoffs.',
     parameters: {
       tabId: optInt,
     },
