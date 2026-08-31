@@ -161,8 +161,8 @@ async function captureCaptchaDemo(args) {
   const kind = String(args.kind || '')
   if (!['click-sequence', 'slider-puzzle'].includes(kind)) throw new Error(`unsupported captcha demo capture kind: ${kind}`)
   const target = await sendCaptchaDemoCommand('captchaDemoTarget', { ...args, tabId, kind })
-  if (!target || typeof target !== 'object' || target.ok === false || target.marker !== true) {
-    throw new Error(target?.error || 'owned-site captcha demo target discovery failed')
+  if (!target || typeof target !== 'object' || target.ok === false || target.available !== true) {
+    throw new Error(target?.error || 'captcha demo target discovery failed')
   }
   const shot = await screenshot({ tabId, format: 'png' })
 
@@ -171,7 +171,7 @@ async function captureCaptchaDemo(args) {
     return {
       ok: true,
       origin: target.origin,
-      marker: true,
+      available: true,
       kind,
       targetText: target.targetText,
       imageSelector: target.imageSelector,
@@ -184,7 +184,7 @@ async function captureCaptchaDemo(args) {
   return {
     ok: true,
     origin: target.origin,
-    marker: true,
+    available: true,
     kind,
     backgroundSelector: target.backgroundSelector,
     pieceSelector: target.pieceSelector,
