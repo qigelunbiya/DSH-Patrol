@@ -1,5 +1,6 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { tryFillImageCode } from './image-code.js'
+import { trySolveOwnedSiteChallenge } from './captcha-demo.js'
 
 const reqStr = { type: 'string', required: true }
 const reqBool = { type: 'boolean', required: true }
@@ -9,14 +10,15 @@ const optInt = { type: 'integer' }
 
 const CHALLENGE_KINDS = ['none', 'otp', 'captcha', 'slider', 'approval', 'unknown']
 const CHALLENGE_SUBTYPES = ['none', 'otp', 'image-code', 'click-sequence', 'third-party', 'generic-captcha', 'slider', 'slider-puzzle', 'rotate', 'approval', 'unknown']
-const CHALLENGE_STRATEGIES = ['none', 'windows-system-ocr', 'manual-click-sequence', 'manual-slider', 'manual-third-party', 'manual-otp', 'manual-approval', 'manual-review']
+const CHALLENGE_STRATEGIES = ['none', 'windows-system-ocr', 'ddddocr-click-sequence-demo', 'ddddocr-slider-demo', 'manual-click-sequence', 'manual-slider', 'manual-third-party', 'manual-otp', 'manual-approval', 'manual-review']
 const KIND_ORDER = ['slider', 'otp', 'captcha', 'approval', 'unknown']
 
-// The taxonomy intentionally recognizes the major families used by projects
-// such as Text_select_captcha (ordered text clicking) and ddddocr (image OCR,
-// target detection, slider/jigsaw matching), but Patrol only auto-completes the
-// conventional image-text family. Interactive anti-bot challenges remain a
-// human handoff after classification.
+// Patrol recognizes the major verification families used by projects such as
+// Text_select_captcha (ordered text clicking) and ddddocr (image OCR, target
+// detection, slider/jigsaw matching). Conventional image text codes may be
+// filled locally on Windows. Ordered-click and jigsaw auto-completion is gated
+// to an explicitly allowlisted owned-site demo origin that also carries the
+// DSH Patrol ownership marker. Third-party anti-bot widgets remain handoffs.
 const CLICK_SEQUENCE_RULES = [
   /依次点击/,
   /按(?:照|顺序).{0,20}点击/,
@@ -180,7 +182,7 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
   const timeoutMs = config.commandTimeoutMs ?? 60000
   const definition = defineTool({
     name: 'browser_detect_auth_challenge',
-    description: 'Detect and classify common post-login verification challenges from safe DOM signals and visible text. Conventional image-text codes may be locally recognized on Windows. Ordered-click, slider/jigsaw, rotate, OTP, passkey, reCAPTCHA/hCaptcha/Turnstile/Arkose-style and unsupported verification are classified for deterministic human handoff rather than bypassed.',
+    description: 'Detect and classify common post-login verification challenges from safe DOM signals and visible text. Conventional image-text codes may be locally recognized on Windows. On an explicitly allowlisted owned test origin that also opts in with the DSH Patrol demo marker, ordered-click and slider/jigsaw demo challenges may be completed locally with ddddocr. OTP, approval, rotate, unsupported challenges, and third-party reCAPTCHA/hCaptcha/Turnstile/Arkose-style widgets remain deterministic human handoffs.',
     parameters: {
       tabId: optInt,
     },
@@ -203,7 +205,7 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
       },
       render: (_args, value) => [{
         type: 'text',
-        text: `Auth challenge: kind=${value.kind}; subtype=${value.subtype}; observed=${value.observedKind}/${value.observedSubtype}; strategy=${value.strategy}; hasChallenge=${value.hasChallenge}; handoffRequired=${value.handoffRequired}${value.autoFilled ? '; simple image code filled by Windows system text recognition' : ''}${value.selectors?.length ? `; selectors=${value.selectors.join(', ')}` : ''}`,
+        text: `Auth challenge: kind=${value.kind}; subtype=${value.subtype}; observed=${value.observedKind}/${value.observedSubtype}; strategy=${value.strategy}; hasChallenge=${value.hasChallenge}; handoffRequired=${value.handoffRequired}${value.autoFilled ? '; verification auto-completed by an authorized local Patrol solver' : ''}${value.selectors?.length ? `; selectors=${value.selectors.join(', ')}` : ''}`,
       }],
     },
     presentCall: args => ({ card: 'generic', title: 'Detect login verification', kind: 'other', rawInput: args }),
@@ -211,7 +213,7 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
       const options = { timeoutMs, signal: exec?.signal }
       let classified = await observeAuthChallenge(bridge, args.tabId, options)
       const initiallyObserved = { kind: classified.kind, subtype: classified.subtype }
-      const strategy = strategyForChallenge(initiallyObserved.kind, initiallyObserved.subtype)
+      let strategy = strategyForChallenge(initiallyObserved.kind, initiallyObserved.subtype)
       let autoFilled = false
 
       if (classified.kind === 'captcha'
@@ -237,6 +239,25 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
             break
           }
           if (classified.kind !== 'captcha' || classified.subtype !== 'image-code') break
+        }
+      }
+
+      if (!autoFilled && classified.hasChallenge) {
+        let demo = { attempted: false }
+        try {
+          demo = await trySolveOwnedSiteChallenge(bridge, args.tabId, classified, options)
+        } catch {
+          demo = { attempted: false }
+        }
+        if (demo.attempted && typeof demo.strategy === 'string') strategy = demo.strategy
+        if (demo.completed) {
+          autoFilled = true
+          await sleep(1000)
+          try {
+            classified = await observeAuthChallenge(bridge, args.tabId, options)
+          } catch {
+            classified = { kind: 'none', subtype: 'none', hasChallenge: false, selectors: [], evidence: [] }
+          }
         }
       }
 
