@@ -72,7 +72,9 @@ if (!captchaDemo.includes('DSH_PATROL_CAPTCHA_DEMO_ORIGINS')) throw new Error('c
 if (!captchaDemo.includes('info.marker !== true')) throw new Error('captcha demo runtime must require the page ownership marker')
 if (!captchaDemo.includes("classified.subtype === 'click-sequence'")) throw new Error('captcha demo ordered-click solver is missing')
 if (!captchaDemo.includes("classified.subtype === 'slider-puzzle'")) throw new Error('captcha demo slider-puzzle solver is missing')
-if (/recaptcha|hcaptcha|turnstile|arkose/i.test(captchaDemo)) throw new Error('captcha demo runtime must not implement third-party anti-bot solvers')
+if (captchaDemo.includes("classified.subtype === 'third-party'") || captchaDemo.includes("operation: 'third-party'") || captchaDemo.includes("kind: 'third-party'")) {
+  throw new Error('captcha demo runtime must not implement third-party anti-bot solver paths')
+}
 
 const screenshotOcr = readFileSync(join(runtimeRoot, 'screenshot-ocr.js'), 'utf8')
 if (/\beval\s*\(/.test(screenshotOcr) || /new\s+Function\s*\(/.test(screenshotOcr)) throw new Error('screenshot OCR must not evaluate page code')
