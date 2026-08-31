@@ -255,7 +255,6 @@ async function runSolver(payload, options = {}) {
     child.stdout.on('data', chunk => {
       if (stdout.length < 1024 * 1024) stdout += chunk
     })
-    child.stderr.setEncoding('utf8')
     child.stderr.on('data', chunk => {
       if (stderr.length < 64 * 1024) stderr += chunk
     })
