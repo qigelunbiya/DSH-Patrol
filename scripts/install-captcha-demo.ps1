@@ -1,43 +1,41 @@
 param(
-    [string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot)
+    [string]$ProjectRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
-$ProjectRoot = (Resolve-Path $ProjectRoot).Path
+if (-not $ProjectRoot) {
+    $ProjectRoot = Split-Path -Parent $PSScriptRoot
+}
+$ProjectRoot = [System.IO.Path]::GetFullPath($ProjectRoot)
 $VenvRoot = Join-Path $ProjectRoot ".captcha-demo-venv"
 $VenvPython = Join-Path $VenvRoot "Scripts\python.exe"
 
-function Find-Python {
+function Resolve-BasePython {
     $py = Get-Command py.exe -ErrorAction SilentlyContinue
     if ($py) {
-        return @($py.Source, "-3")
+        return @{ File = $py.Source; PrefixArgs = @("-3") }
     }
     $python = Get-Command python.exe -ErrorAction SilentlyContinue
     if ($python) {
-        return @($python.Source)
+        return @{ File = $python.Source; PrefixArgs = @() }
     }
-    throw "Python 3.10+ is required for the optional ddddocr CAPTCHA demo solver. Install Python and rerun this script."
+    throw "Python 3.10+ was not found. Install Python for Windows, then rerun scripts\install-captcha-demo.ps1."
 }
 
 function Invoke-Python {
     param(
-        [string[]]$Command,
-        [string[]]$ExtraArgs
+        [Parameter(Mandatory = $true)]$Command,
+        [Parameter(Mandatory = $true)][string[]]$ExtraArgs
     )
-    $exe = $Command[0]
-    $prefix = @()
-    if ($Command.Count -gt 1) {
-        $prefix = $Command[1..($Command.Count - 1)]
-    }
-    & $exe @prefix @ExtraArgs
-    if ($LASTEXITCODE -ne 0) {
-        throw "Python command failed with exit code $LASTEXITCODE"
-    }
+    $file = [string]$Command.File
+    $prefixArgs = @($Command.PrefixArgs)
+    & $file @prefixArgs @ExtraArgs
+    if ($LASTEXITCODE -ne 0) { throw "Python command failed with exit code $LASTEXITCODE" }
 }
 
-$base = Find-Python
-$versionScript = "import sys; assert sys.version_info >= (3,10), 'Python 3.10+ required'; print(sys.version.split()[0])"
-Invoke-Python -Command $base -ExtraArgs @("-c", $versionScript)
+$base = Resolve-BasePython
+$versionCode = "import sys; ok=(sys.version_info.major==3 and sys.version_info.minor>=10); print(sys.version.split()[0]); raise SystemExit(0 if ok else 2)"
+Invoke-Python -Command $base -ExtraArgs @("-c", $versionCode)
 
 if (-not (Test-Path -LiteralPath $VenvPython)) {
     Write-Host "Creating CAPTCHA demo Python environment: $VenvRoot" -ForegroundColor Cyan
