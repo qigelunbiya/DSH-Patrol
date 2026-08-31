@@ -13,12 +13,6 @@ const CHALLENGE_SUBTYPES = ['none', 'otp', 'image-code', 'click-sequence', 'thir
 const CHALLENGE_STRATEGIES = ['none', 'windows-system-ocr', 'ddddocr-click-sequence-demo', 'ddddocr-slider-demo', 'manual-click-sequence', 'manual-slider', 'manual-third-party', 'manual-otp', 'manual-approval', 'manual-review']
 const KIND_ORDER = ['slider', 'otp', 'captcha', 'approval', 'unknown']
 
-// Patrol recognizes the major verification families used by projects such as
-// Text_select_captcha (ordered text clicking) and ddddocr (image OCR, target
-// detection, slider/jigsaw matching). Conventional image text codes may be
-// filled locally on Windows. Explicit challenge markup can refine a weak text
-// classification for ordered-click and slider-puzzle demo automation. Third-
-// party anti-bot widgets remain handoffs.
 const CLICK_SEQUENCE_RULES = [
   /依次点击/,
   /按(?:照|顺序).{0,20}点击/,
@@ -181,6 +175,19 @@ export function classifyAuthChallenge(snapshotValue, pageText = '') {
   }
 }
 
+export function ambiguousDemoFallback(classified, demo) {
+  if (!isWeakClassification(classified)) return null
+  const kinds = Array.isArray(demo?.visibleKinds) ? [...new Set(demo.visibleKinds)] : []
+  if (kinds.length <= 1) return null
+  return {
+    kind: 'unknown',
+    subtype: 'unknown',
+    hasChallenge: true,
+    selectors: Array.isArray(classified?.selectors) ? classified.selectors : [],
+    evidence: [`multiple explicit captcha families visible: ${kinds.join(', ')}`],
+  }
+}
+
 export function registerChallengeTool(ctx, bridge, config = {}) {
   const timeoutMs = config.commandTimeoutMs ?? 60000
   const definition = defineTool({
@@ -237,8 +244,6 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
           try {
             classified = await observeAuthChallenge(bridge, args.tabId, options)
           } catch {
-            // Navigation after a successful form submit can temporarily remove
-            // the page bridge. Let later login/application assertions verify it.
             classified = emptyClassification()
             break
           }
@@ -248,14 +253,19 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
       }
 
       if (!imageAutomationRan) {
-        let demo = { attempted: false }
+        let demo = { attempted: false, visibleKinds: [] }
         try {
           demo = await trySolveOwnedSiteChallenge(bridge, args.tabId, classified, options)
         } catch {
-          demo = { attempted: false }
+          demo = { attempted: false, visibleKinds: [] }
         }
 
-        if (demo.attempted && typeof demo.strategy === 'string') {
+        const ambiguous = ambiguousDemoFallback(classified, demo)
+        if (ambiguous) {
+          classified = ambiguous
+          initiallyObserved = { kind: 'unknown', subtype: 'unknown' }
+          strategy = 'manual-review'
+        } else if (demo.attempted && typeof demo.strategy === 'string') {
           strategy = demo.strategy
           if (isWeakClassification(initiallyObserved)
             && typeof demo.observedKind === 'string'
@@ -341,8 +351,6 @@ function inferChallengeSubtype(kind, text) {
   if (kind === 'slider') return matchesAny(text, SLIDER_PUZZLE_RULES) ? 'slider-puzzle' : 'slider'
   if (kind === 'approval') return 'approval'
   if (kind === 'unknown') return 'unknown'
-  // Third-party widgets take precedence over click wording because providers
-  // such as reCAPTCHA can themselves instruct the user to click images.
   if (matchesAny(text, THIRD_PARTY_RULES)) return 'third-party'
   if (matchesAny(text, CLICK_SEQUENCE_RULES)) return 'click-sequence'
   if (matchesAny(text, ROTATE_RULES)) return 'rotate'
