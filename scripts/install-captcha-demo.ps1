@@ -50,4 +50,4 @@ if ($LASTEXITCODE -ne 0) { throw "pip install ddddocr==1.6.1 failed" }
 if ($LASTEXITCODE -ne 0) { throw "ddddocr verification failed" }
 
 Write-Host "CAPTCHA demo solver ready: $VenvPython" -ForegroundColor Green
-Write-Host "Ordered-click and slider demos prefer explicit data-dsh-patrol-captcha-* markup. Weak unmarked auto-execution is zero-config on localhost/127.0.0.1 test pages; remote weak detections remain handoffs." -ForegroundColor Yellow
+Write-Host "Explicit Patrol markup can auto-run in normal/test modes. Set DSH_PATROL_CAPTCHA_MODE=test before starting DSH to allow weak unmarked click/slider automation without localhost or IP restrictions." -ForegroundColor Yellow
