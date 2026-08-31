@@ -13,11 +13,11 @@ $VenvPython = Join-Path $VenvRoot "Scripts\python.exe"
 function Resolve-BasePython {
     $py = Get-Command py.exe -ErrorAction SilentlyContinue
     if ($py) {
-        return @{ File = $py.Source; Args = @("-3") }
+        return @{ File = $py.Source; PrefixArgs = @("-3") }
     }
     $python = Get-Command python.exe -ErrorAction SilentlyContinue
     if ($python) {
-        return @{ File = $python.Source; Args = @() }
+        return @{ File = $python.Source; PrefixArgs = @() }
     }
     throw "Python 3.10+ was not found. Install Python for Windows, then rerun scripts\install-captcha-demo.ps1."
 }
@@ -25,22 +25,21 @@ function Resolve-BasePython {
 function Invoke-Python {
     param(
         [Parameter(Mandatory = $true)]$Command,
-        [Parameter(Mandatory = $true)][string[]]$Args
+        [Parameter(Mandatory = $true)][string[]]$ExtraArgs
     )
-    & $Command.File @($Command.Args) @Args
+    $file = [string]$Command.File
+    $prefixArgs = @($Command.PrefixArgs)
+    & $file @prefixArgs @ExtraArgs
     if ($LASTEXITCODE -ne 0) { throw "Python command failed with exit code $LASTEXITCODE" }
 }
 
 $base = Resolve-BasePython
 $versionCode = "import sys; ok=(sys.version_info.major==3 and sys.version_info.minor>=10); print(sys.version.split()[0]); raise SystemExit(0 if ok else 2)"
-& $base.File @($base.Args) -c $versionCode
-if ($LASTEXITCODE -ne 0) {
-    throw "The CAPTCHA demo solver requires Python 3.10 or newer."
-}
+Invoke-Python -Command $base -ExtraArgs @("-c", $versionCode)
 
 if (-not (Test-Path -LiteralPath $VenvPython)) {
     Write-Host "Creating CAPTCHA demo Python environment: $VenvRoot" -ForegroundColor Cyan
-    Invoke-Python -Command $base -Args @("-m", "venv", $VenvRoot)
+    Invoke-Python -Command $base -ExtraArgs @("-m", "venv", $VenvRoot)
 }
 
 Write-Host "Installing ddddocr 1.6.1 into the CAPTCHA demo environment..." -ForegroundColor Cyan
