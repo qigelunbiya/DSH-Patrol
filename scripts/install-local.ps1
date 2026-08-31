@@ -1,6 +1,7 @@
 param(
     [string]$HarnessRoot = "",
-    [string]$Profile = "web"
+    [string]$Profile = "web",
+    [bool]$InstallCaptchaDemoSolver = $true
 )
 
 $ErrorActionPreference = "Stop"
@@ -125,6 +126,15 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "build failed" }
 } finally {
     Pop-Location
+}
+
+if ($InstallCaptchaDemoSolver) {
+    try {
+        & (Join-Path $PSScriptRoot "install-captcha-demo.ps1") -ProjectRoot $ProjectRoot
+    } catch {
+        Write-Warning "Optional owned-site CAPTCHA demo solver was not installed: $($_.Exception.Message)"
+        Write-Warning "Core Patrol remains installed. After fixing Python/network prerequisites, run scripts\install-captcha-demo.ps1 manually."
+    }
 }
 
 $DshHome = if ($env:DSH_HOME) { $env:DSH_HOME } else { Join-Path $HOME ".dsh" }
