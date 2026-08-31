@@ -2,9 +2,9 @@
 """Owned-site CAPTCHA demo helper for DSH Patrol.
 
 This process is intentionally not a general browser automation service. The Node
-runtime invokes it only after both an exact-origin allowlist check and an
-ownership marker on the page have passed. It performs local image analysis only
-and writes one compact JSON result to stdout.
+runtime invokes it only for pages that expose explicit DSH Patrol CAPTCHA demo
+markup. It performs local image analysis only and writes one compact JSON
+result to stdout.
 """
 
 from __future__ import annotations
