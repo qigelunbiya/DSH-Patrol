@@ -35,13 +35,15 @@ export async function probeOwnedSiteChallenge(bridge, tabId, options = {}) {
 }
 
 export async function trySolveOwnedSiteChallenge(bridge, tabId, classified, options = {}) {
-  if (!classified || typeof classified !== 'object') return { attempted: false }
+  if (!classified || typeof classified !== 'object') return { attempted: false, visibleKinds: [] }
 
   const info = await probeOwnedSiteChallenge(bridge, tabId, options)
   const selected = selectDemoChallenge(classified, info)
-  if (!selected) return { attempted: false }
+  if (!selected) return { attempted: false, visibleKinds: info.kinds }
   const challengeKey = info.challengeKeys?.[selected.subtype]
-  if (typeof challengeKey !== 'string' || challengeKey.length === 0) return { attempted: false }
+  if (typeof challengeKey !== 'string' || challengeKey.length === 0) {
+    return { attempted: false, visibleKinds: info.kinds }
+  }
 
   let result
   if (selected.subtype === 'click-sequence') {
@@ -49,11 +51,12 @@ export async function trySolveOwnedSiteChallenge(bridge, tabId, classified, opti
   } else if (selected.subtype === 'slider-puzzle') {
     result = await trySliderPuzzle(bridge, tabId, info.documentKey, challengeKey, options)
   } else {
-    return { attempted: false }
+    return { attempted: false, visibleKinds: info.kinds }
   }
 
   return {
     ...result,
+    visibleKinds: info.kinds,
     observedKind: selected.kind,
     observedSubtype: selected.subtype,
   }
