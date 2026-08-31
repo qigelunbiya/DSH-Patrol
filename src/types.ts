@@ -7,6 +7,20 @@ export type InspectionStatus = 'draft' | 'ready'
 export type AuthMode = 'none' | 'existing-session' | 'manual-checkpoint' | 'secret-ref'
 export type ExpectationMode = 'contains' | 'not-contains'
 
+export type ChallengeKind = 'otp' | 'captcha' | 'slider' | 'approval' | 'unknown'
+export type ChallengeSubtype = 'otp' | 'image-code' | 'click-sequence' | 'third-party' | 'generic-captcha' | 'slider' | 'slider-puzzle' | 'rotate' | 'approval' | 'unknown'
+export type ChallengeStrategy = 'windows-system-ocr' | 'manual-click-sequence' | 'manual-slider' | 'manual-third-party' | 'manual-otp' | 'manual-approval' | 'manual-review'
+
+export interface ChallengeProfile {
+  kind: ChallengeKind
+  subtype: ChallengeSubtype
+  strategy: ChallengeStrategy
+  firstObservedAt: string
+  lastObservedAt: string
+  occurrences: number
+  autoCompletedOccurrences: number
+}
+
 export const INSPECTION_ARTIFACTS = ['markdown-report', 'json-report', 'screenshot', 'page-text', 'page-summary'] as const
 export type InspectionArtifact = typeof INSPECTION_ARTIFACTS[number]
 
@@ -71,6 +85,8 @@ export interface InspectionDefinition {
   auth: {
     mode: AuthMode
     notes?: string
+    /** Non-secret learned verification taxonomy. No cookie, OTP, captcha answer, or raw challenge image is stored here. */
+    challengeProfiles?: ChallengeProfile[]
   }
   schedule: null | {
     enabled: boolean

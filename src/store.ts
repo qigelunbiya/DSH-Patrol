@@ -1,5 +1,6 @@
 import { chmod, copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { rememberChallengeObservationFromText } from './challenge-memory.js'
 import { assertInspectionDefinition, assertInspectionId } from './validation.js'
 import type { InspectionDefinition, ResumeState, RunReport, SavedRunPaths } from './types.js'
 
@@ -141,18 +142,35 @@ export class PatrolStore {
     await atomicWrite(internal.json, `${JSON.stringify(report, null, 2)}\n`)
     await atomicWrite(internal.markdown, markdown)
 
+    // A real Patrol run always has a persisted inspection definition. Some
+    // lower-level runner tests deliberately execute an ephemeral definition
+    // without storing it first, so challenge-memory enrichment must remain
+    // optional and must never make report persistence depend on inspection.json.
+    let definition: InspectionDefinition | undefined
+    if (await this.exists(report.inspectionId)) {
+      definition = await this.load(report.inspectionId)
+      let learnedChallenge = false
+      for (const result of report.results) {
+        if (result.tool !== 'browser_detect_auth_challenge' || result.status !== 'passed') continue
+        learnedChallenge = rememberChallengeObservationFromText(definition, result.output, result.finishedAt) || learnedChallenge
+      }
+      if (learnedChallenge) await this.save(definition)
+    }
+
     if (workspaceRoot === undefined || workspaceRoot.trim() === '') return internal
     const visible = this.workspaceRunPaths(report.inspectionId, report.runId, workspaceRoot)
     await atomicWrite(visible.json, `${JSON.stringify(report, null, 2)}\n`)
     await atomicWrite(visible.markdown, markdown)
 
-    // Keep one canonical complete Runbook at patrol-results/<inspection>/runbook,
-    // and also snapshot the exact Runbook used by this run beside its report.
-    const definition = await this.load(report.inspectionId)
-    await this.saveWorkspaceRunbook(definition, workspaceRoot)
-    const runbookSnapshot = join(visible.directory, 'runbook')
-    await atomicWrite(join(runbookSnapshot, 'inspection.json'), `${JSON.stringify(definition, null, 2)}\n`)
-    await atomicWrite(join(runbookSnapshot, 'runbook.md'), renderRunbookMarkdown(definition))
+    // Runbook mirrors require an authoritative persisted definition. If a
+    // low-level test supplied only an ephemeral definition, keep the reports
+    // usable and simply omit mirrors; normal Patrol runs always take this path.
+    if (definition !== undefined) {
+      await this.saveWorkspaceRunbook(definition, workspaceRoot)
+      const runbookSnapshot = join(visible.directory, 'runbook')
+      await atomicWrite(join(runbookSnapshot, 'inspection.json'), `${JSON.stringify(definition, null, 2)}\n`)
+      await atomicWrite(join(runbookSnapshot, 'runbook.md'), renderRunbookMarkdown(definition))
+    }
     return visible
   }
 
@@ -277,9 +295,20 @@ function renderRunbookMarkdown(definition: InspectionDefinition): string {
     `- Auth mode: \`${definition.auth.mode}\``,
     `- Updated: ${definition.metadata.updatedAt}`,
     '',
-    '## Reusable steps',
-    '',
   ]
+
+  const challengeProfiles = definition.auth.challengeProfiles ?? []
+  if (challengeProfiles.length > 0) {
+    lines.push('## Learned verification profiles', '')
+    for (const profile of challengeProfiles) {
+      lines.push(
+        `- \`${profile.kind}/${profile.subtype}\` → \`${profile.strategy}\`; observed ${profile.occurrences} time(s); auto-completed ${profile.autoCompletedOccurrences} time(s); last seen ${profile.lastObservedAt}`,
+      )
+    }
+    lines.push('', 'These entries are non-secret hints learned from prior runs. The current page is still classified once when verification is reached; no captcha answer, OTP, cookie, or raw challenge image is stored.', '')
+  }
+
+  lines.push('## Reusable steps', '')
   if (definition.steps.length === 0) lines.push('(no steps recorded)')
   for (const step of definition.steps) {
     lines.push(`### ${step.id} — ${step.name}`, '')
@@ -295,7 +324,7 @@ function renderRunbookMarkdown(definition: InspectionDefinition): string {
     if (step.notes !== undefined) lines.push(`- Notes: ${step.notes}`)
     lines.push('')
   }
-  lines.push('---', '', 'This is the complete reusable Patrol Runbook mirror. Credential steps contain references only; raw passwords, cookies, OTPs, and other session secrets are intentionally not written here.', '')
+  lines.push('---', '', 'This is the complete reusable Patrol Runbook mirror. Credential steps contain references only; raw passwords, cookies, OTPs, captcha answers, and other session secrets are intentionally not written here.', '')
   return lines.join('\n')
 }
 

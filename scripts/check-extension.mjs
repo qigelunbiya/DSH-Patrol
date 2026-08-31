@@ -52,8 +52,12 @@ if (!challengeTool.includes("name: 'browser_detect_auth_challenge'")) throw new 
 if (!challengeTool.includes("bridge.request('snapshot'")) throw new Error('auth challenge detection must use the safe snapshot provider')
 if (!challengeTool.includes("bridge.request('readPage'")) throw new Error('auth challenge detection must use visible page text only')
 if (/\beval\s*\(/.test(challengeTool) || /new\s+Function\s*\(/.test(challengeTool)) throw new Error('auth challenge detection must not evaluate page code')
-if (/drag(To)?\s*\(/.test(challengeTool)) throw new Error('auth challenge detector must not synthesize drag solving logic')
-if (!challengeTool.includes("classified.subtype !== 'click-sequence'")) throw new Error('click-sequence challenges must remain human handoffs')
+if (/drag(To)?\s*\(/.test(challengeTool) || /bridge\.request\(['"](?:click|drag)/.test(challengeTool)) throw new Error('auth challenge detector must not synthesize click/drag solving logic')
+if (!challengeTool.includes("classified.subtype === 'image-code'")) throw new Error('automatic challenge handling must be limited to conventional image-text codes')
+for (const strategy of ['manual-click-sequence', 'manual-slider', 'manual-third-party']) {
+  if (!challengeTool.includes(strategy)) throw new Error(`interactive verification must expose deterministic handoff strategy ${strategy}`)
+}
+if (!challengeTool.includes('observedKind') || !challengeTool.includes('observedSubtype')) throw new Error('challenge detector must preserve initially observed taxonomy for learned Runbook metadata')
 
 const screenshotOcr = readFileSync(join(runtimeRoot, 'screenshot-ocr.js'), 'utf8')
 if (/\beval\s*\(/.test(screenshotOcr) || /new\s+Function\s*\(/.test(screenshotOcr)) throw new Error('screenshot OCR must not evaluate page code')

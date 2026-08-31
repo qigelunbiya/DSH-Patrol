@@ -47,14 +47,23 @@ describe('auth challenge classification', () => {
     expect(result.hasChallenge).toBe(true)
   })
 
-  it('recognizes click-sequence CAPTCHA wording as a dedicated human-handoff subtype', () => {
+  it('recognizes ordered text-selection CAPTCHA wording as a dedicated human-handoff subtype', () => {
     const result = classifyAuthChallenge(
-      { elements: [{ selector: '.geetest_panel', text: '请在下图依次点击文字', role: 'dialog' }] },
+      { elements: [{ selector: '.captcha-panel', text: '请在下图依次点击文字', role: 'dialog' }] },
       '请在下图依次点击：目标文字，然后点击确认',
     )
     expect(result.kind).toBe('captcha')
     expect(result.subtype).toBe('click-sequence')
     expect(result.hasChallenge).toBe(true)
+  })
+
+  it('keeps third-party CAPTCHA classification above generic click instructions', () => {
+    const result = classifyAuthChallenge(
+      { elements: [{ selector: 'iframe', text: 'recaptcha challenge', role: 'dialog' }] },
+      'reCAPTCHA: select all images with traffic lights and click verify',
+    )
+    expect(result.kind).toBe('captcha')
+    expect(result.subtype).toBe('third-party')
   })
 
   it('classifies conventional image-code wording separately', () => {
@@ -66,13 +75,27 @@ describe('auth challenge classification', () => {
     expect(result.subtype).toBe('image-code')
   })
 
-  it('gives slider verification higher priority than generic captcha wording', () => {
+  it('classifies GeeTest/jigsaw slider verification as slider-puzzle', () => {
     const result = classifyAuthChallenge({
       elements: [{ selector: '.geetest_slider_button', text: '拖动滑块完成验证', role: 'button' }],
     }, '人机验证：请拖动滑块完成拼图验证')
     expect(result.kind).toBe('slider')
-    expect(result.subtype).toBe('slider')
+    expect(result.subtype).toBe('slider-puzzle')
     expect(result.selectors).toContain('.geetest_slider_button')
+  })
+
+  it('classifies simple non-puzzle slider verification separately', () => {
+    const result = classifyAuthChallenge({
+      elements: [{ selector: '.slider', text: 'Drag slider to verify', role: 'button' }],
+    }, 'Drag slider to complete verification')
+    expect(result.kind).toBe('slider')
+    expect(result.subtype).toBe('slider')
+  })
+
+  it('classifies rotate challenges without treating them as image-text codes', () => {
+    const result = classifyAuthChallenge({ elements: [] }, '请旋转图片，使物体方向正确后完成验证码')
+    expect(result.kind).toBe('captcha')
+    expect(result.subtype).toBe('rotate')
   })
 
   it('detects passkey or device approval flows', () => {

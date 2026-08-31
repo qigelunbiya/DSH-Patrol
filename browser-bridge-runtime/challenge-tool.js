@@ -8,15 +8,24 @@ const str = { type: 'string' }
 const optInt = { type: 'integer' }
 
 const CHALLENGE_KINDS = ['none', 'otp', 'captcha', 'slider', 'approval', 'unknown']
-const CHALLENGE_SUBTYPES = ['none', 'otp', 'image-code', 'click-sequence', 'third-party', 'generic-captcha', 'slider', 'approval', 'unknown']
+const CHALLENGE_SUBTYPES = ['none', 'otp', 'image-code', 'click-sequence', 'third-party', 'generic-captcha', 'slider', 'slider-puzzle', 'rotate', 'approval', 'unknown']
+const CHALLENGE_STRATEGIES = ['none', 'windows-system-ocr', 'manual-click-sequence', 'manual-slider', 'manual-third-party', 'manual-otp', 'manual-approval', 'manual-review']
 const KIND_ORDER = ['slider', 'otp', 'captcha', 'approval', 'unknown']
 
+// The taxonomy intentionally recognizes the major families used by projects
+// such as Text_select_captcha (ordered text clicking) and ddddocr (image OCR,
+// target detection, slider/jigsaw matching), but Patrol only auto-completes the
+// conventional image-text family. Interactive anti-bot challenges remain a
+// human handoff after classification.
 const CLICK_SEQUENCE_RULES = [
   /依次点击/,
   /按(?:照|顺序).{0,20}点击/,
   /请.{0,20}(?:下图|图片).{0,20}点击/,
-  /点击.{0,20}(?:文字|汉字|字符|目标).{0,20}(?:顺序|依次)?/,
-  /click.{0,30}(?:characters?|words?|symbols?).{0,30}(?:order|sequence)/i,
+  /点击.{0,20}(?:文字|汉字|字符|目标|图标).{0,20}(?:顺序|依次)?/,
+  /请选择.{0,20}(?:文字|汉字|字符|图标|目标)/,
+  /选出.{0,20}(?:文字|汉字|字符|图标|目标)/,
+  /click.{0,30}(?:characters?|words?|symbols?|icons?).{0,30}(?:order|sequence)/i,
+  /select.{0,30}(?:characters?|words?|symbols?|icons?)/i,
 ]
 
 const IMAGE_CODE_RULES = [
@@ -35,15 +44,39 @@ const THIRD_PARTY_RULES = [
   /\brecaptcha\b/i,
   /\bhcaptcha\b/i,
   /\bturnstile\b/i,
+  /\barkose\b/i,
+  /\bfuncaptcha\b/i,
+  /\btc(?:aptcha)?\b/i,
+  /captcha\.qq\.com/i,
+]
+
+const SLIDER_PUZZLE_RULES = [
+  /\bgeetest\b/i,
+  /\bjigsaw\b/i,
+  /\bpuzzle\b/i,
+  /拼图/,
+  /缺口/,
+  /滑块.{0,20}(?:拼图|缺口)/,
+  /拖动.{0,20}(?:拼图|缺口)/,
+]
+
+const ROTATE_RULES = [
+  /旋转.{0,20}(?:图片|图像|物体|验证码)/,
+  /转动.{0,20}(?:图片|图像|物体)/,
+  /调整.{0,20}(?:角度|方向)/,
+  /rotate.{0,30}(?:image|object|captcha)/i,
+  /rotation.{0,20}(?:captcha|challenge)/i,
 ]
 
 const RULES = {
   slider: [
     /\bslider\b/i,
     /\bdrag\b.{0,30}\b(verify|verification|captcha|puzzle)\b/i,
+    /\bgeetest\b/i,
+    /\bjigsaw\b/i,
     /滑块/,
-    /拖动.{0,20}(验证|拼图|滑块)/,
-    /拼图.{0,20}(验证|滑块)/,
+    /拖动.{0,20}(验证|拼图|滑块|缺口)/,
+    /拼图.{0,20}(验证|滑块|缺口)/,
   ],
   otp: [
     /\botp\b/i,
@@ -61,10 +94,13 @@ const RULES = {
   ],
   captcha: [
     ...CLICK_SEQUENCE_RULES,
+    ...ROTATE_RULES,
     /\bcaptcha\b/i,
     /\brecaptcha\b/i,
     /\bhcaptcha\b/i,
     /\bturnstile\b/i,
+    /\barkose\b/i,
+    /\bfuncaptcha\b/i,
     /图形验证码/,
     /图片验证码/,
     /字符验证码/,
@@ -144,7 +180,7 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
   const timeoutMs = config.commandTimeoutMs ?? 60000
   const definition = defineTool({
     name: 'browser_detect_auth_challenge',
-    description: 'Detect common post-login human-verification challenges from safe DOM signals and visible text. The result includes a subtype such as image-code or click-sequence. On Windows, only conventional image-code inputs may be locally recognized, filled, and submitted; click-sequence CAPTCHAs, sliders, OTP, passkeys, reCAPTCHA-style widgets, and unsupported challenges remain human handoffs.',
+    description: 'Detect and classify common post-login verification challenges from safe DOM signals and visible text. Conventional image-text codes may be locally recognized on Windows. Ordered-click, slider/jigsaw, rotate, OTP, passkey, reCAPTCHA/hCaptcha/Turnstile/Arkose-style and unsupported verification are classified for deterministic human handoff rather than bypassed.',
     parameters: {
       tabId: optInt,
     },
@@ -157,24 +193,29 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
           hasChallenge: reqBool,
           kind: { type: 'string', required: true, enum: CHALLENGE_KINDS },
           subtype: { type: 'string', required: true, enum: CHALLENGE_SUBTYPES },
+          observedKind: { type: 'string', required: true, enum: CHALLENGE_KINDS },
+          observedSubtype: { type: 'string', required: true, enum: CHALLENGE_SUBTYPES },
+          strategy: { type: 'string', required: true, enum: CHALLENGE_STRATEGIES },
           selectors: { type: 'array', required: true, items: str },
           autoFilled: bool,
+          handoffRequired: reqBool,
         },
       },
       render: (_args, value) => [{
         type: 'text',
-        text: `Auth challenge: kind=${value.kind}; subtype=${value.subtype}; hasChallenge=${value.hasChallenge}${value.autoFilled ? '; simple image code filled by Windows system text recognition' : ''}${value.selectors?.length ? `; selectors=${value.selectors.join(', ')}` : ''}`,
+        text: `Auth challenge: kind=${value.kind}; subtype=${value.subtype}; observed=${value.observedKind}/${value.observedSubtype}; strategy=${value.strategy}; hasChallenge=${value.hasChallenge}; handoffRequired=${value.handoffRequired}${value.autoFilled ? '; simple image code filled by Windows system text recognition' : ''}${value.selectors?.length ? `; selectors=${value.selectors.join(', ')}` : ''}`,
       }],
     },
     presentCall: args => ({ card: 'generic', title: 'Detect login verification', kind: 'other', rawInput: args }),
     execute: async (args, exec) => {
       const options = { timeoutMs, signal: exec?.signal }
       let classified = await observeAuthChallenge(bridge, args.tabId, options)
+      const initiallyObserved = { kind: classified.kind, subtype: classified.subtype }
+      const strategy = strategyForChallenge(initiallyObserved.kind, initiallyObserved.subtype)
       let autoFilled = false
 
       if (classified.kind === 'captcha'
-        && classified.subtype !== 'click-sequence'
-        && classified.subtype !== 'third-party'
+        && classified.subtype === 'image-code'
         && process.platform === 'win32') {
         for (let attempt = 0; attempt < 2; attempt += 1) {
           let filled = false
@@ -190,12 +231,12 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
           try {
             classified = await observeAuthChallenge(bridge, args.tabId, options)
           } catch {
+            // Navigation after a successful form submit can temporarily remove
+            // the page bridge. Let later login/application assertions verify it.
             classified = { kind: 'none', subtype: 'none', hasChallenge: false, selectors: [], evidence: [] }
             break
           }
-          if (classified.kind !== 'captcha'
-            || classified.subtype === 'click-sequence'
-            || classified.subtype === 'third-party') break
+          if (classified.kind !== 'captcha' || classified.subtype !== 'image-code') break
         }
       }
 
@@ -203,9 +244,13 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
         ok: true,
         kind: classified.kind,
         subtype: classified.subtype,
+        observedKind: initiallyObserved.kind,
+        observedSubtype: initiallyObserved.subtype,
+        strategy,
         hasChallenge: classified.hasChallenge,
         selectors: classified.selectors,
         autoFilled,
+        handoffRequired: classified.kind !== 'none',
       }
     },
   })
@@ -245,13 +290,27 @@ async function observeAuthChallenge(bridge, tabId, options) {
 function inferChallengeSubtype(kind, text) {
   if (kind === 'none') return 'none'
   if (kind === 'otp') return 'otp'
-  if (kind === 'slider') return 'slider'
+  if (kind === 'slider') return matchesAny(text, SLIDER_PUZZLE_RULES) ? 'slider-puzzle' : 'slider'
   if (kind === 'approval') return 'approval'
   if (kind === 'unknown') return 'unknown'
-  if (matchesAny(text, CLICK_SEQUENCE_RULES)) return 'click-sequence'
+  // Third-party widgets take precedence over click wording because providers
+  // such as reCAPTCHA can themselves instruct the user to click images.
   if (matchesAny(text, THIRD_PARTY_RULES)) return 'third-party'
+  if (matchesAny(text, CLICK_SEQUENCE_RULES)) return 'click-sequence'
+  if (matchesAny(text, ROTATE_RULES)) return 'rotate'
   if (matchesAny(text, IMAGE_CODE_RULES)) return 'image-code'
   return 'generic-captcha'
+}
+
+function strategyForChallenge(kind, subtype) {
+  if (kind === 'none') return 'none'
+  if (kind === 'captcha' && subtype === 'image-code') return 'windows-system-ocr'
+  if (kind === 'captcha' && subtype === 'click-sequence') return 'manual-click-sequence'
+  if (kind === 'captcha' && subtype === 'third-party') return 'manual-third-party'
+  if (kind === 'slider') return 'manual-slider'
+  if (kind === 'otp') return 'manual-otp'
+  if (kind === 'approval') return 'manual-approval'
+  return 'manual-review'
 }
 
 function matchesAny(text, rules) {
