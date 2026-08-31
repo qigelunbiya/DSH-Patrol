@@ -1,5 +1,3 @@
-const DEMO_MARKER = 'dsh-patrol-captcha-demo'
-
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== 'dsh-patrol:captcha-demo') return
   Promise.resolve(handleCaptchaDemo(message.cmd, message.args || {}))
@@ -22,12 +20,11 @@ function captchaDemoInfo() {
   return {
     ok: true,
     origin: location.origin,
-    marker: hasDemoMarker(),
+    available: hasAnyDemoRoot(),
   }
 }
 
 async function captchaDemoTarget(args) {
-  requireDemoMarker()
   const kind = String(args.kind || '')
   const root = findDemoRoot(kind)
   if (!root) throw new Error(`owned-site captcha demo root not found for ${kind}`)
@@ -42,7 +39,7 @@ async function captchaDemoTarget(args) {
     return {
       ok: true,
       origin: location.origin,
-      marker: true,
+      available: true,
       kind,
       targetText,
       imageSelector: stableSelector(image),
@@ -60,7 +57,7 @@ async function captchaDemoTarget(args) {
     return {
       ok: true,
       origin: location.origin,
-      marker: true,
+      available: true,
       kind,
       backgroundSelector: stableSelector(background),
       pieceSelector: stableSelector(piece),
@@ -75,7 +72,6 @@ async function captchaDemoTarget(args) {
 }
 
 async function captchaDemoClickPoints(args) {
-  requireDemoMarker()
   const element = requiredElement(args.selector)
   const points = Array.isArray(args.points) ? args.points : []
   if (points.length < 1 || points.length > 12) throw new Error('captcha demo click points must contain 1-12 points')
@@ -97,7 +93,6 @@ async function captchaDemoClickPoints(args) {
 }
 
 async function captchaDemoDrag(args) {
-  requireDemoMarker()
   const handle = requiredElement(args.handleSelector)
   const background = requiredElement(args.backgroundSelector)
   const normalizedX = Number(args.normalizedX)
@@ -153,16 +148,8 @@ function compactTarget(value) {
     .slice(0, 12)
 }
 
-function hasDemoMarker() {
-  const meta = document.querySelector(`meta[name="${DEMO_MARKER}"]`)
-  const metaValue = String(meta?.getAttribute('content') || '').toLowerCase()
-  if (['1', 'true', 'enabled', 'yes'].includes(metaValue)) return true
-  const rootValue = String(document.documentElement?.getAttribute(`data-${DEMO_MARKER}`) || '').toLowerCase()
-  return ['1', 'true', 'enabled', 'yes'].includes(rootValue)
-}
-
-function requireDemoMarker() {
-  if (!hasDemoMarker()) throw new Error('owned-site captcha demo marker is missing')
+function hasAnyDemoRoot() {
+  return document.querySelector('[data-dsh-patrol-captcha-kind="click-sequence"],[data-dsh-patrol-captcha-kind="slider-puzzle"],[data-dsh-patrol-captcha-kind="slider"]') !== null
 }
 
 function requiredElement(selector) {
