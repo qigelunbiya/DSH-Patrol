@@ -171,6 +171,7 @@ async function captureCaptchaDemo(args) {
     return {
       ok: true,
       origin: target.origin,
+      documentKey: target.documentKey,
       available: true,
       kind,
       targetText: target.targetText,
@@ -184,6 +185,7 @@ async function captureCaptchaDemo(args) {
   return {
     ok: true,
     origin: target.origin,
+    documentKey: target.documentKey,
     available: true,
     kind,
     backgroundSelector: target.backgroundSelector,
