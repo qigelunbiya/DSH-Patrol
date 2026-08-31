@@ -59,6 +59,18 @@ describe('learned verification profile memory', () => {
     })
   })
 
+  it('records an authorized owned-site demo solver as an auto-completed verification', () => {
+    const observed = challengeObservationFromText(
+      'Auth challenge: kind=none; subtype=none; observed=captcha/click-sequence; strategy=ddddocr-click-sequence-demo; hasChallenge=false; handoffRequired=false; verification auto-completed by an authorized local Patrol solver',
+    )
+    expect(observed).toEqual({
+      kind: 'captcha',
+      subtype: 'click-sequence',
+      strategy: 'ddddocr-click-sequence-demo',
+      autoCompleted: true,
+    })
+  })
+
   it('increments occurrences without changing semantic Runbook updatedAt', () => {
     const runbook = definition()
     const updatedAt = runbook.metadata.updatedAt
