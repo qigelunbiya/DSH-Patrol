@@ -10,32 +10,32 @@ const execFileAsync = promisify(execFile)
 
 describe('Excel bridge v4', () => {
   it('keeps the proven one-argument Workbooks.Open path', () => {
-    expect(EXCEL_POWERSHELL_V4).toContain('$opened = $workbooks.Open($filePath)')
+    expect(EXCEL_POWERSHELL_V4).toContain('$x=$books.Open($path)')
     expect(EXCEL_POWERSHELL_V4).toContain("[System.__ComObject].InvokeMember('Open'")
     expect(EXCEL_POWERSHELL_V4).toContain('[Reflection.BindingFlags]::OptionalParamBinding')
   })
 
   it('turns UsedRange metadata mismatch into a bounded scan instead of a fatal worksheet error', () => {
-    expect(EXCEL_POWERSHELL_V4).toContain("$used = Get-ComProperty $sheet 'UsedRange'")
-    expect(EXCEL_POWERSHELL_V4).toContain("Get-ComProperty $used 'Rows'")
-    expect(EXCEL_POWERSHELL_V4).toContain("Get-ComProperty $used 'Columns'")
+    expect(EXCEL_POWERSHELL_V4).toContain("$u=Prop $s 'UsedRange'")
+    expect(EXCEL_POWERSHELL_V4).toContain("$rows=Prop $u 'Rows'")
+    expect(EXCEL_POWERSHELL_V4).toContain("$cols=Prop $u 'Columns'")
     expect(EXCEL_POWERSHELL_V4).toContain('UsedRange metadata unavailable')
-    expect(EXCEL_POWERSHELL_V4).toContain('$endRow = $maxRows')
-    expect(EXCEL_POWERSHELL_V4).toContain('$endColumn = $maxColumns')
+    expect(EXCEL_POWERSHELL_V4).toContain('$er=$maxRows')
+    expect(EXCEL_POWERSHELL_V4).toContain('$ec=$maxCols')
     expect(PATROL_EXCEL_V4_PROMPT).toContain('bounded A1 scan')
   })
 
   it('uses numeric worksheet enumeration and A1 Range access', () => {
-    expect(EXCEL_POWERSHELL_V4).toContain('$sheet = $worksheets.Item($index)')
-    expect(EXCEL_POWERSHELL_V4).toContain('$cell = $sheet.Range($address)')
-    expect(EXCEL_POWERSHELL_V4).not.toContain('$worksheets.Item($name)')
+    expect(EXCEL_POWERSHELL_V4).toContain('$x=$s.Item($i)')
+    expect(EXCEL_POWERSHELL_V4).toContain('$x=$s.Range($a)')
+    expect(EXCEL_POWERSHELL_V4).not.toContain('$s.Item($name)')
   })
 
   it('keeps formatting copy non-fatal and writes/saves with fallbacks', () => {
-    expect(EXCEL_POWERSHELL_V4).toContain('copy formatting $sourceAddress -> $address failed')
-    expect(EXCEL_POWERSHELL_V4).toContain("Invoke-ComSet $cell 'Value2'")
-    expect(EXCEL_POWERSHELL_V4).toContain("Invoke-ComSet $cell 'Formula'")
-    expect(EXCEL_POWERSHELL_V4).toContain("Invoke-ComCall $workbook 'Save'")
+    expect(EXCEL_POWERSHELL_V4).toContain('copy formatting $([string]$u.copyFormatFrom) -> $a failed')
+    expect(EXCEL_POWERSHELL_V4).toContain("CSet $c 'Value2'")
+    expect(EXCEL_POWERSHELL_V4).toContain("CSet $c 'Formula'")
+    expect(EXCEL_POWERSHELL_V4).toContain("CCall $b 'Save'")
   })
 
   it('parses the v4 PowerShell bridge on Windows', async () => {
