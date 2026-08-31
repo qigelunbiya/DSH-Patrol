@@ -422,7 +422,7 @@ function execFileText(file: string, args: string[]): Promise<{ stdout: string; s
   })
 }
 
-export const EXCEL_POWERSHELL = String.raw`param([Parameter(Mandatory=$true)][string]$PayloadPath)
+export const EXCEL_POWERSHELL = '\uFEFF' + String.raw`param([Parameter(Mandatory=$true)][string]$PayloadPath)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)

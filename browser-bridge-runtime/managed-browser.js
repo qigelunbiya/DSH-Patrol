@@ -6,6 +6,8 @@ import puppeteer from 'puppeteer-core'
 
 const DEFAULT_START_TIMEOUT_MS = 30_000
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000
+const CERT_INTERSTITIAL_ATTEMPTS = 20
+const CERT_INTERSTITIAL_RETRY_MS = 100
 const EXTENSION_DIR = fileURLToPath(new URL('../browser-extension/', import.meta.url))
 
 export function createManagedBrowserController(options = {}) {
@@ -28,6 +30,8 @@ export function createManagedBrowserController(options = {}) {
   let lastExecutable
   let extensionId
   let extensionLoadMode
+  const watchedCertificatePages = new WeakSet()
+  const pendingCertificatePages = new WeakSet()
 
   const controller = {
     get status() {
@@ -150,6 +154,45 @@ export function createManagedBrowserController(options = {}) {
       browser = undefined
       removeStateFile(statePath)
     })
+
+    const checkPage = page => {
+      if (!page || pendingCertificatePages.has(page)) return
+      pendingCertificatePages.add(page)
+      void tryProceedPrivateCertificateInterstitial(page, logger)
+        .catch(error => logger.warn?.(`[dsh-patrol/managed-browser] private certificate interstitial handling failed: ${errorMessage(error)}`))
+        .finally(() => pendingCertificatePages.delete(page))
+    }
+
+    const watchPage = page => {
+      if (!page) return
+      if (!watchedCertificatePages.has(page)) {
+        watchedCertificatePages.add(page)
+        page.on?.('domcontentloaded', () => checkPage(page))
+        page.on?.('load', () => checkPage(page))
+        page.on?.('framenavigated', frame => {
+          const mainFrame = page.mainFrame?.()
+          if (mainFrame === undefined || frame === mainFrame) checkPage(page)
+        })
+      }
+      checkPage(page)
+    }
+
+    const observeTarget = target => {
+      try {
+        if (target?.type?.() !== 'page') return
+        void Promise.resolve(target.page?.())
+          .then(page => watchPage(page))
+          .catch(() => {})
+      } catch {}
+    }
+
+    active.on?.('targetcreated', observeTarget)
+    active.on?.('targetchanged', observeTarget)
+    void Promise.resolve(active.pages?.())
+      .then(pages => {
+        if (Array.isArray(pages)) for (const page of pages) watchPage(page)
+      })
+      .catch(() => {})
   }
 
   async function configureRuntimeExtension(activeBrowser) {
@@ -206,6 +249,63 @@ export async function defaultLaunchBrowser({ executablePath, profilePath, extens
     timeout: startTimeoutMs,
     args,
   })
+}
+
+export function isPrivateNetworkUrl(value) {
+  let url
+  try { url = new URL(String(value)) } catch { return false }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return false
+  const hostname = url.hostname.toLowerCase().replace(/^\[/, '').replace(/\]$/, '')
+  if (hostname === 'localhost' || hostname.endsWith('.localhost')) return true
+  if (hostname === '::1') return true
+  if (/^[0-9.]+$/.test(hostname)) {
+    const parts = hostname.split('.').map(Number)
+    if (parts.length !== 4 || parts.some(part => !Number.isInteger(part) || part < 0 || part > 255)) return false
+    const [a, b] = parts
+    return a === 10
+      || a === 127
+      || (a === 169 && b === 254)
+      || (a === 172 && b >= 16 && b <= 31)
+      || (a === 192 && b === 168)
+  }
+  if (/^[0-9a-f:]+$/i.test(hostname)) {
+    return hostname.startsWith('fc')
+      || hostname.startsWith('fd')
+      || /^fe[89ab]/.test(hostname)
+  }
+  return false
+}
+
+export async function tryProceedPrivateCertificateInterstitial(page, logger = console, options = {}) {
+  const targetUrl = String(page?.url?.() ?? '')
+  if (!isPrivateNetworkUrl(targetUrl)) return false
+  const attempts = positiveInt(options.attempts, CERT_INTERSTITIAL_ATTEMPTS)
+  const retryMs = Number.isInteger(options.retryMs) && options.retryMs >= 0 ? options.retryMs : CERT_INTERSTITIAL_RETRY_MS
+  let expanded = false
+
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (page?.isClosed?.() === true) return false
+    let proceed
+    let details
+    try {
+      proceed = await page?.$('#proceed-link')
+      if (!proceed && !expanded) details = await page?.$('#details-button')
+    } catch {
+      return false
+    }
+
+    if (proceed) {
+      await proceed.click()
+      logger.info?.(`[dsh-patrol/managed-browser] continued through private-network certificate interstitial for ${targetUrl}`)
+      return true
+    }
+    if (details) {
+      await details.click()
+      expanded = true
+    }
+    if (attempt + 1 < attempts && retryMs > 0) await delay(retryMs)
+  }
+  return false
 }
 
 export function resolveBrowserExecutable(explicit) {
