@@ -59,9 +59,9 @@ describe('learned verification profile memory', () => {
     })
   })
 
-  it('records an authorized owned-site demo solver as an auto-completed verification', () => {
+  it('records the local demo solver as an auto-completed verification', () => {
     const observed = challengeObservationFromText(
-      'Auth challenge: kind=none; subtype=none; observed=captcha/click-sequence; strategy=ddddocr-click-sequence-demo; hasChallenge=false; handoffRequired=false; verification auto-completed by an authorized local Patrol solver',
+      'Auth challenge: kind=none; subtype=none; observed=captcha/click-sequence; strategy=ddddocr-click-sequence-demo; hasChallenge=false; handoffRequired=false; verification auto-completed by the local Patrol solver',
     )
     expect(observed).toEqual({
       kind: 'captcha',
