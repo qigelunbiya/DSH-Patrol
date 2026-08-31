@@ -8,9 +8,9 @@ import {
 } from '../browser-bridge-runtime/captcha-mode.js'
 
 describe('captcha runtime mode', () => {
-  it('defaults to test mode and treats unknown values as the default mode', () => {
+  it('defaults to test mode for empty/default values', () => {
     expect(resolveCaptchaMode('')).toBe(CAPTCHA_MODES.test)
-    expect(resolveCaptchaMode('unexpected-mode')).toBe(CAPTCHA_MODES.test)
+    expect(resolveCaptchaMode('default')).toBe(CAPTCHA_MODES.test)
     expect(currentCaptchaMode({})).toBe(CAPTCHA_MODES.test)
   })
 
@@ -25,6 +25,12 @@ describe('captcha runtime mode', () => {
     expect(currentCaptchaMode({ DSH_PATROL_CAPTCHA_MODE: 'test' })).toBe(CAPTCHA_MODES.test)
     expect(captchaModeAllowsWeakUnmarkedAutomation(CAPTCHA_MODES.normal)).toBe(false)
     expect(captchaModeAllowsWeakUnmarkedAutomation(CAPTCHA_MODES.test)).toBe(true)
+  })
+
+  it('rejects unsupported non-empty mode values instead of silently falling back to test', () => {
+    expect(() => resolveCaptchaMode('nromal')).toThrow(/Unsupported DSH_PATROL_CAPTCHA_MODE/)
+    expect(() => resolveCaptchaMode('unexpected-mode')).toThrow(/Expected one of: test, testing, default, normal/)
+    expect(() => currentCaptchaMode({ DSH_PATROL_CAPTCHA_MODE: 'whatever' })).toThrow(/Unsupported DSH_PATROL_CAPTCHA_MODE/)
   })
 
   it('keeps the compatibility test-mode toggle harmless and does not override an explicit normal mode', () => {
