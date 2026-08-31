@@ -18,8 +18,9 @@ const TEST_MODE_VALUES = new Set(['1', 'true', 'yes', 'on', 'test', 'testing'])
 export function resolveCaptchaMode(value) {
   const requested = String(value || '').trim().toLowerCase()
   if (requested === 'test' || requested === 'testing') return CAPTCHA_MODES.test
-  if (requested === 'normal' || requested === 'default' || requested === '') return CAPTCHA_MODES.normal
-  return CAPTCHA_MODES.normal
+  if (requested === 'normal') return CAPTCHA_MODES.normal
+  if (requested === 'default' || requested === '') return CAPTCHA_MODES.test
+  return CAPTCHA_MODES.test
 }
 
 export function currentCaptchaMode(env = process.env) {
@@ -30,7 +31,7 @@ export function currentCaptchaMode(env = process.env) {
 
   const compatibilityToggle = String(env?.DSH_PATROL_CAPTCHA_TEST_MODE || '').trim().toLowerCase()
   if (TEST_MODE_VALUES.has(compatibilityToggle)) return CAPTCHA_MODES.test
-  return CAPTCHA_MODES.normal
+  return CAPTCHA_MODES.test
 }
 
 export function captchaModeAllowsWeakUnmarkedAutomation(mode = currentCaptchaMode()) {
