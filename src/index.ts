@@ -8,9 +8,11 @@ import { registerPatrolActionTools } from './action-tools.js'
 import { registerPatrolCreationTools } from './creation-tools.js'
 import { registerPatrolCredentialTools } from './credential-tools.js'
 import { registerPatrolEditTools } from './edit-tools.js'
-import { PATROL_EXCEL_PROMPT, registerPatrolExcelTools } from './excel-tools.js'
+import { PATROL_EXCEL_PROMPT } from './excel-tools.js'
+import { PATROL_EXCEL_V2_PROMPT, registerPatrolExcelToolsV2 } from './excel-tools-v2.js'
 import { registerPatrolHandoffTools } from './handoff-tools.js'
 import { PATROL_SYSTEM_PROMPT } from './prompt.js'
+import { createPatrolRecoveryGuard, PATROL_RECOVERY_PROMPT } from './recovery-guard.js'
 import { PatrolRunner } from './runner.js'
 import { PatrolScheduler, registerPatrolScheduleTools } from './scheduler.js'
 import { PATROL_SESSION_PROMPT } from './session-prompt.js'
@@ -27,6 +29,8 @@ export * from './action-tools.js'
 export * from './creation-tools.js'
 export * from './credential-tools.js'
 export * from './excel-tools.js'
+export * from './excel-tools-v2.js'
+export * from './recovery-guard.js'
 export * from './handoff-tools.js'
 export { PatrolStore } from './store.js'
 export { PatrolRunner, conditionMatches, evaluateExpectation } from './runner.js'
@@ -79,6 +83,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const store = new PatrolStore(resolved.storagePath)
   await store.init()
   const runner = new PatrolRunner(ctx, store, { reportMaxChars: resolved.reportMaxChars })
+  const recoveryGuard = createPatrolRecoveryGuard()
 
   ctx.effect(
     () => registerPatrolTools(ctx, store, runner, {
@@ -99,11 +104,16 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   )
   ctx.effect(() => registerPatrolEditTools(ctx, store, runner), 'dsh-patrol: runbook edit and validation tools')
   ctx.effect(() => registerPatrolWorkspaceTools(ctx, store), 'dsh-patrol: workspace path tools')
-  ctx.effect(() => registerPatrolExcelTools(ctx), 'dsh-patrol: adaptive workspace Excel tools')
+  ctx.effect(() => registerPatrolExcelToolsV2(ctx), 'dsh-patrol: resilient adaptive workspace Excel tools')
   ctx.effect(() => registerPatrolScheduleTools(ctx, store), 'dsh-patrol: schedule tools')
 
   const scheduler = new PatrolScheduler(ctx, store)
   ctx.effect(() => scheduler.start(), 'dsh-patrol: scheduled patrol runner')
+
+  ctx.effect(
+    () => ctx.tools.guard(execution => recoveryGuard(execution)),
+    'dsh-patrol: recovery loop circuit breaker',
+  )
 
   // Browser provider tools live in the Patrol preset so nested dispatch can use
   // them, but model-direct browser calls would bypass recording. Deny only root
@@ -126,11 +136,21 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       text: PATROL_EXCEL_PROMPT,
     }), 'dsh-patrol: adaptive Excel workflow prompt')
     ctx.effect(() => systemPrompt.section({
-      name: 'agent:dsh-patrol-session',
+      name: 'agent:dsh-patrol-excel-v2',
       order: 132,
+      text: PATROL_EXCEL_V2_PROMPT,
+    }), 'dsh-patrol: resilient Excel bridge prompt')
+    ctx.effect(() => systemPrompt.section({
+      name: 'agent:dsh-patrol-session',
+      order: 133,
       text: PATROL_SESSION_PROMPT,
     }), 'dsh-patrol: authenticated-session reuse prompt')
+    ctx.effect(() => systemPrompt.section({
+      name: 'agent:dsh-patrol-recovery',
+      order: 134,
+      text: PATROL_RECOVERY_PROMPT,
+    }), 'dsh-patrol: bounded recovery prompt')
   }
 
-  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; scheduler=enabled; credential helper=enabled; verification handoff=enabled; secret-safe creation=enabled; flat action tools=enabled; adaptive Excel tools=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled`)
+  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; scheduler=enabled; credential helper=enabled; verification handoff=enabled; secret-safe creation=enabled; flat action tools=enabled; resilient Excel v2 tools=enabled; recovery circuit breaker=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled`)
 }

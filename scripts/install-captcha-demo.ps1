@@ -43,11 +43,11 @@ if (-not (Test-Path -LiteralPath $VenvPython)) {
 }
 
 Write-Host "Installing ddddocr 1.6.1 into the CAPTCHA demo environment..." -ForegroundColor Cyan
-& $VenvPython -m pip install --disable-pip-version-check --upgrade "ddddocr==1.6.1"
+& $VenvPython -m pip install --disable-pip-version-check --upgrade --timeout 300 --retries 10 "ddddocr==1.6.1"
 if ($LASTEXITCODE -ne 0) { throw "pip install ddddocr==1.6.1 failed" }
 
 & $VenvPython -c "import ddddocr; print('ddddocr import ok')"
 if ($LASTEXITCODE -ne 0) { throw "ddddocr verification failed" }
 
 Write-Host "CAPTCHA demo solver ready: $VenvPython" -ForegroundColor Green
-Write-Host "Explicit Patrol markup can auto-run in normal/test modes. Set DSH_PATROL_CAPTCHA_MODE=test before starting DSH to allow weak unmarked click/slider automation without localhost or IP restrictions." -ForegroundColor Yellow
+Write-Host "CAPTCHA runtime defaults to test mode, so weak unmarked click/slider automation is enabled unless DSH_PATROL_CAPTCHA_MODE=normal is set before startup. Explicit Patrol markup remains supported in both modes." -ForegroundColor Yellow

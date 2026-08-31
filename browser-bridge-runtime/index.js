@@ -12,7 +12,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { BrowserBridge } from './bridge.js'
-import { createManagedBrowserController, defaultProfilePath } from './managed-browser.js'
+import { createManagedBrowserController, defaultProfilePath } from './managed-browser-controller.js'
 import { handleUpgrade } from './ws.js'
 
 export const name = 'dsh-patrol-browser-bridge-host'
