@@ -1,6 +1,6 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { tryFillImageCode } from './image-code.js'
-import { trySolveOwnedSiteChallenge } from './captcha-demo.js'
+import { probeOwnedSiteChallenge, trySolveOwnedSiteChallenge } from './captcha-demo.js'
 
 const reqStr = { type: 'string', required: true }
 const reqBool = { type: 'boolean', required: true }
@@ -16,9 +16,9 @@ const KIND_ORDER = ['slider', 'otp', 'captcha', 'approval', 'unknown']
 // Patrol recognizes the major verification families used by projects such as
 // Text_select_captcha (ordered text clicking) and ddddocr (image OCR, target
 // detection, slider/jigsaw matching). Conventional image text codes may be
-// filled locally on Windows. Demo ordered-click and jigsaw auto-completion now
-// keys only off explicit challenge markup. Third-party anti-bot widgets remain
-// handoffs.
+// filled locally on Windows. Explicit challenge markup can refine a weak text
+// classification for ordered-click and slider-puzzle demo automation. Third-
+// party anti-bot widgets remain handoffs.
 const CLICK_SEQUENCE_RULES = [
   /依次点击/,
   /按(?:照|顺序).{0,20}点击/,
@@ -165,10 +165,13 @@ export function classifyAuthChallenge(snapshotValue, pageText = '') {
     }
   }
 
-  const kind = KIND_ORDER.find(item => evidenceByKind.get(item).length > 0) || 'none'
+  const combinedText = observedText.join('\n')
+  const kind = matchesAny(combinedText, THIRD_PARTY_RULES)
+    ? 'captcha'
+    : KIND_ORDER.find(item => evidenceByKind.get(item).length > 0) || 'none'
   const evidence = kind === 'none' ? [] : evidenceByKind.get(kind).slice(0, 5)
   const selectors = [...new Set(evidence.map(item => item.selector).filter(Boolean))].slice(0, 5)
-  const subtype = inferChallengeSubtype(kind, observedText.join('\n'))
+  const subtype = inferChallengeSubtype(kind, combinedText)
   return {
     kind,
     subtype,
@@ -182,7 +185,7 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
   const timeoutMs = config.commandTimeoutMs ?? 60000
   const definition = defineTool({
     name: 'browser_detect_auth_challenge',
-    description: 'Detect and classify common post-login verification challenges from safe DOM signals and visible text. Conventional image-text codes may be locally recognized on Windows. When the page exposes explicit DSH Patrol challenge markup, ordered-click and slider/jigsaw demo challenges may also be completed locally with ddddocr. OTP, approval, rotate, unsupported challenges, and third-party reCAPTCHA/hCaptcha/Turnstile/Arkose-style widgets remain deterministic human handoffs.',
+    description: 'Detect and classify common post-login verification challenges from safe DOM signals and visible text. Conventional image-text codes may be locally recognized on Windows. When the page exposes explicit DSH Patrol challenge markup, ordered-click and slider/jigsaw demo challenges may also be completed locally with ddddocr, including when visible-text classification is weak. OTP, approval, rotate, unsupported challenges, and third-party reCAPTCHA/hCaptcha/Turnstile/Arkose-style widgets remain deterministic human handoffs.',
     parameters: {
       tabId: optInt,
     },
@@ -205,16 +208,17 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
       },
       render: (_args, value) => [{
         type: 'text',
-        text: `Auth challenge: kind=${value.kind}; subtype=${value.subtype}; observed=${value.observedKind}/${value.observedSubtype}; strategy=${value.strategy}; hasChallenge=${value.hasChallenge}; handoffRequired=${value.handoffRequired}${value.autoFilled ? '; verification auto-completed by the local Patrol solver' : ''}${value.selectors?.length ? `; selectors=${value.selectors.join(', ')}` : ''}`,
+        text: `Auth challenge: kind=${value.kind}; subtype=${value.subtype}; observed=${value.observedKind}/${value.observedSubtype}; strategy=${value.strategy}; hasChallenge=${value.hasChallenge}; handoffRequired=${value.handoffRequired}${value.autoFilled && !value.handoffRequired ? '; verification auto-completed by the local Patrol solver' : ''}${value.selectors?.length ? `; selectors=${value.selectors.join(', ')}` : ''}`,
       }],
     },
     presentCall: args => ({ card: 'generic', title: 'Detect login verification', kind: 'other', rawInput: args }),
     execute: async (args, exec) => {
       const options = { timeoutMs, signal: exec?.signal }
       let classified = await observeAuthChallenge(bridge, args.tabId, options)
-      const initiallyObserved = { kind: classified.kind, subtype: classified.subtype }
+      let initiallyObserved = { kind: classified.kind, subtype: classified.subtype }
       let strategy = strategyForChallenge(initiallyObserved.kind, initiallyObserved.subtype)
       let autoFilled = false
+      let imageAutomationRan = false
 
       if (classified.kind === 'captcha'
         && classified.subtype === 'image-code'
@@ -228,36 +232,59 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
           }
           if (!filled) break
 
-          autoFilled = true
+          imageAutomationRan = true
           await sleep(900)
           try {
             classified = await observeAuthChallenge(bridge, args.tabId, options)
           } catch {
             // Navigation after a successful form submit can temporarily remove
             // the page bridge. Let later login/application assertions verify it.
-            classified = { kind: 'none', subtype: 'none', hasChallenge: false, selectors: [], evidence: [] }
+            classified = emptyClassification()
             break
           }
           if (classified.kind !== 'captcha' || classified.subtype !== 'image-code') break
         }
+        autoFilled = imageAutomationRan && classified.hasChallenge === false
       }
 
-      if (!autoFilled && classified.hasChallenge) {
+      if (!imageAutomationRan) {
         let demo = { attempted: false }
         try {
           demo = await trySolveOwnedSiteChallenge(bridge, args.tabId, classified, options)
         } catch {
           demo = { attempted: false }
         }
-        if (demo.attempted && typeof demo.strategy === 'string') strategy = demo.strategy
-        if (demo.completed) {
-          autoFilled = true
-          await sleep(1000)
-          try {
-            classified = await observeAuthChallenge(bridge, args.tabId, options)
-          } catch {
-            classified = { kind: 'none', subtype: 'none', hasChallenge: false, selectors: [], evidence: [] }
+
+        if (demo.attempted && typeof demo.strategy === 'string') {
+          strategy = demo.strategy
+          if (isWeakClassification(initiallyObserved)
+            && typeof demo.observedKind === 'string'
+            && typeof demo.observedSubtype === 'string') {
+            initiallyObserved = { kind: demo.observedKind, subtype: demo.observedSubtype }
           }
+
+          if (demo.completed) {
+            await sleep(1000)
+            try {
+              classified = await observeAuthChallenge(bridge, args.tabId, options)
+            } catch {
+              classified = emptyClassification()
+            }
+          }
+
+          let visibleProbe = { available: false, kinds: [] }
+          try {
+            visibleProbe = await probeOwnedSiteChallenge(bridge, args.tabId, options)
+          } catch {
+          }
+          const explicitStillVisible = visibleProbe.available === true
+            && Array.isArray(visibleProbe.kinds)
+            && visibleProbe.kinds.includes(demo.observedSubtype)
+
+          if (explicitStillVisible) {
+            classified = explicitClassification(demo.observedKind, demo.observedSubtype, classified)
+          }
+          autoFilled = demo.completed === true && classified.hasChallenge === false && !explicitStillVisible
         }
       }
 
@@ -332,6 +359,26 @@ function strategyForChallenge(kind, subtype) {
   if (kind === 'otp') return 'manual-otp'
   if (kind === 'approval') return 'manual-approval'
   return 'manual-review'
+}
+
+function isWeakClassification(value) {
+  return value?.kind === 'none'
+    || (value?.kind === 'captcha' && value?.subtype === 'generic-captcha')
+    || (value?.kind === 'slider' && value?.subtype === 'slider')
+}
+
+function explicitClassification(kind, subtype, previous) {
+  return {
+    kind,
+    subtype,
+    hasChallenge: true,
+    selectors: Array.isArray(previous?.selectors) ? previous.selectors : [],
+    evidence: Array.isArray(previous?.evidence) ? previous.evidence : [],
+  }
+}
+
+function emptyClassification() {
+  return { kind: 'none', subtype: 'none', hasChallenge: false, selectors: [], evidence: [] }
 }
 
 function matchesAny(text, rules) {
