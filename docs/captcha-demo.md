@@ -1,6 +1,6 @@
 # CAPTCHA demo mode
 
-DSH Patrol keeps normal verification handling conservative. Conventional image-text codes can use the existing Windows system OCR path. Ordered-click and slider-puzzle automation can now run in two modes: explicit Patrol markup when the page exposes `data-dsh-patrol-captcha-*` anchors, or weak auto-detection when Patrol sees an ordinary visible click-sequence or slider-puzzle challenge shape without markup.
+DSH Patrol keeps normal verification handling conservative. Conventional image-text codes can use the existing Windows system OCR path. Ordered-click and slider-puzzle automation has two cooperative test paths: explicit Patrol markup on any page that exposes `data-dsh-patrol-captcha-*` anchors, and zero-configuration weak DOM discovery on loopback test pages (`localhost`, `127.0.0.1`, or IPv6 loopback). Remote pages may still be weakly detected and classified, but weak unmarked detections do not trigger automatic clicks or drags.
 
 ## 1. Install the local solver
 
@@ -52,18 +52,20 @@ Your demo site's slider implementation should respond to standard pointer/mouse 
 
 ## 4. Weak auto-detection fallback
 
-If the page does not expose Patrol markup, DSH Patrol can still try the local ddddocr solver for ordinary visible `click-sequence` and `slider-puzzle` challenges that it already classified from page text and DOM evidence.
+On a loopback test page, Patrol can run without any `data-dsh-patrol-*` markup once the normal challenge classifier has already identified an exact `click-sequence` or `slider-puzzle` challenge.
 
 - Ordered-click fallback:
-  Patrol looks for click-order wording near a large visible image or canvas and uses that image as the solve target.
+  Patrol looks for click-order wording near a large visible image or canvas and uses the strongest matching image as the solve target.
 - Slider-puzzle fallback:
   Patrol looks for slider/puzzle wording near a likely background image, puzzle piece, and draggable handle.
 - Markup still wins:
   if Patrol markup exists, those explicit anchors are preferred over weak detection.
+- Remote weak detections are observation-only:
+  on non-loopback pages Patrol can use the same heuristics as evidence for detection, but it does not automatically execute weakly discovered click or drag actions.
 - Third-party widgets stay out:
-  reCAPTCHA, hCaptcha, Turnstile, Arkose/FunCaptcha, OTP, passkeys, approvals, rotate challenges, and other unsupported flows still remain human handoffs.
+  reCAPTCHA, hCaptcha, Turnstile, Arkose/FunCaptcha, OTP, passkeys, approvals, rotate challenges, and other unsupported flows remain human handoffs.
 
-Weak auto-detection is intended for quick testing and ordinary self-hosted challenge widgets. It is less precise than explicit markup and may fall back to human handoff when Patrol cannot confidently isolate the right DOM.
+Weak auto-detection is intended for quick local testing and is less precise than explicit markup. If Patrol cannot confidently isolate the right DOM, it falls back to the normal handoff path rather than guessing.
 
 ## 5. Runbook memory
 
@@ -83,4 +85,4 @@ A later patrol still runs the detector once because the verification type may ch
 
 ## Scope
 
-The demo solver supports only `click-sequence` and `slider-puzzle` families, whether they are explicitly marked or weakly auto-detected from an ordinary page. It does not automate reCAPTCHA, hCaptcha, Cloudflare Turnstile, Arkose/FunCaptcha, OTP, passkeys, device approvals, rotate challenges, or other unsupported third-party verification. Those continue through Patrol's existing human handoff flow.
+The local ddddocr demo solver supports `click-sequence` and `slider-puzzle` through explicit cooperative markup, plus weak unmarked execution on loopback test pages after an exact challenge classification. It does not automate weakly discovered remote challenges, reCAPTCHA, hCaptcha, Cloudflare Turnstile, Arkose/FunCaptcha, OTP, passkeys, device approvals, rotate challenges, or other unsupported third-party verification. Those continue through Patrol's existing human handoff flow.

@@ -184,7 +184,7 @@ export function ambiguousDemoFallback(classified, demo) {
     subtype: 'unknown',
     hasChallenge: true,
     selectors: Array.isArray(classified?.selectors) ? classified.selectors : [],
-    evidence: [`multiple explicit captcha families visible: ${kinds.join(', ')}`],
+    evidence: [`multiple captcha families visible: ${kinds.join(', ')}`],
   }
 }
 
@@ -192,7 +192,7 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
   const timeoutMs = config.commandTimeoutMs ?? 60000
   const definition = defineTool({
     name: 'browser_detect_auth_challenge',
-    description: 'Detect and classify common post-login verification challenges from safe DOM signals and visible text. Conventional image-text codes may be locally recognized on Windows. Ordered-click and slider/jigsaw demo challenges may also be completed locally with ddddocr, preferring explicit DSH Patrol challenge markup and otherwise falling back to weak DOM discovery for ordinary non-third-party widgets, including when visible-text classification is weak. OTP, approval, rotate, unsupported challenges, and third-party reCAPTCHA/hCaptcha/Turnstile/Arkose-style widgets remain deterministic human handoffs.',
+    description: 'Detect and classify common post-login verification challenges from safe DOM signals and visible text. Conventional image-text codes may be locally recognized on Windows. Ordered-click and slider/jigsaw demo challenges may be completed locally with ddddocr when explicit DSH Patrol challenge markup is present. On localhost/127.0.0.1 test pages, exact click-sequence or slider-puzzle classifications may also use weak DOM discovery without markup. Remote weak detections stay in the normal handoff path. OTP, approval, rotate, unsupported challenges, and third-party reCAPTCHA/hCaptcha/Turnstile/Arkose-style widgets remain deterministic human handoffs.',
     parameters: {
       tabId: optInt,
     },

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   authorizedCapture,
+  isLocalTestOrigin,
   selectDemoChallenge,
   supportsDemoSolve,
 } from '../browser-bridge-runtime/captcha-demo.js'
@@ -21,7 +22,13 @@ describe('captcha demo challenge support', () => {
   it('lets one explicit visible markup family refine a weak text classification', () => {
     expect(selectDemoChallenge(
       { kind: 'none', subtype: 'none' },
-      { available: true, kinds: ['click-sequence'], documentKey: 'doc-1' },
+      {
+        available: true,
+        kinds: ['click-sequence'],
+        documentKey: 'doc-1',
+        origin: 'https://demo.test',
+        sources: { 'click-sequence': 'explicit' },
+      },
     )).toEqual({
       kind: 'captcha',
       subtype: 'click-sequence',
@@ -30,7 +37,13 @@ describe('captcha demo challenge support', () => {
 
     expect(selectDemoChallenge(
       { kind: 'slider', subtype: 'slider' },
-      { available: true, kinds: ['slider-puzzle'], documentKey: 'doc-2' },
+      {
+        available: true,
+        kinds: ['slider-puzzle'],
+        documentKey: 'doc-2',
+        origin: 'https://demo.test',
+        sources: { 'slider-puzzle': 'explicit' },
+      },
     )).toEqual({
       kind: 'slider',
       subtype: 'slider-puzzle',
@@ -38,15 +51,66 @@ describe('captcha demo challenge support', () => {
     })
   })
 
+  it('runs weak unmarked solving only on zero-config loopback test origins', () => {
+    const classified = { kind: 'captcha', subtype: 'click-sequence' }
+    const remote = {
+      available: true,
+      kinds: ['click-sequence'],
+      documentKey: 'doc-remote',
+      origin: 'https://example.test',
+      sources: { 'click-sequence': 'weak' },
+    }
+    const local = {
+      ...remote,
+      documentKey: 'doc-local',
+      origin: 'http://127.0.0.1:3000',
+    }
+
+    expect(selectDemoChallenge(classified, remote)).toBeNull()
+    expect(selectDemoChallenge(classified, local)).toEqual({
+      kind: 'captcha',
+      subtype: 'click-sequence',
+      strategy: 'ddddocr-click-sequence-demo',
+    })
+    expect(isLocalTestOrigin('http://localhost:5173')).toBe(true)
+    expect(isLocalTestOrigin('http://127.0.0.1:3000')).toBe(true)
+    expect(isLocalTestOrigin('https://example.test')).toBe(false)
+  })
+
+  it('does not let weak unmarked probing invent a challenge from kind=none', () => {
+    expect(selectDemoChallenge(
+      { kind: 'none', subtype: 'none' },
+      {
+        available: true,
+        kinds: ['click-sequence'],
+        documentKey: 'doc-local',
+        origin: 'http://localhost:3000',
+        sources: { 'click-sequence': 'weak' },
+      },
+    )).toBeNull()
+  })
+
   it('does not guess when weak classification sees multiple explicit challenge families', () => {
     expect(selectDemoChallenge(
       { kind: 'none', subtype: 'none' },
-      { available: true, kinds: ['click-sequence', 'slider-puzzle'], documentKey: 'doc-1' },
+      {
+        available: true,
+        kinds: ['click-sequence', 'slider-puzzle'],
+        documentKey: 'doc-1',
+        origin: 'https://demo.test',
+        sources: { 'click-sequence': 'explicit', 'slider-puzzle': 'explicit' },
+      },
     )).toBeNull()
   })
 
   it('keeps protected verification families out of the local demo solver even when markup exists', () => {
-    const info = { available: true, kinds: ['click-sequence'], documentKey: 'doc-1' }
+    const info = {
+      available: true,
+      kinds: ['click-sequence'],
+      documentKey: 'doc-1',
+      origin: 'http://localhost:3000',
+      sources: { 'click-sequence': 'explicit' },
+    }
     expect(selectDemoChallenge({ kind: 'captcha', subtype: 'third-party' }, info)).toBeNull()
     expect(selectDemoChallenge({ kind: 'captcha', subtype: 'rotate' }, info)).toBeNull()
     expect(selectDemoChallenge({ kind: 'captcha', subtype: 'image-code' }, info)).toBeNull()

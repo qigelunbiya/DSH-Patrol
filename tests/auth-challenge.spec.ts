@@ -114,7 +114,7 @@ describe('auth challenge classification', () => {
     expect(result.hasChallenge).toBe(true)
   })
 
-  it('fails closed when multiple explicit captcha families are visible but text classification is weak', () => {
+  it('fails closed when multiple captcha families are visible but text classification is weak', () => {
     expect(ambiguousDemoFallback(
       { kind: 'none', subtype: 'none', hasChallenge: false, selectors: [], evidence: [] },
       { attempted: false, visibleKinds: ['click-sequence', 'slider-puzzle'] },
@@ -123,7 +123,7 @@ describe('auth challenge classification', () => {
       subtype: 'unknown',
       hasChallenge: true,
       selectors: [],
-      evidence: ['multiple explicit captcha families visible: click-sequence, slider-puzzle'],
+      evidence: ['multiple captcha families visible: click-sequence, slider-puzzle'],
     })
   })
 
