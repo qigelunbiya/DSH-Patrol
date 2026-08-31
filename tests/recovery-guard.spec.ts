@@ -21,7 +21,7 @@ describe('Patrol recovery circuit breaker', () => {
     expect(call('snapshot three')).toMatch(/already been attempted twice/)
   })
 
-  it('stops a diagnostic loop even when the model alternates different probe tools', () => {
+  it('stops a diagnostic loop but still permits exactly one doctor call', () => {
     const guard = createPatrolRecoveryGuard()
     const names = [
       'patrol_navigate',
@@ -29,17 +29,21 @@ describe('Patrol recovery circuit breaker', () => {
       'patrol_snapshot',
       'patrol_read_page',
       'patrol_screenshot',
-      'patrol_doctor',
       'patrol_paths',
       'patrol_show',
       'patrol_read_page',
+      'patrol_wait',
     ]
     const outputs = names.map((name, index) => guard({
       name,
       arguments: { inspectionId: 'demo', stepName: `probe-${index}`, ...(name === 'patrol_navigate' ? { url: 'https://10.192.1.125/login' } : {}) },
     }))
-    expect(outputs.slice(0, 8).every(value => value === undefined)).toBe(true)
-    expect(outputs[8]).toMatch(/too many diagnostic actions|already been attempted twice/)
+    expect(outputs.some(value => typeof value === 'string' && /too many diagnostic actions|already been attempted twice/.test(value))).toBe(true)
+
+    // This matches the recovery instruction emitted by the breaker: doctor is
+    // still allowed once even though the general diagnostic budget is spent.
+    expect(guard({ name: 'patrol_doctor', arguments: { inspectionId: 'demo' } })).toBeUndefined()
+    expect(guard({ name: 'patrol_doctor', arguments: { inspectionId: 'demo' } })).toMatch(/already been used once/)
   })
 
   it('resets the diagnostic episode after a meaningful browser progress action', () => {

@@ -9,7 +9,7 @@ import { registerPatrolCreationTools } from './creation-tools.js'
 import { registerPatrolCredentialTools } from './credential-tools.js'
 import { registerPatrolEditTools } from './edit-tools.js'
 import { PATROL_EXCEL_PROMPT } from './excel-tools.js'
-import { PATROL_EXCEL_V2_PROMPT, registerPatrolExcelToolsV2 } from './excel-tools-v2.js'
+import { PATROL_EXCEL_V3_PROMPT, registerPatrolExcelToolsV3 } from './excel-tools-v3.js'
 import { registerPatrolHandoffTools } from './handoff-tools.js'
 import { PATROL_SYSTEM_PROMPT } from './prompt.js'
 import { createPatrolRecoveryGuard, PATROL_RECOVERY_PROMPT } from './recovery-guard.js'
@@ -30,6 +30,7 @@ export * from './creation-tools.js'
 export * from './credential-tools.js'
 export * from './excel-tools.js'
 export * from './excel-tools-v2.js'
+export * from './excel-tools-v3.js'
 export * from './recovery-guard.js'
 export * from './handoff-tools.js'
 export { PatrolStore } from './store.js'
@@ -104,7 +105,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   )
   ctx.effect(() => registerPatrolEditTools(ctx, store, runner), 'dsh-patrol: runbook edit and validation tools')
   ctx.effect(() => registerPatrolWorkspaceTools(ctx, store), 'dsh-patrol: workspace path tools')
-  ctx.effect(() => registerPatrolExcelToolsV2(ctx), 'dsh-patrol: resilient adaptive workspace Excel tools')
+  ctx.effect(() => registerPatrolExcelToolsV3(ctx), 'dsh-patrol: hybrid resilient workspace Excel tools')
   ctx.effect(() => registerPatrolScheduleTools(ctx, store), 'dsh-patrol: schedule tools')
 
   const scheduler = new PatrolScheduler(ctx, store)
@@ -136,10 +137,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       text: PATROL_EXCEL_PROMPT,
     }), 'dsh-patrol: adaptive Excel workflow prompt')
     ctx.effect(() => systemPrompt.section({
-      name: 'agent:dsh-patrol-excel-v2',
+      name: 'agent:dsh-patrol-excel-v3',
       order: 132,
-      text: PATROL_EXCEL_V2_PROMPT,
-    }), 'dsh-patrol: resilient Excel bridge prompt')
+      text: PATROL_EXCEL_V3_PROMPT,
+    }), 'dsh-patrol: hybrid resilient Excel bridge prompt')
     ctx.effect(() => systemPrompt.section({
       name: 'agent:dsh-patrol-session',
       order: 133,
@@ -152,5 +153,5 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     }), 'dsh-patrol: bounded recovery prompt')
   }
 
-  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; scheduler=enabled; credential helper=enabled; verification handoff=enabled; secret-safe creation=enabled; flat action tools=enabled; resilient Excel v2 tools=enabled; recovery circuit breaker=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled`)
+  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; scheduler=enabled; credential helper=enabled; verification handoff=enabled; secret-safe creation=enabled; flat action tools=enabled; resilient Excel v3 tools=enabled; recovery circuit breaker=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled`)
 }

@@ -4,16 +4,27 @@ export function certificateActionForUrl(value) {
   return isPrivateNetworkUrl(value) ? 'continue' : 'cancel'
 }
 
+export function certificateErrorRequestUrl(event) {
+  // Chrome DevTools Protocol exposes the requested URL as `requestURL` on
+  // Security.certificateError. Keep `url` only as a compatibility fallback for
+  // older/fake clients. Using only event.url silently classified real Chrome
+  // events as public/unknown and cancelled the private-network request.
+  return String(event?.requestURL ?? event?.url ?? '')
+}
+
 export async function installPrivateCertificateErrorHandler(browser, logger = console) {
   const session = await createBrowserSecuritySession(browser)
   if (!session) return false
 
+  // Security.enable is harmless on builds that support it and makes the
+  // session's Security domain lifecycle explicit before enabling the override.
+  try { await session.send('Security.enable') } catch {}
   await session.send('Security.setOverrideCertificateErrors', { override: true })
 
   const onCertificateError = event => {
     const eventId = event?.eventId
     if (!Number.isInteger(eventId)) return
-    const url = String(event?.url ?? '')
+    const url = certificateErrorRequestUrl(event)
     const action = certificateActionForUrl(url)
     void Promise.resolve(session.send('Security.handleCertificateError', { eventId, action }))
       .then(() => {

@@ -42,6 +42,7 @@ interface RecoveryState {
   touchedAt: number
   diagnostics: number
   repeated: boolean
+  doctorUsed: boolean
   fingerprints: Map<string, number>
 }
 
@@ -49,7 +50,7 @@ export const PATROL_RECOVERY_PROMPT = `Patrol recovery and loop discipline:
 - A failed teaching/browser action is diagnostic evidence, not a reason to repeat the same action indefinitely. Read the concrete error and make at most one materially different recovery attempt.
 - Never retry the same navigation in a new tab. Patrol Runbooks are active-tab deterministic; omit newTab or set it false.
 - After two attempts with the same effective action/arguments, STOP repeating it. Do not hide repetition by changing stepName/notes or by alternating wait, snapshot, read-page, screenshot, delete-step, and navigate around the same blocker.
-- If a private HTTPS target still shows a Chrome certificate interstitial after one navigation, run patrol_doctor at most once and report the managed-browser certificate-handler blocker. The host browser layer owns private certificate continuation; page snapshot/read tools cannot repair a Chrome interstitial.
+- If a private HTTPS target still shows a Chrome certificate interstitial after one navigation, patrol_doctor is allowed exactly once even after the diagnostic budget trips. After that doctor result, stop and report the managed-browser certificate-handler blocker; page snapshot/read tools cannot repair a Chrome interstitial.
 - When several diagnostic calls produce no real browser progress, stop the teaching attempt and explain the exact failing operation and next concrete fix instead of creating more tabs or duplicate steps.`
 
 export function createPatrolRecoveryGuard() {
@@ -80,10 +81,21 @@ export function createPatrolRecoveryGuard() {
 
     let state = states.get(key)
     if (state === undefined || now - state.touchedAt > STATE_TTL_MS) {
-      state = { touchedAt: now, diagnostics: 0, repeated: false, fingerprints: new Map() }
+      state = { touchedAt: now, diagnostics: 0, repeated: false, doctorUsed: false, fingerprints: new Map() }
       states.set(key, state)
     }
     state.touchedAt = now
+
+    // The breaker itself tells the model to run patrol_doctor once for a final
+    // managed-browser diagnosis. Do not immediately block that exact recovery
+    // action with the same diagnostic budget that produced the instruction.
+    if (name === 'patrol_doctor') {
+      if (state.doctorUsed) {
+        return 'Patrol recovery circuit breaker: patrol_doctor has already been used once for this stalled inspection. Stop diagnostics and report the exact blocker instead of running doctor or browser probes again.'
+      }
+      state.doctorUsed = true
+      return undefined
+    }
 
     const fingerprint = `${name}:${stableStringify(normalizeArguments(args))}`
     const previous = state.fingerprints.get(fingerprint) ?? 0
@@ -97,7 +109,10 @@ export function createPatrolRecoveryGuard() {
 
     const budget = state.repeated ? MAX_DIAGNOSTICS_AFTER_REPEAT : MAX_DIAGNOSTICS_WITHOUT_PROGRESS
     if (state.diagnostics > budget) {
-      return 'Patrol recovery circuit breaker: too many diagnostic actions have run without a meaningful browser progress action. Do not continue cycling navigate/wait/snapshot/read-page/screenshot. Run patrol_doctor once if it has not already been used, then stop and report the exact blocker.'
+      if (state.doctorUsed) {
+        return 'Patrol recovery circuit breaker: too many diagnostic actions have run without meaningful browser progress, and patrol_doctor has already been used. Stop now and report the exact blocker; do not continue navigate/wait/snapshot/read-page/screenshot cycles.'
+      }
+      return 'Patrol recovery circuit breaker: too many diagnostic actions have run without a meaningful browser progress action. Do not continue cycling navigate/wait/snapshot/read-page/screenshot. Run patrol_doctor once, then stop and report the exact blocker.'
     }
     return undefined
   }

@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   certificateActionForUrl,
+  certificateErrorRequestUrl,
   installPrivateCertificateErrorHandler,
 } from '../browser-bridge-runtime/private-cert.js'
 
@@ -13,6 +14,12 @@ describe('private certificate browser policy', () => {
     expect(certificateActionForUrl('https://localhost:8443/')).toBe('continue')
     expect(certificateActionForUrl('https://example.com/')).toBe('cancel')
     expect(certificateActionForUrl('https://8.8.8.8/')).toBe('cancel')
+  })
+
+  it('reads the actual Security.certificateError requestURL field', () => {
+    expect(certificateErrorRequestUrl({ requestURL: 'https://10.192.1.125/login' })).toBe('https://10.192.1.125/login')
+    expect(certificateErrorRequestUrl({ url: 'https://legacy.example/' })).toBe('https://legacy.example/')
+    expect(certificateErrorRequestUrl({})).toBe('')
   })
 
   it('installs a browser-level Security handler before page DOM access is needed', async () => {
@@ -32,9 +39,13 @@ describe('private certificate browser policy', () => {
     }
 
     await expect(installPrivateCertificateErrorHandler(browser, { info() {}, warn() {} })).resolves.toBe(true)
-    expect(sends[0]).toEqual({ method: 'Security.setOverrideCertificateErrors', params: { override: true } })
+    expect(sends).toContainEqual({ method: 'Security.enable', params: undefined })
+    expect(sends).toContainEqual({ method: 'Security.setOverrideCertificateErrors', params: { override: true } })
 
-    listeners.get('Security.certificateError')?.({ eventId: 7, url: 'https://10.192.1.125/login' })
+    // This is the real CDP event shape. The URL property is named requestURL,
+    // not url. A regression here would cancel the private request and leave
+    // Chrome on NET::ERR_CERT_AUTHORITY_INVALID.
+    listeners.get('Security.certificateError')?.({ eventId: 7, requestURL: 'https://10.192.1.125/login' })
     await Promise.resolve()
     await Promise.resolve()
     expect(sends).toContainEqual({
@@ -42,7 +53,7 @@ describe('private certificate browser policy', () => {
       params: { eventId: 7, action: 'continue' },
     })
 
-    listeners.get('Security.certificateError')?.({ eventId: 8, url: 'https://example.com/' })
+    listeners.get('Security.certificateError')?.({ eventId: 8, requestURL: 'https://example.com/' })
     await Promise.resolve()
     await Promise.resolve()
     expect(sends).toContainEqual({
