@@ -58,6 +58,16 @@ function appendChild(parent: FakeElement, child: FakeElement) {
   return child
 }
 
+function htmlCollectionLike(children: FakeElement[]) {
+  const value: Record<string | number | symbol, unknown> = {
+    length: children.length,
+    item: (index: number) => children[index] ?? null,
+    [Symbol.iterator]: function* () { yield* children },
+  }
+  children.forEach((child, index) => { value[index] = child })
+  return value
+}
+
 function loadContext(options: {
   querySelector?: (selector: string) => FakeElement | null
   querySelectorAll?: (selector: string) => FakeElement[]
@@ -131,8 +141,14 @@ describe('captcha demo content bridge', () => {
       kinds: string[]
       documentKey: string
       challengeKeys: Record<string, string>
+      sources: Record<string, string>
     }
-    expect(info).toMatchObject({ available: true, kinds: ['click-sequence'], documentKey: 'doc-test' })
+    expect(info).toMatchObject({
+      available: true,
+      kinds: ['click-sequence'],
+      documentKey: 'doc-test',
+      sources: { 'click-sequence': 'explicit' },
+    })
     expect(info.challengeKeys['click-sequence']).toBe('doc-test:1')
 
     const target = plain(await vm.runInContext(
@@ -180,6 +196,40 @@ describe('captcha demo content bridge', () => {
     )).rejects.toThrow(/challenge changed/)
   })
 
+  it('rejects stale coordinates when an SPA reuses the same captcha root but replaces its image', async () => {
+    const root = element('stable-root', rect(100, 100, 360, 240), {
+      'data-dsh-patrol-captcha-kind': 'click-sequence',
+      'data-target-text': '春',
+    })
+    const firstImage = element('first-image', rect(120, 130, 300, 170), {
+      'data-dsh-patrol-captcha-image': '',
+    })
+    const secondImage = element('second-image', rect(120, 130, 300, 170), {
+      'data-dsh-patrol-captcha-image': '',
+    })
+    firstImage.tagName = 'IMG'
+    secondImage.tagName = 'IMG'
+    let currentImage = firstImage
+    root.querySelector = selector => selector.includes('captcha-image') ? currentImage : null
+
+    const context = loadContext({
+      querySelectorAll: selector => selector.includes('click-sequence') ? [root] : [],
+      querySelector: selector => {
+        if (selector === '#first-image') return firstImage
+        if (selector === '#second-image') return secondImage
+        return null
+      },
+    })
+    const info = plain(vm.runInContext('captchaDemoInfo()', context)) as { challengeKeys: Record<string, string> }
+    const oldKey = info.challengeKeys['click-sequence']
+    currentImage = secondImage
+
+    await expect(vm.runInContext(
+      `captchaDemoTarget({kind:'click-sequence', documentKey:'doc-test', challengeKey:'${oldKey}'})`,
+      context,
+    )).rejects.toThrow(/challenge changed/)
+  })
+
   it('drags by the matched relative puzzle distance instead of subtracting the handle start offset', async () => {
     const root = element('slider-root', rect(80, 80, 360, 220), {
       'data-dsh-patrol-captcha-kind': 'slider-puzzle',
@@ -210,7 +260,9 @@ describe('captcha demo content bridge', () => {
     })
     root.innerText = '请在下图依次点击：春山水'
     root.textContent = root.innerText
-    const image = appendChild(root, element('weak-click-image', rect(110, 140, 320, 180)))
+    const image = appendChild(root, element('weak-click-image', rect(110, 140, 320, 180), {
+      class: 'captcha-image',
+    }))
     image.tagName = 'IMG'
 
     const context = loadContext({
@@ -228,9 +280,11 @@ describe('captcha demo content bridge', () => {
       available: boolean
       kinds: string[]
       challengeKeys: Record<string, string>
+      sources: Record<string, string>
     }
     expect(info.available).toBe(true)
     expect(info.kinds).toContain('click-sequence')
+    expect(info.sources['click-sequence']).toBe('weak')
 
     const target = plain(await vm.runInContext(
       `captchaDemoTarget({kind:'click-sequence', documentKey:'doc-test', challengeKey:'${info.challengeKeys['click-sequence']}'})`,
@@ -244,7 +298,7 @@ describe('captcha demo content bridge', () => {
     })
   })
 
-  it('auto-detects an unmarked slider puzzle from nearby assets and handle hints', async () => {
+  it('auto-detects an unmarked slider puzzle using browser-like HTMLCollection children', async () => {
     const root = element('weak-slider-root', rect(60, 60, 460, 280), {
       class: 'geetest_panel',
     })
@@ -259,8 +313,9 @@ describe('captcha demo content bridge', () => {
     }))
     piece.tagName = 'IMG'
     const handle = appendChild(root, element('weak-handle', rect(96, 300, 44, 44), {
-      class: 'geetest_slider_button',
+      class: 'captcha-slider-handle',
     }))
+    ;(root as unknown as { children: unknown }).children = htmlCollectionLike([background, piece, handle])
 
     const context = loadContext({
       querySelectorAll: selector => {
@@ -283,9 +338,11 @@ describe('captcha demo content bridge', () => {
       available: boolean
       kinds: string[]
       challengeKeys: Record<string, string>
+      sources: Record<string, string>
     }
     expect(info.available).toBe(true)
     expect(info.kinds).toContain('slider-puzzle')
+    expect(info.sources['slider-puzzle']).toBe('weak')
 
     const target = plain(await vm.runInContext(
       `captchaDemoTarget({kind:'slider-puzzle', documentKey:'doc-test', challengeKey:'${info.challengeKeys['slider-puzzle']}'})`,
