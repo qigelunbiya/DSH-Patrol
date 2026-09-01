@@ -116,9 +116,12 @@ export function registerPatrolObservationTools(
         const bootstrap = await detectBootstrapObservation(runner, exec, args.tabId)
         if (bootstrap !== undefined) {
           gate.markBootstrap(args.inspectionId, exec.rootCallId, bootstrap.kind)
+          const observationKind = bootstrap.kind === 'no-tab'
+            ? 'bootstrap-no-tab' as const
+            : 'bootstrap-unobservable-tab' as const
           return {
             ok: true,
-            observationKind: bootstrap.kind === 'no-tab' ? 'bootstrap-no-tab' : 'bootstrap-unobservable-tab',
+            observationKind,
             ...(bootstrap.url === undefined ? {} : { url: bootstrap.url }),
             ...(bootstrap.title === undefined ? {} : { title: bootstrap.title }),
             ocrStatus: 'not-captured-bootstrap',
@@ -154,7 +157,7 @@ export function registerPatrolObservationTools(
       gate.markObserved(args.inspectionId, exec.rootCallId)
       return {
         ok: true,
-        observationKind: 'visual',
+        observationKind: 'visual' as const,
         path,
         ...(url ? { url } : {}),
         ...(title ? { title } : {}),
