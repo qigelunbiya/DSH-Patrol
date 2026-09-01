@@ -13,6 +13,7 @@ export const SAFE_BROWSER_TOOLS = [
   'browser_click',
   'browser_type',
   'browser_type_credential',
+  'browser_type_transient_ref',
   'browser_press',
   'browser_scroll',
   'browser_wait',
@@ -31,6 +32,7 @@ export const REPLAYABLE_BROWSER_TOOLS = [
   'browser_click',
   'browser_type',
   'browser_type_credential',
+  'browser_type_transient_ref',
   'browser_press',
   'browser_scroll',
   'browser_wait',
@@ -85,7 +87,7 @@ export function browserToolForAction(action: BrowserAction): SafeBrowserTool {
 
 export function assertSafePlainTextInput(stepName: string, selector: string): void {
   if (SENSITIVE_TARGET.test(stepName) || SENSITIVE_TARGET.test(selector)) {
-    throw new Error('This input looks credential-like. Use patrol_type_credential with a Harness credential reference, or a manual checkpoint; plaintext typing is not recordable here.')
+    throw new Error('This input looks credential-like. Use patrol_type_transient for a value the user already supplied in this conversation, or patrol_type_credential for a durable Harness credential reference.')
   }
 }
 
