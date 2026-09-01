@@ -15,10 +15,17 @@ const PROGRESS_TOOLS = new Set([
   'patrol_scroll',
   'patrol_type',
   'patrol_type_credential',
+  'patrol_type_transient',
+  'patrol_reteach_text',
+  'patrol_reteach_credential',
+  'patrol_reteach_transient',
+  'patrol_reteach_browser_step',
+  'patrol_reteach_checkpoint',
   'patrol_login_state',
   'patrol_detect_auth_challenge',
   'patrol_handoff',
   'patrol_resume',
+  'patrol_resume_validation',
   'patrol_run',
 ])
 
@@ -37,12 +44,14 @@ const STATE_TTL_MS = 2 * 60_000
 const MAX_SAME_EFFECTIVE_ACTIONS = 2
 const MAX_DIAGNOSTICS_WITHOUT_PROGRESS = 8
 const MAX_DIAGNOSTICS_AFTER_REPEAT = 6
+const MAX_STEP_DELETIONS_PER_RECOVERY = 1
 
 interface RecoveryState {
   touchedAt: number
   diagnostics: number
   repeated: boolean
   doctorUsed: boolean
+  stepDeletions: number
   fingerprints: Map<string, number>
 }
 
@@ -50,6 +59,8 @@ export const PATROL_RECOVERY_PROMPT = `Patrol recovery and loop discipline:
 - A failed teaching/browser action is diagnostic evidence, not a reason to repeat the same action indefinitely. Read the concrete error and make at most one materially different recovery attempt.
 - Never retry the same navigation in a new tab. Patrol Runbooks are active-tab deterministic; omit newTab or set it false.
 - After two attempts with the same effective action/arguments, STOP repeating it. Do not hide repetition by changing stepName/notes or by alternating wait, snapshot, read-page, screenshot, delete-step, and navigate around the same blocker.
+- During one stalled recovery, deleting more than one Runbook step is blocked. Use patrol_last_failure and re-teach the stable failed step instead of dismantling previously successful steps.
+- If a transient password step expired after restart, re-teach only that stable step with patrol_reteach_transient.
 - If a private HTTPS target still shows a Chrome certificate interstitial after one navigation, patrol_doctor is allowed exactly once even after the diagnostic budget trips. After that doctor result, stop and report the managed-browser certificate-handler blocker; page snapshot/read tools cannot repair a Chrome interstitial.
 - When several diagnostic calls produce no real browser progress, stop the teaching attempt and explain the exact failing operation and next concrete fix instead of creating more tabs or duplicate steps.`
 
@@ -72,19 +83,27 @@ export function createPatrolRecoveryGuard() {
       return 'Patrol recovery circuit breaker: patrol_navigate must reuse the active tab; newTab=true is not replay-stable. Retry once with newTab omitted/false, not with another tab.'
     }
 
+    let state = states.get(key)
+    if (state === undefined || now - state.touchedAt > STATE_TTL_MS) {
+      state = { touchedAt: now, diagnostics: 0, repeated: false, doctorUsed: false, stepDeletions: 0, fingerprints: new Map() }
+      states.set(key, state)
+    }
+    state.touchedAt = now
+
+    if (name === 'patrol_delete_step') {
+      if (state.stepDeletions >= MAX_STEP_DELETIONS_PER_RECOVERY) {
+        return 'Patrol recovery circuit breaker: one Runbook step has already been deleted during this stalled recovery. Do not delete more previously successful steps. Call patrol_last_failure and repair/re-teach that stable failed step instead.'
+      }
+      state.stepDeletions += 1
+      return undefined
+    }
+
     if (PROGRESS_TOOLS.has(name)) {
       states.delete(key)
       return undefined
     }
 
     if (!DIAGNOSTIC_TOOLS.has(name)) return undefined
-
-    let state = states.get(key)
-    if (state === undefined || now - state.touchedAt > STATE_TTL_MS) {
-      state = { touchedAt: now, diagnostics: 0, repeated: false, doctorUsed: false, fingerprints: new Map() }
-      states.set(key, state)
-    }
-    state.touchedAt = now
 
     // The breaker itself tells the model to run patrol_doctor once for a final
     // managed-browser diagnosis. Do not immediately block that exact recovery

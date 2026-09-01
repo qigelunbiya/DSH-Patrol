@@ -36,6 +36,7 @@
     "presets/**/*",
     "browser-extension/**/*",
     "browser-bridge-runtime/**/*",
+    "excel-runtime/**/*",
     "cleanup-runtime/**/*",
     "docs/**/*",
     "scripts/install-local.ps1",

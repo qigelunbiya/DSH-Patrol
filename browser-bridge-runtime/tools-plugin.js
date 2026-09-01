@@ -11,6 +11,7 @@
 import { registerChallengeTool } from './challenge-tool.js'
 import { registerCountTool } from './count-tool.js'
 import { registerLoginStateTool } from './login-state-tool.js'
+import { registerTransientTool } from './transient-tool.js'
 import { registerTools } from './tools.js'
 
 export const name = 'dsh-patrol-browser-tools'
@@ -36,18 +37,36 @@ export async function apply(ctx, config = {}) {
 
   // Re-check managed browser availability before every real browser request so
   // closing the Patrol browser window does not permanently break the session.
-  // Keep non-request bridge capabilities (notably screenshot persistence) on
-  // this scoped facade too: registerTools intentionally receives the facade,
-  // not the host BrowserBridge object directly.
+  // DOM commands get a short bounded retry because a newly navigated page can
+  // exist before its content-script bridge finishes attaching.
+  const retryableDomCommands = new Set([
+    'snapshot', 'readPage', 'challengeSignals', 'imageCodeTarget', 'count',
+    'click', 'type', 'press', 'scroll', 'wait',
+  ])
   const bridge = {
     get connected() { return service.bridge.connected },
     status: (...args) => service.bridge.status(...args),
     saveScreenshot: (...args) => service.bridge.saveScreenshot(...args),
-    async request(...args) {
+    async request(cmd, args, options) {
       if (!service.bridge.connected && typeof service.ensureBrowser === 'function') {
         await service.ensureBrowser()
       }
-      return await service.bridge.request(...args)
+      const delays = retryableDomCommands.has(cmd) ? [0, 160, 360, 700] : [0]
+      let lastError
+      for (const delay of delays) {
+        if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay))
+        try {
+          return await service.bridge.request(cmd, args, options)
+        } catch (error) {
+          lastError = error
+          const message = String(error?.message ?? error)
+          if (!retryableDomCommands.has(cmd)
+            || !/page bridge unavailable|receiving end does not exist|could not establish connection|message port closed/i.test(message)) {
+            throw error
+          }
+        }
+      }
+      throw lastError
     },
   }
 
@@ -64,4 +83,7 @@ export async function apply(ctx, config = {}) {
   ctx.effect(() => registerLoginStateTool(ctx, bridge, {
     commandTimeoutMs: config.commandTimeoutMs ?? 60000,
   }), 'dsh-patrol/browser-tools: scoped login-state detector')
+  ctx.effect(() => registerTransientTool(ctx, bridge, {
+    commandTimeoutMs: config.commandTimeoutMs ?? 60000,
+  }), 'dsh-patrol/browser-tools: scoped transient input replay')
 }
