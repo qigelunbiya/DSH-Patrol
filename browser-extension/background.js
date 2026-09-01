@@ -3,6 +3,7 @@ const DEFAULTS = {
   autoConnect: true,
 }
 
+const PAGE_BRIDGE_RETRY_MS = [0, 120, 280, 650]
 let socket = null
 let state = 'disconnected'
 let reconnectTimer = null
@@ -141,17 +142,43 @@ async function screenshot(args) {
 
 async function captureImageCode(args) {
   const tabId = await resolveTabId(args.tabId)
-  const target = await sendDomCommand('imageCodeTarget', { ...args, tabId })
-  if (!target || typeof target !== 'object' || target.ok === false) {
-    throw new Error(target?.error || 'image-code target discovery failed')
+  let target
+  let visualError = ''
+
+  // Prefer the dedicated visual layer. It can see non-interactive media that
+  // the semantic snapshot intentionally omitted in older builds and can return
+  // the original bytes for data:image captchas without a screenshot roundtrip.
+  try {
+    target = await sendVisualCommand('imageCodeTarget', { ...args, tabId })
+  } catch (error) {
+    visualError = safeError(error)
   }
-  const shot = await screenshot({ tabId, format: 'png' })
-  const dataUrl = await cropVisibleTabDataUrl(shot.dataUrl, target.rect, target.viewport)
+
+  if (!target || typeof target !== 'object' || target.ok === false) {
+    try {
+      target = await sendDomCommand('imageCodeTarget', { ...args, tabId })
+    } catch (error) {
+      const legacyError = safeError(error)
+      throw new Error(`image-code target discovery failed; visual=${visualError || 'unavailable'}; semantic=${legacyError}`)
+    }
+  }
+
+  let dataUrl
+  let captureMode = target.captureMode || 'element-crop'
+  if (isSmallImageDataUrl(target.sourceDataUrl)) {
+    dataUrl = target.sourceDataUrl
+    captureMode = 'direct-source'
+  } else {
+    const shot = await screenshot({ tabId, format: 'png' })
+    dataUrl = await cropVisibleTabDataUrl(shot.dataUrl, target.rect, target.viewport)
+  }
+
   return {
     ok: true,
     dataUrl,
-    imageSelector: target.imageSelector,
+    imageSelector: typeof target.imageSelector === 'string' ? target.imageSelector : '',
     inputSelector: target.inputSelector,
+    captureMode,
     bytes: Math.floor(dataUrl.length * 0.75),
   }
 }
@@ -261,25 +288,108 @@ async function blobToDataUrl(blob) {
 async function sendDomCommand(cmd, args) {
   const tabId = await resolveTabId(args.tabId)
   try {
-    const value = await chrome.tabs.sendMessage(tabId, { type: 'dsh-patrol:command', cmd, args: { ...args, tabId: undefined } })
+    const value = await sendPageMessageWithRetry(tabId, {
+      type: 'dsh-patrol:command',
+      cmd,
+      args: { ...args, tabId: undefined },
+    }, 'page bridge')
     if (!value || typeof value !== 'object') throw new Error('page bridge returned an invalid response')
     if (value.ok === false) throw new Error(safeError(value.error || 'page command failed'))
+
+    if (cmd === 'snapshot') {
+      try {
+        const visual = await sendVisualCommand('snapshotVisuals', args)
+        return mergeVisualSnapshot(value, visual, args.maxElements)
+      } catch {
+        // Compatibility with an older installed extension is intentionally soft:
+        // the semantic snapshot still works, while a fresh install gains visual
+        // media immediately.
+      }
+    }
     return value
   } catch (error) {
-    throw new Error(`page bridge unavailable in tab ${tabId}: ${safeError(error)}. Reload the page after installing the extension and retry.`)
+    throw new Error(`page bridge unavailable in tab ${tabId}: ${safeError(error)}. The extension retried content-script readiness; if this persists, reload once and retry.`)
   }
+}
+
+async function sendVisualCommand(cmd, args) {
+  const tabId = await resolveTabId(args.tabId)
+  const value = await sendPageMessageWithRetry(tabId, {
+    type: 'dsh-patrol:visual-command',
+    cmd,
+    args: { ...args, tabId: undefined },
+  }, 'visual page bridge')
+  if (!value || typeof value !== 'object') throw new Error('visual page bridge returned an invalid response')
+  if (value.ok === false) throw new Error(safeError(value.error || 'visual page command failed'))
+  return value
 }
 
 async function sendCaptchaDemoCommand(cmd, args) {
   const tabId = await resolveTabId(args.tabId)
   try {
-    const value = await chrome.tabs.sendMessage(tabId, { type: 'dsh-patrol:captcha-demo', cmd, args: { ...args, tabId: undefined } })
+    const value = await sendPageMessageWithRetry(tabId, {
+      type: 'dsh-patrol:captcha-demo',
+      cmd,
+      args: { ...args, tabId: undefined },
+    }, 'captcha demo page bridge')
     if (!value || typeof value !== 'object') throw new Error('captcha demo page bridge returned an invalid response')
     if (value.ok === false) throw new Error(safeError(value.error || 'captcha demo page command failed'))
     return value
   } catch (error) {
     throw new Error(`captcha demo page bridge unavailable in tab ${tabId}: ${safeError(error)}. Reload the page and retry.`)
   }
+}
+
+async function sendPageMessageWithRetry(tabId, message, label) {
+  let lastError
+  for (let index = 0; index < PAGE_BRIDGE_RETRY_MS.length; index += 1) {
+    const waitMs = PAGE_BRIDGE_RETRY_MS[index]
+    if (waitMs > 0) await delay(waitMs)
+    try {
+      return await chrome.tabs.sendMessage(tabId, message)
+    } catch (error) {
+      lastError = error
+      if (!isTransientPageBridgeError(error) || index === PAGE_BRIDGE_RETRY_MS.length - 1) break
+      try {
+        const tab = await chrome.tabs.get(tabId)
+        if (tab?.status === 'loading') continue
+      } catch {
+      }
+    }
+  }
+  throw new Error(`${label} unavailable after bounded retry: ${safeError(lastError)}`)
+}
+
+function isTransientPageBridgeError(error) {
+  const text = safeError(error)
+  return /receiving end does not exist|could not establish connection|message port closed|frame with id .* was removed|no tab with id/i.test(text)
+}
+
+function mergeVisualSnapshot(snapshot, visual, maxElements) {
+  const semantic = Array.isArray(snapshot?.elements) ? snapshot.elements : []
+  const visuals = Array.isArray(visual?.elements) ? visual.elements : []
+  const max = Number.isInteger(maxElements) ? Math.max(1, Math.min(maxElements, 500)) : 150
+  const selectors = new Set(semantic.map(item => item?.selector).filter(value => typeof value === 'string'))
+  const merged = [...semantic]
+  for (const item of visuals) {
+    if (!item || typeof item !== 'object') continue
+    const selector = typeof item.selector === 'string' ? item.selector : ''
+    if (selector && selectors.has(selector)) continue
+    if (selector) selectors.add(selector)
+    merged.push(item)
+    if (merged.length >= max) break
+  }
+  return {
+    ...snapshot,
+    elements: merged.slice(0, max),
+    truncated: snapshot?.truncated === true || visual?.truncated === true || semantic.length + visuals.length > max,
+  }
+}
+
+function isSmallImageDataUrl(value) {
+  return typeof value === 'string'
+    && /^data:image\/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/i.test(value)
+    && value.length <= 4 * 1024 * 1024
 }
 
 async function resolveTabId(explicit) {
@@ -304,6 +414,8 @@ function safeError(error) {
   const text = error && typeof error.message === 'string' ? error.message : String(error)
   return text.replace(/(password|passwd|pwd|token|secret|authorization|cookie|otp|captcha|验证码)\s*[:=：]\s*\S+/gi, '$1=[REDACTED]')
 }
+
+function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'bridge:getStatus') {
