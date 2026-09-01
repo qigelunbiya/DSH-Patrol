@@ -14,7 +14,7 @@ const CREDENTIAL_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 export function registerPatrolCredentialTools(ctx: Context, store: PatrolStore): () => void {
   const helper = defineTool({
     name: 'patrol_credential_help',
-    description: 'Check a Harness credential reference and, when missing, return the exact workspace-local secure setup helper command. This tool never accepts or reveals a credential value.',
+    description: 'Optional helper for users who explicitly want a Harness credential reference. Do NOT call this merely because a password was supplied in chat; patrol_type_transient now encrypts that supplied value for durable replay automatically.',
     parameters: {
       credentialRef: { type: 'string', required: true, description: 'Harness credential reference name such as IDC_LOGIN_PASSWORD.' },
     },
@@ -34,10 +34,12 @@ export function registerPatrolCredentialTools(ctx: Context, store: PatrolStore):
       return [
         `Credential ${args.credentialRef}: NOT configured.`,
         `Secure helper: ${helperPath}`,
+        'This helper is optional. Use it only when you intentionally want a Harness credential reference instead of Patrol encrypted-secret storage.',
         'Run this once in PowerShell:',
         `& '${helperPath.replace(/'/g, "''")}' -Name '${args.credentialRef}'`,
         'The helper prompts for the secret with hidden input and stores it in the Harness credential store, not in the Patrol workspace or Runbook.',
-        'After it succeeds, retry patrol_type_credential. Do not create a manual-login checkpoint for an ordinary password field.',
+        'Do not create a manual-login checkpoint just because this optional credential reference is missing.',
+        'If the user already supplied the password in chat, do not stop here: use patrol_type_transient instead, which stores only encrypted ciphertext plus an opaque Runbook reference.',
       ].join('\n')
     },
   })

@@ -1,11 +1,30 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { clearTransientSecrets } from '../browser-bridge-runtime/transient-secret-store.js'
 import { registerPatrolTransientInputTools } from '../src/transient-input-tools.ts'
 import type { PatrolRunner } from '../src/runner.ts'
 import type { PatrolStore } from '../src/store.ts'
 
-describe('Patrol transient sensitive input', () => {
-  it('types an already-supplied secret and stores only a current-session transient reference', async () => {
+const roots: string[] = []
+const previousOverride = process.env.DSH_PATROL_SECRET_DIR
+
+afterEach(async () => {
+  clearTransientSecrets()
+  if (previousOverride === undefined) delete process.env.DSH_PATROL_SECRET_DIR
+  else process.env.DSH_PATROL_SECRET_DIR = previousOverride
+  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+})
+
+describe('Patrol encrypted sensitive input', () => {
+  it('types an already-supplied secret and stores only an encrypted durable reference', async () => {
+    const secretRoot = await mkdtemp(join(tmpdir(), 'dsh-patrol-sensitive-input-'))
+    roots.push(secretRoot)
+    process.env.DSH_PATROL_SECRET_DIR = secretRoot
+    clearTransientSecrets()
+
     const definitions: any[] = []
     const ctx = {
       tools: {
@@ -58,10 +77,11 @@ describe('Patrol transient sensitive input', () => {
     expect(inspection.steps).toHaveLength(1)
     expect(inspection.steps[0].tool).toBe('browser_type_transient_ref')
     expect(inspection.steps[0].arguments.selector).toBe('#password')
-    expect(inspection.steps[0].arguments.transientRef).toMatch(/^PATROL_TRANSIENT_[A-F0-9]+$/)
+    expect(inspection.steps[0].arguments.transientRef).toMatch(/^PATROL_SECRET_[A-F0-9]+$/)
     expect(JSON.stringify(inspection)).not.toContain(secret)
     expect(result).not.toContain(secret)
-    expect(result).toContain('NOT written')
+    expect(result).toContain('encrypted')
+    expect(result).toContain('Harness restarts')
   })
 
   it('redacts text from the visible tool-call card', () => {
