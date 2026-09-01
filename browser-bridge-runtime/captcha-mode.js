@@ -4,12 +4,14 @@ export const CAPTCHA_MODES = Object.freeze({
     explicitDemoAutomation: true,
     weakUnmarkedAutomation: false,
     thirdPartyAutomation: false,
+    imageCodeScreenshotOcr: false,
   }),
   test: Object.freeze({
     name: 'test',
     explicitDemoAutomation: true,
     weakUnmarkedAutomation: true,
     thirdPartyAutomation: false,
+    imageCodeScreenshotOcr: true,
   }),
 })
 
@@ -41,4 +43,8 @@ export function captchaModeAllowsWeakUnmarkedAutomation(mode = currentCaptchaMod
 
 export function captchaModeAllowsThirdPartyAutomation(mode = currentCaptchaMode()) {
   return mode?.thirdPartyAutomation === true
+}
+
+export function captchaModeAllowsImageCodeScreenshotOcr(mode = currentCaptchaMode()) {
+  return mode?.imageCodeScreenshotOcr === true
 }
