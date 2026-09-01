@@ -248,10 +248,15 @@ function visualAttributes(element) {
 }
 
 function sharesNearAncestor(left, right) {
+  // BODY/HTML are page roots, not evidence that two visible elements belong to
+  // the same visual component. Counting them as "near" allowed a distant brand
+  // logo to beat the explicit #captcha neighbor screenshot fallback.
+  const roots = new Set([document.body, document.documentElement].filter(Boolean))
   const ancestors = new Set()
   let node = left?.parentElement
   let depth = 0
   while (node && depth < 4) {
+    if (roots.has(node)) break
     ancestors.add(node)
     node = node.parentElement
     depth += 1
@@ -259,6 +264,7 @@ function sharesNearAncestor(left, right) {
   node = right?.parentElement
   depth = 0
   while (node && depth < 4) {
+    if (roots.has(node)) break
     if (ancestors.has(node)) return true
     node = node.parentElement
     depth += 1
