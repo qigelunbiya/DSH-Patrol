@@ -21,6 +21,38 @@ describe('Patrol recovery circuit breaker', () => {
     expect(call('snapshot three')).toMatch(/already been attempted twice/)
   })
 
+  it('allows only one auth detector in a stalled phase, then allows a later OTP detector after real progress', () => {
+    const guard = createPatrolRecoveryGuard()
+    const detector = (stepName: string) => guard({
+      name: 'patrol_detect_auth_challenge',
+      arguments: { inspectionId: 'demo', stepName },
+    })
+
+    expect(detector('detect image code')).toBeUndefined()
+    expect(detector('retry image code with a different name')).toMatch(/already run once in this stalled phase/)
+
+    // A real login/submit click starts the post-login phase. The next detector
+    // can now legitimately classify an OTP or device challenge.
+    expect(guard({ name: 'patrol_click', arguments: { inspectionId: 'demo', selector: '#login', stepName: '登录' } })).toBeUndefined()
+    expect(detector('detect post-login OTP')).toBeUndefined()
+  })
+
+  it('does not let a forbidden captcha guess pretend to be progress and reset detector history', () => {
+    const guard = createPatrolRecoveryGuard()
+    expect(guard({
+      name: 'patrol_detect_auth_challenge',
+      arguments: { inspectionId: 'demo', stepName: 'detect image code' },
+    })).toBeUndefined()
+    expect(guard({
+      name: 'patrol_type_transient',
+      arguments: { inspectionId: 'demo', stepName: '填写验证码', selector: '#captcha', text: 'AB12C' },
+    })).toBeUndefined()
+    expect(guard({
+      name: 'patrol_detect_auth_challenge',
+      arguments: { inspectionId: 'demo', stepName: 'retry image code' },
+    })).toMatch(/already run once in this stalled phase/)
+  })
+
   it('stops a diagnostic loop but still permits exactly one doctor call', () => {
     const guard = createPatrolRecoveryGuard()
     const names = [
