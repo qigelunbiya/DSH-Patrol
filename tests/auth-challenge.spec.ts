@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ambiguousDemoFallback, classifyAuthChallenge } from '../browser-bridge-runtime/challenge-tool.js'
+import { ambiguousDemoFallback, assertImageCodeAutoSolved, classifyAuthChallenge } from '../browser-bridge-runtime/challenge-tool.js'
 import { normalizeImageCodeText } from '../browser-bridge-runtime/image-code.js'
 import { classifyLoginState } from '../browser-bridge-runtime/login-state-tool.js'
 
@@ -82,6 +82,18 @@ describe('auth challenge classification', () => {
     )
     expect(result.kind).toBe('captcha')
     expect(result.subtype).toBe('image-code')
+  })
+
+  it('makes an image-code solver failure terminal instead of allowing human handoff', () => {
+    const classified = { kind: 'captcha', subtype: 'image-code' }
+    expect(() => assertImageCodeAutoSolved(classified, false, 'win32'))
+      .toThrow(/Manual handoff is disabled for image-code/)
+    expect(assertImageCodeAutoSolved(classified, true, 'win32')).toBe(true)
+  })
+
+  it('does not apply the image-code no-handoff policy to OTP or third-party challenges', () => {
+    expect(assertImageCodeAutoSolved({ kind: 'otp', subtype: 'otp' }, false, 'win32')).toBe(false)
+    expect(assertImageCodeAutoSolved({ kind: 'captcha', subtype: 'third-party' }, false, 'win32')).toBe(false)
   })
 
   it('classifies GeeTest/jigsaw slider verification as slider-puzzle', () => {
