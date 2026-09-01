@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Owned-site CAPTCHA demo helper for DSH Patrol.
+"""Local CAPTCHA image-analysis helper for DSH Patrol.
 
-This process is intentionally not a general browser automation service. The Node
-runtime invokes it only for pages that expose explicit DSH Patrol CAPTCHA demo
-markup. It performs local image analysis only and writes one compact JSON
-result to stdout.
+The browser runtime invokes this process only for Patrol-supported local image
+analysis: conventional image-text codes plus Patrol's click-sequence/slider
+flows. It is not used for third-party reCAPTCHA/hCaptcha/Turnstile/Arkose
+widgets. The process writes one compact JSON result to stdout.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from typing import Any
 import cv2
 import ddddocr
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter
 
 
 def decode_image(value: str) -> bytes:
@@ -33,6 +33,52 @@ def decode_image(value: str) -> bytes:
 
 def normalize_text(value: str) -> str:
     return re.sub(r"[\s,，.。:：;；|/\\\-_'\"`~!！?？()（）\[\]{}<>《》]+", "", str(value or ""))
+
+
+def plausible_image_code(value: str) -> bool:
+    text = normalize_text(value)
+    return 2 <= len(text) <= 12 and re.search(r"[A-Za-z0-9]", text) is not None
+
+
+def png_bytes(image: Image.Image) -> bytes:
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    return output.getvalue()
+
+
+def solve_image_code(payload: dict[str, Any]) -> dict[str, Any]:
+    image_bytes = decode_image(payload.get("image", ""))
+    recognizer = ddddocr.DdddOcr(ocr=True, det=False, show_ad=False)
+    candidates: list[str] = []
+
+    def classify(data: bytes) -> None:
+        try:
+            text = normalize_text(recognizer.classification(data))
+        except Exception:
+            return
+        if text and text not in candidates:
+            candidates.append(text)
+
+    # First use the raw crop; ddddocr is usually strongest on the untouched
+    # distorted captcha. Then try a few deterministic enlarged/high-contrast
+    # variants for very small legacy images such as 4-6 colored characters.
+    classify(image_bytes)
+    try:
+        with Image.open(io.BytesIO(image_bytes)).convert("RGB") as image:
+            scale = 3 if max(image.size) < 500 else 2
+            enlarged = image.resize((max(1, image.width * scale), max(1, image.height * scale)), Image.Resampling.LANCZOS)
+            classify(png_bytes(enlarged))
+            classify(png_bytes(ImageEnhance.Contrast(enlarged).enhance(1.8)))
+            gray = enlarged.convert("L").filter(ImageFilter.SHARPEN)
+            classify(png_bytes(gray))
+    except Exception:
+        pass
+
+    plausible = [value for value in candidates if plausible_image_code(value)]
+    if not plausible:
+        raise ValueError("ddddocr did not recognize a plausible image code")
+    plausible.sort(key=lambda value: (abs(len(value) - 5), -sum(ch.isalnum() for ch in value), len(value)))
+    return {"ok": True, "operation": "image-code", "text": plausible[0], "candidates": plausible[:4]}
 
 
 def image_size(image_bytes: bytes) -> tuple[int, int]:
@@ -199,7 +245,9 @@ def main() -> int:
     try:
         payload = json.load(sys.stdin)
         operation = str(payload.get("operation", ""))
-        if operation == "click-sequence":
+        if operation == "image-code":
+            result = solve_image_code(payload)
+        elif operation == "click-sequence":
             result = solve_click_sequence(payload)
         elif operation == "slider-puzzle":
             result = solve_slider(payload)
