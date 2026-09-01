@@ -192,10 +192,8 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
   const timeoutMs = config.commandTimeoutMs ?? 60000
   const definition = defineTool({
     name: 'browser_detect_auth_challenge',
-    description: 'Detect and classify common post-login verification challenges from safe DOM signals and visible text. Conventional image-text codes may be locally recognized on Windows. Ordered-click and slider/jigsaw demo challenges may be completed locally with ddddocr when explicit DSH Patrol challenge markup is present. On localhost/127.0.0.1 test pages, exact click-sequence or slider-puzzle classifications may also use weak DOM discovery without markup. Remote weak detections stay in the normal handoff path. OTP, approval, rotate, unsupported challenges, and third-party reCAPTCHA/hCaptcha/Turnstile/Arkose-style widgets remain deterministic human handoffs.',
-    parameters: {
-      tabId: optInt,
-    },
+    description: 'Detect login verification and automate supported local flows before handoff. Conventional image-text CAPTCHA is attempted with Windows OCR first. OTP, device approval, rotate/unsupported challenges, and third-party reCAPTCHA/hCaptcha/Turnstile/Arkose-style widgets remain human handoffs.',
+    parameters: { tabId: optInt },
     output: {
       schema: {
         type: 'object',
@@ -215,7 +213,7 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
       },
       render: (_args, value) => [{
         type: 'text',
-        text: `Auth challenge: kind=${value.kind}; subtype=${value.subtype}; observed=${value.observedKind}/${value.observedSubtype}; strategy=${value.strategy}; hasChallenge=${value.hasChallenge}; handoffRequired=${value.handoffRequired}${value.autoFilled && !value.handoffRequired ? '; verification auto-completed by the local Patrol solver' : ''}${value.selectors?.length ? `; selectors=${value.selectors.join(', ')}` : ''}`,
+        text: `Auth challenge: kind=${value.kind}; subtype=${value.subtype}; observed=${value.observedKind}/${value.observedSubtype}; strategy=${value.strategy}; hasChallenge=${value.hasChallenge}; handoffRequired=${value.handoffRequired}${value.autoFilled && !value.handoffRequired ? '; verification input auto-filled by the local Patrol solver; continue with the observed submit/login step' : ''}${value.selectors?.length ? `; selectors=${value.selectors.join(', ')}` : ''}`,
       }],
     },
     presentCall: args => ({ card: 'generic', title: 'Detect login verification', kind: 'other', rawInput: args }),
@@ -230,26 +228,20 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
       if (classified.kind === 'captcha'
         && classified.subtype === 'image-code'
         && process.platform === 'win32') {
-        for (let attempt = 0; attempt < 2; attempt += 1) {
-          let filled = false
-          try {
-            filled = await tryFillImageCode(bridge, args.tabId, options)
-          } catch {
-            filled = false
-          }
-          if (!filled) break
-
-          imageAutomationRan = true
-          await sleep(900)
-          try {
-            classified = await observeAuthChallenge(bridge, args.tabId, options)
-          } catch {
-            classified = emptyClassification()
-            break
-          }
-          if (classified.kind !== 'captcha' || classified.subtype !== 'image-code') break
+        try {
+          imageAutomationRan = await tryFillImageCode(bridge, args.tabId, options)
+        } catch {
+          imageAutomationRan = false
         }
-        autoFilled = imageAutomationRan && classified.hasChallenge === false
+        if (imageAutomationRan) {
+          // Recognition/fill is the whole responsibility of this solver. The
+          // observed Runbook button remains responsible for submitting the form.
+          // Treat the CAPTCHA as automation-completed so the Agent does not add
+          // an unnecessary human checkpoint merely because the image remains in
+          // the DOM until the subsequent Login click.
+          autoFilled = true
+          classified = emptyClassification()
+        }
       }
 
       if (!imageAutomationRan) {
