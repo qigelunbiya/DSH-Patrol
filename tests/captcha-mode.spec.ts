@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   CAPTCHA_MODES,
+  captchaModeAllowsImageCodeScreenshotOcr,
   captchaModeAllowsThirdPartyAutomation,
   captchaModeAllowsWeakUnmarkedAutomation,
   currentCaptchaMode,
@@ -25,6 +26,12 @@ describe('captcha runtime mode', () => {
     expect(currentCaptchaMode({ DSH_PATROL_CAPTCHA_MODE: 'test' })).toBe(CAPTCHA_MODES.test)
     expect(captchaModeAllowsWeakUnmarkedAutomation(CAPTCHA_MODES.normal)).toBe(false)
     expect(captchaModeAllowsWeakUnmarkedAutomation(CAPTCHA_MODES.test)).toBe(true)
+  })
+
+  it('allows screenshot OCR for conventional image-code only in test mode', () => {
+    expect(captchaModeAllowsImageCodeScreenshotOcr(CAPTCHA_MODES.test)).toBe(true)
+    expect(captchaModeAllowsImageCodeScreenshotOcr(CAPTCHA_MODES.normal)).toBe(false)
+    expect(captchaModeAllowsImageCodeScreenshotOcr(currentCaptchaMode({}))).toBe(true)
   })
 
   it('rejects unsupported non-empty mode values instead of silently falling back to test', () => {
