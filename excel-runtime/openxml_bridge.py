@@ -14,7 +14,6 @@ PKG_REL = "http://schemas.openxmlformats.org/package/2006/relationships"
 NS = {"m": MAIN, "r": DOC_REL, "pr": PKG_REL}
 ET.register_namespace("", MAIN)
 ET.register_namespace("r", DOC_REL)
-
 CELL_RE = re.compile(r"^([A-Z]+)([1-9][0-9]*)$")
 
 
@@ -100,8 +99,7 @@ def load_styles(zf):
 
 BUILTIN_FORMATS = {
     0: "General", 1: "0", 2: "0.00", 3: "#,##0", 4: "#,##0.00",
-    9: "0%", 10: "0.00%", 14: "mm-dd-yy", 22: "m/d/yy h:mm",
-    49: "@",
+    9: "0%", 10: "0.00%", 14: "mm-dd-yy", 22: "m/d/yy h:mm", 49: "@",
 }
 
 
@@ -178,6 +176,19 @@ def sheet_cells(root):
     return data, rows, cells
 
 
+def ref_in_range(ref, range_ref):
+    try:
+        if ":" not in range_ref:
+            return ref == range_ref
+        left, right = range_ref.split(":", 1)
+        r, c = parse_ref(ref)
+        r1, c1 = parse_ref(left)
+        r2, c2 = parse_ref(right)
+        return min(r1, r2) <= r <= max(r1, r2) and min(c1, c2) <= c <= max(c1, c2)
+    except ValueError:
+        return False
+
+
 def inspect_sheet(name, root, shared, styles, max_rows, max_cols):
     merges_node = root.find("m:mergeCells", NS)
     merges = [] if merges_node is None else [item.get("ref", "") for item in merges_node.findall("m:mergeCell", NS) if item.get("ref")]
@@ -242,19 +253,6 @@ def inspect_sheet(name, root, shared, styles, max_rows, max_cols):
         "cells": parsed,
         "warnings": [],
     }
-
-
-def ref_in_range(ref, range_ref):
-    try:
-        if ":" not in range_ref:
-            return ref == range_ref
-        left, right = range_ref.split(":", 1)
-        r, c = parse_ref(ref)
-        r1, c1 = parse_ref(left)
-        r2, c2 = parse_ref(right)
-        return min(r1, r2) <= r <= max(r1, r2) and min(c1, c2) <= c <= max(c1, c2)
-    except ValueError:
-        return False
 
 
 def ensure_cell(root, ref):
@@ -386,6 +384,73 @@ def write_sheet(root, updates):
     return written, warnings
 
 
+def inspect_workbook(file_path, payload):
+    with zipfile.ZipFile(file_path, "r") as zf:
+        sheets = workbook_parts(zf)
+        if not sheets:
+            raise ValueError("workbook has no worksheets")
+        selected = sheets
+        if payload.get("sheetName"):
+            selected = [item for item in sheets if item["name"] == payload["sheetName"]]
+            if not selected:
+                raise ValueError(f"Worksheet not found: {payload['sheetName']}")
+        shared = load_shared_strings(zf)
+        styles = load_styles(zf)
+        result = []
+        for item in selected:
+            root = ET.fromstring(zf.read(item["path"]))
+            result.append(inspect_sheet(
+                item["name"], root, shared, styles,
+                int(payload.get("maxRows", 80)), int(payload.get("maxColumns", 30)),
+            ))
+        return {
+            "operation": "inspect",
+            "path": file_path,
+            "sheetNames": [item["name"] for item in sheets],
+            "sheets": result,
+        }
+
+
+def write_workbook(file_path, payload):
+    # Read every package part while the source workbook is open. Close that ZIP
+    # before replacing the original path: Windows rejects replacement while the
+    # source .xlsx still has an open handle.
+    with zipfile.ZipFile(file_path, "r") as zf:
+        sheets = workbook_parts(zf)
+        if not sheets:
+            raise ValueError("workbook has no worksheets")
+        selected = [item for item in sheets if item["name"] == payload.get("sheetName")]
+        if not selected:
+            raise ValueError(f"Worksheet not found: {payload.get('sheetName')}")
+        target = selected[0]
+        root = ET.fromstring(zf.read(target["path"]))
+        written, warnings = write_sheet(root, payload.get("updates") or [])
+        replacement = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+        entries = [
+            (info, replacement if info.filename == target["path"] else zf.read(info.filename))
+            for info in zf.infolist()
+        ]
+
+    temp_fd, temp_path = tempfile.mkstemp(prefix="dsh-patrol-openxml-", suffix=".xlsx", dir=os.path.dirname(file_path))
+    os.close(temp_fd)
+    try:
+        with zipfile.ZipFile(temp_path, "w") as out:
+            for info, data in entries:
+                out.writestr(info, data)
+        shutil.copystat(file_path, temp_path)
+        os.replace(temp_path, file_path)
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+    return {
+        "operation": "write",
+        "path": file_path,
+        "sheetName": target["name"],
+        "written": written,
+        "warnings": warnings,
+    }
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: openxml_bridge.py <payload.json>")
@@ -393,56 +458,15 @@ def main():
         payload = json.load(handle)
     file_path = os.path.abspath(payload["filePath"])
     if not file_path.lower().endswith(".xlsx"):
-        raise ValueError("OpenXML fallback only supports .xlsx workbooks")
-    with zipfile.ZipFile(file_path, "r") as zf:
-        sheets = workbook_parts(zf)
-        if not sheets:
-            raise ValueError("workbook has no worksheets")
-        operation = payload.get("operation")
-        selected = sheets
-        if payload.get("sheetName"):
-            selected = [item for item in sheets if item["name"] == payload["sheetName"]]
-            if not selected:
-                raise ValueError(f"Worksheet not found: {payload['sheetName']}")
-        if operation == "inspect":
-            shared = load_shared_strings(zf)
-            styles = load_styles(zf)
-            result = []
-            for item in selected:
-                root = ET.fromstring(zf.read(item["path"]))
-                result.append(inspect_sheet(item["name"], root, shared, styles, int(payload.get("maxRows", 80)), int(payload.get("maxColumns", 30))))
-            print(json.dumps({
-                "operation": "inspect",
-                "path": file_path,
-                "sheetNames": [item["name"] for item in sheets],
-                "sheets": result,
-            }, ensure_ascii=False, separators=(",", ":")))
-            return
-        if operation != "write":
-            raise ValueError(f"Unsupported Excel operation: {operation}")
-        target = selected[0]
-        root = ET.fromstring(zf.read(target["path"]))
-        written, warnings = write_sheet(root, payload.get("updates") or [])
-        replacement = ET.tostring(root, encoding="utf-8", xml_declaration=True)
-        temp_fd, temp_path = tempfile.mkstemp(prefix="dsh-patrol-openxml-", suffix=".xlsx", dir=os.path.dirname(file_path))
-        os.close(temp_fd)
-        try:
-            with zipfile.ZipFile(temp_path, "w") as out:
-                for info in zf.infolist():
-                    data = replacement if info.filename == target["path"] else zf.read(info.filename)
-                    out.writestr(info, data)
-            shutil.copystat(file_path, temp_path)
-            os.replace(temp_path, file_path)
-        finally:
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
-        print(json.dumps({
-            "operation": "write",
-            "path": file_path,
-            "sheetName": target["name"],
-            "written": written,
-            "warnings": warnings,
-        }, ensure_ascii=False, separators=(",", ":")))
+        raise ValueError("OpenXML bridge only supports .xlsx workbooks")
+    operation = payload.get("operation")
+    if operation == "inspect":
+        result = inspect_workbook(file_path, payload)
+    elif operation == "write":
+        result = write_workbook(file_path, payload)
+    else:
+        raise ValueError(f"Unsupported Excel operation: {operation}")
+    print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
 
 
 if __name__ == "__main__":
