@@ -8,61 +8,81 @@ export async function tryFillImageCode(bridge, tabId, options = {}) {
 
   let inputSelector
   let code = ''
+  const diagnostics = []
 
-  // Primary path: let the extension identify and crop the small captcha image.
-  // Prefer ddddocr on that clean crop because it is much better than general
-  // Windows OCR on distorted 4-6 character legacy image codes. If the optional
-  // ddddocr runtime is unavailable or uncertain, fall back to system OCR.
+  // Primary path: ask the extension for the cleanest visual captcha capture.
+  // Newer extensions can return the original data:image bytes directly; older
+  // ones return an element crop. Either way ddddocr gets a captcha-sized image
+  // instead of a whole login-page screenshot.
   try {
     const captured = await bridge.request('captureImageCode', { tabId }, options)
-    if (captured
-      && typeof captured === 'object'
-      && captured.ok !== false
-      && typeof captured.dataUrl === 'string'
-      && typeof captured.inputSelector === 'string'
-      && await isExplicitImageCodeInput(bridge, captured.inputSelector, tabId, options)) {
+    if (!captured || typeof captured !== 'object' || captured.ok === false) {
+      diagnostics.push(`captureImageCode: ${shortDiagnostic(captured?.error || 'invalid capture result')}`)
+    } else if (typeof captured.dataUrl !== 'string' || typeof captured.inputSelector !== 'string') {
+      diagnostics.push('captureImageCode: missing image bytes or input selector')
+    } else if (!await isExplicitImageCodeInput(bridge, captured.inputSelector, tabId, options)) {
+      diagnostics.push(`captureImageCode: ${captured.inputSelector} was not verified as the explicit image-code input`)
+    } else {
       inputSelector = captured.inputSelector
+      const captureMode = typeof captured.captureMode === 'string' ? captured.captureMode : 'unknown'
 
       try {
         const ddddocr = await recognizeImageCodeWithDdddocr(captured.dataUrl, options)
         if (ddddocr?.ok === true && typeof ddddocr.text === 'string') {
           code = normalizeImageCodeText(ddddocr.text)
+          if (!isPlausibleImageCode(code)) diagnostics.push(`ddddocr(${captureMode}): returned implausible text`)
+        } else {
+          diagnostics.push(`ddddocr(${captureMode}): ${shortDiagnostic(ddddocr?.error || 'no plausible text')}`)
         }
-      } catch {
+      } catch (error) {
+        diagnostics.push(`ddddocr(${captureMode}): ${shortDiagnostic(error)}`)
       }
 
       if (!isPlausibleImageCode(code)) {
-        const recognized = await recognizeScreenshotText(captured.dataUrl, { signal: options.signal })
-        code = selectImageCodeCandidate(recognized?.text ?? '')
+        try {
+          const recognized = await recognizeScreenshotText(captured.dataUrl, { signal: options.signal })
+          code = selectImageCodeCandidate(recognized?.text ?? '')
+          if (!isPlausibleImageCode(code)) {
+            diagnostics.push(`windows-ocr(${captureMode}): ${shortDiagnostic(recognized?.status || 'no plausible text')}`)
+          }
+        } catch (error) {
+          diagnostics.push(`windows-ocr(${captureMode}): ${shortDiagnostic(error)}`)
+        }
       }
     }
-  } catch {
-    // Fall through to the page-level OCR recovery path below. A common legacy
-    // layout has a clearly named #captcha input but a generic adjacent <img>
-    // with no captcha/id/class hint. content.js now finds that image by spatial
-    // proximity, but this whole-page recovery remains as a final fallback.
+  } catch (error) {
+    diagnostics.push(`captureImageCode: ${shortDiagnostic(error)}`)
+  }
+
+  // Final recovery: whole-page system OCR. This remains useful for legacy
+  // pages where the captcha input is explicit but all visual-element discovery
+  // failed. The new extension normally reaches this path only after direct
+  // source, element crop, and input-neighbor visual crop all failed.
+  if (!inputSelector || !isPlausibleImageCode(code)) {
+    const fallback = await recognizeImageCodeFromPage(bridge, tabId, options)
+    if (fallback) {
+      inputSelector = fallback.inputSelector
+      code = fallback.code
+    } else {
+      diagnostics.push('page-level Windows OCR: no plausible image-code candidate')
+    }
   }
 
   if (!inputSelector || !isPlausibleImageCode(code)) {
-    const fallback = await recognizeImageCodeFromPage(bridge, tabId, options)
-    if (!fallback) return false
-    inputSelector = fallback.inputSelector
-    code = fallback.code
+    throw new Error(`image-code recognition exhausted automatic paths: ${diagnostics.filter(Boolean).slice(0, 8).join(' | ') || 'no diagnostic detail'}`)
   }
 
-  if (!inputSelector || !isPlausibleImageCode(code)) return false
   const typed = await bridge.request('type', {
     selector: inputSelector,
     text: code,
     clear: true,
     tabId,
   }, options)
-  if (!typed || typeof typed !== 'object' || typed.ok === false) return false
+  if (!typed || typeof typed !== 'object' || typed.ok === false) {
+    throw new Error(`recognized image code but browser typing failed: ${shortDiagnostic(typed?.error || 'invalid type result')}`)
+  }
 
-  // Do not press Enter here. Image-code solving owns only recognition/fill;
-  // the deterministic Runbook keeps responsibility for the observed Login/
-  // Submit button. This prevents OCR from unexpectedly submitting a partially
-  // taught form or double-submitting before the recorded click step.
+  // Recognition/fill only. The deterministic Runbook owns form submission.
   return true
 }
 
@@ -236,4 +256,9 @@ function isPlausibleImageCode(value) {
   return value.length >= 2
     && value.length <= 16
     && /[\p{L}\p{N}]/u.test(value)
+}
+
+function shortDiagnostic(value) {
+  const text = value instanceof Error ? value.message : String(value || '')
+  return text.replace(/\s+/g, ' ').trim().slice(0, 220)
 }
