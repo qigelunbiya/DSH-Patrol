@@ -6,6 +6,7 @@ import { findUniqueHealingSelector, isPageReadStep, isScreenshotStep, isSafeBrow
 import { renderRunReport } from './report.js'
 import { credentialReferenceName, redactLikelySecrets, untrustedPageData } from './security.js'
 import type {
+  CheckpointStep,
   InspectionDefinition,
   JsonObject,
   JsonValue,
@@ -159,6 +160,19 @@ export class PatrolRunner {
           startedAt: stepStartedAt,
           finishedAt: new Date().toISOString(),
           output: `Condition on ${step.when.sourceStepId} was not satisfied.`,
+        })
+        continue
+      }
+
+      if (step.kind === 'checkpoint' && shouldSkipLegacyImageCodeCheckpoint(step, results)) {
+        results.push({
+          stepId: step.id,
+          name: step.name,
+          kind: 'checkpoint',
+          status: 'skipped',
+          startedAt: stepStartedAt,
+          finishedAt: new Date().toISOString(),
+          output: 'Legacy image-code checkpoint skipped because the immediately preceding successful detector already auto-filled the conventional image CAPTCHA.',
         })
         continue
       }
@@ -407,6 +421,20 @@ export function conditionMatches(results: readonly StepRunResult[], condition: {
   const source = [...results].reverse().find(item => item.stepId === condition.sourceStepId)
   if (source === undefined || source.status === 'failed' || source.status === 'waiting' || source.status === 'skipped') return false
   return evaluateExpectation(source.output ?? '', condition) === undefined
+}
+
+export function shouldSkipLegacyImageCodeCheckpoint(step: CheckpointStep, results: readonly StepRunResult[]): boolean {
+  const detector = [...results].reverse().find(result => result.tool === 'browser_detect_auth_challenge' && result.status === 'passed')
+  const output = detector?.output ?? ''
+  if (!/\bobserved=captcha\/image-code\b/i.test(output)) return false
+  if (!/\bkind=none\b/i.test(output) || !/\bhandoffRequired=false\b/i.test(output)) return false
+  if (!/verification input auto-filled|auto-filled by the local Patrol solver/i.test(output)) return false
+
+  const hint = [step.name, step.prompt, step.notes ?? ''].join(' ')
+  if (/(otp|one[- ]?time|动态码|动态验证码|一次性|短信|手机验证码|邮箱验证码|邮件验证码|二次验证码|二次验证|secondary|device|设备|确认登录|passkey|二维码|recaptcha|hcaptcha|turnstile|arkose|funcaptcha)/i.test(hint)) {
+    return false
+  }
+  return /(captcha|验证码|verification|human verification|人机验证)/i.test(hint)
 }
 
 export function deterministicPageSummary(results: readonly StepRunResult[]): string | undefined {
