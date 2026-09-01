@@ -6,25 +6,25 @@ import type { PatrolObservationGate } from './observation-guard.js'
 import { PatrolRunner } from './runner.js'
 
 const IMAGE_SCHEMA = {
-  type: 'object' as const,
+  type: 'object',
   additionalProperties: false,
   properties: {
-    attachmentId: { type: 'string' as const, required: true },
-    mediaType: { type: 'string' as const, required: true, enum: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] },
-    bytes: { type: 'integer' as const, required: true },
-    width: { type: 'integer' as const, required: true },
-    height: { type: 'integer' as const, required: true },
-    name: { type: 'string' as const },
+    attachmentId: { type: 'string', required: true },
+    mediaType: { type: 'string', required: true, enum: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] },
+    bytes: { type: 'integer', required: true },
+    width: { type: 'integer', required: true },
+    height: { type: 'integer', required: true },
+    name: { type: 'string' },
     originalDimensions: {
-      type: 'object' as const,
+      type: 'object',
       additionalProperties: false,
       properties: {
-        width: { type: 'integer' as const, required: true },
-        height: { type: 'integer' as const, required: true },
+        width: { type: 'integer', required: true },
+        height: { type: 'integer', required: true },
       },
     },
   },
-}
+} as const
 
 export function registerPatrolObservationTools(
   ctx: Context,
@@ -40,14 +40,14 @@ export function registerPatrolObservationTools(
     },
     output: {
       schema: {
-        type: 'object' as const,
+        type: 'object',
         additionalProperties: false,
         properties: {
-          ok: { type: 'boolean' as const, required: true },
-          path: { type: 'string' as const, required: true },
-          url: { type: 'string' as const },
-          title: { type: 'string' as const },
-          ocrStatus: { type: 'string' as const },
+          ok: { type: 'boolean', required: true },
+          path: { type: 'string', required: true },
+          url: { type: 'string' },
+          title: { type: 'string' },
+          ocrStatus: { type: 'string' },
           image: IMAGE_SCHEMA,
         },
       },
