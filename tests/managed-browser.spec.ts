@@ -94,50 +94,50 @@ describe('managed Patrol browser', () => {
     expect(closes).toBe(1)
   })
 
-  it('reloads an older installed worker when bundled extension files have a newer manifest revision', async () => {
+  it('reinstalls a persisted Patrol extension from the current checkout even when the manifest revision is unchanged', async () => {
     const { extensionPath, profilePath, statePath } = fixtureRoot('dsh-patrol-managed-revision-')
-    writeFileSync(join(extensionPath, 'manifest.json'), JSON.stringify({ manifest_version: 3, version: '0.2.1' }))
+    writeFileSync(join(extensionPath, 'manifest.json'), JSON.stringify({
+      manifest_version: 3,
+      name: 'DSH Patrol Browser Bridge',
+      version: '0.2.1',
+    }))
     const bridge = { connected: false }
     const extensionId = 'abcdefghijklmnopabcdefghijklmnop'
-    let reloads = 0
-    let currentWorker
+    let uninstalls = 0
+    let installs = 0
     const state = {}
+    const freshWorker = workerThatConnects(bridge, state)
+    let installedExtension = {
+      name: 'DSH Patrol Browser Bridge',
+      version: '0.2.1',
+      path: join(profilePath, 'stale-runtime-copy'),
+      workers: async () => [{ async evaluate() {} }],
+    }
 
-    const newWorker = {
-      async evaluate(fn, url) {
-        const source = String(fn)
-        if (source.includes('getManifest')) return '0.2.1'
-        if (url !== undefined) {
-          state.configuredUrl = url
-          bridge.connected = true
-        }
-      },
-    }
-    const oldWorker = {
-      async evaluate(fn) {
-        const source = String(fn)
-        if (source.includes('getManifest')) return '0.2.0'
-        if (source.includes('runtime.reload')) {
-          reloads += 1
-          currentWorker = newWorker
-          return undefined
-        }
-      },
-    }
-    currentWorker = oldWorker
-    const extension = {
-      path: extensionPath,
-      workers: async () => [currentWorker],
-    }
     const browser = {
       connected: true,
       on() {},
       process: () => ({ pid: 3333 }),
       async extensions() {
-        return new Map([[extensionId, extension]])
+        return installedExtension === undefined
+          ? new Map()
+          : new Map([[extensionId, installedExtension]])
       },
-      async installExtension() {
-        throw new Error('existing extension must be refreshed, not reinstalled')
+      async uninstallExtension(id) {
+        expect(id).toBe(extensionId)
+        uninstalls += 1
+        installedExtension = undefined
+      },
+      async installExtension(path) {
+        expect(path).toBe(extensionPath)
+        installs += 1
+        installedExtension = {
+          name: 'DSH Patrol Browser Bridge',
+          version: '0.2.1',
+          path: extensionPath,
+          workers: async () => [freshWorker],
+        }
+        return extensionId
       },
       async close() { this.connected = false },
     }
@@ -158,7 +158,8 @@ describe('managed Patrol browser', () => {
     const result = await controller.ensureStarted()
     expect(result.connected).toBe(true)
     expect(result.extensionLoadMode).toBe('runtime')
-    expect(reloads).toBe(1)
+    expect(uninstalls).toBe(1)
+    expect(installs).toBe(1)
     expect(state.configuredUrl).toBe('ws://127.0.0.1:3080/patrol-browser-bridge')
     await controller.dispose()
   })
