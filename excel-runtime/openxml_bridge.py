@@ -194,6 +194,19 @@ def ref_in_range(ref, range_ref):
         return False
 
 
+def merge_owner(root, ref):
+    merges_node = root.find("m:mergeCells", NS)
+    if merges_node is None:
+        return None, None
+    for item in merges_node.findall("m:mergeCell", NS):
+        range_ref = item.get("ref", "")
+        if not range_ref or not ref_in_range(ref, range_ref):
+            continue
+        owner = range_ref.split(":", 1)[0].upper()
+        return owner, range_ref
+    return None, None
+
+
 def inspect_sheet(name, root, shared, styles, max_rows, max_cols):
     merges_node = root.find("m:mergeCells", NS)
     merges = [] if merges_node is None else [item.get("ref", "") for item in merges_node.findall("m:mergeCell", NS) if item.get("ref")]
@@ -354,13 +367,62 @@ def update_dimension(root):
         dimension.set("ref", ref)
 
 
-def write_sheet(root, updates):
+def desired_text(value_type, value):
+    if value_type == "clear":
+        return ""
+    if value_type == "formula":
+        return str(value)
+    if value_type == "number":
+        try:
+            number = float(value)
+            return str(int(number)) if number.is_integer() else str(number)
+        except (TypeError, ValueError):
+            return str(value)
+    return str(value)
+
+
+def write_sheet(root, updates, shared):
     warnings = []
     _, _, cells = sheet_cells(root)
     written = []
     for update in updates:
         ref = str(update.get("cell", "")).upper()
         parse_ref(ref)
+
+        owner, merge_range = merge_owner(root, ref)
+        if owner and owner != ref:
+            raise ValueError(f"refusing to write {ref}: it is inside merged range {merge_range}; write the top-left cell {owner} instead")
+
+        existing_cell = cells.get(ref)
+        previous_text = ""
+        previous_formula = None
+        if existing_cell is not None:
+            previous_text, previous_formula = cell_value(existing_cell, shared)
+
+        value_type = update.get("valueType") or "text"
+        value = "" if update.get("value") is None else str(update.get("value"))
+        shown = desired_text(value_type, value)
+        previous_semantic = previous_formula if previous_formula else previous_text
+        same_value = str(previous_semantic or "") == shown
+        protected = bool(previous_text or previous_formula)
+        allow_overwrite = update.get("allowOverwriteExisting") is True
+        expected = update.get("expectedCurrentText")
+
+        if protected and not same_value:
+            if not allow_overwrite:
+                raise ValueError(
+                    f"refusing to overwrite non-empty template cell {ref} ({previous_text!r}); "
+                    "write into an inspected blank destination or explicitly opt into a guarded overwrite"
+                )
+            if expected is None:
+                raise ValueError(
+                    f"guarded overwrite of {ref} requires expectedCurrentText from the latest patrol_excel_inspect result"
+                )
+            if str(expected) != str(previous_text):
+                raise ValueError(
+                    f"guarded overwrite of {ref} rejected: expectedCurrentText={expected!r}, actual={previous_text!r}; re-inspect the workbook"
+                )
+
         cell = ensure_cell(root, ref)
         source_ref = update.get("copyFormatFrom")
         if source_ref:
@@ -369,21 +431,16 @@ def write_sheet(root, updates):
                 warnings.append(f"copy formatting {source_ref} -> {ref} skipped: source cell not found")
             elif source.get("s") is not None:
                 cell.set("s", source.get("s"))
-        value_type = update.get("valueType") or "text"
-        value = "" if update.get("value") is None else str(update.get("value"))
+
         if value_type == "clear":
             set_clear(cell)
-            shown = ""
         elif value_type == "number":
             set_number(cell, value)
-            shown = value
         elif value_type == "formula":
             set_formula(cell, value)
-            shown = value
         else:
             set_text(cell, value)
-            shown = value
-        written.append({"cell": ref, "text": shown})
+        written.append({"cell": ref, "text": shown, "previousText": previous_text})
         _, _, cells = sheet_cells(root)
     update_dimension(root)
     return written, warnings
@@ -428,8 +485,9 @@ def write_workbook(file_path, payload):
         if not selected:
             raise ValueError(f"Worksheet not found: {payload.get('sheetName')}")
         target = selected[0]
+        shared = load_shared_strings(zf)
         root = ET.fromstring(zf.read(target["path"]))
-        written, warnings = write_sheet(root, payload.get("updates") or [])
+        written, warnings = write_sheet(root, payload.get("updates") or [], shared)
         replacement = ET.tostring(root, encoding="utf-8", xml_declaration=True)
         entries = [
             (info, replacement if info.filename == target["path"] else zf.read(info.filename))
