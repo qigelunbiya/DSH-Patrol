@@ -44,7 +44,16 @@ export function summarizeReport(report: RunReport): string {
   const failed = report.results.filter(item => item.status === 'failed').length
   const waiting = report.results.filter(item => item.status === 'waiting').length
   const skipped = report.results.filter(item => item.status === 'skipped').length
-  return `run ${report.runId}: ${report.status}; passed=${passed}, failed=${failed}, waiting=${waiting}, skipped=${skipped}`
+  const base = `run ${report.runId}: ${report.status}; passed=${passed}, failed=${failed}, waiting=${waiting}, skipped=${skipped}`
+  const firstFailed = report.results.find(item => item.status === 'failed')
+  if (firstFailed === undefined) return base
+  const error = clipInline(redactLikelySecrets(firstFailed.error ?? '(no explicit error text)'), 240)
+  return `${base}; firstFailure=${firstFailed.stepId} (${firstFailed.tool ?? firstFailed.kind}): ${error}. Preserve earlier passed steps; repair this stable step instead of restarting the Runbook.`
+}
+
+function clipInline(text: string, maxChars: number): string {
+  const value = plainLine(text)
+  return value.length <= maxChars ? value : `${value.slice(0, Math.max(0, maxChars - 1))}…`
 }
 
 function clip(text: string, maxChars: number): string {

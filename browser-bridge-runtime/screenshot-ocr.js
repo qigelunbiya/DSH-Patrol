@@ -14,7 +14,11 @@ export async function recognizeScreenshotText(dataUrl, options = {}) {
   }
 
   const locale = Intl.DateTimeFormat().resolvedOptions().locale || 'en-US'
-  const result = await recognize(image, OcrAccuracy.Accurate, [locale], options.signal)
+  // Alphanumeric image codes are frequently rendered with Latin glyphs even
+  // on zh-CN Windows hosts. Keep the user's locale first, but always expose an
+  // English recognizer fallback to Windows OCR as well.
+  const languages = [...new Set([locale, 'en-US'])]
+  const result = await recognize(image, OcrAccuracy.Accurate, languages, options.signal)
   const text = normalizeScreenshotOcrText(result?.text)
   return { status: text ? 'recognized' : 'empty', text }
 }

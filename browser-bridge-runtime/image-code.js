@@ -1,26 +1,44 @@
+import { recognizeScreenshotText } from './screenshot-ocr.js'
+
 const IMAGE_CODE_INPUT_HINT = /(captcha|image[-_ ]?code|img[-_ ]?code|verify[-_ ]?code|verification[-_ ]?code|validation[-_ ]?code|check[-_ ]?code|auth[-_ ]?code|\bcode\b|验证码|校验码|图形码)/i
 
 export async function tryFillImageCode(bridge, tabId, options = {}) {
   if (process.platform !== 'win32') return false
 
-  const captured = await bridge.request('captureImageCode', { tabId }, options)
-  if (!captured || typeof captured !== 'object' || captured.ok === false) return false
-  if (typeof captured.dataUrl !== 'string' || typeof captured.inputSelector !== 'string') return false
-  if (!await isExplicitImageCodeInput(bridge, captured.inputSelector, tabId, options)) return false
+  let inputSelector
+  let code = ''
 
-  const image = decodeDataUrl(captured.dataUrl)
-  const systemOcr = await import('@napi-rs/system-ocr')
-  const recognize = systemOcr.recognize ?? systemOcr.default?.recognize
-  const OcrAccuracy = systemOcr.OcrAccuracy ?? systemOcr.default?.OcrAccuracy
-  if (typeof recognize !== 'function' || !OcrAccuracy) throw new Error('Windows system OCR API is unavailable')
+  // Primary path: let the extension identify and crop the small captcha image.
+  // This produces the cleanest OCR input when the image has useful captcha-ish
+  // attributes or a stable selector.
+  try {
+    const captured = await bridge.request('captureImageCode', { tabId }, options)
+    if (captured
+      && typeof captured === 'object'
+      && captured.ok !== false
+      && typeof captured.dataUrl === 'string'
+      && typeof captured.inputSelector === 'string'
+      && await isExplicitImageCodeInput(bridge, captured.inputSelector, tabId, options)) {
+      inputSelector = captured.inputSelector
+      const recognized = await recognizeScreenshotText(captured.dataUrl, { signal: options.signal })
+      code = selectImageCodeCandidate(recognized?.text ?? '')
+    }
+  } catch {
+    // Fall through to the page-level OCR recovery path below. A common legacy
+    // layout has a clearly named #captcha input but a generic adjacent <img>
+    // with no captcha/id/class hint, which defeats strict image discovery.
+  }
 
-  const locale = Intl.DateTimeFormat().resolvedOptions().locale || 'en-US'
-  const result = await recognize(image, OcrAccuracy.Accurate, [locale], options.signal)
-  const code = normalizeImageCodeText(result?.text)
-  if (!isPlausibleImageCode(code)) return false
+  if (!inputSelector || !isPlausibleImageCode(code)) {
+    const fallback = await recognizeImageCodeFromPage(bridge, tabId, options)
+    if (!fallback) return false
+    inputSelector = fallback.inputSelector
+    code = fallback.code
+  }
 
+  if (!inputSelector || !isPlausibleImageCode(code)) return false
   const typed = await bridge.request('type', {
-    selector: captured.inputSelector,
+    selector: inputSelector,
     text: code,
     clear: true,
     tabId,
@@ -29,16 +47,106 @@ export async function tryFillImageCode(bridge, tabId, options = {}) {
 
   try {
     await bridge.request('press', {
-      selector: captured.inputSelector,
+      selector: inputSelector,
       key: 'Enter',
       tabId,
     }, options)
   } catch {
-    // Filling the field is still useful when a page intentionally disables
-    // Enter-to-submit. The existing Patrol login flow may click submit next.
+    // Filling remains useful if this particular form intentionally disables
+    // Enter-to-submit; the recorded Patrol flow can click its Login button.
+  }
+  return true
+}
+
+async function recognizeImageCodeFromPage(bridge, tabId, options) {
+  let snapshot
+  try {
+    snapshot = await bridge.request('snapshot', {
+      maxElements: 300,
+      includeHidden: false,
+      tabId,
+    }, options)
+  } catch {
+    return undefined
   }
 
-  return true
+  const inputSelector = findExplicitImageCodeInputSelector(snapshot)
+  if (!inputSelector) return undefined
+
+  let shot
+  try {
+    shot = await bridge.request('screenshot', { tabId, format: 'png' }, options)
+  } catch {
+    return undefined
+  }
+  if (!shot || typeof shot !== 'object' || shot.ok === false || typeof shot.dataUrl !== 'string') return undefined
+
+  let knownText = snapshotText(snapshot)
+  try {
+    const page = await bridge.request('readPage', { maxChars: 16000, tabId }, options)
+    if (page && typeof page === 'object' && page.ok !== false && typeof page.text === 'string') {
+      knownText += `\n${page.text}`
+    }
+  } catch {
+  }
+
+  let recognized
+  try {
+    recognized = await recognizeScreenshotText(shot.dataUrl, { signal: options.signal })
+  } catch {
+    return undefined
+  }
+  if (recognized?.status !== 'recognized' || !recognized.text) return undefined
+
+  const code = selectImageCodeCandidate(recognized.text, knownText)
+  return isPlausibleImageCode(code) ? { inputSelector, code } : undefined
+}
+
+export function findExplicitImageCodeInputSelector(snapshot) {
+  const elements = Array.isArray(snapshot?.elements) ? snapshot.elements : []
+  const scored = []
+  for (let index = 0; index < elements.length; index += 1) {
+    const element = elements[index]
+    if (!element || typeof element !== 'object' || typeof element.selector !== 'string') continue
+    const hint = [element.selector, element.name, element.text, element.type]
+      .filter(value => typeof value === 'string')
+      .join(' ')
+    if (!IMAGE_CODE_INPUT_HINT.test(hint)) continue
+    const editable = !['password', 'hidden', 'submit', 'button', 'checkbox', 'radio', 'file'].includes(String(element.type || '').toLowerCase())
+    if (!editable) continue
+    let score = 10
+    if (/captcha|验证码/i.test(String(element.selector))) score += 8
+    if (/captcha|验证码/i.test(String(element.name || ''))) score += 5
+    if (String(element.type || '').toLowerCase() === 'text') score += 2
+    scored.push({ selector: element.selector, score, index })
+  }
+  scored.sort((left, right) => right.score - left.score || left.index - right.index)
+  return scored[0]?.selector
+}
+
+export function selectImageCodeCandidate(value, knownText = '') {
+  const rawLines = String(value || '')
+    .replace(/\u0000/g, ' ')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+  const known = cleanupComparable(knownText)
+  const candidates = []
+
+  for (let index = 0; index < rawLines.length; index += 1) {
+    const raw = rawLines[index]
+    const compact = cleanupLine(raw)
+    if (compact.length < 2 || compact.length > 16) continue
+    if (!/[\p{L}\p{N}]/u.test(compact)) continue
+    const comparable = cleanupComparable(compact)
+    if (comparable.length >= 3 && known.includes(comparable)) continue
+    candidates.push({ value: compact, score: scoreCandidate(compact, raw), index })
+  }
+
+  candidates.sort((left, right) => right.score - left.score || left.index - right.index)
+  if (candidates[0]) return candidates[0].value
+
+  return normalizeImageCodeText(value)
 }
 
 export function normalizeImageCodeText(value) {
@@ -46,12 +154,10 @@ export function normalizeImageCodeText(value) {
     .split(/\r?\n/)
     .map(line => cleanupLine(line))
     .filter(Boolean)
-
   const plausible = lines
     .filter(line => line.length >= 2 && line.length <= 16)
-    .sort((left, right) => scoreLine(right) - scoreLine(left))
+    .sort((left, right) => scoreCandidate(right, right) - scoreCandidate(left, left))
   if (plausible[0]) return plausible[0]
-
   const compact = cleanupLine(String(value || '').replace(/\s+/g, ''))
   return compact.length >= 2 && compact.length <= 16 ? compact : ''
 }
@@ -67,39 +173,59 @@ async function isExplicitImageCodeInput(bridge, selector, tabId, options) {
   } catch {
     return false
   }
+  return findExplicitImageCodeInputSelector(snapshot) === selector
+    || Array.isArray(snapshot?.elements) && snapshot.elements.some(element => {
+      if (!element || typeof element !== 'object' || element.selector !== selector) return false
+      const hint = [element.selector, element.name, element.text, element.type]
+        .filter(value => typeof value === 'string')
+        .join(' ')
+      return IMAGE_CODE_INPUT_HINT.test(hint)
+    })
+}
+
+function snapshotText(snapshot) {
   const elements = Array.isArray(snapshot?.elements) ? snapshot.elements : []
-  const target = elements.find(element => element && typeof element === 'object' && element.selector === selector)
-  if (!target) return false
-  const hint = [target.selector, target.name, target.text, target.type]
+  return elements.map(element => [element?.text, element?.name, element?.value]
     .filter(value => typeof value === 'string')
-    .join(' ')
-  return IMAGE_CODE_INPUT_HINT.test(hint)
+    .join(' '))
+    .filter(Boolean)
+    .join('\n')
 }
 
 function cleanupLine(value) {
   return String(value || '')
     .replace(/\s+/g, '')
-    .replace(/^["'`“”‘’.,，。:：;；|]+|["'`“”‘’.,，。:：;；|]+$/g, '')
+    .replace(/^["'`“”‘’.,，。:：;；|_\-]+|["'`“”‘’.,，。:：;；|_\-]+$/g, '')
 }
 
-function scoreLine(value) {
-  let alphaNumeric = 0
-  let symbols = 0
-  for (const char of value) {
-    if (/^[\p{L}\p{N}]$/u.test(char)) alphaNumeric += 1
-    else symbols += 1
-  }
-  return alphaNumeric * 4 - symbols * 2 - Math.abs(value.length - 5)
+function cleanupComparable(value) {
+  return String(value || '')
+    .normalize('NFKC')
+    .replace(/[^\p{L}\p{N}]/gu, '')
+    .toLocaleLowerCase()
+}
+
+function scoreCandidate(value, raw) {
+  let score = 0
+  const asciiAlpha = (value.match(/[A-Za-z]/g) || []).length
+  const digits = (value.match(/[0-9]/g) || []).length
+  const unicodeAlphaNumeric = (value.match(/[\p{L}\p{N}]/gu) || []).length
+  const symbols = Math.max(0, value.length - unicodeAlphaNumeric)
+
+  score += unicodeAlphaNumeric * 4
+  score -= symbols * 5
+  score -= Math.abs(value.length - 5) * 3
+  if (value.length >= 4 && value.length <= 8) score += 14
+  if (asciiAlpha > 0) score += 8
+  if (digits > 0 && asciiAlpha > 0) score += 10
+  if (asciiAlpha > 0 && value.replace(/[^A-Za-z]/g, '') === value.replace(/[^A-Za-z]/g, '').toUpperCase()) score += 5
+  if (/^(?:[A-Za-z0-9]\s+){2,}[A-Za-z0-9]$/.test(String(raw).trim())) score += 12
+  if (/^(?:login|password|captcha|username|verify|code|登录|密码|验证码)$/i.test(value)) score -= 40
+  return score
 }
 
 function isPlausibleImageCode(value) {
   return value.length >= 2
     && value.length <= 16
     && /[\p{L}\p{N}]/u.test(value)
-}
-
-function decodeDataUrl(value) {
-  const match = /^data:image\/[a-z0-9.+-]+;base64,([A-Za-z0-9+/=]+)$/i.exec(value)
-  if (!match) throw new Error('image-code capture did not return a base64 image')
-  return Buffer.from(match[1], 'base64')
 }
