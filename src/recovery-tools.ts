@@ -14,7 +14,7 @@ const TEXT_OUTPUT = {
 export const PATROL_TARGETED_RECOVERY_PROMPT = `Targeted failed-step recovery:
 - When patrol_run, patrol_validate, or patrol_resume_validation fails, do NOT restart teaching from navigation and do NOT delete/recreate unrelated successful steps.
 - Call patrol_last_failure first. It returns the exact stable stepId, tool, and error from the latest run.
-- Repair only that stable step: patrol_reteach_text for browser_type, patrol_reteach_credential for browser_type_credential, patrol_reteach_checkpoint for a checkpoint, or patrol_reteach_browser_step for other browser steps.
+- Repair only that stable step: patrol_reteach_text for browser_type, patrol_reteach_credential for browser_type_credential, patrol_reteach_transient for browser_type_transient_ref, patrol_reteach_checkpoint for a checkpoint, or patrol_reteach_browser_step for other browser steps.
 - A failed step does not invalidate earlier successful steps. Preserve the Runbook, its step ids, conditions, screenshots, and page-read steps.
 - After the one affected step is repaired, validate once end-to-end and confirm the edit. Do not enter a delete/re-add/revalidate loop.`
 
@@ -82,6 +82,9 @@ function recoveryInstruction(failed: StepRunResult): string {
   }
   if (failed.tool === 'browser_type_credential') {
     return `Recovery: preserve every other step. Call patrol_begin_edit, then patrol_reteach_credential for stepId=${failed.stepId}; validate once after that single repair.`
+  }
+  if (failed.tool === 'browser_type_transient_ref') {
+    return `Recovery: preserve every other step. The current-session sensitive reference probably expired. Call patrol_begin_edit, then patrol_reteach_transient for stepId=${failed.stepId} with the user-supplied value; validate once after that single repair.`
   }
   return `Recovery: preserve every other step. Call patrol_begin_edit, then patrol_reteach_browser_step for stepId=${failed.stepId}; validate once after that single repair. Do not delete and rebuild the Runbook.`
 }
