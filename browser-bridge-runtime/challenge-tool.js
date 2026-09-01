@@ -188,11 +188,23 @@ export function ambiguousDemoFallback(classified, demo) {
   }
 }
 
+export function assertImageCodeAutoSolved(classified, automationRan, platform = process.platform, detail = '') {
+  if (classified?.kind !== 'captcha' || classified?.subtype !== 'image-code') return false
+  if (platform !== 'win32') {
+    throw new Error('DSH Patrol image-code automation failed: conventional image-text CAPTCHA requires automatic local recognition, manual handoff is disabled, and this runtime is not Windows.')
+  }
+  if (!automationRan) {
+    const suffix = String(detail || '').trim() ? ` Detail: ${compact(detail, 180)}` : ''
+    throw new Error(`DSH Patrol image-code automation failed: local ddddocr/Windows OCR could not confidently recognize and fill the CAPTCHA. Manual handoff is disabled for image-code; the patrol must fail instead of asking the user to type this CAPTCHA.${suffix}`)
+  }
+  return true
+}
+
 export function registerChallengeTool(ctx, bridge, config = {}) {
   const timeoutMs = config.commandTimeoutMs ?? 60000
   const definition = defineTool({
     name: 'browser_detect_auth_challenge',
-    description: 'Detect login verification and automate supported local flows before handoff. Conventional image-text CAPTCHA is attempted with Windows OCR first. OTP, device approval, rotate/unsupported challenges, and third-party reCAPTCHA/hCaptcha/Turnstile/Arkose-style widgets remain human handoffs.',
+    description: 'Detect login verification and automate supported local flows. Conventional image-text CAPTCHA is mandatory automatic local recognition/fill; if that solver fails the detector fails and never falls back to a human checkpoint. OTP, device approval, rotate/unsupported challenges, and third-party reCAPTCHA/hCaptcha/Turnstile/Arkose-style widgets remain human handoffs.',
     parameters: { tabId: optInt },
     output: {
       schema: {
@@ -224,27 +236,29 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
       let strategy = strategyForChallenge(initiallyObserved.kind, initiallyObserved.subtype)
       let autoFilled = false
       let imageAutomationRan = false
+      const imageCodeObserved = classified.kind === 'captcha' && classified.subtype === 'image-code'
 
-      if (classified.kind === 'captcha'
-        && classified.subtype === 'image-code'
-        && process.platform === 'win32') {
-        try {
-          imageAutomationRan = await tryFillImageCode(bridge, args.tabId, options)
-        } catch {
-          imageAutomationRan = false
+      if (imageCodeObserved) {
+        let imageAutomationError = ''
+        if (process.platform === 'win32') {
+          try {
+            imageAutomationRan = await tryFillImageCode(bridge, args.tabId, options)
+          } catch (error) {
+            imageAutomationRan = false
+            imageAutomationError = error instanceof Error ? error.message : String(error)
+          }
         }
-        if (imageAutomationRan) {
-          // Recognition/fill is the whole responsibility of this solver. The
-          // observed Runbook button remains responsible for submitting the form.
-          // Treat the CAPTCHA as automation-completed so the Agent does not add
-          // an unnecessary human checkpoint merely because the image remains in
-          // the DOM until the subsequent Login click.
-          autoFilled = true
-          classified = emptyClassification()
-        }
+        assertImageCodeAutoSolved(classified, imageAutomationRan, process.platform, imageAutomationError)
+
+        // Recognition/fill is the whole responsibility of this solver. The
+        // observed Runbook button remains responsible for submitting the form.
+        // Once the field was filled, the CAPTCHA is complete from Patrol's
+        // perspective even if the image remains visible until submit.
+        autoFilled = true
+        classified = emptyClassification()
       }
 
-      if (!imageAutomationRan) {
+      if (!imageCodeObserved) {
         let demo = { attempted: false, visibleKinds: [] }
         try {
           demo = await trySolveOwnedSiteChallenge(bridge, args.tabId, classified, options)
