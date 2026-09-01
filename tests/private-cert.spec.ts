@@ -24,6 +24,7 @@ describe('private certificate browser policy', () => {
 
   it('installs a browser-level Security handler before page DOM access is needed', async () => {
     const listeners = new Map()
+    const browserListeners = new Map()
     const sends = []
     const session = {
       async send(method, params) {
@@ -35,7 +36,7 @@ describe('private certificate browser policy', () => {
     }
     const browser = {
       async createBrowserCDPSession() { return session },
-      on() {},
+      on(name, handler) { browserListeners.set(name, handler) },
     }
 
     await expect(installPrivateCertificateErrorHandler(browser, { info() {}, warn() {} })).resolves.toBe(true)
@@ -60,6 +61,30 @@ describe('private certificate browser policy', () => {
       method: 'Security.handleCertificateError',
       params: { eventId: 8, action: 'cancel' },
     })
+
+    browserListeners.get('disconnected')?.()
+    await Promise.resolve()
+  })
+
+  it('swallows Puppeteer already-detached rejection during browser shutdown', async () => {
+    const browserListeners = new Map()
+    const warnings = []
+    const session = {
+      async send() {},
+      on() {},
+      off() {},
+      detach() { return Promise.reject(new Error('Session already detached. Most likely the browser has been closed.')) },
+    }
+    const browser = {
+      async createBrowserCDPSession() { return session },
+      on(name, handler) { browserListeners.set(name, handler) },
+    }
+
+    await installPrivateCertificateErrorHandler(browser, { info() {}, warn(message) { warnings.push(message) } })
+    browserListeners.get('disconnected')?.()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(warnings).toEqual([])
   })
 
   it('falls back cleanly when a Chromium build exposes no browser CDP session', async () => {
