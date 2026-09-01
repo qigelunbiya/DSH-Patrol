@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -92,6 +92,75 @@ describe('managed Patrol browser', () => {
 
     await controller.dispose()
     expect(closes).toBe(1)
+  })
+
+  it('reloads an older installed worker when bundled extension files have a newer manifest revision', async () => {
+    const { extensionPath, profilePath, statePath } = fixtureRoot('dsh-patrol-managed-revision-')
+    writeFileSync(join(extensionPath, 'manifest.json'), JSON.stringify({ manifest_version: 3, version: '0.2.1' }))
+    const bridge = { connected: false }
+    const extensionId = 'abcdefghijklmnopabcdefghijklmnop'
+    let reloads = 0
+    let currentWorker
+    const state = {}
+
+    const newWorker = {
+      async evaluate(fn, url) {
+        const source = String(fn)
+        if (source.includes('getManifest')) return '0.2.1'
+        if (url !== undefined) {
+          state.configuredUrl = url
+          bridge.connected = true
+        }
+      },
+    }
+    const oldWorker = {
+      async evaluate(fn) {
+        const source = String(fn)
+        if (source.includes('getManifest')) return '0.2.0'
+        if (source.includes('runtime.reload')) {
+          reloads += 1
+          currentWorker = newWorker
+          return undefined
+        }
+      },
+    }
+    currentWorker = oldWorker
+    const extension = {
+      path: extensionPath,
+      workers: async () => [currentWorker],
+    }
+    const browser = {
+      connected: true,
+      on() {},
+      process: () => ({ pid: 3333 }),
+      async extensions() {
+        return new Map([[extensionId, extension]])
+      },
+      async installExtension() {
+        throw new Error('existing extension must be refreshed, not reinstalled')
+      },
+      async close() { this.connected = false },
+    }
+
+    const controller = createManagedBrowserController({
+      bridge,
+      extensionPath,
+      profilePath,
+      statePath,
+      browserExecutable: process.execPath,
+      bridgeUrlHint: () => 'ws://127.0.0.1:3080/patrol-browser-bridge',
+      launchBrowser: async () => browser,
+      logger: { info() {}, warn() {} },
+      connectTimeoutMs: 1000,
+      startTimeoutMs: 1000,
+    })
+
+    const result = await controller.ensureStarted()
+    expect(result.connected).toBe(true)
+    expect(result.extensionLoadMode).toBe('runtime')
+    expect(reloads).toBe(1)
+    expect(state.configuredUrl).toBe('ws://127.0.0.1:3080/patrol-browser-bridge')
+    await controller.dispose()
   })
 
   it('falls back automatically when Chromium lacks the runtime extension API', async () => {
