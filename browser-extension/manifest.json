@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "DSH Patrol Browser Bridge",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Hardened browser bridge for the DSH Patrol Agent Preset.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnFtLea5LWeVkuoUcnUjzNvlV3dZQfvRp0mAi0E9KwMFbjlrVVnnHjVmsDu2KN1OZXVTJpklNcafldjeOcbR9nv87iVVfON69Q0fMrd7h6AkdCimgyoBhT2+JIkMELWOag0c/u7hxFtlW8+Wzruf1IXRSWIhclc6VLdJzgtIS0gHIxm1O0AZVCq5I38s6MmhwH89MXyPsBqwhdpHIy98NH8xGshEr+sudPEw5j+jPe+fR1Z5z90Zo84Ilw7u4OK5WniOymeXittwIHg9aZASHgnJRKFeXQ06vLELkGztdo+EhD/D3Q3DH8FbKzbiKSLLzXBDugqFO/W/7TKj0KbYDbQIDAQAB",
   "permissions": ["tabs", "activeTab", "storage"],
