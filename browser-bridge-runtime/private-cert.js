@@ -40,7 +40,26 @@ export async function installPrivateCertificateErrorHandler(browser, logger = co
   session.on?.('Security.certificateError', onCertificateError)
   browser.on?.('disconnected', () => {
     try { session.off?.('Security.certificateError', onCertificateError) } catch {}
-    try { void session.detach?.() } catch {}
+    // Puppeteer may already detach this browser-level session before emitting
+    // Browser.disconnected. detach() then returns a rejected Promise rather
+    // than throwing synchronously. Swallow that expected shutdown race so
+    // Ctrl+C / closing the managed browser never becomes a fatal load error.
+    try {
+      const detached = session.detach?.()
+      if (detached && typeof detached.catch === 'function') {
+        void detached.catch(error => {
+          const message = errorMessage(error)
+          if (!/already detached|session.*closed|target closed/i.test(message)) {
+            logger.warn?.(`[dsh-patrol/managed-browser] CDP session detach failed during shutdown: ${message}`)
+          }
+        })
+      }
+    } catch (error) {
+      const message = errorMessage(error)
+      if (!/already detached|session.*closed|target closed/i.test(message)) {
+        logger.warn?.(`[dsh-patrol/managed-browser] CDP session detach failed during shutdown: ${message}`)
+      }
+    }
   })
   return true
 }

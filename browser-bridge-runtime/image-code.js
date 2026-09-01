@@ -1,4 +1,5 @@
 import { recognizeScreenshotText } from './screenshot-ocr.js'
+import { recognizeImageCodeWithDdddocr } from './image-code-ddddocr.js'
 
 const IMAGE_CODE_INPUT_HINT = /(captcha|image[-_ ]?code|img[-_ ]?code|verify[-_ ]?code|verification[-_ ]?code|validation[-_ ]?code|check[-_ ]?code|auth[-_ ]?code|\bcode\b|验证码|校验码|图形码)/i
 
@@ -9,8 +10,9 @@ export async function tryFillImageCode(bridge, tabId, options = {}) {
   let code = ''
 
   // Primary path: let the extension identify and crop the small captcha image.
-  // This produces the cleanest OCR input when the image has useful captcha-ish
-  // attributes or a stable selector.
+  // Prefer ddddocr on that clean crop because it is much better than general
+  // Windows OCR on distorted 4-6 character legacy image codes. If the optional
+  // ddddocr runtime is unavailable or uncertain, fall back to system OCR.
   try {
     const captured = await bridge.request('captureImageCode', { tabId }, options)
     if (captured
@@ -20,13 +22,25 @@ export async function tryFillImageCode(bridge, tabId, options = {}) {
       && typeof captured.inputSelector === 'string'
       && await isExplicitImageCodeInput(bridge, captured.inputSelector, tabId, options)) {
       inputSelector = captured.inputSelector
-      const recognized = await recognizeScreenshotText(captured.dataUrl, { signal: options.signal })
-      code = selectImageCodeCandidate(recognized?.text ?? '')
+
+      try {
+        const ddddocr = await recognizeImageCodeWithDdddocr(captured.dataUrl, options)
+        if (ddddocr?.ok === true && typeof ddddocr.text === 'string') {
+          code = normalizeImageCodeText(ddddocr.text)
+        }
+      } catch {
+      }
+
+      if (!isPlausibleImageCode(code)) {
+        const recognized = await recognizeScreenshotText(captured.dataUrl, { signal: options.signal })
+        code = selectImageCodeCandidate(recognized?.text ?? '')
+      }
     }
   } catch {
     // Fall through to the page-level OCR recovery path below. A common legacy
     // layout has a clearly named #captcha input but a generic adjacent <img>
-    // with no captcha/id/class hint, which defeats strict image discovery.
+    // with no captcha/id/class hint. content.js now finds that image by spatial
+    // proximity, but this whole-page recovery remains as a final fallback.
   }
 
   if (!inputSelector || !isPlausibleImageCode(code)) {

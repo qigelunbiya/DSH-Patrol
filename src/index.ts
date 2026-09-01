@@ -5,6 +5,7 @@ import type {} from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
 import { registerPatrolActionTools } from './action-tools.js'
+import { PATROL_BEHAVIOR_PROMPT } from './behavior-prompt.js'
 import { registerPatrolCreationTools } from './creation-tools.js'
 import { registerPatrolCredentialTools } from './credential-tools.js'
 import { registerPatrolEditTools } from './edit-tools.js'
@@ -29,6 +30,7 @@ export * from './security.js'
 export * from './scheduler.js'
 export * from './edit-tools.js'
 export * from './action-tools.js'
+export * from './behavior-prompt.js'
 export * from './creation-tools.js'
 export * from './credential-tools.js'
 export * from './excel-tools.js'
@@ -184,6 +186,14 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       order: 137,
       text: PATROL_MANUAL_VERIFICATION_PROMPT,
     }), 'dsh-patrol: automation-first verification prompt')
+    // Keep this last. It intentionally resolves legacy prompt conflicts (for
+    // example credential-only vs transient input and screenshot-suppressed vs
+    // dedicated image-code automation) and fixes user-facing language.
+    ctx.effect(() => systemPrompt.section({
+      name: 'agent:dsh-patrol-current-behavior',
+      order: 138,
+      text: PATROL_BEHAVIOR_PROMPT,
+    }), 'dsh-patrol: current behavior and Simplified Chinese prompt')
   }
 
   ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; scheduler=enabled; credential helper=optional; transient sensitive replay=enabled; automation-first verification=enabled; secret-safe creation=enabled; flat action tools=enabled; OpenXML Excel v5 tools=enabled; recovery circuit breaker=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled`)

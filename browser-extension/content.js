@@ -79,10 +79,15 @@ function challengeSignals() {
 }
 
 async function imageCodeTarget(args) {
-  const image = args.imageSelector ? requiredElement(args.imageSelector) : pickImageCodeImage()
+  // Legacy systems often give the input a very explicit id such as #captcha
+  // while the adjacent captcha image is just a generic <img>. Find the input
+  // first and use its form/spatial relationship to locate the image instead of
+  // requiring captcha-ish attributes on the image itself.
+  const hintedInput = args.inputSelector ? requiredElement(args.inputSelector) : pickExplicitImageCodeInput()
+  const image = args.imageSelector ? requiredElement(args.imageSelector) : pickImageCodeImage(hintedInput)
   if (!image) throw new Error('no conventional image-code image found')
 
-  const input = args.inputSelector ? requiredElement(args.inputSelector) : pickImageCodeInput(image)
+  const input = hintedInput || pickImageCodeInput(image)
   if (!input) throw new Error('no conventional image-code input found')
   if (!isEditableCodeInput(input)) throw new Error('image-code target is not an editable input')
 
@@ -103,14 +108,45 @@ async function imageCodeTarget(args) {
   }
 }
 
-function pickImageCodeImage() {
-  const candidates = [...document.querySelectorAll('img,canvas,svg')].filter(isVisible)
+function pickExplicitImageCodeInput() {
+  const candidates = [...document.querySelectorAll('input,textarea')]
+    .filter(element => isVisible(element) && isEditableCodeInput(element))
   let best
   for (let index = 0; index < candidates.length; index += 1) {
     const element = candidates[index]
-    const score = imageCodeImageScore(element)
-    if (score < 8) continue
+    const attrs = imageCodeAttributes(element)
+    if (!IMAGE_CODE_HINT.test(attrs)) continue
+    let score = 12
+    const maxLength = element instanceof HTMLInputElement ? element.maxLength : -1
+    if (maxLength >= 2 && maxLength <= 12) score += 4
+    if (/captcha|验证码/i.test(`${element.id || ''} ${element.getAttribute('name') || ''}`)) score += 8
     if (!best || score > best.score) best = { element, score, index }
+  }
+  return best?.element
+}
+
+function pickImageCodeImage(input) {
+  const candidates = [...document.querySelectorAll('img,canvas,svg')].filter(isVisible)
+  const inputRect = input?.getBoundingClientRect?.()
+  const inputForm = input?.closest?.('form') || null
+  let best
+  for (let index = 0; index < candidates.length; index += 1) {
+    const element = candidates[index]
+    let score = imageCodeImageScore(element)
+    if (inputRect) {
+      const rect = element.getBoundingClientRect()
+      const verticalDistance = Math.abs((rect.top + rect.height / 2) - (inputRect.top + inputRect.height / 2))
+      const horizontalDistance = Math.abs((rect.left + rect.width / 2) - (inputRect.left + inputRect.width / 2))
+      if (inputForm && element.closest?.('form') === inputForm) score += 7
+      if (verticalDistance <= 70) score += 9
+      else if (verticalDistance <= 180) score += 4
+      if (horizontalDistance <= 260) score += 6
+      else if (horizontalDistance <= 600) score += 2
+      if (rect.left >= inputRect.left - 40) score += 2
+    }
+    const minimum = inputRect ? 9 : 8
+    if (score < minimum) continue
+    if (!best || score > best.score || (score === best.score && index < best.index)) best = { element, score, index }
   }
   return best?.element
 }

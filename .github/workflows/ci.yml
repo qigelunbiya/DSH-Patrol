@@ -59,6 +59,7 @@ jobs:
           grep -qx 'package/browser-bridge-runtime/tools-plugin.js' .pack-check/contents.txt
           grep -qx 'package/browser-bridge-runtime/captcha-demo.js' .pack-check/contents.txt
           grep -qx 'package/browser-bridge-runtime/captcha-demo-solver.py' .pack-check/contents.txt
+          grep -qx 'package/browser-bridge-runtime/image-code-ddddocr.js' .pack-check/contents.txt
           grep -qx 'package/browser-bridge-runtime/transient-tool.js' .pack-check/contents.txt
           grep -qx 'package/excel-runtime/openxml_bridge.py' .pack-check/contents.txt
           grep -qx 'package/browser-extension/manifest.json' .pack-check/contents.txt
