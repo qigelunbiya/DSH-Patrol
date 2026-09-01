@@ -1,6 +1,6 @@
 {
   "name": "dsh-patrol",
-  "version": "0.2.0-alpha.0",
+  "version": "0.2.0-alpha.1",
   "description": "Dedicated browser inspection Agent Preset and deterministic Runbook runner for DeepSeek Harness",
   "license": "MIT",
   "type": "module",
