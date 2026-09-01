@@ -30,6 +30,29 @@ describe('Patrol manual verification guard', () => {
     })).toMatch(/直接失败/)
   })
 
+  it('blocks model-visible input tools from copying a screenshot captcha into #captcha', () => {
+    const guard = createManualVerificationGuard()
+    for (const name of ['patrol_type_transient', 'patrol_type_text', 'patrol_type_credential', 'patrol_reteach_transient']) {
+      expect(guard({
+        name,
+        arguments: {
+          inspectionId: 'demo',
+          stepName: '填写图片验证码',
+          selector: '#captcha',
+          text: 'SHOULD-NOT-BE-INSPECTED',
+        },
+      })).toMatch(/禁止通过通用输入工具手工填写/)
+    }
+  })
+
+  it('blocks model-driven captcha refresh clicks after automatic recognition failure', () => {
+    const guard = createManualVerificationGuard()
+    expect(guard({
+      name: 'patrol_click',
+      arguments: { inspectionId: 'demo', stepName: '刷新验证码图片', selector: '#captcha-image' },
+    })).toMatch(/禁止模型.*刷新验证码/)
+  })
+
   it('allows genuinely human-only OTP and device-approval checkpoints immediately', () => {
     const guard = createManualVerificationGuard()
     expect(guard({
@@ -39,6 +62,14 @@ describe('Patrol manual verification guard', () => {
     expect(guard({
       name: 'patrol_add_checkpoint',
       arguments: { inspectionId: 'approval', stepName: 'approve', reason: 'approval', prompt: '请在设备上确认登录' },
+    })).toBeUndefined()
+  })
+
+  it('does not confuse a true OTP field with an ordinary image-code input', () => {
+    const guard = createManualVerificationGuard()
+    expect(guard({
+      name: 'patrol_type_transient',
+      arguments: { inspectionId: 'otp', stepName: '填写 OTP 动态码', selector: '#captcha', text: '123456' },
     })).toBeUndefined()
   })
 })
