@@ -38,6 +38,7 @@ export function registerPatrolCredentialTools(ctx: Context, store: PatrolStore):
         'Run this once in PowerShell:',
         `& '${helperPath.replace(/'/g, "''")}' -Name '${args.credentialRef}'`,
         'The helper prompts for the secret with hidden input and stores it in the Harness credential store, not in the Patrol workspace or Runbook.',
+        'Do not create a manual-login checkpoint just because this optional credential reference is missing.',
         'If the user already supplied the password in chat, do not stop here: use patrol_type_transient instead, which stores only encrypted ciphertext plus an opaque Runbook reference.',
       ].join('\n')
     },
