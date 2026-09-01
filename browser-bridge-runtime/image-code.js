@@ -45,16 +45,10 @@ export async function tryFillImageCode(bridge, tabId, options = {}) {
   }, options)
   if (!typed || typeof typed !== 'object' || typed.ok === false) return false
 
-  try {
-    await bridge.request('press', {
-      selector: inputSelector,
-      key: 'Enter',
-      tabId,
-    }, options)
-  } catch {
-    // Filling remains useful if this particular form intentionally disables
-    // Enter-to-submit; the recorded Patrol flow can click its Login button.
-  }
+  // Do not press Enter here. Image-code solving owns only recognition/fill;
+  // the deterministic Runbook keeps responsibility for the observed Login/
+  // Submit button. This prevents OCR from unexpectedly submitting a partially
+  // taught form or double-submitting before the recorded click step.
   return true
 }
 
