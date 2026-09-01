@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createManualVerificationGuard } from '../src/manual-verification-guard.js'
 
 describe('Patrol manual verification guard', () => {
-  it('blocks an ordinary image-code checkpoint until the dedicated solver was attempted', () => {
+  it('always blocks ordinary image-code checkpoints, even after an automatic attempt', () => {
     const guard = createManualVerificationGuard()
     expect(guard({
       name: 'patrol_add_checkpoint',
@@ -12,7 +12,7 @@ describe('Patrol manual verification guard', () => {
         reason: 'other',
         prompt: '请手动填写图片验证码',
       },
-    })).toMatch(/patrol_detect_auth_challenge/)
+    })).toMatch(/禁止人工 checkpoint/)
 
     expect(guard({
       name: 'patrol_detect_auth_challenge',
@@ -25,9 +25,9 @@ describe('Patrol manual verification guard', () => {
         inspectionId: 'demo',
         stepName: 'captcha checkpoint',
         reason: 'other',
-        prompt: 'OCR 尝试失败后请手动填写图片验证码',
+        prompt: 'OCR 自动识别失败后请手动填写图片验证码',
       },
-    })).toBeUndefined()
+    })).toMatch(/直接失败/)
   })
 
   it('allows genuinely human-only OTP and device-approval checkpoints immediately', () => {
