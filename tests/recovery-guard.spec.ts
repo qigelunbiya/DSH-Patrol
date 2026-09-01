@@ -40,8 +40,6 @@ describe('Patrol recovery circuit breaker', () => {
     }))
     expect(outputs.some(value => typeof value === 'string' && /too many diagnostic actions|already been attempted twice/.test(value))).toBe(true)
 
-    // This matches the recovery instruction emitted by the breaker: doctor is
-    // still allowed once even though the general diagnostic budget is spent.
     expect(guard({ name: 'patrol_doctor', arguments: { inspectionId: 'demo' } })).toBeUndefined()
     expect(guard({ name: 'patrol_doctor', arguments: { inspectionId: 'demo' } })).toMatch(/already been used once/)
   })
@@ -54,5 +52,11 @@ describe('Patrol recovery circuit breaker', () => {
     expect(guard({ name: 'patrol_click', arguments: { inspectionId: 'demo', selector: '#login' } })).toBeUndefined()
     expect(snapshot()).toBeUndefined()
     expect(snapshot()).toBeUndefined()
+  })
+
+  it('allows at most one destructive step deletion in one stalled recovery episode', () => {
+    const guard = createPatrolRecoveryGuard()
+    expect(guard({ name: 'patrol_delete_step', arguments: { inspectionId: 'demo', stepId: 'step-004' } })).toBeUndefined()
+    expect(guard({ name: 'patrol_delete_step', arguments: { inspectionId: 'demo', stepId: 'step-005' } })).toMatch(/one Runbook step has already been deleted/)
   })
 })
