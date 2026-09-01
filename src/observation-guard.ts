@@ -92,7 +92,7 @@ export function createPatrolObservationGate(): PatrolObservationGate {
       if (!inspectionId) return undefined
 
       const state = states.get(inspectionId)
-      const sameTurn = state !== undefined && state.rootCallId === callKey(execution?.rootCallId)
+      const sameTurn = state !== undefined && belongsToCurrentHarnessTurn(state, execution)
       const fresh = sameTurn && Date.now() - state.observedAt <= OBSERVATION_TTL_MS
 
       if (!fresh) {
@@ -118,6 +118,52 @@ export function createPatrolObservationGate(): PatrolObservationGate {
       return undefined
     },
   }
+}
+
+export function belongsToCurrentHarnessTurn(state: Pick<ObservationState, 'rootCallId' | 'observedAt'>, execution: any): boolean {
+  const events = execution?.agent?.session?.events
+  if (Array.isArray(events)) {
+    const currentTurn = latestTurnNumber(events)
+    const observedTurn = turnForRootCall(events, state.rootCallId)
+    if (currentTurn !== undefined && observedTurn !== undefined) return currentTurn === observedTurn
+
+    const currentTurnStartedAt = latestTurnStartedAt(events)
+    if (currentTurnStartedAt !== undefined) return currentTurnStartedAt <= state.observedAt
+  }
+
+  return state.rootCallId === callKey(execution?.rootCallId)
+}
+
+function latestTurnNumber(events: readonly unknown[]): number | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (!isRecord(event) || event.type !== 'turn/start' || !isRecord(event.data)) continue
+    const turn = event.data.turn
+    if (typeof turn === 'number') return turn
+  }
+  return undefined
+}
+
+function latestTurnStartedAt(events: readonly unknown[]): number | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (!isRecord(event) || event.type !== 'turn/start') continue
+    const time = event.time
+    if (typeof time === 'number') return time
+  }
+  return undefined
+}
+
+function turnForRootCall(events: readonly unknown[], rootCallId: string): number | undefined {
+  if (rootCallId === '(no-root-call)') return undefined
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (!isRecord(event) || event.type !== 'tool/call' || !isRecord(event.data)) continue
+    if (callKey(event.data.callId) !== rootCallId) continue
+    const turn = event.data.turn
+    if (typeof turn === 'number') return turn
+  }
+  return undefined
 }
 
 function bootstrapGateError(kind: PatrolBootstrapObservationKind | undefined): string {
