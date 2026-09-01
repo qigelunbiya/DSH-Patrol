@@ -62,10 +62,6 @@ async function visualImageCodeTarget(args) {
     })
   }
 
-  // Last-resort visual fallback: if semantic DOM discovery cannot identify the
-  // captcha media element, crop the visible row immediately beside the explicit
-  // captcha input. This converts "I can see it but snapshot cannot" pages into
-  // a deterministic screenshot region that ddddocr can inspect.
   const rect = neighborCaptureRect(input)
   assertVisibleRect(rect, viewport, 'image-code neighbor region')
   return {
@@ -79,9 +75,10 @@ async function visualImageCodeTarget(args) {
 }
 
 function visualCandidates(root) {
-  const media = [...root.querySelectorAll('img,canvas,svg')]
+  const queryRoot = root && typeof root.querySelectorAll === 'function' ? root : document
+  const media = [...queryRoot.querySelectorAll('img,canvas,svg')]
   const backgrounds = []
-  const all = [...root.querySelectorAll('*')].slice(0, 1800)
+  const all = [...queryRoot.querySelectorAll('*')].slice(0, 1800)
   for (const element of all) {
     if (media.includes(element) || !visualIsVisible(element)) continue
     const background = getComputedStyle(element).backgroundImage
@@ -122,19 +119,27 @@ function pickVisualImageCodeImage(input) {
 
     const attrs = visualAttributes(element)
     const parentAttrs = visualAttributes(element.parentElement)
-    let score = VISUAL_IMAGE_CODE_HINT.test(`${attrs} ${parentAttrs}`) ? 12 : 0
-    if (rect.width >= 35 && rect.width <= 500 && rect.height >= 18 && rect.height <= 220) score += 5
-    if (inputForm && element.closest?.('form') === inputForm) score += 10
-
+    const semanticHint = VISUAL_IMAGE_CODE_HINT.test(`${attrs} ${parentAttrs}`)
+    const sameForm = !!inputForm && element.closest?.('form') === inputForm
+    const nearAncestor = sharesNearAncestor(element, input)
     const verticalDistance = Math.abs(centerY(rect) - centerY(inputRect))
     const horizontalDistance = Math.abs(centerX(rect) - centerX(inputRect))
+
+    // A generic brand/logo image should never win merely because it has a
+    // captcha-like size. Without semantic evidence, require strong row/form/
+    // ancestor proximity to the explicit captcha input.
+    if (!semanticHint && verticalDistance > 140 && !sameForm && !nearAncestor) continue
+
+    let score = semanticHint ? 12 : 0
+    if (rect.width >= 35 && rect.width <= 500 && rect.height >= 18 && rect.height <= 220) score += 5
+    if (sameForm) score += 10
     if (verticalDistance <= 28) score += 15
     else if (verticalDistance <= 70) score += 10
     else if (verticalDistance <= 160) score += 3
     if (horizontalDistance <= 260) score += 9
     else if (horizontalDistance <= 600) score += 2
     if (rect.left >= inputRect.right - 8) score += 5
-    if (sharesNearAncestor(element, input)) score += 8
+    if (nearAncestor) score += 8
     if (directVisualDataUrl(element)) score += 4
 
     if (score < 13) continue
