@@ -7,6 +7,10 @@ const DIAGNOSTIC_TOOLS = new Set([
   'patrol_doctor',
   'patrol_paths',
   'patrol_show',
+  // Challenge detection is only "progress" after it actually succeeds. Guards
+  // run before execution and cannot know that outcome, so treating detector as
+  // progress here allowed every failed image-code attempt to reset the breaker.
+  'patrol_detect_auth_challenge',
 ])
 
 const PROGRESS_TOOLS = new Set([
@@ -14,6 +18,7 @@ const PROGRESS_TOOLS = new Set([
   'patrol_press',
   'patrol_scroll',
   'patrol_type',
+  'patrol_type_text',
   'patrol_type_credential',
   'patrol_type_transient',
   'patrol_reteach_text',
@@ -22,7 +27,6 @@ const PROGRESS_TOOLS = new Set([
   'patrol_reteach_browser_step',
   'patrol_reteach_checkpoint',
   'patrol_login_state',
-  'patrol_detect_auth_challenge',
   'patrol_handoff',
   'patrol_resume',
   'patrol_resume_validation',
@@ -39,6 +43,9 @@ const IGNORED_ARGUMENT_KEYS = new Set([
   'conditionExpectedText',
   'conditionMode',
 ])
+
+const CAPTCHA_HINT = /(captcha|图形验证码|图片验证码|字符验证码|验证码图片|图形码|校验码|\b验证码\b)/i
+const HUMAN_ONLY_HINT = /(otp|one[- ]?time|动态码|动态验证码|一次性|短信|手机验证码|邮箱验证码|二次验证|passkey|security key|扫码|二维码|确认登录|设备.{0,12}确认|recaptcha|hcaptcha|turnstile|arkose|funcaptcha)/i
 
 const STATE_TTL_MS = 2 * 60_000
 const MAX_SAME_EFFECTIVE_ACTIONS = 2
@@ -57,8 +64,10 @@ interface RecoveryState {
 
 export const PATROL_RECOVERY_PROMPT = `Patrol recovery and loop discipline:
 - A failed teaching/browser action is diagnostic evidence, not a reason to repeat the same action indefinitely. Read the concrete error and make at most one materially different recovery attempt.
+- patrol_detect_auth_challenge is part of the diagnostic budget until a following real browser action makes progress. In one stalled phase, do not call the same detector twice. This still permits the normal two-stage login flow because a successful image-code detector is followed by the recorded Login click, which starts a fresh phase before a later OTP detector.
 - Never retry the same navigation in a new tab. Patrol Runbooks are active-tab deterministic; omit newTab or set it false.
 - After two attempts with the same effective action/arguments, STOP repeating it. Do not hide repetition by changing stepName/notes or by alternating wait, snapshot, read-page, screenshot, delete-step, and navigate around the same blocker.
+- A manual captcha typing/captcha-refresh attempt is NOT progress and must not reset the recovery budget. The verification guard separately rejects those operations.
 - During one stalled recovery, deleting more than one Runbook step is blocked. Use patrol_last_failure and re-teach the stable failed step instead of dismantling previously successful steps.
 - If a transient password step expired after restart, re-teach only that stable step with patrol_reteach_transient.
 - If a private HTTPS target still shows a Chrome certificate interstitial after one navigation, patrol_doctor is allowed exactly once even after the diagnostic budget trips. After that doctor result, stop and report the managed-browser certificate-handler blocker; page snapshot/read tools cannot repair a Chrome interstitial.
@@ -99,6 +108,9 @@ export function createPatrolRecoveryGuard() {
     }
 
     if (PROGRESS_TOOLS.has(name)) {
+      // Do not let a forbidden captcha guess/refresh clear the stalled state
+      // before the verification guard gets a chance to reject it.
+      if (looksLikeManualImageCodeAction(name, args)) return undefined
       states.delete(key)
       return undefined
     }
@@ -118,6 +130,14 @@ export function createPatrolRecoveryGuard() {
 
     const fingerprint = `${name}:${stableStringify(normalizeArguments(args))}`
     const previous = state.fingerprints.get(fingerprint) ?? 0
+
+    // A detector failure is terminal for the current stalled phase. One later
+    // detector remains valid after a real Login/Submit click because that click
+    // clears this state and starts a new phase (e.g. the post-login OTP stage).
+    if (name === 'patrol_detect_auth_challenge' && previous >= 1) {
+      return 'Patrol recovery circuit breaker: patrol_detect_auth_challenge has already run once in this stalled phase. Do not retry the same image-code detector or surround it with screenshot/snapshot/navigate loops. Preserve the first concrete automation error and stop this attempt. A later OTP detector is allowed only after a real Login/Submit action makes progress.'
+    }
+
     if (previous >= MAX_SAME_EFFECTIVE_ACTIONS) {
       return 'Patrol recovery circuit breaker: this same effective diagnostic/browser action has already been attempted twice for the current inspection. Do not repeat it or rename the step to retry. Stop, preserve the concrete error, and report the blocker or make a genuinely different progress action.'
     }
@@ -135,6 +155,16 @@ export function createPatrolRecoveryGuard() {
     }
     return undefined
   }
+}
+
+function looksLikeManualImageCodeAction(name: string, args: Record<string, any>): boolean {
+  if (!['patrol_click', 'patrol_press', 'patrol_type', 'patrol_type_text', 'patrol_type_credential', 'patrol_type_transient', 'patrol_reteach_text', 'patrol_reteach_credential', 'patrol_reteach_transient'].includes(name)) {
+    return false
+  }
+  const descriptor = [args.stepName, args.selector, args.notes, args.prompt, args.reason, args.locatorText]
+    .filter(value => typeof value === 'string')
+    .join(' ')
+  return CAPTCHA_HINT.test(descriptor) && !HUMAN_ONLY_HINT.test(descriptor)
 }
 
 function normalizeArguments(value: Record<string, unknown>): unknown {
