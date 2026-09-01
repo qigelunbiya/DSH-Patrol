@@ -9,7 +9,7 @@ export function registerTransientTool(ctx, bridge, config = {}) {
   const timeoutMs = config.commandTimeoutMs ?? 60000
   const definition = defineTool({
     name: 'browser_type_transient_ref',
-    description: 'Replay a sensitive value from DSH Patrol in-memory transient storage. The tool arguments contain only a short-lived reference and never the plaintext.',
+    description: 'Replay a sensitive value from DSH Patrol encrypted local secret storage. The tool arguments contain only an opaque PATROL_SECRET reference and never the plaintext.',
     parameters: {
       selector: reqStr,
       transientRef: reqStr,
@@ -26,18 +26,18 @@ export function registerTransientTool(ctx, bridge, config = {}) {
           transientRef: reqStr,
         },
       },
-      render: (_args, value) => [{ type: 'text', text: `Typed current-session transient value into ${value.selector}.` }],
+      render: (_args, value) => [{ type: 'text', text: `Typed encrypted Patrol secret reference into ${value.selector}.` }],
     },
     presentCall: args => ({
       card: 'generic',
-      title: 'Type transient reference',
+      title: 'Type encrypted secret reference',
       kind: 'other',
       rawInput: { selector: args.selector, transientRef: args.transientRef, clear: args.clear },
     }),
     execute: async (args, exec) => {
       const value = resolveTransientSecret(args.transientRef)
       if (value === undefined) {
-        throw new Error('This transient sensitive value is no longer available in memory. Re-enter it with patrol_reteach_transient; do not rebuild unrelated Runbook steps.')
+        throw new Error('This encrypted Patrol secret reference does not exist. Re-enter only this sensitive step with patrol_reteach_transient; do not rebuild unrelated Runbook steps.')
       }
       const result = await bridge.request('type', {
         selector: args.selector,
@@ -46,7 +46,7 @@ export function registerTransientTool(ctx, bridge, config = {}) {
         tabId: args.tabId,
       }, { timeoutMs, signal: exec?.signal })
       if (!result || typeof result !== 'object' || result.ok === false) {
-        throw new Error(String(result?.error || 'transient browser typing failed'))
+        throw new Error(String(result?.error || 'encrypted secret browser typing failed'))
       }
       return { ok: true, selector: args.selector, transientRef: args.transientRef }
     },
