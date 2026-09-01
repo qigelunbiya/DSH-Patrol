@@ -193,7 +193,7 @@ function SetFormula($c,[string]$v){try{$c.Formula=$v;return}catch{};CSet $c 'For
 function ClearCell($c){try{[void]$c.ClearContents();return}catch{};[void](CCall $c 'ClearContents')}
 function SaveBook($b){try{[void]$b.Save();return}catch{};[void](CCall $b 'Save')}
 function Col([int]$n){$r='';while($n-gt0){$n--;$r=[char](65+($n%26))+$r;$n=[Math]::Floor($n/26)};$r}
-function A1([int]$r1,[int]$c1,[int]$r2,[int]$c2){$a="$(Col $c1)$r1";$b="$(Col $c2)$r2";if($a-eq$b){$a}else{"$a`:$b"}}
+function A1([int]$r1,[int]$c1,[int]$r2,[int]$c2){$a="$(Col $c1)$r1";$b="$(Col $c2)$r2";if($a-eq$b){$a}else{$a + ':' + $b}}
 function Text($c,$w,[string]$a){try{[Convert]::ToString($c.Text)}catch{Warn $w "$a Text: $(Err $_)";try{[Convert]::ToString($c.Value2)}catch{try{[Convert]::ToString((CGet $c 'Value2'))}catch{Warn $w "$a Value2: $(Err $_)";''}}}}
 function Formula($c,$w,[string]$a){try{$h=Prop $c 'HasFormula';if($null-eq$h-or$h-is[DBNull]-or-not[Convert]::ToBoolean($h)){return$null};[Convert]::ToString((Prop $c 'Formula'))}catch{Warn $w "$a Formula: $(Err $_)";$null}}
 function Merge($c,$w,[string]$a){$area=$null;$rows=$null;$cols=$null;try{$m=Prop $c 'MergeCells';if($null-eq$m-or$m-is[DBNull]-or-not[Convert]::ToBoolean($m)){return$null};$area=Prop $c 'MergeArea';$r=IntProp $area 'Row';$co=IntProp $area 'Column';$rows=Prop $area 'Rows';$cols=Prop $area 'Columns';A1 $r $co ($r+(IntProp $rows 'Count')-1) ($co+(IntProp $cols 'Count')-1)}catch{Warn $w "$a Merge: $(Err $_)";$null}finally{Release-Com $rows;Release-Com $cols;Release-Com $area}}
