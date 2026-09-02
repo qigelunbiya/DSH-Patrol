@@ -48,39 +48,67 @@ export function parseTotpUri(value) {
   }
 }
 
-export function saveTotpProfileFromUri(profileId, uri) {
-  assertProfileId(profileId)
-  const parsed = parseTotpUri(uri)
-  const store = loadProfileStore()
-  const previous = store.profiles[profileId]
-  const secretRef = rememberTransientSecret(parsed.secret)
-  const now = new Date().toISOString()
+export function parseTotpImportPayload(value) {
+  const text = String(value || '').trim()
+  if (!text) throw new Error('TOTP import payload is empty')
+  if (/^otpauth:\/\/totp\//i.test(text)) return [parseTotpUri(text)]
+  if (/^otpauth-migration:\/\//i.test(text)) return parseGoogleAuthenticatorMigration(text)
+  if (text.startsWith('[') || text.startsWith('{')) return parseAuthingExport(text)
+  throw new Error('Unsupported TOTP import payload; use otpauth://, Google Authenticator migration, or Authing export JSON')
+}
 
-  const profile = {
-    id: profileId,
-    issuer: parsed.issuer,
-    account: parsed.account,
-    label: parsed.label,
-    algorithm: parsed.algorithm,
-    digits: parsed.digits,
-    period: parsed.period,
-    secretRef,
-    createdAt: typeof previous?.createdAt === 'string' ? previous.createdAt : now,
-    updatedAt: now,
-  }
+export function saveTotpProfilesFromPayload(profileIdHint, payload) {
+  const hint = String(profileIdHint || '').trim()
+  if (hint) assertProfileId(hint)
+  const parsedProfiles = parseTotpImportPayload(payload)
+  if (parsedProfiles.length === 0) throw new Error('TOTP import payload did not contain any TOTP accounts')
+
+  const store = loadProfileStore()
+  const now = new Date().toISOString()
+  const createdSecretRefs = []
+  const replacedSecretRefs = []
+  const imported = []
+  const usedIds = new Set()
 
   try {
-    store.profiles[profileId] = profile
+    for (let index = 0; index < parsedProfiles.length; index += 1) {
+      const parsed = parsedProfiles[index]
+      const profileId = chooseProfileId(hint, parsed, index, parsedProfiles.length, usedIds)
+      usedIds.add(profileId)
+      const previous = store.profiles[profileId]
+      const secretRef = rememberTransientSecret(parsed.secret)
+      createdSecretRefs.push(secretRef)
+
+      const profile = {
+        id: profileId,
+        issuer: parsed.issuer,
+        account: parsed.account,
+        label: parsed.label,
+        algorithm: parsed.algorithm,
+        digits: parsed.digits,
+        period: parsed.period,
+        secretRef,
+        createdAt: typeof previous?.createdAt === 'string' ? previous.createdAt : now,
+        updatedAt: now,
+      }
+      store.profiles[profileId] = profile
+      imported.push(publicProfile(profile))
+      if (typeof previous?.secretRef === 'string' && previous.secretRef !== secretRef) {
+        replacedSecretRefs.push(previous.secretRef)
+      }
+    }
     saveProfileStore(store)
   } catch (error) {
-    forgetTransientSecret(secretRef)
+    for (const secretRef of createdSecretRefs) forgetTransientSecret(secretRef)
     throw error
   }
 
-  if (typeof previous?.secretRef === 'string' && previous.secretRef !== secretRef) {
-    forgetTransientSecret(previous.secretRef)
-  }
-  return publicProfile(profile)
+  for (const secretRef of replacedSecretRefs) forgetTransientSecret(secretRef)
+  return imported
+}
+
+export function saveTotpProfileFromUri(profileId, uri) {
+  return saveTotpProfilesFromPayload(profileId, uri)[0]
 }
 
 export function listTotpProfiles() {
@@ -138,7 +166,7 @@ export function generateTotp(config, timestampMs = Date.now()) {
   const counter = Math.floor(seconds / period)
   const counterBuffer = Buffer.alloc(8)
   counterBuffer.writeBigUInt64BE(BigInt(counter))
-  const digest = createHmac(algorithm.toLowerCase().replace('sha', 'sha'), decodeBase32(secret))
+  const digest = createHmac(algorithm.toLowerCase(), decodeBase32(secret))
     .update(counterBuffer)
     .digest()
   const offset = digest[digest.length - 1] & 0x0f
@@ -165,6 +193,217 @@ export function totpProfileStorePath() {
   const override = String(process.env.DSH_PATROL_TOTP_DIR || '').trim()
   const root = override || join(String(process.env.DSH_HOME || '').trim() || join(homedir(), '.dsh'), 'patrol', 'totp-v1')
   return join(root, PROFILE_FILE)
+}
+
+function parseAuthingExport(text) {
+  let parsed
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    throw new Error('Authing TOTP export must contain valid JSON')
+  }
+  let entries
+  if (Array.isArray(parsed)) entries = parsed
+  else if (Array.isArray(parsed?.accounts)) entries = parsed.accounts
+  else if (Array.isArray(parsed?.tokens)) entries = parsed.tokens
+  else if (Array.isArray(parsed?.data)) entries = parsed.data
+  else if (parsed && typeof parsed === 'object') entries = [parsed]
+  else entries = []
+
+  const profiles = []
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') continue
+    const secret = normalizeBase32Secret(entry.secret ?? entry.seed)
+    if (!secret) continue
+    const issuer = String(entry.issuer ?? entry.provider ?? entry.service ?? 'Authing').trim()
+    const account = String(entry.account ?? entry.accountId ?? entry.name ?? entry.label ?? 'TOTP account').trim() || 'TOTP account'
+    const algorithm = normalizeAlgorithm(entry.algorithm)
+    const digits = normalizeInteger(entry.digits, 6, 6, 8, 'digits')
+    const period = normalizeInteger(entry.interval ?? entry.period, 30, 15, 120, 'period')
+    profiles.push({
+      secret,
+      issuer,
+      account,
+      label: [issuer, account].filter(Boolean).join(':') || account,
+      algorithm,
+      digits,
+      period,
+    })
+  }
+  if (profiles.length === 0) throw new Error('Authing export JSON did not contain any supported TOTP account')
+  return profiles
+}
+
+function parseGoogleAuthenticatorMigration(value) {
+  let url
+  try {
+    url = new URL(String(value || ''))
+  } catch {
+    throw new Error('Google Authenticator migration payload is invalid')
+  }
+  if (url.protocol !== 'otpauth-migration:') throw new Error('Google Authenticator migration payload is invalid')
+  const encoded = url.searchParams.get('data')
+  if (!encoded) throw new Error('Google Authenticator migration payload is missing data')
+  let bytes
+  try {
+    bytes = Buffer.from(encoded.replace(/-/g, '+').replace(/_/g, '/'), 'base64')
+  } catch {
+    throw new Error('Google Authenticator migration payload is not valid Base64')
+  }
+  if (!bytes.length) throw new Error('Google Authenticator migration payload is empty')
+
+  const profiles = []
+  let offset = 0
+  while (offset < bytes.length) {
+    const key = readVarint(bytes, offset)
+    offset = key.offset
+    const field = Number(key.value >> 3n)
+    const wire = Number(key.value & 7n)
+    if (field === 1 && wire === 2) {
+      const chunk = readLengthDelimited(bytes, offset)
+      offset = chunk.offset
+      const profile = decodeGoogleOtpParameters(chunk.value)
+      if (profile) profiles.push(profile)
+      continue
+    }
+    offset = skipProtobufField(bytes, offset, wire)
+  }
+  if (profiles.length === 0) throw new Error('Google Authenticator migration QR did not contain supported TOTP accounts')
+  return profiles
+}
+
+function decodeGoogleOtpParameters(bytes) {
+  let offset = 0
+  let secretBytes
+  let name = ''
+  let issuer = ''
+  let algorithm = 1
+  let digits = 1
+  let type = 2
+  while (offset < bytes.length) {
+    const key = readVarint(bytes, offset)
+    offset = key.offset
+    const field = Number(key.value >> 3n)
+    const wire = Number(key.value & 7n)
+    if (wire === 2 && (field === 1 || field === 2 || field === 3)) {
+      const chunk = readLengthDelimited(bytes, offset)
+      offset = chunk.offset
+      if (field === 1) secretBytes = chunk.value
+      else if (field === 2) name = chunk.value.toString('utf8').trim()
+      else issuer = chunk.value.toString('utf8').trim()
+      continue
+    }
+    if (wire === 0 && (field === 4 || field === 5 || field === 6 || field === 7)) {
+      const item = readVarint(bytes, offset)
+      offset = item.offset
+      const number = Number(item.value)
+      if (field === 4) algorithm = number
+      else if (field === 5) digits = number
+      else if (field === 6) type = number
+      continue
+    }
+    offset = skipProtobufField(bytes, offset, wire)
+  }
+
+  if (type === 1) return undefined
+  if (!secretBytes?.length) return undefined
+  const algorithmName = ({ 0: 'SHA1', 1: 'SHA1', 2: 'SHA256', 3: 'SHA512' })[algorithm]
+  if (!algorithmName) throw new Error('Google Authenticator migration contains an unsupported TOTP algorithm')
+  const digitCount = digits === 2 ? 8 : 6
+  const account = name || 'TOTP account'
+  return {
+    secret: encodeBase32(secretBytes),
+    issuer,
+    account,
+    label: [issuer, account].filter(Boolean).join(':') || account,
+    algorithm: algorithmName,
+    digits: digitCount,
+    period: 30,
+  }
+}
+
+function readVarint(buffer, start) {
+  let value = 0n
+  let shift = 0n
+  let offset = start
+  while (offset < buffer.length && shift <= 63n) {
+    const byte = buffer[offset]
+    offset += 1
+    value |= BigInt(byte & 0x7f) << shift
+    if ((byte & 0x80) === 0) return { value, offset }
+    shift += 7n
+  }
+  throw new Error('Google Authenticator migration protobuf is malformed')
+}
+
+function readLengthDelimited(buffer, start) {
+  const lengthInfo = readVarint(buffer, start)
+  const length = Number(lengthInfo.value)
+  if (!Number.isSafeInteger(length) || length < 0 || lengthInfo.offset + length > buffer.length) {
+    throw new Error('Google Authenticator migration protobuf has an invalid field length')
+  }
+  return {
+    value: buffer.subarray(lengthInfo.offset, lengthInfo.offset + length),
+    offset: lengthInfo.offset + length,
+  }
+}
+
+function skipProtobufField(buffer, start, wire) {
+  if (wire === 0) return readVarint(buffer, start).offset
+  if (wire === 1) {
+    if (start + 8 > buffer.length) throw new Error('Google Authenticator migration protobuf is truncated')
+    return start + 8
+  }
+  if (wire === 2) return readLengthDelimited(buffer, start).offset
+  if (wire === 5) {
+    if (start + 4 > buffer.length) throw new Error('Google Authenticator migration protobuf is truncated')
+    return start + 4
+  }
+  throw new Error('Google Authenticator migration protobuf uses an unsupported wire type')
+}
+
+function encodeBase32(bytes) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+  let bits = 0
+  let value = 0
+  let output = ''
+  for (const byte of bytes) {
+    value = (value << 8) | byte
+    bits += 8
+    while (bits >= 5) {
+      output += alphabet[(value >>> (bits - 5)) & 31]
+      bits -= 5
+    }
+  }
+  if (bits > 0) output += alphabet[(value << (5 - bits)) & 31]
+  return output
+}
+
+function chooseProfileId(hint, profile, index, total, usedIds) {
+  let base
+  if (hint && total === 1) base = hint
+  else {
+    const identity = slugifyProfileId([profile.issuer, profile.account].filter(Boolean).join('-'))
+    base = hint ? slugifyProfileId(`${hint}-${identity || index + 1}`) : (identity || `token-${index + 1}`)
+  }
+  if (!base) base = `token-${index + 1}`
+  let candidate = base.slice(0, 64)
+  let suffix = 2
+  while (usedIds.has(candidate)) {
+    const tail = `-${suffix}`
+    candidate = `${base.slice(0, Math.max(1, 64 - tail.length))}${tail}`
+    suffix += 1
+  }
+  assertProfileId(candidate)
+  return candidate
+}
+
+function slugifyProfileId(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '')
+    .slice(0, 64)
 }
 
 function loadProfileStore() {
