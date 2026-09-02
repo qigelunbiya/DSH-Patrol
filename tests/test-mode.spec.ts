@@ -42,7 +42,7 @@ describe('Patrol test-mode guard policy', () => {
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/browser_capture_image_code_visual/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/置信度 >= 0\.80/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/patrol_type_current_image_code/)
-    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/低于 0\.80 时禁止把弱猜测写入输入框/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/置信度 < 0\.80 时禁止把弱猜测写入输入框/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/最多尝试 3 次验证码级刷新/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/1 次整页 reload/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/不要通过反复提交低置信度验证码/)

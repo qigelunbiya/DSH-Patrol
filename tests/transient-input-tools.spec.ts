@@ -115,7 +115,7 @@ describe('Patrol encrypted sensitive input', () => {
 
     expect(dispatch).not.toHaveBeenCalled()
     expect(result).toContain('NOT typed')
-    expect(result).toContain('0.800')
+    expect(result).toContain('0.80')
   })
 
   it('types a high-confidence current image-code without persisting or exposing its value', async () => {
