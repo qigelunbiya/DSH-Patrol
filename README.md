@@ -1,5 +1,7 @@
 # DSH Patrol
 
+> 🚧 **开发中（Under Development）**
+
 **DSH Patrol** 是 DeepSeek Harness 的专用网页巡检 Agent Preset：第一次通过自然语言把巡检教给 Agent，验证后固化为 Runbook；后续运行由确定性 Runner 重放，而不是让模型每次重新猜步骤。
 
 > Teach once. Patrol repeatedly.
