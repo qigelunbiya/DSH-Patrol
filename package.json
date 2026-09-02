@@ -12,6 +12,9 @@
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
+    "./client": {
+      "default": "./client-runtime/client.js"
+    },
     "./browser-bridge": {
       "default": "./browser-bridge-runtime/index.js"
     },
@@ -36,6 +39,7 @@
     "presets/**/*",
     "browser-extension/**/*",
     "browser-bridge-runtime/**/*",
+    "client-runtime/**/*",
     "excel-runtime/**/*",
     "cleanup-runtime/**/*",
     "docs/**/*",
@@ -50,6 +54,15 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
     }
   },
   "scripts": {
@@ -58,7 +71,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check:extension": "node scripts/check-extension.mjs && node scripts/check-managed-browser.mjs",
+    "check:extension": "node scripts/check-extension.mjs && node scripts/check-managed-browser.mjs && node scripts/check-client-runtime.mjs",
     "check:encoding": "node scripts/check-encoding.mjs"
   },
   "peerDependencies": {
