@@ -12,9 +12,6 @@
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
-    "./client": {
-      "default": "./client-runtime/client.js"
-    },
     "./browser-bridge": {
       "default": "./browser-bridge-runtime/index.js"
     },
@@ -39,7 +36,7 @@
     "presets/**/*",
     "browser-extension/**/*",
     "browser-bridge-runtime/**/*",
-    "client-runtime/**/*",
+    "client-host-runtime/**/*",
     "excel-runtime/**/*",
     "cleanup-runtime/**/*",
     "docs/**/*",
@@ -54,14 +51,6 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
-    },
-    "client": {
-      "platform": "web",
-      "inject": [
-        "@deepseek-ai/dsh-api-session-controller",
-        "@deepseek-ai/dsh-client-ui-conversation",
-        "@deepseek-ai/dsh-client-ui-renderer"
-      ]
     }
   },
   "scripts": {
