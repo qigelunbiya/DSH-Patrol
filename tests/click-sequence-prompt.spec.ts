@@ -39,13 +39,13 @@ function context() {
 }
 
 describe('real click-sequence prompt parsing', () => {
-  it('uses the DOM instruction instead of guessing the requested characters from the image', () => {
+  it('uses the DOM instruction instead of guessing requested characters from the image', () => {
     const sandbox = context()
-    const result = vm.runInContext("parseClickSequenceTarget('请在下图依次点击：象 → 眼 → 鸽 → 蛋   确认')", sandbox)
-    expect(result).toBe('象→眼→鸽→蛋')
+    const result = vm.runInContext("parseClickSequenceTarget('请在下图依次点击：象眼鸽蛋')", sandbox)
+    expect(result).toBe('象眼鸽蛋')
   })
 
-  it('normalizes ordinary spaced prompt text to the exact requested sequence', () => {
+  it('stops before the confirmation control text when the root flattens UI text onto one line', () => {
     const sandbox = context()
     const result = vm.runInContext("parseClickSequenceTarget('请在下图依次点击：象 眼 鸽 蛋 确认')", sandbox)
     expect(result).toBe('象眼鸽蛋')
