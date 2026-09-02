@@ -19,4 +19,12 @@ describe('Patrol token client surface', () => {
     expect(clientSource).toContain('window.dispatchEvent(new Event(TOTP_OPEN_EVENT));')
     expect(clientSource).toContain('TokenDialogBridge')
   })
+
+  it('imports QR images through the local Patrol decoder without requiring BarcodeDetector', () => {
+    expect(clientSource).toContain('function readFileDataUrl(file)')
+    expect(clientSource).toContain("totpPost('import-image', csrf")
+    expect(clientSource).toContain('Authing 导出二维码')
+    expect(clientSource).toContain('Google Authenticator 迁移二维码')
+    expect(clientSource).not.toContain('window.BarcodeDetector')
+  })
 })
