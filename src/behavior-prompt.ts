@@ -24,4 +24,6 @@ export const PATROL_BEHAVIOR_PROMPT = `DSH Patrol current behavior overrides（�
 
 12. patrol_excel_write 默认只写语义匹配的空白模板单元格。覆盖非空单元格必须有用户明确意图和 guarded overwrite 参数。写之前再次核对同类内容是否应该聚合到同一格。
 
-13. 单个 Patrol 步骤失败时只修失败步骤。先 patrol_last_failure，保留已经成功的导航、登录、读取和截图步骤；不要重新从头教学，不要批量删除 Runbook 步骤。瞬时 page bridge 错误由底层 bounded retry 处理后才会暴露。`
+13. 单个 Patrol 步骤失败时只修失败步骤。先 patrol_last_failure，保留已经成功的导航、登录、读取和截图步骤；不要重新从头教学，不要批量删除 Runbook 步骤。瞬时 page bridge 错误由底层 bounded retry 处理后才会暴露。
+
+14. 页面点击必须优先使用 patrol_click_target 解析 CURRENT 可见目标。不要用 patrol_click 配合 button、a、div 等宽泛 CSS 反复试，也不要使用 :has-text()、text=、XPath 等当前 Patrol CSS 层不支持的选择器。可以只传 locatorText，必要时再加 locatorRole/locatorTag；若 CSS 匹配多个可见元素，必须报歧义而不是点击第一个。登录入口、登录方式切换、获取验证码、提交登录等关键点击后立即重新观察/读取 CURRENT 页面确认状态真的变化；页面没变化时重新解析目标，不要把底层 element.click() 已返回当作业务点击成功。`
