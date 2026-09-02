@@ -52,6 +52,17 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
     return payload;
   }
 
+  function readFileDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(reader.error || new Error('二维码图片读取失败'));
+      reader.onload = () => typeof reader.result === 'string'
+        ? resolve(reader.result)
+        : reject(new Error('二维码图片读取失败'));
+      reader.readAsDataURL(file);
+    });
+  }
+
   function profileIdFromOtpAuth(uri) {
     try {
       const url = new URL(uri);
@@ -93,14 +104,15 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
     const importProfile = async () => {
       const id = profileId.trim();
       const value = uri.trim();
-      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(id)) { setStatus('Profile ID 格式不正确。'); setStatusError(true); return; }
-      if (!/^otpauth:\/\/totp\//i.test(value)) { setStatus('请输入有效的 otpauth://totp/... URI。'); setStatusError(true); return; }
+      if (id && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(id)) { setStatus('Profile ID 格式不正确。'); setStatusError(true); return; }
+      if (!value) { setStatus('请粘贴 TOTP 导入内容。'); setStatusError(true); return; }
       setBusy(true);
       try {
-        const payload = await totpPost('import', csrf, { profileId: id, uri: value });
+        const payload = await totpPost('import', csrf, { profileId: id, payload: value });
+        const imported = Array.isArray(payload.imported) ? payload.imported : [];
         setProfiles(Array.isArray(payload.profiles) ? payload.profiles : []);
         setUri('');
-        setStatus(`令牌 ${id} 已安全导入。`);
+        setStatus(`已安全导入 ${imported.length || 1} 个令牌。`);
         setStatusError(false);
       } catch (error) {
         setUri('');
@@ -128,25 +140,22 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
       event.target.value = '';
       if (!file) return;
       if (file.size > 8 * 1024 * 1024) { setStatus('二维码图片不能超过 8 MiB。'); setStatusError(true); return; }
-      if (typeof window.BarcodeDetector !== 'function') { setStatus('当前 Chromium 不支持 BarcodeDetector，请直接粘贴 otpauth URI。'); setStatusError(true); return; }
-      let bitmap;
+      if (!csrf) { setStatus('TOTP 管理会话尚未就绪，请先点击刷新。'); setStatusError(true); return; }
+      const id = profileId.trim();
+      if (id && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(id)) { setStatus('Profile ID 格式不正确。'); setStatusError(true); return; }
       setBusy(true);
       try {
-        const detector = new window.BarcodeDetector({ formats: ['qr_code'] });
-        bitmap = await createImageBitmap(file);
-        const codes = await detector.detect(bitmap);
-        const raw = codes.map(item => String(item.rawValue || '')).find(value => /^otpauth:\/\/totp\//i.test(value));
-        if (!raw) throw new Error('图片中没有识别到普通 TOTP 二维码');
-        setUri(raw);
-        if (!profileId.trim()) setProfileId(profileIdFromOtpAuth(raw));
-        setStatus('二维码识别成功，确认 Profile ID 后点击导入。');
+        const image = await readFileDataUrl(file);
+        const payload = await totpPost('import-image', csrf, { profileId: id, image });
+        const imported = Array.isArray(payload.imported) ? payload.imported : [];
+        setProfiles(Array.isArray(payload.profiles) ? payload.profiles : []);
+        setUri('');
+        setStatus(`二维码识别并导入成功，共 ${imported.length || 1} 个令牌。`);
         setStatusError(false);
       } catch (error) {
-        setUri('');
         setStatus(errorMessage(error));
         setStatusError(true);
       } finally {
-        if (bitmap && typeof bitmap.close === 'function') bitmap.close();
         setBusy(false);
       }
     };
@@ -159,7 +168,7 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
         ),
         React.createElement('button', { type: 'button', style: BUTTON, disabled: busy, onClick: reload }, '刷新'),
       ),
-      React.createElement('div', { style: { ...CARD, color: MUTED, fontSize: '12px', lineHeight: 1.65, marginBottom: '10px' } }, 'TOTP seed 使用 Patrol vault 加密保存在本机；界面和巡检日志不会显示 seed 或当前动态码。'),
+      React.createElement('div', { style: { ...CARD, color: MUTED, fontSize: '12px', lineHeight: 1.65, marginBottom: '10px' } }, '支持标准 otpauth、Authing 导出二维码和 Google Authenticator 迁移二维码。二维码只在本机解码，TOTP seed 使用 Patrol vault 加密保存；界面和巡检日志不会显示 seed 或当前动态码。'),
       React.createElement('div', { role: statusError ? 'alert' : 'status', style: { minHeight: '20px', color: statusError ? '#dc2626' : MUTED, fontSize: '12px', marginBottom: '10px' } }, status),
       React.createElement('div', { style: { fontSize: '13px', fontWeight: 650, margin: '10px 0 8px' } }, '已配置令牌'),
       profiles.length === 0
@@ -172,11 +181,11 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
           React.createElement('button', { type: 'button', style: BUTTON, disabled: busy, onClick: () => removeProfile(profile.id) }, '删除'),
         ))),
       React.createElement('div', { style: { fontSize: '13px', fontWeight: 650, margin: '10px 0 8px' } }, '导入令牌'),
-      React.createElement('input', { value: profileId, onChange: event => setProfileId(event.target.value), disabled: busy, placeholder: 'Profile ID，例如 anheng-ops', autoComplete: 'off', style: INPUT }),
-      React.createElement('input', { value: uri, onChange: event => setUri(event.target.value), disabled: busy, placeholder: '粘贴 otpauth://totp/...', type: 'password', autoComplete: 'off', spellCheck: false, style: { ...INPUT, marginTop: '8px' }, 'data-dsh-patrol-totp-uri': 'true' }),
+      React.createElement('input', { value: profileId, onChange: event => setProfileId(event.target.value), disabled: busy, placeholder: 'Profile ID（可选；批量导入时作为前缀）', autoComplete: 'off', style: INPUT }),
+      React.createElement('input', { value: uri, onChange: event => setUri(event.target.value), disabled: busy, placeholder: '粘贴 otpauth://、otpauth-migration:// 或 Authing 导出 JSON', type: 'password', autoComplete: 'off', spellCheck: false, style: { ...INPUT, marginTop: '8px' }, 'data-dsh-patrol-totp-uri': 'true' }),
       React.createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '10px' } },
         React.createElement('button', { type: 'button', style: BUTTON, disabled: busy || !csrf, onClick: importProfile }, busy ? '处理中…' : '导入'),
-        React.createElement('button', { type: 'button', style: BUTTON, disabled: busy, onClick: () => fileRef.current?.click() }, '识别二维码图片'),
+        React.createElement('button', { type: 'button', style: BUTTON, disabled: busy, onClick: () => fileRef.current?.click() }, '导入二维码图片'),
         React.createElement('input', { ref: fileRef, type: 'file', accept: 'image/*', hidden: true, onChange: readQrImage }),
       ),
     );
