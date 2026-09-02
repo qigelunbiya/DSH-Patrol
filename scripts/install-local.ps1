@@ -161,7 +161,7 @@ if ($CredentialHelperSourceHash -ne $CredentialHelperTargetHash) {
 }
 
 $PatrolIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "lib\index.js")))).AbsoluteUri
-$BridgeHostIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "browser-bridge-runtime\index.js")))).AbsoluteUri
+$BridgeHostIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "client-host-runtime\index.js")))).AbsoluteUri
 $BrowserToolsIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "browser-bridge-runtime\tools-plugin.js")))).AbsoluteUri
 $SafeStoragePath = ConvertTo-YamlSingleQuoted -Value $PatrolStorage
 
