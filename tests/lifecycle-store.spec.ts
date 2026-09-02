@@ -84,7 +84,7 @@ describe('PatrolLifecycleStore', () => {
       auth: { mode: 'none' },
       schedule: null,
       steps: [{
-        id: 'step-001', kind: 'tool', name: 'Navigate', tool: 'browser_navigate', arguments: {}, recordedAt: '2026-09-02T01:00:00.000Z',
+        id: 'step-001', kind: 'tool', name: 'Navigate', tool: 'browser_navigate', arguments: { url: 'https://example.test' }, recordedAt: '2026-09-02T01:00:00.000Z',
       }],
       metadata: {
         createdAt: '2026-09-02T01:00:00.000Z',
