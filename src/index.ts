@@ -22,6 +22,7 @@ import { PatrolRunner } from './runner.js'
 import { PatrolScheduler, registerPatrolScheduleTools } from './scheduler.js'
 import { PATROL_SESSION_PROMPT } from './session-prompt.js'
 import { PatrolStore } from './store.js'
+import { PATROL_TEST_MODE_OVERRIDE_PROMPT, resolvePatrolRuntimePolicy } from './test-mode.js'
 import { registerPatrolTools } from './tools.js'
 import { PATROL_TRANSIENT_INPUT_PROMPT, registerPatrolTransientInputTools } from './transient-input-tools.js'
 import { registerPatrolWorkspaceTools } from './workspace-tools.js'
@@ -47,6 +48,7 @@ export * from './manual-verification-guard.js'
 export * from './observation-guard.js'
 export * from './observation-tools.js'
 export * from './handoff-tools.js'
+export * from './test-mode.js'
 export { PatrolStore } from './store.js'
 export { PatrolRunner, conditionMatches, evaluateExpectation } from './runner.js'
 
@@ -95,6 +97,7 @@ export function resolveConfig(config: Config): ResolvedConfig {
 
 export async function apply(ctx: Context, config: Config): Promise<void> {
   const resolved = resolveConfig(config)
+  const runtimePolicy = resolvePatrolRuntimePolicy()
   const store = new PatrolStore(resolved.storagePath)
   await store.init()
   const runner = new PatrolRunner(ctx, store, { reportMaxChars: resolved.reportMaxChars })
@@ -136,26 +139,28 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const scheduler = new PatrolScheduler(ctx, store)
   ctx.effect(() => scheduler.start(), 'dsh-patrol: scheduled patrol runner')
 
-  ctx.effect(
-    () => ctx.tools.guard(execution => observationGate.guard(execution)),
-    'dsh-patrol: observe-before-mutate browser state gate',
-  )
-  ctx.effect(
-    () => ctx.tools.guard(execution => recoveryGuard(execution)),
-    'dsh-patrol: recovery loop circuit breaker',
-  )
-  ctx.effect(
-    () => ctx.tools.guard(execution => verificationGuard(execution)),
-    'dsh-patrol: automation-first human verification guard',
-  )
+  if (runtimePolicy.installGuards) {
+    ctx.effect(
+      () => ctx.tools.guard(execution => observationGate.guard(execution)),
+      'dsh-patrol: observe-before-mutate browser state gate',
+    )
+    ctx.effect(
+      () => ctx.tools.guard(execution => recoveryGuard(execution)),
+      'dsh-patrol: recovery loop circuit breaker',
+    )
+    ctx.effect(
+      () => ctx.tools.guard(execution => verificationGuard(execution)),
+      'dsh-patrol: automation-first human verification guard',
+    )
 
-  // Browser provider tools live in the Patrol preset so nested dispatch can use
-  // them, but model-direct browser calls would bypass recording. Deny only root
-  // calls; Patrol's nested calls carry the outer patrol_* execution token.
-  ctx.effect(
-    () => ctx.tools.guard(execution => runner.browserGuard(execution.name, execution.parent)),
-    'dsh-patrol: deny direct model browser calls',
-  )
+    // Browser provider tools live in the Patrol preset so nested dispatch can use
+    // them, but model-direct browser calls would bypass recording. Normal mode
+    // denies root calls; test mode intentionally skips this guard for debugging.
+    ctx.effect(
+      () => ctx.tools.guard(execution => runner.browserGuard(execution.name, execution.parent)),
+      'dsh-patrol: deny direct model browser calls',
+    )
+  }
 
   const systemPrompt = ctx.get('systemPrompt')
   if (systemPrompt !== undefined) {
@@ -184,29 +189,49 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       order: 134,
       text: PATROL_TRANSIENT_INPUT_PROMPT,
     }), 'dsh-patrol: transient sensitive-input workflow prompt')
-    ctx.effect(() => systemPrompt.section({
-      name: 'agent:dsh-patrol-recovery',
-      order: 135,
-      text: PATROL_RECOVERY_PROMPT,
-    }), 'dsh-patrol: bounded recovery prompt')
+
+    if (runtimePolicy.injectStrictRecoveryPrompt) {
+      ctx.effect(() => systemPrompt.section({
+        name: 'agent:dsh-patrol-recovery',
+        order: 135,
+        text: PATROL_RECOVERY_PROMPT,
+      }), 'dsh-patrol: bounded recovery prompt')
+    }
+
     ctx.effect(() => systemPrompt.section({
       name: 'agent:dsh-patrol-targeted-recovery',
       order: 136,
       text: PATROL_TARGETED_RECOVERY_PROMPT,
     }), 'dsh-patrol: targeted failed-step recovery prompt')
-    ctx.effect(() => systemPrompt.section({
-      name: 'agent:dsh-patrol-verification',
-      order: 137,
-      text: PATROL_MANUAL_VERIFICATION_PROMPT,
-    }), 'dsh-patrol: automation-first verification prompt')
-    // Keep this last. It intentionally resolves legacy prompt conflicts and
-    // now also includes the observation-first browser-state discipline.
+
+    if (runtimePolicy.injectStrictVerificationPrompt) {
+      ctx.effect(() => systemPrompt.section({
+        name: 'agent:dsh-patrol-verification',
+        order: 137,
+        text: PATROL_MANUAL_VERIFICATION_PROMPT,
+      }), 'dsh-patrol: automation-first verification prompt')
+    }
+
+    // Keep the normal behavior section late so it resolves legacy prompt
+    // conflicts. In test mode the observation prompt is omitted, and an even
+    // later explicit test override relaxes the remaining strict workflow text.
     ctx.effect(() => systemPrompt.section({
       name: 'agent:dsh-patrol-current-behavior',
       order: 138,
-      text: `${PATROL_BEHAVIOR_PROMPT}\n\n${PATROL_OBSERVATION_PROMPT}`,
+      text: runtimePolicy.injectObservationPrompt
+        ? `${PATROL_BEHAVIOR_PROMPT}\n\n${PATROL_OBSERVATION_PROMPT}`
+        : PATROL_BEHAVIOR_PROMPT,
     }), 'dsh-patrol: current behavior, visual state gate, and Simplified Chinese prompt')
+
+    if (runtimePolicy.testMode) {
+      ctx.effect(() => systemPrompt.section({
+        name: 'agent:dsh-patrol-test-mode-override',
+        order: 999,
+        text: PATROL_TEST_MODE_OVERRIDE_PROMPT,
+      }), 'dsh-patrol: unrestricted test-mode debugging override')
+    }
   }
 
-  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; scheduler=enabled; credential helper=optional; transient sensitive replay=enabled; automation-first verification=enabled; visual-observation-first=enabled; secret-safe creation=enabled; flat action tools=enabled; OpenXML Excel v5 tools=enabled; recovery circuit breaker=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled`)
+  const guardMode = runtimePolicy.testMode ? 'test-bypass' : 'normal-strict'
+  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; guard-mode=${guardMode}; scheduler=enabled; credential helper=optional; transient sensitive replay=enabled; automation-first verification=enabled; visual-observation-first=enabled; secret-safe creation=enabled; flat action tools=enabled; OpenXML Excel v5 tools=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled`)
 }
