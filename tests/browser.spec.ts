@@ -6,6 +6,7 @@ import {
   findUniqueHealingSelector,
   isReplayableBrowserTool,
   isSafeBrowserTool,
+  isTestModeImageCodeInput,
 } from '../src/browser.ts'
 
 
@@ -27,10 +28,25 @@ describe('browser policy', () => {
     expect(BROWSER_ACTIONS).not.toContain('list-tabs')
   })
 
-  it('forces credential flow for credential-looking inputs', () => {
-    expect(() => assertSafePlainTextInput('用户名', '#username')).not.toThrow()
-    expect(() => assertSafePlainTextInput('输入密码', '#password')).toThrow(/credential-like/i)
-    expect(() => assertSafePlainTextInput('验证码', '#captcha')).toThrow(/credential-like/i)
+  it('keeps real credentials protected while allowing explicit image-code inputs only in test mode', () => {
+    const testEnv = { DSH_PATROL_CAPTCHA_MODE: 'test' }
+    const normalEnv = { DSH_PATROL_CAPTCHA_MODE: 'normal' }
+
+    expect(() => assertSafePlainTextInput('用户名', '#username', testEnv)).not.toThrow()
+    expect(() => assertSafePlainTextInput('输入密码', '#password', testEnv)).toThrow(/credential-like/i)
+    expect(() => assertSafePlainTextInput('输入 APP 动态口令', '#otp', testEnv)).toThrow(/credential-like/i)
+
+    expect(isTestModeImageCodeInput('填写验证码', '#captcha', testEnv)).toBe(true)
+    expect(() => assertSafePlainTextInput('填写验证码', '#captcha', testEnv)).not.toThrow()
+
+    expect(isTestModeImageCodeInput('填写验证码', '#captcha', normalEnv)).toBe(false)
+    expect(() => assertSafePlainTextInput('填写验证码', '#captcha', normalEnv)).toThrow(/credential-like/i)
+  })
+
+  it('does not treat a generic OTP field as an image-code merely because its label says 验证码', () => {
+    const testEnv = { DSH_PATROL_CAPTCHA_MODE: 'test' }
+    expect(isTestModeImageCodeInput('填写验证码', '#otpCode', testEnv)).toBe(false)
+    expect(() => assertSafePlainTextInput('填写验证码', '#otpCode', testEnv)).toThrow(/credential-like/i)
   })
 
   it('heals only on one exact semantic match', () => {

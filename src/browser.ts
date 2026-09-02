@@ -1,4 +1,5 @@
 import type { JsonObject, SemanticLocator, ToolStep } from './types.js'
+import { isPatrolTestMode } from './test-mode.js'
 
 export const SAFE_BROWSER_TOOLS = [
   'browser_status',
@@ -72,6 +73,8 @@ export const BROWSER_ACTION_TOOL: Record<BrowserAction, SafeBrowserTool> = {
 }
 
 const SENSITIVE_TARGET = /(pass(word|wd)?|pwd|secret|token|api[-_]?key|authorization|cookie|session[-_]?id|otp|one[-_ ]?time|verification|verify[-_ ]?code|captcha)/i
+const IMAGE_CODE_TARGET = /(captcha|image[-_ ]?code|img[-_ ]?code|图形验证码|图片验证码|字符验证码|验证码图片)/i
+const NON_IMAGE_CODE_SECRET_TARGET = /(pass(word|wd)?|pwd|secret|token|api[-_]?key|authorization|cookie|session[-_]?id|otp|one[-_ ]?time|动态(?:口令|码|验证码)|短信验证码|手机验证码|邮箱验证码|邮件验证码)/i
 
 export function isSafeBrowserTool(name: string): name is SafeBrowserTool {
   return (SAFE_BROWSER_TOOLS as readonly string[]).includes(name)
@@ -85,7 +88,29 @@ export function browserToolForAction(action: BrowserAction): SafeBrowserTool {
   return BROWSER_ACTION_TOOL[action]
 }
 
-export function assertSafePlainTextInput(stepName: string, selector: string): void {
+/**
+ * Conventional image-text CAPTCHA values are one-time page state, not durable
+ * credentials. In test mode they may be typed directly for the current page,
+ * but must never be confused with OTP/password/token fields or persisted as a
+ * reusable Runbook literal.
+ */
+export function isTestModeImageCodeInput(
+  stepName: string,
+  selector: string,
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  if (!isPatrolTestMode(env)) return false
+  const hint = `${stepName} ${selector}`
+  if (!IMAGE_CODE_TARGET.test(hint)) return false
+  return !NON_IMAGE_CODE_SECRET_TARGET.test(hint)
+}
+
+export function assertSafePlainTextInput(
+  stepName: string,
+  selector: string,
+  env: Record<string, string | undefined> = process.env,
+): void {
+  if (isTestModeImageCodeInput(stepName, selector, env)) return
   if (SENSITIVE_TARGET.test(stepName) || SENSITIVE_TARGET.test(selector)) {
     throw new Error('This input looks credential-like. Use patrol_type_transient for a value the user already supplied in this conversation, or patrol_type_credential for a durable Harness credential reference.')
   }

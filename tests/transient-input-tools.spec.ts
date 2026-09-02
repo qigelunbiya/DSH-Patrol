@@ -10,11 +10,14 @@ import type { PatrolStore } from '../src/store.ts'
 
 const roots: string[] = []
 const previousOverride = process.env.DSH_PATROL_SECRET_DIR
+const previousCaptchaMode = process.env.DSH_PATROL_CAPTCHA_MODE
 
 afterEach(async () => {
   clearTransientSecrets()
   if (previousOverride === undefined) delete process.env.DSH_PATROL_SECRET_DIR
   else process.env.DSH_PATROL_SECRET_DIR = previousOverride
+  if (previousCaptchaMode === undefined) delete process.env.DSH_PATROL_CAPTCHA_MODE
+  else process.env.DSH_PATROL_CAPTCHA_MODE = previousCaptchaMode
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
@@ -92,5 +95,78 @@ describe('Patrol encrypted sensitive input', () => {
     const card = tool.presentCall({ inspectionId: 'demo', stepName: 'password', selector: '#password', text: 'never-display-me' })
     expect(JSON.stringify(card)).not.toContain('never-display-me')
     expect(JSON.stringify(card)).toContain('[REDACTED]')
+  })
+
+  it('does not type a low-confidence current image-code', async () => {
+    process.env.DSH_PATROL_CAPTCHA_MODE = 'test'
+    const definitions: any[] = []
+    const ctx = { tools: { register(definition: any) { definitions.push(definition); return () => {} } } } as unknown as Context
+    const dispatch = vi.fn(async () => ({ ok: true, text: 'typed' }))
+    registerPatrolTransientInputTools(ctx, {} as PatrolStore, { dispatch } as unknown as PatrolRunner)
+    const tool = definitions.find(item => item.name === 'patrol_type_current_image_code')
+
+    const result = await tool.execute({
+      inspectionId: 'demo',
+      selector: '#captcha',
+      text: 'AD4T',
+      confidence: 0.72,
+      source: 'model-visual',
+    }, { token: Symbol('exec') })
+
+    expect(dispatch).not.toHaveBeenCalled()
+    expect(result).toContain('NOT typed')
+    expect(result).toContain('0.800')
+  })
+
+  it('types a high-confidence current image-code without persisting or exposing its value', async () => {
+    process.env.DSH_PATROL_CAPTCHA_MODE = 'test'
+    const definitions: any[] = []
+    const ctx = { tools: { register(definition: any) { definitions.push(definition); return () => {} } } } as unknown as Context
+    const dispatch = vi.fn(async () => ({ ok: true, text: 'typed' }))
+    const store = { save: vi.fn(async () => {}), load: vi.fn() } as unknown as PatrolStore
+    registerPatrolTransientInputTools(ctx, store, { dispatch } as unknown as PatrolRunner)
+    const tool = definitions.find(item => item.name === 'patrol_type_current_image_code')
+    const code = 'RKHF'
+
+    const card = tool.presentCall({
+      inspectionId: 'demo',
+      selector: '#captcha',
+      text: code,
+      confidence: 0.93,
+      source: 'model-visual',
+    })
+    expect(JSON.stringify(card)).not.toContain(code)
+
+    const result = await tool.execute({
+      inspectionId: 'demo',
+      selector: '#captcha',
+      text: code,
+      confidence: 0.93,
+      source: 'model-visual',
+      clear: true,
+    }, { token: Symbol('exec') })
+
+    expect(dispatch).toHaveBeenCalledTimes(1)
+    expect(dispatch.mock.calls[0]?.[0]).toBe('browser_type')
+    expect(dispatch.mock.calls[0]?.[1]).toEqual({ selector: '#captcha', text: code, clear: true })
+    expect((store as any).save).not.toHaveBeenCalled()
+    expect((store as any).load).not.toHaveBeenCalled()
+    expect(result).not.toContain(code)
+    expect(result).toContain('NOT written to the Runbook')
+  })
+
+  it('keeps the current image-code tool disabled in normal mode', async () => {
+    process.env.DSH_PATROL_CAPTCHA_MODE = 'normal'
+    const definitions: any[] = []
+    const ctx = { tools: { register(definition: any) { definitions.push(definition); return () => {} } } } as unknown as Context
+    registerPatrolTransientInputTools(ctx, {} as PatrolStore, {} as PatrolRunner)
+    const tool = definitions.find(item => item.name === 'patrol_type_current_image_code')
+
+    await expect(tool.execute({
+      inspectionId: 'demo',
+      selector: '#captcha',
+      text: 'ABCD',
+      confidence: 0.95,
+    }, { token: Symbol('exec') })).rejects.toThrow(/TEST MODE/)
   })
 })

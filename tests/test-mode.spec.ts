@@ -37,12 +37,15 @@ describe('Patrol test-mode guard policy', () => {
     expect(() => isPatrolTestMode({ DSH_PATROL_CAPTCHA_MODE: 'nromal' })).toThrow(/Unsupported DSH_PATROL_CAPTCHA_MODE/)
   })
 
-  it('prioritizes current model vision and explicitly overrides debug restrictions', () => {
+  it('prioritizes current model vision, confidence gating, and bounded captcha refresh', () => {
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/patrol_observe 附带的 CURRENT 页面截图/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/browser_capture_image_code_visual/)
-    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/直接用 patrol_type_text \/ browser_type 填入当前验证码输入框/)
-    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/失败后允许再次 detector/)
-    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/允许点击\/按键刷新验证码/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/置信度 >= 0\.80/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/patrol_type_current_image_code/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/低于 0\.80 时禁止把弱猜测写入输入框/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/最多尝试 3 次验证码级刷新/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/1 次整页 reload/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/不要通过反复提交低置信度验证码/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/recovery circuit breaker 在测试模式关闭/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/patrol_runtime_mode/)
   })
