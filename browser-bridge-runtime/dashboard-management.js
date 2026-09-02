@@ -1,6 +1,6 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
-import { compactTeachingFlow } from '../lib/flow-optimizer.js'
+import { compactTeachingFlow } from './flow-optimizer.js'
 
 const ID = /^[A-Za-z0-9._-]+$/
 const MAX_BODY_BYTES = 32 * 1024
@@ -191,8 +191,7 @@ async function atomicWrite(path, content) {
   await mkdir(dirname(path), { recursive: true })
   const temp = `${path}.${process.pid}.${Date.now()}.tmp`
   await writeFile(temp, content, 'utf8')
-  await writeFile(path, content, 'utf8')
-  await rm(temp, { force: true })
+  await rename(temp, path)
 }
 
 async function readJsonBody(req) {
