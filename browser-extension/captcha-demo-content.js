@@ -117,7 +117,8 @@ async function captchaDemoTarget(args) {
 
 async function captchaDemoClickPoints(args) {
   assertDocumentKey(args.documentKey)
-  assertCurrentChallenge(args.kind, args.challengeKey)
+  const entry = findDemoEntryByKey(String(args.kind || ''), args.challengeKey)
+  if (!entry) throw new Error('captcha challenge changed before the requested action; rediscover the current challenge')
   const element = requiredElement(args.selector)
   const points = Array.isArray(args.points) ? args.points : []
   if (points.length < 1 || points.length > 12) throw new Error('captcha demo click points must contain 1-12 points')
@@ -136,9 +137,13 @@ async function captchaDemoClickPoints(args) {
     await sleep(130)
   }
 
+  // Real click-sequence challenges (including the current Bilibili flow) often
+  // require a separate 确认/Confirm action after all requested characters are
+  // selected. Resolve that control from the same challenge root instead of
+  // asking the model/user to submit it manually.
   let confirmed = false
-  if (typeof args.confirmSelector === 'string' && args.confirmSelector) {
-    const confirm = requiredElement(args.confirmSelector)
+  const confirm = findConfirmControl(entry.root)
+  if (confirm && isVisible(confirm)) {
     confirm.scrollIntoView({ block: 'center', inline: 'center' })
     await sleep(100)
     const confirmRect = confirm.getBoundingClientRect()
