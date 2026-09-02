@@ -13,6 +13,7 @@ import { registerCountTool } from './count-tool.js'
 import { registerImageCodeRefreshTool } from './image-code-refresh-tool.js'
 import { registerImageCodeVisualTool } from './image-code-visual-tool.js'
 import { registerLoginStateTool } from './login-state-tool.js'
+import { registerTotpTool } from './totp-tool.js'
 import { registerTransientTool } from './transient-tool.js'
 import { registerTools } from './tools.js'
 
@@ -88,6 +89,10 @@ export async function apply(ctx, config = {}) {
   ctx.effect(() => registerImageCodeRefreshTool(ctx, bridge, {
     commandTimeoutMs: config.commandTimeoutMs ?? 60000,
   }), 'dsh-patrol/browser-tools: current image-code refresh recovery')
+  ctx.effect(() => registerTotpTool(ctx, bridge, {
+    commandTimeoutMs: config.commandTimeoutMs ?? 60000,
+    minimumValiditySeconds: config.totpMinimumValiditySeconds ?? 5,
+  }), 'dsh-patrol/browser-tools: encrypted TOTP profile input')
   ctx.effect(() => registerLoginStateTool(ctx, bridge, {
     commandTimeoutMs: config.commandTimeoutMs ?? 60000,
   }), 'dsh-patrol/browser-tools: scoped login-state detector')
