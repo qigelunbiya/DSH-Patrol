@@ -37,11 +37,16 @@
   function schedulePatch() {
     if (patchQueued) return
     patchQueued = true
-    queueMicrotask(() => {
+    // Do not use a self-sustaining microtask loop here. The dashboard itself
+    // replaces large DOM sections when returning from a flow detail view, and
+    // management decorations also mutate that subtree. A task boundary plus
+    // idempotent writes guarantees the observer settles after at most one
+    // follow-up patch instead of starving the whole Harness UI.
+    setTimeout(() => {
       patchQueued = false
       patchCards()
       patchDetail()
-    })
+    }, 0)
   }
 
   function patchCards() {
@@ -54,8 +59,11 @@
       const meta = card.querySelector('.flow-meta')
       const time = meta?.querySelector('span:last-child')
       if (time) {
-        time.textContent = `更新 ${fmt(item.definition?.metadata?.updatedAt)}`
-        time.setAttribute('title', '流程定义最近更新时间')
+        const nextText = `更新 ${fmt(item.definition?.metadata?.updatedAt)}`
+        if (time.textContent !== nextText) time.textContent = nextText
+        if (time.getAttribute('title') !== '流程定义最近更新时间') {
+          time.setAttribute('title', '流程定义最近更新时间')
+        }
       }
 
       if (!card.querySelector('[data-flow-tools]')) {
@@ -64,7 +72,7 @@
         tools.className = 'flow-manage-actions'
         tools.innerHTML = [
           `<button class="mini-btn" data-manage-action="rename" data-manage-id="${escapeAttr(id)}">改名</button>`,
-          `<button class="mini-btn" data-manage-action="optimize" data-manage-id="${escapeAttr(id)}">优化</button>`,
+          `<button class="mini-btn" title="只清理教学试错/探针步骤，不删除真实操作" data-manage-action="optimize" data-manage-id="${escapeAttr(id)}">清理试错</button>`,
           `<button class="mini-btn danger" data-manage-action="delete" data-manage-id="${escapeAttr(id)}">删除</button>`,
         ].join('')
         meta?.before(tools)
@@ -84,7 +92,7 @@
     wrap.className = 'detail-flow-actions'
     wrap.innerHTML = [
       `<button class="btn" data-manage-action="rename" data-manage-id="${escapeAttr(id)}">编辑名称</button>`,
-      `<button class="btn" data-manage-action="optimize" data-manage-id="${escapeAttr(id)}">精简流程</button>`,
+      `<button class="btn" title="清理 snapshot/count/无依赖重复读取等教学试错步骤" data-manage-action="optimize" data-manage-id="${escapeAttr(id)}">清理试错步骤</button>`,
       `<button class="btn danger-btn" data-manage-action="delete" data-manage-id="${escapeAttr(id)}">删除流程</button>`,
     ].join('')
     actions.prepend(wrap)
@@ -106,9 +114,18 @@
     const item = cardsById.get(id)
     if (!item) return
     const count = Array.isArray(item.definition?.steps) ? item.definition.steps.length : 0
-    if (!window.confirm(`将自动移除教学阶段的 snapshot/count/多余页面读取等试探步骤，并保留真实操作、条件依赖和必要产物。\n\n当前 ${count} 个步骤，是否继续？`)) return
+    const message = [
+      '这是“清理教学试错步骤”，不是删除流程。',
+      '',
+      '会清理：snapshot、count、无依赖的重复页面读取等仅用于模型探索/试错的步骤。',
+      '会保留：导航、点击、输入、人工检查点、条件依赖、断言，以及最终截图/页面产物。',
+      '',
+      '注意：确认后会直接更新真实 Runbook；历史巡检记录不会被删除。',
+      `当前流程共 ${count} 个步骤。是否继续清理？`,
+    ].join('\n')
+    if (!window.confirm(message)) return
     const result = await postAction('/flow/optimize', { inspectionId: id })
-    window.alert(`流程优化完成：${result.originalSteps} → ${result.finalSteps} 个步骤，移除 ${result.removedSteps} 个教学试探步骤。`)
+    window.alert(`清理完成：${result.originalSteps} → ${result.finalSteps} 个步骤，移除 ${result.removedSteps} 个教学试错/探针步骤。`)
     location.reload()
   }
 
