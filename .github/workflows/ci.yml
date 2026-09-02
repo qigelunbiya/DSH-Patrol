@@ -39,7 +39,7 @@ jobs:
         run: pnpm check:extension
 
       - name: Check Python runtime syntax
-        run: python -m py_compile browser-bridge-runtime/captcha-demo-solver.py excel-runtime/openxml_bridge.py
+        run: python -m py_compile browser-bridge-runtime/captcha-demo-solver.py browser-bridge-runtime/qr-decode.py excel-runtime/openxml_bridge.py
 
       - name: Check UTF-8 and Chinese text
         run: pnpm check:encoding
@@ -59,6 +59,8 @@ jobs:
           grep -qx 'package/browser-bridge-runtime/tools-plugin.js' .pack-check/contents.txt
           grep -qx 'package/browser-bridge-runtime/captcha-demo.js' .pack-check/contents.txt
           grep -qx 'package/browser-bridge-runtime/captcha-demo-solver.py' .pack-check/contents.txt
+          grep -qx 'package/browser-bridge-runtime/qr-decode.py' .pack-check/contents.txt
+          grep -qx 'package/browser-bridge-runtime/qr-code.js' .pack-check/contents.txt
           grep -qx 'package/browser-bridge-runtime/image-code-ddddocr.js' .pack-check/contents.txt
           grep -qx 'package/browser-bridge-runtime/transient-tool.js' .pack-check/contents.txt
           grep -qx 'package/excel-runtime/openxml_bridge.py' .pack-check/contents.txt
@@ -103,7 +105,7 @@ jobs:
         run: pnpm check:extension
 
       - name: Check Python runtime syntax
-        run: python -m py_compile browser-bridge-runtime/captcha-demo-solver.py excel-runtime/openxml_bridge.py
+        run: python -m py_compile browser-bridge-runtime/captcha-demo-solver.py browser-bridge-runtime/qr-decode.py excel-runtime/openxml_bridge.py
 
       - name: Check UTF-8 and Chinese text
         run: pnpm check:encoding
