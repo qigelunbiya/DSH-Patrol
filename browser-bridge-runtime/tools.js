@@ -60,11 +60,29 @@ export function registerTools(ctx, bridge, config = {}) {
   const definitions = [
     defineTool({
       name: 'browser_status',
-      description: 'Check whether the DSH Patrol browser extension is connected.',
+      description: 'Check whether the DSH Patrol browser extension is connected and whether the live extension advertises the capabilities required by the current Patrol runtime.',
       parameters: {},
       output: {
-        schema: { type: 'object', additionalProperties: false, properties: { ok: reqBool, connected: reqBool, pending: int, bridgeUrl: str, extension: { type: 'object', additionalProperties: true, properties: { name: str, version: str } } } },
-        render: (_args, value) => [{ type: 'text', text: value.connected ? `Patrol browser connected${value.extension ? ` (${value.extension.name} v${value.extension.version})` : ''}.` : 'Patrol browser NOT connected.' }],
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: reqBool,
+            connected: reqBool,
+            pending: int,
+            bridgeUrl: str,
+            extension: {
+              type: 'object',
+              additionalProperties: true,
+              properties: {
+                name: str,
+                version: str,
+                capabilities: { type: 'array', items: { type: 'string' } },
+              },
+            },
+          },
+        },
+        render: (_args, value) => [{ type: 'text', text: renderBrowserStatus(value) }],
       },
       presentCall: args => generic('Check Patrol browser', args),
       execute: async () => {
@@ -346,6 +364,26 @@ async function inspectScreenshotOcr(bridge, exec, tabId, dataUrl, timeoutMs) {
       } : {}),
     }
   }
+}
+
+function renderBrowserStatus(value) {
+  if (!value?.connected) return 'Patrol browser NOT connected.'
+  const extension = value.extension
+  if (!extension) return 'Patrol browser connected, but the extension has not completed its hello handshake yet.'
+  const capabilities = Array.isArray(extension.capabilities)
+    ? extension.capabilities.filter(item => typeof item === 'string')
+    : []
+  const base = `Patrol browser connected (${extension.name || 'unknown'} v${extension.version || '?'}).`
+  if (capabilities.length === 0) {
+    return `${base} capabilities=NOT_ADVERTISED; this usually means an older/stale Patrol extension is still loaded. Restart Harness so the managed browser reinstalls the bundled extension before using CAPTCHA visual capture.`
+  }
+  const imageCode = capabilities.includes('captureImageCode')
+    ? 'captureImageCode=yes'
+    : 'captureImageCode=MISSING'
+  const suffix = imageCode === 'captureImageCode=yes'
+    ? ''
+    : '; runtime/extension capability mismatch: restart Harness before CAPTCHA visual capture'
+  return `${base} ${imageCode}; capabilities=[${capabilities.join(', ')}]${suffix}.`
 }
 
 function renderScreenshotResult(value) {
