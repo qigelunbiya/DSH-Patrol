@@ -1,7 +1,9 @@
 import { readFile } from 'node:fs/promises'
 import { registerPatrolDashboardRoutes as registerBoundedDashboardRoutes } from './dashboard-fast.js'
+import { registerPatrolDashboardManagementRoutes } from './dashboard-management.js'
 
 const CLIENT_URL = new URL('./dashboard-client.js', import.meta.url)
+const MANAGEMENT_CLIENT_URL = new URL('./dashboard-management-client.js', import.meta.url)
 
 export { buildPatrolDashboardCatalog, parseLegacyMarkdownSummary } from './dashboard-fast.js'
 
@@ -28,6 +30,16 @@ export function registerPatrolDashboardRoutes(ctx, basePath, config = {}) {
               res.end(source)
               return
             }
+            if (url.searchParams.get('asset') === 'management') {
+              const source = await readFile(MANAGEMENT_CLIENT_URL, 'utf8')
+              res.writeHead(200, {
+                'content-type': 'text/javascript; charset=utf-8',
+                'cache-control': 'no-store',
+                'x-content-type-options': 'nosniff',
+              })
+              res.end(source)
+              return
+            }
 
             const html = dashboardShell(prefix)
             res.writeHead(200, {
@@ -43,7 +55,12 @@ export function registerPatrolDashboardRoutes(ctx, basePath, config = {}) {
     },
   }
 
-  return registerBoundedDashboardRoutes(proxyCtx, basePath, config)
+  const disposeDashboard = registerBoundedDashboardRoutes(proxyCtx, basePath, config)
+  const disposeManagement = registerPatrolDashboardManagementRoutes(ctx, basePath, config)
+  return () => {
+    try { disposeManagement() } catch {}
+    try { disposeDashboard() } catch {}
+  }
 }
 
 function methodNotAllowed(res, allow) {
@@ -57,6 +74,7 @@ function methodNotAllowed(res, allow) {
 
 function dashboardShell(prefix) {
   const clientSrc = `${prefix}/ui?asset=client`
+  const managementSrc = `${prefix}/ui?asset=management`
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -69,6 +87,6 @@ function dashboardShell(prefix) {
 @media(max-width:900px){.app{padding:17px}.stats{grid-template-columns:repeat(2,1fr)}.meta-grid,.detail-grid{grid-template-columns:1fr}.toolbar{grid-template-columns:1fr 1fr}.toolbar input{grid-column:1/-1}.top{flex-direction:column}}
 </style>
 </head>
-<body><main class="app"><div id="root" class="page"><div class="loading"><div><div class="spinner"></div>正在初始化巡检面板…</div></div></div></main><noscript>巡检面板需要启用 JavaScript。</noscript><script src="${clientSrc}" defer></script></body>
+<body><main class="app"><div id="root" class="page"><div class="loading"><div><div class="spinner"></div>正在初始化巡检面板…</div></div></div></main><noscript>巡检面板需要启用 JavaScript。</noscript><script src="${clientSrc}" defer></script><script src="${managementSrc}" defer></script></body>
 </html>`
 }

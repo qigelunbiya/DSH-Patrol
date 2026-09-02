@@ -26,4 +26,6 @@ export const PATROL_BEHAVIOR_PROMPT = `DSH Patrol current behavior overrides（�
 
 13. 单个 Patrol 步骤失败时只修失败步骤。先 patrol_last_failure，保留已经成功的导航、登录、读取和截图步骤；不要重新从头教学，不要批量删除 Runbook 步骤。瞬时 page bridge 错误由底层 bounded retry 处理后才会暴露。
 
-14. 页面点击必须优先使用 patrol_click_target 解析 CURRENT 可见目标。不要用 patrol_click 配合 button、a、div 等宽泛 CSS 反复试，也不要使用 :has-text()、text=、XPath 等当前 Patrol CSS 层不支持的选择器。可以只传 locatorText，必要时再加 locatorRole/locatorTag；若 CSS 匹配多个可见元素，必须报歧义而不是点击第一个。登录入口、登录方式切换、获取验证码、提交登录等关键点击后立即重新观察/读取 CURRENT 页面确认状态真的变化；页面没变化时重新解析目标，不要把底层 element.click() 已返回当作业务点击成功。`
+14. 页面点击必须优先使用 patrol_click_target 解析 CURRENT 可见目标。默认只传 locatorText；只有 patrol_observe / CURRENT snapshot 明确给出了 role/tag 时才增加 locatorRole/locatorTag，绝对不要把“看起来像按钮”猜成 role=button 或 tag=button/a。现代 React/Vue 页面经常用可点击 div/span，Patrol 会把 role/tag 作为排序提示而不是在有文本时的硬过滤。不要为了找 selector 额外调用会写入 Runbook 的 patrol_snapshot；patrol_click_target 内部会做不落盘的 CURRENT snapshot。不要用 patrol_click 配合 button、a、div 等宽泛 CSS 反复试，也不要使用 :has-text()、text=、XPath 等当前 Patrol CSS 层不支持的选择器。登录入口、登录方式切换、获取验证码、提交登录等关键点击后立即 patrol_observe / patrol_read_page 确认页面真的变化；页面没变化时重新按 CURRENT 文本解析目标，不要把底层 element.click() 已返回当作业务点击成功。
+
+15. 对话式教学也是一次真实巡检。只要用户要求创建/教学一个流程，并且本轮已经达到预期结果，在结束前必须完成必要的最终截图/页面读取，并在用户已经明确同意固化流程时调用 patrol_confirm；不要只告诉用户“巡检完成”却留下 DRAFT。patrol_confirm 的持久化层会自动移除不参与复用的 snapshot/count/多余页面读取等教学试探步骤，并把这次对话教学写成正常巡检记录。之后 Dashboard 的“最近巡检”和“巡检记录”应同时包含对话教学完成的巡检与 patrol_run 的确定性重放。`

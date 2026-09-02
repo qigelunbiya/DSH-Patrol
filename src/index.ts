@@ -13,6 +13,7 @@ import { registerPatrolEditTools } from './edit-tools.js'
 import { PATROL_EXCEL_PROMPT } from './excel-tools.js'
 import { PATROL_EXCEL_V5_PROMPT, registerPatrolExcelToolsV5 } from './excel-tools-v5.js'
 import { registerPatrolHandoffTools } from './handoff-tools.js'
+import { PatrolLifecycleStore } from './lifecycle-store.js'
 import { createManualVerificationGuard, PATROL_MANUAL_VERIFICATION_PROMPT } from './manual-verification-guard.js'
 import { createPatrolObservationGate, PATROL_OBSERVATION_PROMPT } from './observation-guard.js'
 import { registerPatrolObservationTools } from './observation-tools.js'
@@ -22,7 +23,6 @@ import { PATROL_TARGETED_RECOVERY_PROMPT, registerPatrolRecoveryTools } from './
 import { PatrolRunner } from './runner.js'
 import { PatrolScheduler, registerPatrolScheduleTools } from './scheduler.js'
 import { PATROL_SESSION_PROMPT } from './session-prompt.js'
-import { PatrolStore } from './store.js'
 import { PATROL_TEST_MODE_OVERRIDE_PROMPT, resolvePatrolRuntimePolicy } from './test-mode.js'
 import { registerPatrolTools } from './tools.js'
 import { PATROL_TOTP_PROMPT, registerPatrolTotpTools } from './totp-tools.js'
@@ -44,6 +44,8 @@ export * from './excel-tools-v2.js'
 export * from './excel-tools-v3.js'
 export * from './excel-tools-v4.js'
 export * from './excel-tools-v5.js'
+export * from './flow-optimizer.js'
+export * from './lifecycle-store.js'
 export * from './recovery-guard.js'
 export * from './recovery-tools.js'
 export * from './totp-tools.js'
@@ -103,7 +105,7 @@ export function resolveConfig(config: Config): ResolvedConfig {
 export async function apply(ctx: Context, config: Config): Promise<void> {
   const resolved = resolveConfig(config)
   const runtimePolicy = resolvePatrolRuntimePolicy()
-  const store = new PatrolStore(resolved.storagePath)
+  const store = new PatrolLifecycleStore(resolved.storagePath)
   await store.init()
   const runner = new PatrolRunner(ctx, store, { reportMaxChars: resolved.reportMaxChars })
   const observationGate = createPatrolObservationGate()

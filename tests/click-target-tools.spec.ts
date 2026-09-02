@@ -105,6 +105,46 @@ describe('semantic Patrol click target', () => {
     })
   })
 
+  it('does not reject an exact custom clickable div when role=button was only a model hint', async () => {
+    const calls: Array<{ tool: string; args: JsonObject }> = []
+    const { store, tool, exec } = await setup(async (name, args) => {
+      calls.push({ tool: name, args })
+      if (name === 'browser_snapshot') {
+        return {
+          ok: true,
+          text: 'snapshot',
+          value: {
+            ok: true,
+            url: 'https://example.test',
+            elements: [
+              { tag: 'div', text: '登录', selector: '#custom-login' },
+              { tag: 'a', role: 'link', text: '登录帮助', selector: '#help' },
+            ],
+          },
+        }
+      }
+      if (name === 'browser_click') return { ok: true, text: 'Clicked #custom-login', value: { ok: true } }
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    const result = await tool.execute({
+      inspectionId: 'click-target',
+      stepName: 'Open custom login entry',
+      locatorText: '登录',
+      locatorRole: 'button',
+    }, exec)
+
+    expect(result).toContain('#custom-login')
+    expect(calls).toEqual([
+      { tool: 'browser_snapshot', args: { maxElements: 500 } },
+      { tool: 'browser_click', args: { selector: '#custom-login' } },
+    ])
+    expect((await store.load('click-target')).steps[0]).toMatchObject({
+      tool: 'browser_click',
+      arguments: { selector: '#custom-login' },
+    })
+  })
+
   it('refuses a broad selector that matches multiple visible elements instead of clicking the first one', async () => {
     const calls: Array<{ tool: string; args: JsonObject }> = []
     const { store, tool, exec } = await setup(async (name, args) => {

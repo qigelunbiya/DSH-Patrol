@@ -51,14 +51,14 @@ export function registerPatrolClickTargetTool(
 ): () => void {
   const tool = defineTool({
     name: 'patrol_click_target',
-    description: 'Reliably click a CURRENT visible page target. Prefer semantic locatorText/locatorRole/locatorTag; selector is optional. Broad CSS such as button or a is never allowed to silently click the first match: Patrol resolves one concrete visible stable selector first, refuses ambiguity, then clicks and records the resolved selector plus semantic locator for replay.',
+    description: 'Reliably click a CURRENT visible page target. Start with locatorText. locatorRole/locatorTag are optional ranking hints and must not be guessed as hard DOM requirements. selector is optional. Broad CSS such as button or a is never allowed to silently click the first match: Patrol resolves one concrete visible stable selector first, refuses ambiguity, then clicks and records the resolved selector plus semantic locator for replay.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
       selector: { type: 'string', description: 'Optional CSS hint. Stable selectors from patrol_snapshot are ideal. Broad selectors are accepted only when exactly one visible element matches or semantic fields uniquely identify the target.' },
       locatorText: { type: 'string', description: 'Visible/accessible target text, for example 登录、短信登录、获取验证码、立即登录.' },
-      locatorRole: { type: 'string', description: 'Optional semantic role such as button, link, tab.' },
-      locatorTag: { type: 'string', description: 'Optional tag such as button, a, div.' },
+      locatorRole: { type: 'string', description: 'Optional ranking hint such as button, link, tab. Supply only when CURRENT observation actually exposes the role.' },
+      locatorTag: { type: 'string', description: 'Optional ranking hint such as button, a, div. Supply only when CURRENT observation actually exposes the tag.' },
       tabId: { type: 'integer' },
       expectedText: { type: 'string' },
       expectationMode: { type: 'string', enum: ['contains', 'not-contains'] },
@@ -159,14 +159,14 @@ async function resolveCurrentTarget(
     return targetFromSnapshot(exactSelector[0]!, 'semantic-contains')
   }
   if (semantic.length === 0) {
-    throw new Error(`no visible interactive element matched ${describeLocator(locator)}${selector ? ` with selector hint ${JSON.stringify(selector)}` : ''}. Take patrol_snapshot/patrol_observe and use CURRENT text; do not fall back to button/a.`)
+    throw new Error(`no visible interactive element matched ${describeLocator(locator)}${selector ? ` with selector hint ${JSON.stringify(selector)}` : ''}. Call patrol_observe, use CURRENT visible text, and retry locatorText without guessing role/tag; do not fall back to button/a or text= selectors.`)
   }
 
   const bestScore = semantic[0]!.score
   const best = semantic.filter(item => item.score === bestScore)
   if (best.length !== 1) {
     const examples = best.slice(0, 5).map(item => describeSnapshot(item.element)).join('; ')
-    throw new Error(`ambiguous semantic click target ${describeLocator(locator)} matched ${best.length} equally good visible elements: ${examples}. Add locatorRole/locatorTag or a stable selector.`)
+    throw new Error(`ambiguous semantic click target ${describeLocator(locator)} matched ${best.length} equally good visible elements: ${examples}. Add a role/tag only if CURRENT observation confirms it, or provide a stable selector.`)
   }
 
   return targetFromSnapshot(best[0]!.element, best[0]!.exactText ? 'semantic-exact' : 'semantic-contains')
@@ -184,8 +184,15 @@ function scoreSemanticCandidates(elements: SnapshotElement[], locator: SemanticL
     const text = normalizeText(element.text)
     const role = normalizeToken(element.role)
     const tag = normalizeToken(element.tag)
-    if (wantedRole !== undefined && role !== wantedRole) continue
-    if (wantedTag !== undefined && tag !== wantedTag) continue
+
+    // Without text, role/tag are the locator and therefore remain strict.
+    // With visible text, they are only ranking hints. Real-world React/Vue
+    // pages frequently implement a button as a clickable div/span, and a model
+    // should not lose an exact text target merely because it guessed role=button.
+    if (wantedText === undefined) {
+      if (wantedRole !== undefined && role !== wantedRole) continue
+      if (wantedTag !== undefined && tag !== wantedTag) continue
+    }
 
     let score = 0
     let exactText = false
@@ -199,8 +206,8 @@ function scoreSemanticCandidates(elements: SnapshotElement[], locator: SemanticL
         continue
       }
     }
-    if (wantedRole !== undefined) score += 20
-    if (wantedTag !== undefined) score += 10
+    if (wantedRole !== undefined && role === wantedRole) score += 20
+    if (wantedTag !== undefined && tag === wantedTag) score += 10
     if (selectorHint !== undefined && selector === selectorHint) score += 35
     ranked.push({ element, score, exactText })
   }
@@ -214,9 +221,11 @@ function semanticLocatorMatches(element: SnapshotElement, locator: SemanticLocat
   const wantedRole = normalizeToken(locator.role)
   const wantedTag = normalizeToken(locator.tag)
   const text = normalizeText(element.text)
-  if (wantedRole !== undefined && normalizeToken(element.role) !== wantedRole) return false
-  if (wantedTag !== undefined && normalizeToken(element.tag) !== wantedTag) return false
-  if (wantedText === undefined) return true
+  if (wantedText === undefined) {
+    if (wantedRole !== undefined && normalizeToken(element.role) !== wantedRole) return false
+    if (wantedTag !== undefined && normalizeToken(element.tag) !== wantedTag) return false
+    return true
+  }
   if (text === wantedText) return true
   return !exactOnly && text !== undefined && (text.includes(wantedText) || wantedText.includes(text))
 }
