@@ -10,6 +10,7 @@
 // the sibling `inject` metadata before the preset is mounted.
 import { registerChallengeTool } from './challenge-tool.js'
 import { registerCountTool } from './count-tool.js'
+import { registerImageCodeVisualTool } from './image-code-visual-tool.js'
 import { registerLoginStateTool } from './login-state-tool.js'
 import { registerTransientTool } from './transient-tool.js'
 import { registerTools } from './tools.js'
@@ -40,7 +41,7 @@ export async function apply(ctx, config = {}) {
   // DOM commands get a short bounded retry because a newly navigated page can
   // exist before its content-script bridge finishes attaching.
   const retryableDomCommands = new Set([
-    'snapshot', 'readPage', 'challengeSignals', 'imageCodeTarget', 'count',
+    'snapshot', 'readPage', 'challengeSignals', 'imageCodeTarget', 'captureImageCode', 'count',
     'click', 'type', 'press', 'scroll', 'wait',
   ])
   const bridge = {
@@ -80,6 +81,9 @@ export async function apply(ctx, config = {}) {
   ctx.effect(() => registerChallengeTool(ctx, bridge, {
     commandTimeoutMs: config.commandTimeoutMs ?? 60000,
   }), 'dsh-patrol/browser-tools: scoped auth challenge detector')
+  ctx.effect(() => registerImageCodeVisualTool(ctx, bridge, {
+    commandTimeoutMs: config.commandTimeoutMs ?? 60000,
+  }), 'dsh-patrol/browser-tools: current image-code visual crop')
   ctx.effect(() => registerLoginStateTool(ctx, bridge, {
     commandTimeoutMs: config.commandTimeoutMs ?? 60000,
   }), 'dsh-patrol/browser-tools: scoped login-state detector')
