@@ -24,17 +24,19 @@ if (carrierPackage.exports?.['./client'] !== './client.js') {
 if (carrierPackage.dsh?.client?.platform !== 'web') {
   throw new Error('client host package must declare dsh.client.platform=web')
 }
-for (const dependency of [
-  '@deepseek-ai/dsh-api-session-controller',
-  '@deepseek-ai/dsh-client-ui-conversation',
-  '@deepseek-ai/dsh-client-ui-renderer',
-]) {
-  if (!carrierPackage.dsh.client.inject?.includes(dependency)) {
-    throw new Error(`client host dsh.client.inject is missing ${dependency}`)
-  }
+const clientInject = carrierPackage.dsh.client.inject ?? []
+if (JSON.stringify(clientInject) !== JSON.stringify(['@deepseek-ai/dsh-client-ui-conversation'])) {
+  throw new Error('client host dsh.client.inject must stay on the cross-version conversation package edge only')
 }
-if (carrierPackage.dsh.client.inject?.includes('@deepseek-ai/dsh-client-ui-slots')) {
-  throw new Error('client host dsh.client.inject must not include static package @deepseek-ai/dsh-client-ui-slots')
+for (const versionSpecificDependency of [
+  '@deepseek-ai/dsh-api-session-controller',
+  '@deepseek-ai/dsh-client-runtime',
+  '@deepseek-ai/dsh-client-ui-renderer',
+  '@deepseek-ai/dsh-client-ui-slots',
+]) {
+  if (clientInject.includes(versionSpecificDependency)) {
+    throw new Error(`client host dsh.client.inject contains version-specific dependency ${versionSpecificDependency}`)
+  }
 }
 for (const marker of [
   "export const name = 'dsh-patrol-client-host'",
@@ -49,6 +51,10 @@ if (carrierIndex.includes("../browser-bridge-runtime/index.js")) {
 for (const marker of [
   'function Install-ClientHostDependency',
   'pnpm add --save-prod $ClientHostRoot',
+  'function Install-HarnessClientHostCompatMirror',
+  'node_modules\\dsh-patrol-client-host',
+  '.managed-by-dsh-patrol',
+  "require.resolve('dsh-patrol-client-host/package.json')",
   'browser-bridge-runtime\\index.js',
   'client-host-runtime',
   'id: dsh-patrol-browser-host',
@@ -56,7 +62,7 @@ for (const marker of [
   "name: 'dsh-patrol-client-host'",
   'node_modules\\dsh-patrol-client-host\\package.json',
 ]) {
-  if (!installer.includes(marker)) throw new Error(`install-local.ps1 is missing client profile dependency marker: ${marker}`)
+  if (!installer.includes(marker)) throw new Error(`install-local.ps1 is missing client compatibility marker: ${marker}`)
 }
 for (const forbidden of ['-ClientHostUri $ClientHostIndex', "$ClientHostIndex ="] ) {
   if (installer.includes(forbidden)) throw new Error(`install-local.ps1 still contains obsolete file-URL carrier marker: ${forbidden}`)
@@ -67,12 +73,22 @@ if (!uninstaller.includes('pnpm remove dsh-patrol-client-host')) {
 for (const marker of [
   "window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host'",
   "exports.inject = ['slots', 'sessions'];",
-  "projectionValues.agentPreset === PATROL_PRESET_ID",
+  'function FlowView({ useSession, loadOlder })',
+  'function RecordsView({ useSession, loadOlder })',
+  'snapshot.nodes',
+  'snapshot.runningCalls',
+  'snapshot.hasMore',
+  'binding.session.getSnapshot()',
+  'summary.agentPreset === PATROL_PRESET_ID',
+  'summary.projectionValues.agentPreset === PATROL_PRESET_ID',
   "registerView(ctx, 'patrol-flow', 30, '流程管理'",
   "registerView(ctx, 'patrol-records', 40, '巡检记录'",
   "name: 'conversation.view'",
 ]) {
   if (!client.includes(marker)) throw new Error(`client bundle is missing marker: ${marker}`)
+}
+for (const obsolete of ['eventSource', 'useEventWindow']) {
+  if (client.includes(obsolete)) throw new Error(`client bundle still depends on obsolete rc2-incompatible ${obsolete}`)
 }
 
 for (const file of [resolve(carrierRoot, 'index.js'), clientPath]) {
