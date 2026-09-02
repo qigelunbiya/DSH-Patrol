@@ -91,9 +91,10 @@ describe('local TOTP management API', () => {
     expect(imported.status).toBe(200)
     expect(imported.body).not.toContain(secret)
     expect(imported.body).not.toContain('otpauth://')
-    expect(JSON.parse(imported.body).profiles).toEqual([
-      expect.objectContaining({ id: 'ops-login', issuer: 'Operations', account: 'alice' }),
-    ])
+    expect(JSON.parse(imported.body)).toMatchObject({
+      imported: [expect.objectContaining({ id: 'ops-login', issuer: 'Operations', account: 'alice' })],
+      profiles: [expect.objectContaining({ id: 'ops-login', issuer: 'Operations', account: 'alice' })],
+    })
 
     const deleted = response()
     await routes[3].handler(request('POST', JSON.stringify({ profileId: 'ops-login' }), {
@@ -102,5 +103,28 @@ describe('local TOTP management API', () => {
     }), deleted)
     expect(deleted.status).toBe(200)
     expect(JSON.parse(deleted.body)).toMatchObject({ ok: true, deleted: true, profiles: [] })
+  })
+
+  it('accepts Authing export JSON through the same local import endpoint without echoing seeds', async () => {
+    const { routes } = await setup()
+    const sessionRes = response()
+    await routes[0].handler(request('GET'), sessionRes)
+    const session = JSON.parse(sessionRes.body)
+    const secret = 'JBSWY3DPEHPK3PXP'
+    const payload = JSON.stringify([
+      { account: 'alice', issuer: 'USM', algorithm: 'SHA1', digits: 6, interval: 30, secret },
+    ])
+
+    const imported = response()
+    await routes[1].handler(request('POST', JSON.stringify({ payload }), {
+      'content-type': 'application/json',
+      'x-dsh-patrol-csrf': session.csrf,
+    }), imported)
+    expect(imported.status).toBe(200)
+    expect(imported.body).not.toContain(secret)
+    expect(JSON.parse(imported.body)).toMatchObject({
+      ok: true,
+      imported: [expect.objectContaining({ id: 'usm-alice', issuer: 'USM', account: 'alice' })],
+    })
   })
 })
