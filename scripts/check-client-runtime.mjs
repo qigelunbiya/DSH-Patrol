@@ -11,6 +11,10 @@ const clientPath = resolve(carrierRoot, 'client.js')
 const client = readFileSync(clientPath, 'utf8')
 const dashboardPath = resolve(root, 'browser-bridge-runtime', 'dashboard-fast.js')
 const dashboard = readFileSync(dashboardPath, 'utf8')
+const dashboardRuntimePath = resolve(root, 'browser-bridge-runtime', 'dashboard-runtime.js')
+const dashboardRuntime = readFileSync(dashboardRuntimePath, 'utf8')
+const dashboardClientPath = resolve(root, 'browser-bridge-runtime', 'dashboard-client.js')
+const dashboardClient = readFileSync(dashboardClientPath, 'utf8')
 const bridgeHost = readFileSync(resolve(root, 'browser-bridge-runtime', 'index.js'), 'utf8')
 const store = readFileSync(resolve(root, 'src', 'store.ts'), 'utf8')
 const installer = readFileSync(resolve(root, 'scripts', 'install-local.ps1'), 'utf8')
@@ -115,18 +119,34 @@ for (const marker of [
   'const MAX_RUNS_PER_INSPECTION = 2000',
   'async function mapLimit(items, limit, worker)',
   'function artifactCandidates(storageRoot, report)',
-  'function dashboardHtml(prefix)',
-  "MODE=qs.get('mode')==='records'?'records':'flows'",
-  'async function get(path,timeout=12000)',
-  'function filterRecords()',
-  'function renderFlowDetail(x)',
-  'function renderRunDetail()',
-  "[['overview','概述'],['steps','步骤'],['artifacts','产物'],['logs','日志']]",
 ]) {
-  if (!dashboard.includes(marker)) throw new Error(`dashboard runtime is missing marker: ${marker}`)
+  if (!dashboard.includes(marker)) throw new Error(`dashboard data runtime is missing marker: ${marker}`)
 }
-if (!bridgeHost.includes("import { registerPatrolDashboardRoutes } from './dashboard-fast.js'")) {
-  throw new Error('browser bridge host must import the bounded Patrol dashboard runtime')
+
+for (const marker of [
+  "import { registerPatrolDashboardRoutes as registerBoundedDashboardRoutes } from './dashboard-fast.js'",
+  "url.searchParams.get('asset') === 'client'",
+  "'content-type': 'text/javascript; charset=utf-8'",
+  "script-src 'self'",
+  'function dashboardShell(prefix)',
+]) {
+  if (!dashboardRuntime.includes(marker)) throw new Error(`dashboard shell runtime is missing marker: ${marker}`)
+}
+
+for (const marker of [
+  "const API = location.pathname.replace(/\\/ui$/, '')",
+  'async function get(path, timeout = 12000)',
+  'function renderFlows()',
+  'function renderRecords()',
+  'function renderRunDetail()',
+  'function logsView(report, definition)',
+  "root?.addEventListener('click'",
+]) {
+  if (!dashboardClient.includes(marker)) throw new Error(`dashboard browser client is missing marker: ${marker}`)
+}
+
+if (!bridgeHost.includes("import { registerPatrolDashboardRoutes } from './dashboard-runtime.js'")) {
+  throw new Error('browser bridge host must import the parse-safe Patrol dashboard runtime')
 }
 if (!bridgeHost.includes('registerPatrolDashboardRoutes(ctx, path, config)')) {
   throw new Error('browser bridge host must mount the Patrol dashboard routes')
@@ -151,7 +171,7 @@ for (const forbidden of [
   if (client.includes(forbidden)) throw new Error(`client bundle contains forbidden compatibility/security marker: ${forbidden}`)
 }
 
-for (const file of [resolve(carrierRoot, 'index.js'), clientPath, dashboardPath]) {
+for (const file of [resolve(carrierRoot, 'index.js'), clientPath, dashboardPath, dashboardRuntimePath, dashboardClientPath]) {
   const syntax = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' })
   if (syntax.status !== 0) {
     throw new Error(`Patrol web runtime syntax check failed for ${file}:\n${syntax.stderr || syntax.stdout}`)

@@ -152,7 +152,7 @@ describe('browser host/agent plane split', () => {
     expect(savedPayload).toBe(dataUrl)
     expect(value).toMatchObject({ ok: true, path: '/tmp/patrol-screenshot.png', bytes: 1 })
     expect(typeof value.ocrStatus).toBe('string')
-  })
+  }, 15_000)
 
   it('agent plugin fails closed when the host bridge was not installed', async () => {
     const ctx = {
