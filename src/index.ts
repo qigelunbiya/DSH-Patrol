@@ -24,7 +24,7 @@ import { PATROL_SESSION_PROMPT } from './session-prompt.js'
 import { PatrolStore } from './store.js'
 import { PATROL_TEST_MODE_OVERRIDE_PROMPT, resolvePatrolRuntimePolicy } from './test-mode.js'
 import { registerPatrolTools } from './tools.js'
-import { registerPatrolTotpTools } from './totp-tools.js'
+import { PATROL_TOTP_PROMPT, registerPatrolTotpTools } from './totp-tools.js'
 import { PATROL_TRANSIENT_INPUT_PROMPT, registerPatrolTransientInputTools } from './transient-input-tools.js'
 import { registerPatrolWorkspaceTools } from './workspace-tools.js'
 
@@ -181,9 +181,6 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       'dsh-patrol: automation-first human verification guard',
     )
 
-    // Browser provider tools live in the Patrol preset so nested dispatch can use
-    // them, but model-direct browser calls would bypass recording. Normal mode
-    // denies root calls; test mode intentionally skips this guard for debugging.
     ctx.effect(
       () => ctx.tools.guard(execution => runner.browserGuard(execution.name, execution.parent)),
       'dsh-patrol: deny direct model browser calls',
@@ -220,6 +217,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       order: 134,
       text: PATROL_TRANSIENT_INPUT_PROMPT,
     }), 'dsh-patrol: transient sensitive-input workflow prompt')
+    ctx.effect(() => systemPrompt.section({
+      name: 'agent:dsh-patrol-totp',
+      order: 134.5,
+      text: PATROL_TOTP_PROMPT,
+    }), 'dsh-patrol: configured TOTP profile workflow prompt')
 
     if (runtimePolicy.injectStrictRecoveryPrompt) {
       ctx.effect(() => systemPrompt.section({
