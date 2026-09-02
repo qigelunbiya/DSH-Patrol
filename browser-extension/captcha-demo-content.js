@@ -8,6 +8,9 @@ let elementSequence = 0
 const CLICK_SEQUENCE_HINT = /依次点击|按(?:照|顺序).{0,20}点击|请.{0,20}(?:下图|图片).{0,20}点击|点击.{0,20}(?:文字|汉字|字符|目标|图标).{0,20}(?:顺序|依次)?|请选择.{0,20}(?:文字|汉字|字符|图标|目标)|选出.{0,20}(?:文字|汉字|字符|图标|目标)|click.{0,30}(?:characters?|words?|symbols?|icons?).{0,30}(?:order|sequence)|select.{0,30}(?:characters?|words?|symbols?|icons?)/i
 const SLIDER_PUZZLE_HINT = /\bgeetest\b|\bjigsaw\b|\bpuzzle\b|拼图|缺口|滑块.{0,20}(?:拼图|缺口)|拖动.{0,20}(?:拼图|缺口)|drag.{0,30}(?:slider|puzzle)|slider.{0,30}(?:verify|puzzle)/i
 const HANDLE_SELECTOR = '[role="slider"],[class*="slider"],[id*="slider"],[class*="drag"],[id*="drag"],[class*="handle"],[id*="handle"],button'
+const CLICK_IMAGE_HINT_SELECTOR = '[style*="background"],[class*="captcha"],[class*="geetest"],[class*="verify"]'
+const CONFIRM_TEXT = /^(?:确认|确定|提交|验证|完成|confirm|submit|verify|done)$/i
+const CLICK_SEQUENCE_MAX_ANCESTOR_DEPTH = 12
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== 'dsh-patrol:captcha-demo') return
@@ -64,6 +67,7 @@ async function captchaDemoTarget(args) {
     if (!image || !isVisible(image)) throw new Error('click captcha image not found')
     const targetText = entry.targetText || extractTargetText(root)
     if (!targetText) throw new Error('click captcha target text not found')
+    const confirm = findConfirmControl(root)
     return {
       ok: true,
       origin: location.origin,
@@ -75,6 +79,7 @@ async function captchaDemoTarget(args) {
       imageSelector: stableSelector(image),
       imageRect: rectValue(image),
       viewport: viewportValue(),
+      ...(confirm ? { confirmSelector: stableSelector(confirm) } : {}),
     }
   }
 
@@ -112,7 +117,8 @@ async function captchaDemoTarget(args) {
 
 async function captchaDemoClickPoints(args) {
   assertDocumentKey(args.documentKey)
-  assertCurrentChallenge(args.kind, args.challengeKey)
+  const entry = findDemoEntryByKey(String(args.kind || ''), args.challengeKey)
+  if (!entry) throw new Error('captcha challenge changed before the requested action; rediscover the current challenge')
   const element = requiredElement(args.selector)
   const points = Array.isArray(args.points) ? args.points : []
   if (points.length < 1 || points.length > 12) throw new Error('captcha demo click points must contain 1-12 points')
@@ -128,9 +134,27 @@ async function captchaDemoClickPoints(args) {
     const x = rect.left + rect.width * nx
     const y = rect.top + rect.height * ny
     dispatchMouseSequence(element, x, y)
-    await sleep(110)
+    await sleep(130)
   }
-  return { ok: true, documentKey: DOCUMENT_KEY, challengeKey: args.challengeKey, clicks: points.length }
+
+  // Real click-sequence challenges (including the current Bilibili flow) often
+  // require a separate 确认/Confirm action after all requested characters are
+  // selected. Resolve that control from the same challenge root instead of
+  // asking the model/user to submit it manually.
+  let confirmed = false
+  const confirm = findConfirmControl(entry.root)
+  if (confirm && isVisible(confirm)) {
+    confirm.scrollIntoView({ block: 'center', inline: 'center' })
+    await sleep(100)
+    const confirmRect = confirm.getBoundingClientRect()
+    dispatchMouseSequence(
+      confirm,
+      confirmRect.left + confirmRect.width / 2,
+      confirmRect.top + confirmRect.height / 2,
+    )
+    confirmed = true
+  }
+  return { ok: true, documentKey: DOCUMENT_KEY, challengeKey: args.challengeKey, clicks: points.length, confirmed }
 }
 
 async function captchaDemoDrag(args) {
@@ -237,11 +261,11 @@ function weakDemoEntries(kind) {
 }
 
 function detectWeakClickSequence() {
-  const images = visibleElements('img,canvas').filter(isLargeImageCandidate)
+  const images = clickImageCandidates()
   const candidates = []
   for (const image of images) {
     let node = image
-    for (let depth = 0; node && depth <= 5; depth += 1) {
+    for (let depth = 0; node && depth <= CLICK_SEQUENCE_MAX_ANCESTOR_DEPTH; depth += 1) {
       if (looksLikeChallengeRoot(node, CLICK_SEQUENCE_HINT)) {
         const targetText = extractTargetText(node)
         if (targetText) {
@@ -254,6 +278,28 @@ function detectWeakClickSequence() {
   }
   candidates.sort((a, b) => weakClickScore(b) - weakClickScore(a))
   return candidates[0] || null
+}
+
+function clickImageCandidates() {
+  const seen = new Set()
+  const out = []
+  for (const element of [...visibleElements('img,canvas'), ...visibleElements(CLICK_IMAGE_HINT_SELECTOR)]) {
+    if (seen.has(element) || !isLargeImageCandidate(element) || !isImageSurface(element)) continue
+    seen.add(element)
+    out.push(element)
+  }
+  return out
+}
+
+function isImageSurface(element) {
+  const tag = tagNameOf(element)
+  if (tag === 'img' || tag === 'canvas') return true
+  try {
+    const background = String(getComputedStyle(element).backgroundImage || '')
+    return background !== '' && background !== 'none'
+  } catch {
+    return false
+  }
 }
 
 function detectWeakSliderPuzzle() {
@@ -277,10 +323,14 @@ function detectWeakSliderPuzzle() {
 }
 
 function findClickImage(root) {
-  return firstVisibleDescendant(root, element => {
-    const tag = tagNameOf(element)
-    return (tag === 'img' || tag === 'canvas') && isLargeImageCandidate(element)
-  })
+  return firstVisibleDescendant(root, element => isLargeImageCandidate(element) && isImageSurface(element))
+}
+
+function findConfirmControl(root) {
+  const candidates = visibleDescendants(root)
+    .filter(element => CONFIRM_TEXT.test(compactText(element.innerText || element.textContent || element.getAttribute?.('aria-label') || '')))
+    .sort((a, b) => visibleScore(a) - visibleScore(b))
+  return candidates[0] || null
 }
 
 function detectSliderAssets(root) {
@@ -476,9 +526,24 @@ function extractTargetText(root) {
   if (direct) return compactTarget(direct)
   const target = root.querySelector('[data-dsh-patrol-captcha-target]')
   if (target) return compactTarget(target.getAttribute('data-dsh-patrol-captcha-target') || target.textContent || '')
-  const text = String(root.innerText || root.textContent || '')
-  const match = /(?:依次点击|按顺序点击|click\s+in\s+order)\s*[:：]?\s*([^\n\r]{1,24})/i.exec(text)
-  return match ? compactTarget(match[1]) : ''
+
+  const sources = [root, ...visibleDescendants(root)]
+    .map(element => compactText(element.innerText || element.textContent || ''))
+    .filter(Boolean)
+    .sort((a, b) => a.length - b.length)
+  for (const text of sources) {
+    const parsed = parseClickSequenceTarget(text)
+    if (parsed) return parsed
+  }
+  return ''
+}
+
+function parseClickSequenceTarget(value) {
+  const text = String(value || '')
+  const match = /(?:依次点击|按(?:照|顺序)?[^\n\r]{0,8}点击|click\s+in\s+order)\s*[:：]?\s*([^\n\r]{1,40})/i.exec(text)
+  if (!match) return ''
+  const target = String(match[1] || '').replace(/(?:确认|确定|提交|验证|刷新|取消|换一张|confirm|submit|verify|refresh|cancel).*$/i, '')
+  return compactTarget(target)
 }
 
 function compactTarget(value) {

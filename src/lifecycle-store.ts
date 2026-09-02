@@ -2,24 +2,71 @@ import { compactTeachingFlow, type FlowCompactionResult } from './flow-optimizer
 import { PatrolStore } from './store.js'
 import type { InspectionDefinition, RunReport, StepRunResult } from './types.js'
 
+interface ActiveTeachingRun {
+  runId: string
+  startedAt: string
+  workspaceRoot?: string
+}
+
 /**
- * Store variant used by the Patrol runtime. A draft -> ready transition is the
- * moment an interactive teaching session becomes a reusable flow, so we make
- * that transition durable in two ways:
+ * Store variant used by the Patrol runtime.
  *
- * 1. compact away teaching-only probes before the runbook is frozen;
- * 2. persist the successful teaching session as a normal Patrol run so both
- *    "recent patrols" and the global patrol history include conversational
- *    patrols, not only deterministic patrol_run replays.
+ * Interactive teaching is a real patrol from the moment the user starts it,
+ * not only after a draft is eventually confirmed. A WAITING run is therefore
+ * created as soon as the first new teaching step is recorded and the same run
+ * is updated throughout the conversation. A later DRAFT -> READY transition
+ * compacts the reusable runbook and finalizes that same record as PASSED.
  */
 export class PatrolLifecycleStore extends PatrolStore {
-  override async save(definition: InspectionDefinition): Promise<void> {
-    let previous: InspectionDefinition | undefined
-    if (await this.exists(definition.id)) {
-      previous = await this.load(definition.id)
+  private readonly activeTeachingRuns = new Map<string, ActiveTeachingRun>()
+
+  async beginTeachingRun(inspectionId: string, workspaceRoot?: string): Promise<RunReport> {
+    const definition = await this.load(inspectionId)
+    if (definition.status !== 'draft') {
+      throw new Error(`inspection ${inspectionId} is ${definition.status}; interactive teaching requires a draft`)
     }
 
+    const existing = this.activeTeachingRuns.get(inspectionId)
+    if (existing !== undefined) {
+      if (existing.workspaceRoot === undefined && workspaceRoot !== undefined && workspaceRoot.trim() !== '') {
+        existing.workspaceRoot = workspaceRoot
+      }
+      return await this.writePendingTeachingReport(definition, existing)
+    }
+
+    const startedAt = new Date().toISOString()
+    const active: ActiveTeachingRun = {
+      runId: teachingRunId(startedAt),
+      startedAt,
+      ...(workspaceRoot === undefined || workspaceRoot.trim() === '' ? {} : { workspaceRoot }),
+    }
+    this.activeTeachingRuns.set(inspectionId, active)
+    return await this.writePendingTeachingReport(definition, active)
+  }
+
+  override async save(definition: InspectionDefinition): Promise<void> {
+    let previous: InspectionDefinition | undefined
+    if (await this.exists(definition.id)) previous = await this.load(definition.id)
+
     const completingTeaching = previous?.status === 'draft' && definition.status === 'ready'
+    let active = this.activeTeachingRuns.get(definition.id)
+
+    // Existing drafts are commonly reused in a new conversation. The first
+    // successfully recorded step is sufficient evidence that a new patrol has
+    // actually started, so create its WAITING history row immediately instead
+    // of waiting for patrol_confirm.
+    if (definition.status === 'draft' && active === undefined && hasNewTeachingStep(previous, definition)) {
+      const firstNewStepIndex = previous?.steps.length ?? 0
+      const firstNewStep = definition.steps[firstNewStepIndex]
+      const startedAt = firstNewStep?.recordedAt || new Date().toISOString()
+      active = {
+        runId: teachingRunId(startedAt),
+        startedAt,
+        ...(definition.metadata.workspaceRoot === undefined ? {} : { workspaceRoot: definition.metadata.workspaceRoot }),
+      }
+      this.activeTeachingRuns.set(definition.id, active)
+    }
+
     let compaction: FlowCompactionResult | undefined
     if (completingTeaching) {
       compaction = compactTeachingFlow(definition)
@@ -29,35 +76,79 @@ export class PatrolLifecycleStore extends PatrolStore {
     await super.save(definition)
 
     if (completingTeaching) {
-      const report = createTeachingReport(definition, compaction!)
+      const report = createTeachingReport(definition, compaction!, active)
       await super.saveRun(
         report,
         renderTeachingReport(report, compaction!),
-        definition.metadata.workspaceRoot,
+        active?.workspaceRoot ?? definition.metadata.workspaceRoot,
       )
+      this.activeTeachingRuns.delete(definition.id)
+      return
     }
+
+    if (definition.status === 'draft' && active !== undefined) {
+      if (active.workspaceRoot === undefined && definition.metadata.workspaceRoot !== undefined) {
+        active.workspaceRoot = definition.metadata.workspaceRoot
+      }
+      await this.writePendingTeachingReport(definition, active)
+    }
+  }
+
+  private async writePendingTeachingReport(
+    definition: InspectionDefinition,
+    active: ActiveTeachingRun,
+  ): Promise<RunReport> {
+    const now = new Date().toISOString()
+    const sessionSteps = teachingSessionSteps(definition, active.startedAt)
+    const results = sessionSteps.map(step => teachingStepResult(step, now, step.kind === 'checkpoint' ? 'waiting' : 'passed'))
+    const waitingCheckpoints = results.filter(result => result.status === 'waiting').length
+    const passedSteps = results.filter(result => result.status === 'passed').length
+    const summary = waitingCheckpoints > 0
+      ? `巡检进行中：本轮已完成 ${passedSteps} 个步骤，当前有 ${waitingCheckpoints} 个人工检查点等待处理。即使本轮未继续完成，这条巡检记录也会保留。`
+      : `巡检进行中：本轮已记录 ${passedSteps} 个成功步骤。巡检从开始时即计入历史，不需要等到流程确认完成。`
+
+    const report: RunReport = {
+      schemaVersion: '0.2',
+      runId: active.runId,
+      inspectionId: definition.id,
+      inspectionName: definition.name,
+      startedAt: active.startedAt,
+      finishedAt: now,
+      status: 'waiting',
+      expectedResult: definition.expectedResult,
+      results,
+      summary,
+      ...(active.workspaceRoot === undefined ? {} : { outputWorkspace: active.workspaceRoot }),
+    }
+
+    // Pending teaching runs are written only to the internal Patrol history on
+    // each step. This keeps interactive teaching fast. The finalized run is
+    // mirrored to the workspace once DRAFT -> READY succeeds.
+    await super.saveRun(report, renderPendingTeachingReport(report))
+    return report
   }
 }
 
-function createTeachingReport(definition: InspectionDefinition, compaction: FlowCompactionResult): RunReport {
-  const startedAt = earliestRecordedAt(definition) ?? definition.metadata.createdAt
+function hasNewTeachingStep(previous: InspectionDefinition | undefined, current: InspectionDefinition): boolean {
+  if (current.steps.length === 0) return false
+  if (previous === undefined) return current.steps.length > 0
+  if (previous.status !== 'draft') return false
+  return current.steps.length > previous.steps.length
+}
+
+function createTeachingReport(
+  definition: InspectionDefinition,
+  compaction: FlowCompactionResult,
+  active?: ActiveTeachingRun,
+): RunReport {
+  const startedAt = active?.startedAt ?? earliestRecordedAt(definition) ?? definition.metadata.createdAt
   const finishedAt = definition.metadata.validatedAt ?? definition.metadata.updatedAt
-  const runId = teachingRunId(finishedAt)
-  const results: StepRunResult[] = definition.steps.map(step => {
-    const timestamp = step.recordedAt || finishedAt
-    return {
-      stepId: step.id,
-      name: step.name,
-      kind: step.kind,
-      status: 'passed',
-      startedAt: timestamp,
-      finishedAt: timestamp,
-      ...(step.kind === 'tool' ? { tool: step.tool } : {}),
-      output: step.kind === 'checkpoint'
-        ? '交互教学完成后由用户确认，该人工检查点已纳入最终流程。'
-        : '该步骤已在交互教学过程中成功执行，并在确认流程时固化。',
-    }
-  })
+  const runId = active?.runId ?? teachingRunId(finishedAt)
+  const sessionSteps = active === undefined
+    ? definition.steps
+    : teachingSessionSteps(definition, active.startedAt)
+  const results: StepRunResult[] = sessionSteps.map(step => teachingStepResult(step, finishedAt, 'passed'))
+  const outputWorkspace = active?.workspaceRoot ?? definition.metadata.workspaceRoot
 
   return {
     schemaVersion: '0.2',
@@ -72,7 +163,33 @@ function createTeachingReport(definition: InspectionDefinition, compaction: Flow
     summary: compaction.removedSteps > 0
       ? `交互教学巡检已完成；从 ${compaction.originalSteps} 个教学步骤中移除 ${compaction.removedSteps} 个试探/诊断步骤，固化为 ${compaction.finalSteps} 个可复用步骤。`
       : `交互教学巡检已完成并固化为 ${compaction.finalSteps} 个可复用步骤。`,
-    ...(definition.metadata.workspaceRoot === undefined ? {} : { outputWorkspace: definition.metadata.workspaceRoot }),
+    ...(outputWorkspace === undefined ? {} : { outputWorkspace }),
+  }
+}
+
+function teachingSessionSteps(definition: InspectionDefinition, startedAt: string) {
+  return definition.steps.filter(step => !step.recordedAt || step.recordedAt >= startedAt)
+}
+
+function teachingStepResult(
+  step: InspectionDefinition['steps'][number],
+  fallback: string,
+  status: StepRunResult['status'],
+): StepRunResult {
+  const timestamp = step.recordedAt || fallback
+  return {
+    stepId: step.id,
+    name: step.name,
+    kind: step.kind,
+    status,
+    startedAt: timestamp,
+    finishedAt: timestamp,
+    ...(step.kind === 'tool' ? { tool: step.tool } : {}),
+    output: step.kind === 'checkpoint'
+      ? status === 'waiting'
+        ? '交互巡检已到达人工检查点，等待用户完成后继续。'
+        : '交互教学完成后由用户确认，该人工检查点已纳入最终流程。'
+      : '该步骤已在本轮交互巡检过程中成功执行。',
   }
 }
 
@@ -88,6 +205,31 @@ function earliestRecordedAt(definition: InspectionDefinition): string | undefine
 function teachingRunId(value: string): string {
   const compact = value.replace(/[^0-9]/g, '').slice(0, 17)
   return `teaching-${compact || Date.now()}`
+}
+
+function renderPendingTeachingReport(report: RunReport): string {
+  const lines = [
+    `# DSH Patrol 巡检报告：${report.inspectionName}`,
+    '',
+    `- Run ID：\`${report.runId}\``,
+    `- Inspection ID：\`${report.inspectionId}\``,
+    '- 状态：**WAITING**',
+    `- 开始：${report.startedAt}`,
+    `- 最近更新：${report.finishedAt}`,
+    `- 预期结果：${report.expectedResult}`,
+    '- 来源：交互巡检（进行中/未完成）',
+    '',
+    '## 页面摘要',
+    '',
+    '```text',
+    report.summary ?? '',
+    '```',
+    '',
+    '## 步骤结果',
+    '',
+  ]
+  appendResultMarkdown(lines, report.results)
+  return `${lines.join('\n')}\n`
 }
 
 function renderTeachingReport(report: RunReport, compaction: FlowCompactionResult): string {
@@ -117,8 +259,12 @@ function renderTeachingReport(report: RunReport, compaction: FlowCompactionResul
     '## 步骤结果',
     '',
   ]
+  appendResultMarkdown(lines, report.results)
+  return `${lines.join('\n')}\n`
+}
 
-  for (const result of report.results) {
+function appendResultMarkdown(lines: string[], results: readonly StepRunResult[]): void {
+  for (const result of results) {
     lines.push(
       `### ${result.stepId} — ${result.name}`,
       '',
@@ -128,5 +274,4 @@ function renderTeachingReport(report: RunReport, compaction: FlowCompactionResul
       '',
     )
   }
-  return `${lines.join('\n')}\n`
 }
