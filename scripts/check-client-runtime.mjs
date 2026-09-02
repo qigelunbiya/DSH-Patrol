@@ -9,6 +9,9 @@ const carrierPackage = JSON.parse(readFileSync(resolve(carrierRoot, 'package.jso
 const carrierIndex = readFileSync(resolve(carrierRoot, 'index.js'), 'utf8')
 const clientPath = resolve(carrierRoot, 'client.js')
 const client = readFileSync(clientPath, 'utf8')
+const dashboardPath = resolve(root, 'browser-bridge-runtime', 'dashboard.js')
+const dashboard = readFileSync(dashboardPath, 'utf8')
+const bridgeHost = readFileSync(resolve(root, 'browser-bridge-runtime', 'index.js'), 'utf8')
 const installer = readFileSync(resolve(root, 'scripts', 'install-local.ps1'), 'utf8')
 const uninstaller = readFileSync(resolve(root, 'scripts', 'uninstall-local.ps1'), 'utf8')
 
@@ -74,35 +77,50 @@ if (!uninstaller.includes('pnpm remove dsh-patrol-client-host')) {
 for (const marker of [
   "window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host'",
   "exports.inject = ['slots', 'sessions'];",
-  'function FlowView({ useSession, loadOlder })',
-  'function RecordsView({ useSession, loadOlder })',
+  "const DASHBOARD_UI = '/patrol-browser-bridge/dashboard/ui';",
+  'function DashboardFrame({ useSession, workspaceRoot, mode })',
+  'function currentInspectionId(nodes, runningCalls)',
+  "mode: 'flows'",
+  "mode: 'records'",
+  "registerView(ctx, 'patrol-flow', 30, '流程管理'",
+  "registerView(ctx, 'patrol-records', 40, '巡检记录'",
+  'summary.agentPreset === PATROL_PRESET_ID',
+  'summary.projectionValues.agentPreset === PATROL_PRESET_ID',
   'function TokenManager({ embedded = false })',
   'function mountTokenSidebarEntry()',
   "const TOTP_API_ROOT = '/patrol-browser-bridge/totp';",
-  "const TOTP_ENTRY_SELECTOR = '[data-dsh-patrol-token-entry]';",
-  "root.querySelector('[data-dsh-ssh-entry]')",
-  "entry.setAttribute('data-dsh-plugin', 'patrol-token')",
-  "entry.setAttribute('data-dsh-part', 'sidebar-entry')",
-  'new MutationObserver(',
-  'new ResizeObserver(',
   "ctx.inject(['betterSidebar']",
   'service.registerTab({',
-  'betterSidebar.openTab({ type: TOTP_TAB_ID',
   "name: 'sidebar.footer.action', id: 'dsh-patrol-token-bridge'",
   'window.BarcodeDetector',
   "type: 'password'",
   "'x-dsh-patrol-csrf': csrf",
-  'snapshot.nodes',
-  'snapshot.runningCalls',
-  'snapshot.hasMore',
-  'binding.session.getSnapshot()',
-  'summary.agentPreset === PATROL_PRESET_ID',
-  'summary.projectionValues.agentPreset === PATROL_PRESET_ID',
-  "registerView(ctx, 'patrol-flow', 30, '流程管理'",
-  "registerView(ctx, 'patrol-records', 40, '巡检记录'",
-  "name: 'conversation.view'",
 ]) {
   if (!client.includes(marker)) throw new Error(`client bundle is missing marker: ${marker}`)
+}
+
+for (const marker of [
+  'registerPatrolDashboardRoutes',
+  "path: `${prefix}/catalog`",
+  "path: `${prefix}/run`",
+  "path: `${prefix}/artifact`",
+  'function buildCatalog(storageRoot, workspace)',
+  'function artifactCandidates(storageRoot, report)',
+  'function dashboardHtml(prefix)',
+  "const MODE=qs.get('mode')==='records'?'records':'flows'",
+  "function filterRecords()",
+  "function renderFlowDetail(x)",
+  "function flowDiagram(steps)",
+  "function renderRunDetail()",
+  "[['overview','概述'],['steps','步骤'],['artifacts','产物'],['logs','日志']]",
+]) {
+  if (!dashboard.includes(marker)) throw new Error(`dashboard runtime is missing marker: ${marker}`)
+}
+if (!bridgeHost.includes("import { registerPatrolDashboardRoutes } from './dashboard.js'")) {
+  throw new Error('browser bridge host must import the Patrol dashboard routes')
+}
+if (!bridgeHost.includes('registerPatrolDashboardRoutes(ctx, path, config)')) {
+  throw new Error('browser bridge host must mount the Patrol dashboard routes')
 }
 
 for (const forbidden of [
@@ -116,10 +134,10 @@ for (const forbidden of [
   if (client.includes(forbidden)) throw new Error(`client bundle contains forbidden compatibility/security marker: ${forbidden}`)
 }
 
-for (const file of [resolve(carrierRoot, 'index.js'), clientPath]) {
+for (const file of [resolve(carrierRoot, 'index.js'), clientPath, dashboardPath]) {
   const syntax = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' })
   if (syntax.status !== 0) {
-    throw new Error(`client host syntax check failed for ${file}:\n${syntax.stderr || syntax.stdout}`)
+    throw new Error(`Patrol web runtime syntax check failed for ${file}:\n${syntax.stderr || syntax.stdout}`)
   }
 }
 
