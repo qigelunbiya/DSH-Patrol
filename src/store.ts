@@ -139,8 +139,10 @@ export class PatrolStore {
       json: this.runJsonPath(report.inspectionId, report.runId),
       markdown: this.runMarkdownPath(report.inspectionId, report.runId),
     }
+    const summary = runIndexSummary(report)
     await atomicWrite(internal.json, `${JSON.stringify(report, null, 2)}\n`)
     await atomicWrite(internal.markdown, markdown)
+    await atomicWrite(join(internal.directory, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`)
 
     // A real Patrol run always has a persisted inspection definition. Some
     // lower-level runner tests deliberately execute an ephemeral definition
@@ -161,6 +163,7 @@ export class PatrolStore {
     const visible = this.workspaceRunPaths(report.inspectionId, report.runId, workspaceRoot)
     await atomicWrite(visible.json, `${JSON.stringify(report, null, 2)}\n`)
     await atomicWrite(visible.markdown, markdown)
+    await atomicWrite(join(dirname(visible.json), 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`)
 
     // Runbook mirrors require an authoritative persisted definition. If a
     // low-level test supplied only an ephemeral definition, keep the reports
@@ -277,6 +280,32 @@ export class PatrolStore {
   }
 }
 
+function runIndexSummary(report: RunReport): Record<string, unknown> {
+  const results = report.results
+  const passedSteps = results.filter(result => result.status === 'passed').length
+  const failedSteps = results.filter(result => result.status === 'failed').length
+  const waitingSteps = results.filter(result => result.status === 'waiting').length
+  const skippedSteps = results.filter(result => result.status === 'skipped').length
+  const artifactCount = results.reduce((count, result) => count + (result.artifacts?.length ?? 0), 0) + 2
+  return {
+    schemaVersion: 1,
+    runId: report.runId,
+    inspectionId: report.inspectionId,
+    inspectionName: report.inspectionName,
+    status: report.status,
+    startedAt: report.startedAt,
+    finishedAt: report.finishedAt,
+    expectedResult: report.expectedResult,
+    summary: report.summary ?? '',
+    stepCount: results.length,
+    passedSteps,
+    failedSteps,
+    waitingSteps,
+    skippedSteps,
+    artifactCount,
+  }
+}
+
 async function atomicWrite(path: string, content: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
   const temp = `${path}.${process.pid}.${Date.now()}.tmp`
@@ -305,7 +334,7 @@ function renderRunbookMarkdown(definition: InspectionDefinition): string {
         `- \`${profile.kind}/${profile.subtype}\` → \`${profile.strategy}\`; observed ${profile.occurrences} time(s); auto-completed ${profile.autoCompletedOccurrences} time(s); last seen ${profile.lastObservedAt}`,
       )
     }
-    lines.push('', 'These entries are non-secret hints learned from prior runs. The current page is still classified once when verification is reached; no captcha answer, OTP, cookie, or raw challenge image is stored.', '')
+    lines.push('', 'These entries are non-secret hints learned from prior runs. The current page is still classified once when verification is reached; no captcha answer, OTP, cookie, or raw challenge image is stored here.', '')
   }
 
   lines.push('## Reusable steps', '')
