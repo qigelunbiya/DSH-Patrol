@@ -70,11 +70,28 @@ for (const forbidden of ['-ClientHostUri $ClientHostIndex', "$ClientHostIndex ="
 if (!uninstaller.includes('pnpm remove dsh-patrol-client-host')) {
   throw new Error('uninstall-local.ps1 must remove the Patrol client carrier profile dependency')
 }
+
 for (const marker of [
   "window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host'",
   "exports.inject = ['slots', 'sessions'];",
   'function FlowView({ useSession, loadOlder })',
   'function RecordsView({ useSession, loadOlder })',
+  'function TokenManager({ embedded = false })',
+  'function mountTokenSidebarEntry()',
+  "const TOTP_API_ROOT = '/patrol-browser-bridge/totp';",
+  "const TOTP_ENTRY_SELECTOR = '[data-dsh-patrol-token-entry]';",
+  "root.querySelector('[data-dsh-ssh-entry]')",
+  "entry.setAttribute('data-dsh-plugin', 'patrol-token')",
+  "entry.setAttribute('data-dsh-part', 'sidebar-entry')",
+  'new MutationObserver(',
+  'new ResizeObserver(',
+  "ctx.inject(['betterSidebar']",
+  'service.registerTab({',
+  'betterSidebar.openTab({ type: TOTP_TAB_ID',
+  "name: 'sidebar.footer.action', id: 'dsh-patrol-token-bridge'",
+  'window.BarcodeDetector',
+  "type: 'password'",
+  "'x-dsh-patrol-csrf': csrf",
   'snapshot.nodes',
   'snapshot.runningCalls',
   'snapshot.hasMore',
@@ -87,8 +104,16 @@ for (const marker of [
 ]) {
   if (!client.includes(marker)) throw new Error(`client bundle is missing marker: ${marker}`)
 }
-for (const obsolete of ['eventSource', 'useEventWindow']) {
-  if (client.includes(obsolete)) throw new Error(`client bundle still depends on obsolete rc2-incompatible ${obsolete}`)
+
+for (const forbidden of [
+  'eventSource',
+  'useEventWindow',
+  '.cloneNode(',
+  'currentTotpCode',
+  'generateTotpForProfile',
+  'PATROL_SECRET_',
+]) {
+  if (client.includes(forbidden)) throw new Error(`client bundle contains forbidden compatibility/security marker: ${forbidden}`)
 }
 
 for (const file of [resolve(carrierRoot, 'index.js'), clientPath]) {
