@@ -39,7 +39,7 @@ export interface PatrolClickTargetOptions {
 }
 
 /**
- * New teaching-time click path.  The low-level browser_click tool is kept for
+ * New teaching-time click path. The low-level browser_click tool is kept for
  * Runbook compatibility, but model-facing teaching should resolve a concrete
  * visible target before browser_click is allowed to mutate the page.
  */
@@ -224,20 +224,34 @@ function semanticLocatorMatches(element: SnapshotElement, locator: SemanticLocat
 function targetFromSnapshot(element: SnapshotElement, match: ClickTarget['match']): ClickTarget {
   const selector = cleanString(element.selector)
   if (selector === undefined) throw new Error('resolved click target has no stable selector')
+  const text = cleanString(element.text)
+  const role = cleanString(element.role)
+  const tag = cleanString(element.tag)
   return {
     selector,
-    ...(cleanString(element.text) === undefined ? {} : { text: cleanString(element.text) }),
-    ...(cleanString(element.role) === undefined ? {} : { role: cleanString(element.role) }),
-    ...(cleanString(element.tag) === undefined ? {} : { tag: cleanString(element.tag) }),
+    ...(text === undefined ? {} : { text }),
+    ...(role === undefined ? {} : { role }),
+    ...(tag === undefined ? {} : { tag }),
     match,
   }
 }
 
 function snapshotElements(value: JsonValue | undefined): SnapshotElement[] {
   if (value === null || value === undefined || typeof value !== 'object' || Array.isArray(value)) return []
-  const children = (value as Record<string, JsonValue>).elements
+  const children = (value as JsonObject).elements
   if (!Array.isArray(children)) return []
-  return children.filter((child): child is SnapshotElement => child !== null && typeof child === 'object' && !Array.isArray(child))
+  const out: SnapshotElement[] = []
+  for (const child of children) {
+    if (child === null || typeof child !== 'object' || Array.isArray(child)) continue
+    const object = child as JsonObject
+    out.push({
+      selector: object.selector,
+      text: object.text,
+      role: object.role,
+      tag: object.tag,
+    })
+  }
+  return out
 }
 
 function describeTarget(target: ClickTarget): string {
@@ -294,7 +308,7 @@ function cleanString(value: unknown): string | undefined {
 
 function objectNumber(value: JsonValue | undefined, key: string): number | undefined {
   if (value === null || value === undefined || typeof value !== 'object' || Array.isArray(value)) return undefined
-  const child = (value as Record<string, JsonValue>)[key]
+  const child = (value as JsonObject)[key]
   return typeof child === 'number' && Number.isFinite(child) ? child : undefined
 }
 
