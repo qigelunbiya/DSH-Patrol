@@ -1,4 +1,5 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import { currentCaptchaMode } from './captcha-mode.js'
 import { tryFillImageCode } from './image-code.js'
 import { probeOwnedSiteChallenge, trySolveOwnedSiteChallenge } from './captcha-demo.js'
 
@@ -10,7 +11,7 @@ const optInt = { type: 'integer' }
 
 const CHALLENGE_KINDS = ['none', 'otp', 'captcha', 'slider', 'approval', 'unknown']
 const CHALLENGE_SUBTYPES = ['none', 'otp', 'image-code', 'click-sequence', 'third-party', 'generic-captcha', 'slider', 'slider-puzzle', 'rotate', 'approval', 'unknown']
-const CHALLENGE_STRATEGIES = ['none', 'windows-system-ocr', 'ddddocr-click-sequence-demo', 'ddddocr-slider-demo', 'manual-click-sequence', 'manual-slider', 'manual-third-party', 'manual-otp', 'manual-approval', 'manual-review']
+const CHALLENGE_STRATEGIES = ['none', 'windows-system-ocr', 'model-visual-test', 'ddddocr-click-sequence-demo', 'ddddocr-slider-demo', 'manual-click-sequence', 'manual-slider', 'manual-third-party', 'manual-otp', 'manual-approval', 'manual-review']
 const KIND_ORDER = ['slider', 'otp', 'captcha', 'approval', 'unknown']
 
 const CLICK_SEQUENCE_RULES = [
@@ -188,23 +189,25 @@ export function ambiguousDemoFallback(classified, demo) {
   }
 }
 
-export function assertImageCodeAutoSolved(classified, automationRan, platform = process.platform, detail = '') {
+export function assertImageCodeAutoSolved(classified, automationRan, platform = process.platform, detail = '', allowTestDebugFallback = false) {
   if (classified?.kind !== 'captcha' || classified?.subtype !== 'image-code') return false
+  if (automationRan) return true
+  if (allowTestDebugFallback) return false
   if (platform !== 'win32') {
     throw new Error('DSH Patrol image-code automation failed: conventional image-text CAPTCHA requires automatic local recognition, manual handoff is disabled, and this runtime is not Windows.')
   }
-  if (!automationRan) {
-    const suffix = String(detail || '').trim() ? ` Detail: ${compact(detail, 180)}` : ''
-    throw new Error(`DSH Patrol image-code automation failed: local ddddocr/Windows OCR could not confidently recognize and fill the CAPTCHA. Manual handoff is disabled for image-code; the patrol must fail instead of asking the user to type this CAPTCHA.${suffix}`)
-  }
-  return true
+  const suffix = String(detail || '').trim() ? ` Detail: ${compact(detail, 180)}` : ''
+  throw new Error(`DSH Patrol image-code automation failed: local ddddocr/Windows OCR could not confidently recognize and fill the CAPTCHA. Manual handoff is disabled for image-code; the patrol must fail instead of asking the user to type this CAPTCHA.${suffix}`)
 }
 
 export function registerChallengeTool(ctx, bridge, config = {}) {
   const timeoutMs = config.commandTimeoutMs ?? 60000
+  const testMode = currentCaptchaMode().name === 'test'
   const definition = defineTool({
     name: 'browser_detect_auth_challenge',
-    description: 'Detect login verification and automate supported local flows. Conventional image-text CAPTCHA is mandatory automatic local recognition/fill; if that solver fails the detector fails and never falls back to a human checkpoint. OTP, device approval, rotate/unsupported challenges, and third-party reCAPTCHA/hCaptcha/Turnstile/Arkose-style widgets remain human handoffs.',
+    description: testMode
+      ? 'Detect login verification and try supported automation. In TEST MODE, image-code OCR failure is non-terminal: the current image-code remains reported so the model may use current screenshot vision/read_image/manual debug typing and retry.'
+      : 'Detect login verification and automate supported local flows. Conventional image-text CAPTCHA is mandatory automatic local recognition/fill; if that solver fails the detector fails and never falls back to a human checkpoint. OTP, device approval, rotate/unsupported challenges, and third-party reCAPTCHA/hCaptcha/Turnstile/Arkose-style widgets remain human handoffs.',
     parameters: { tabId: optInt },
     output: {
       schema: {
@@ -221,11 +224,12 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
           selectors: { type: 'array', required: true, items: str },
           autoFilled: bool,
           handoffRequired: reqBool,
+          testModeFallback: bool,
         },
       },
       render: (_args, value) => [{
         type: 'text',
-        text: `Auth challenge: kind=${value.kind}; subtype=${value.subtype}; observed=${value.observedKind}/${value.observedSubtype}; strategy=${value.strategy}; hasChallenge=${value.hasChallenge}; handoffRequired=${value.handoffRequired}${value.autoFilled && !value.handoffRequired ? '; verification input auto-filled by the local Patrol solver; continue with the observed submit/login step' : ''}${value.selectors?.length ? `; selectors=${value.selectors.join(', ')}` : ''}`,
+        text: `Auth challenge: kind=${value.kind}; subtype=${value.subtype}; observed=${value.observedKind}/${value.observedSubtype}; strategy=${value.strategy}; hasChallenge=${value.hasChallenge}; handoffRequired=${value.handoffRequired}${value.testModeFallback ? '; TEST MODE fallback is active: OCR did not auto-fill, continue with CURRENT screenshot/model vision/read_image/manual debug typing instead of stopping' : ''}${value.autoFilled && !value.handoffRequired ? '; verification input auto-filled by the local Patrol solver; continue with the observed submit/login step' : ''}${value.selectors?.length ? `; selectors=${value.selectors.join(', ')}` : ''}`,
       }],
     },
     presentCall: args => ({ card: 'generic', title: 'Detect login verification', kind: 'other', rawInput: args }),
@@ -236,6 +240,7 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
       let strategy = strategyForChallenge(initiallyObserved.kind, initiallyObserved.subtype)
       let autoFilled = false
       let imageAutomationRan = false
+      let testModeFallback = false
       const imageCodeObserved = classified.kind === 'captcha' && classified.subtype === 'image-code'
 
       if (imageCodeObserved) {
@@ -248,14 +253,26 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
             imageAutomationError = error instanceof Error ? error.message : String(error)
           }
         }
-        assertImageCodeAutoSolved(classified, imageAutomationRan, process.platform, imageAutomationError)
+        const autoSolved = assertImageCodeAutoSolved(
+          classified,
+          imageAutomationRan,
+          process.platform,
+          imageAutomationError,
+          testMode,
+        )
 
-        // Recognition/fill is the whole responsibility of this solver. The
-        // observed Runbook button remains responsible for submitting the form.
-        // Once the field was filled, the CAPTCHA is complete from Patrol's
-        // perspective even if the image remains visible until submit.
-        autoFilled = true
-        classified = emptyClassification()
+        if (autoSolved) {
+          // Recognition/fill is the whole responsibility of this solver. The
+          // observed Runbook button remains responsible for submitting the form.
+          autoFilled = true
+          classified = emptyClassification()
+        } else if (testMode) {
+          // Do not destroy the current CAPTCHA state. Keep the classification so
+          // the model can use the authoritative current patrol_observe image (or
+          // a workspace read_image) and type a debug result directly.
+          strategy = 'model-visual-test'
+          testModeFallback = true
+        }
       }
 
       if (!imageCodeObserved) {
@@ -314,7 +331,8 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
         hasChallenge: classified.hasChallenge,
         selectors: classified.selectors,
         autoFilled,
-        handoffRequired: classified.kind !== 'none',
+        handoffRequired: testModeFallback ? false : classified.kind !== 'none',
+        testModeFallback,
       }
     },
   })
