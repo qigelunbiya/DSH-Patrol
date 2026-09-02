@@ -10,6 +10,7 @@
 // the sibling `inject` metadata before the preset is mounted.
 import { registerChallengeTool } from './challenge-tool.js'
 import { registerCountTool } from './count-tool.js'
+import { registerImageCodeRefreshTool } from './image-code-refresh-tool.js'
 import { registerImageCodeVisualTool } from './image-code-visual-tool.js'
 import { registerLoginStateTool } from './login-state-tool.js'
 import { registerTransientTool } from './transient-tool.js'
@@ -84,6 +85,9 @@ export async function apply(ctx, config = {}) {
   ctx.effect(() => registerImageCodeVisualTool(ctx, bridge, {
     commandTimeoutMs: config.commandTimeoutMs ?? 60000,
   }), 'dsh-patrol/browser-tools: current image-code visual crop')
+  ctx.effect(() => registerImageCodeRefreshTool(ctx, bridge, {
+    commandTimeoutMs: config.commandTimeoutMs ?? 60000,
+  }), 'dsh-patrol/browser-tools: current image-code refresh recovery')
   ctx.effect(() => registerLoginStateTool(ctx, bridge, {
     commandTimeoutMs: config.commandTimeoutMs ?? 60000,
   }), 'dsh-patrol/browser-tools: scoped login-state detector')

@@ -11,6 +11,7 @@ export const SAFE_BROWSER_TOOLS = [
   'browser_count',
   'browser_login_state',
   'browser_detect_auth_challenge',
+  'browser_refresh_image_code',
   'browser_click',
   'browser_type',
   'browser_type_credential',
