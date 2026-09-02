@@ -57,6 +57,61 @@ function Install-ClientHostDependency {
     }
 }
 
+function Install-HarnessClientHostCompatMirror {
+    param(
+        [Parameter(Mandatory = $true)][string]$HarnessRootPath,
+        [Parameter(Mandatory = $true)][string]$ClientHostRoot
+    )
+
+    $resolvedHarnessRoot = [System.IO.Path]::GetFullPath($HarnessRootPath)
+    $nodeModules = Join-Path $resolvedHarnessRoot "node_modules"
+    if (-not (Test-Path -LiteralPath $nodeModules)) {
+        throw "Harness node_modules does not exist: $nodeModules. Run pnpm install in the Harness checkout first."
+    }
+
+    $target = Join-Path $nodeModules "dsh-patrol-client-host"
+    $marker = Join-Path $target ".managed-by-dsh-patrol"
+    if (Test-Path -LiteralPath $target) {
+        if (-not (Test-Path -LiteralPath $marker)) {
+            throw "Refusing to replace unmanaged Harness package path: $target"
+        }
+        Remove-Item -LiteralPath $target -Recurse -Force
+    }
+
+    New-Item -ItemType Directory -Force -Path $target | Out-Null
+    foreach ($name in @("package.json", "index.js", "client.js")) {
+        $source = Join-Path $ClientHostRoot $name
+        if (-not (Test-Path -LiteralPath $source)) {
+            throw "Patrol client host source file is missing: $source"
+        }
+        Copy-Item -LiteralPath $source -Destination (Join-Path $target $name) -Force
+    }
+    Write-Utf8NoBom -Path $marker -Content "managed by dsh-patrol local installer`n"
+
+    $targetManifestPath = Join-Path $target "package.json"
+    $targetManifest = [System.IO.File]::ReadAllText($targetManifestPath) | ConvertFrom-Json
+    if ($targetManifest.name -ne "dsh-patrol-client-host" -or $targetManifest.dsh.client.platform -ne "web") {
+        throw "Harness compatibility mirror has an invalid Patrol client manifest: $targetManifestPath"
+    }
+
+    Push-Location $resolvedHarnessRoot
+    try {
+        $resolvedManifest = (& node -e "console.log(require.resolve('dsh-patrol-client-host/package.json'))" 2>&1 | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($resolvedManifest)) {
+            throw "Harness root cannot resolve dsh-patrol-client-host/package.json after compatibility install"
+        }
+        $expectedManifest = [System.IO.Path]::GetFullPath($targetManifestPath)
+        $actualManifest = [System.IO.Path]::GetFullPath($resolvedManifest)
+        if ($actualManifest -ne $expectedManifest) {
+            throw "Harness root resolves dsh-patrol-client-host from an unexpected location: $actualManifest (expected $expectedManifest)"
+        }
+    } finally {
+        Pop-Location
+    }
+
+    return $target
+}
+
 function Install-ManagedHostBridgePatch {
     param(
         [Parameter(Mandatory = $true)][string]$PatchPath,
@@ -206,10 +261,15 @@ $ClientHostRoot = [System.IO.Path]::GetFullPath((Join-Path $ProjectRoot "client-
 $BrowserToolsIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "browser-bridge-runtime\tools-plugin.js")))).AbsoluteUri
 $SafeStoragePath = ConvertTo-YamlSingleQuoted -Value $PatrolStorage
 
-# ClientModuleRegistry resolves bare package rows from the profile's dependency
-# closure. Install the client carrier there instead of relying on an out-of-tree
-# file URL to be rediscovered as a package during the browser roster scan.
+# Newer Harness versions resolve client rows from the profile's dependency
+# closure, while dsh@0.1.1-rc.2 (b150a55) resolves them from the Harness config
+# tree's ctx.baseUrl. Install both surfaces so the same Patrol checkout works on
+# either loader implementation without asking the user to upgrade Harness.
 Install-ClientHostDependency -ProfileDir $ProfileDir -ClientHostRoot $ClientHostRoot
+$HarnessClientHostMirror = $null
+if ($HarnessRoot) {
+    $HarnessClientHostMirror = Install-HarnessClientHostCompatMirror -HarnessRootPath $HarnessRoot -ClientHostRoot $ClientHostRoot
+}
 
 # Keep this PowerShell source ASCII-only for Windows PowerShell 5.1 compatibility.
 # Copy the UTF-8 preset bytes directly instead of embedding non-ASCII literals here.
@@ -279,6 +339,9 @@ Write-Host ""
 Write-Host "Local Patrol preset installed and UTF-8 verified: $PresetDir" -ForegroundColor Green
 Write-Host "Host browser bridge patch installed: $WebPatch" -ForegroundColor Green
 Write-Host "Patrol web client package installed into profile: $ProfileDir" -ForegroundColor Green
+if ($HarnessClientHostMirror) {
+    Write-Host "Patrol web client compatibility mirror installed: $HarnessClientHostMirror" -ForegroundColor Green
+}
 Write-Host "Lifecycle cleanup coordinator installed: $CleanupTarget" -ForegroundColor Green
 Write-Host "Patrol workspace storage: $PatrolStorage" -ForegroundColor Green
 Write-Host "Patrol screenshot temp storage: $PatrolScreenshotDir" -ForegroundColor Green
