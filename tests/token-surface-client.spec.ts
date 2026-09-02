@@ -27,4 +27,11 @@ describe('Patrol token client surface', () => {
     expect(clientSource).toContain('Google Authenticator 迁移二维码')
     expect(clientSource).not.toContain('window.BarcodeDetector')
   })
+
+  it('shows locally generated current TOTP digits with a live countdown', () => {
+    expect(clientSource).toContain("totpPost('preview', csrf")
+    expect(clientSource).toContain("'data-dsh-patrol-totp-preview': profile.id")
+    expect(clientSource).toContain("live?.code || '------'")
+    expect(clientSource).toContain('s 后刷新')
+  })
 })
