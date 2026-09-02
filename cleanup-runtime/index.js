@@ -103,10 +103,10 @@ export function manifestReferencesPatrol(manifest) {
     const dependencies = manifest?.[section]
     if (!dependencies || typeof dependencies !== 'object' || Array.isArray(dependencies)) continue
     for (const [packageName, spec] of Object.entries(dependencies)) {
-      if (packageName === 'dsh-patrol') return true
+      if (packageName === 'dsh-patrol' || packageName === 'dsh-patrol-client-host') return true
       const text = String(spec ?? '')
       if (/qigelunbiya[\\/]DSH-Patrol/i.test(text)) return true
-      if (/(?:^|[/:@])dsh-patrol(?:[#@/:]|$)/i.test(text)) return true
+      if (/(?:^|[/:@])dsh-patrol(?:-client-host)?(?:[#@/:]|$)/i.test(text)) return true
     }
   }
   return false
