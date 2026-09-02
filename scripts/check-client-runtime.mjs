@@ -95,7 +95,8 @@ for (const marker of [
   "ctx.inject(['betterSidebar']",
   'service.registerTab({',
   "name: 'sidebar.footer.action', id: 'dsh-patrol-token-bridge'",
-  'window.BarcodeDetector',
+  'function readFileDataUrl(file)',
+  "totpPost('import-image', csrf",
   "type: 'password'",
   "'x-dsh-patrol-csrf': csrf",
 ]) {
@@ -145,6 +146,7 @@ for (const forbidden of [
   'currentTotpCode',
   'generateTotpForProfile',
   'PATROL_SECRET_',
+  'window.BarcodeDetector',
 ]) {
   if (client.includes(forbidden)) throw new Error(`client bundle contains forbidden compatibility/security marker: ${forbidden}`)
 }
