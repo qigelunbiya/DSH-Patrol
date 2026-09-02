@@ -1,5 +1,4 @@
 import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-system-prompt'
 import { defineTool, type ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { listTotpProfiles } from '../browser-bridge-runtime/totp-store.js'
 import { assertSafePersistentText } from './security.js'
@@ -99,14 +98,6 @@ export function registerPatrolTotpTools(
 
   const definitions: ToolDefinition[] = [listProfiles, typeTotp]
   const disposers = definitions.map(definition => ctx.tools.register(definition))
-  const systemPrompt = ctx.get('systemPrompt')
-  if (systemPrompt !== undefined) {
-    disposers.push(systemPrompt.section({
-      name: 'agent:dsh-patrol-totp',
-      order: 134.5,
-      text: PATROL_TOTP_PROMPT,
-    }))
-  }
   return () => { for (const dispose of disposers) dispose() }
 }
 
