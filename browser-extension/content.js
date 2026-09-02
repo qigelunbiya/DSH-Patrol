@@ -1,6 +1,8 @@
 const SENSITIVE_INPUT = /(pass(word|wd)?|pwd|secret|token|api[-_]?key|authorization|cookie|session[-_]?id|otp|captcha|verification)/i
 const CHALLENGE_SIGNAL = /(captcha|recaptcha|hcaptcha|turnstile|geetest|slider|puzzle|human.?verify|verify.?human|verification.?code|otp|验证码|滑块|拼图|人机验证|机器人验证|二次验证|安全验证)/i
 const IMAGE_CODE_HINT = /(captcha|image[-_ ]?code|img[-_ ]?code|verify[-_ ]?code|verification[-_ ]?code|validation[-_ ]?code|check[-_ ]?code|auth[-_ ]?code|\bcode\b|验证码|校验码|图形码)/i
+const BASE_INTERACTIVE_SELECTOR = 'a,button,input,select,textarea,[role="button"],[role="link"],[role="checkbox"],[role="tab"],[contenteditable="true"],[onclick]'
+const CUSTOM_INTERACTIVE_SELECTOR = '[tabindex],div,span,li,p,label,strong,img,svg'
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== 'dsh-patrol:command') return
@@ -29,15 +31,15 @@ async function handle(cmd, args) {
 function snapshot(args) {
   const root = selectRoot(args.selector)
   const max = Number.isInteger(args.maxElements) ? Math.max(1, Math.min(args.maxElements, 500)) : 150
-  const nodes = [...root.querySelectorAll('a,button,input,select,textarea,[role="button"],[role="link"],[role="checkbox"],[role="tab"],[contenteditable="true"],[onclick]')]
+  const nodes = interactiveCandidates(root)
   const visible = nodes.filter(element => args.includeHidden === true || isVisible(element))
   const elements = visible.slice(0, max).map(element => {
     const input = element instanceof HTMLInputElement ? element : null
     const sensitive = input !== null && (input.type === 'password' || SENSITIVE_INPUT.test(input.name) || SENSITIVE_INPUT.test(input.id) || SENSITIVE_INPUT.test(input.autocomplete))
     return clean({
       tag: element.tagName.toLowerCase(),
-      role: element.getAttribute('role') || undefined,
-      text: compactText(element.innerText || element.textContent || element.getAttribute('aria-label') || '', 240),
+      role: semanticRole(element),
+      text: compactText(element.innerText || element.textContent || element.getAttribute('aria-label') || element.getAttribute('title') || '', 240),
       selector: stableSelector(element),
       type: input?.type || undefined,
       name: input?.name || undefined,
@@ -47,6 +49,32 @@ function snapshot(args) {
     })
   })
   return { ok: true, url: location.href, title: document.title, elements, truncated: visible.length > elements.length }
+}
+
+function interactiveCandidates(root) {
+  const selector = `${BASE_INTERACTIVE_SELECTOR},${CUSTOM_INTERACTIVE_SELECTOR}`
+  const nodes = [...root.querySelectorAll(selector)]
+  return nodes.filter(element => element.matches(BASE_INTERACTIVE_SELECTOR) || isLikelyClickable(element))
+}
+
+function isLikelyClickable(element) {
+  const tabindex = element.getAttribute('tabindex')
+  if (tabindex !== null && Number(tabindex) >= 0) return true
+  const style = getComputedStyle(element)
+  if (style.cursor !== 'pointer') return false
+  const label = compactText(element.innerText || element.textContent || element.getAttribute('aria-label') || element.getAttribute('title') || '', 160)
+  return label.length > 0
+}
+
+function semanticRole(element) {
+  const explicit = element.getAttribute('role')
+  if (explicit) return explicit
+  const tag = element.tagName.toLowerCase()
+  if (tag === 'button') return 'button'
+  if (tag === 'a' && element.getAttribute('href')) return 'link'
+  if (element instanceof HTMLInputElement && ['button', 'submit', 'reset'].includes(element.type)) return 'button'
+  if (isLikelyClickable(element)) return 'button'
+  return undefined
 }
 
 function readPage(args) {
