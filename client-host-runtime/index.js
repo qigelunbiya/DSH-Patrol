@@ -1,11 +1,7 @@
-// Host-side anchor for the Patrol browser UI companion.
+// Host-plane carrier for both the Patrol browser bridge and Patrol web UI.
 //
-// This plugin intentionally registers no host services or Patrol tools. Its only
-// purpose is to give the web profile Loader a stable package row whose nearest
-// package.json declares dsh.client, allowing ClientModuleRegistry to publish the
-// browser bundle in window.__DSH_BOOT__. Patrol orchestration itself remains
-// scoped to the dedicated Agent Preset.
-export const name = 'dsh-patrol-client-host'
-export const inject = []
-
-export function apply() {}
+// The Loader entry points at this nested package so ClientModuleRegistry sees a
+// single dedicated dsh.client package row. The actual host bridge implementation
+// remains in browser-bridge-runtime; Patrol orchestration/tools remain scoped to
+// the dedicated Agent Preset and are not registered globally by this carrier.
+export { name, inject, apply } from '../browser-bridge-runtime/index.js'
