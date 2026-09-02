@@ -56,10 +56,18 @@ async function setup(dispatchOk = true) {
   registerPatrolTotpTools(ctx, store, runner, { maxSteps: 20 })
   const tool = definitions.find(item => item.name === 'patrol_type_totp_profile')
   if (!tool) throw new Error('patrol_type_totp_profile not registered')
-  return { store, tool, calls }
+  return { store, tool, calls, definitions }
 }
 
 describe('Patrol TOTP Runbook tool', () => {
+  it('registers non-sensitive profile discovery before profile-based typing', async () => {
+    const { definitions } = await setup(true)
+    expect(definitions.map(item => item.name)).toEqual([
+      'patrol_list_totp_profiles',
+      'patrol_type_totp_profile',
+    ])
+  })
+
   it('records only the opaque token profile reference after successful typing', async () => {
     const { store, tool, calls } = await setup(true)
     const result = await tool.execute({
