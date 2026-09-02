@@ -41,6 +41,7 @@ export const PATROL_TEST_MODE_OVERRIDE_PROMPT = `DSH Patrol TEST MODE 调试规�
 - 不要通过反复提交低置信度验证码来“试对”。如果站点可能存在验证码失败次数或临时封禁策略，宁可换验证码，也不要消耗一次登录提交。只有达到置信度门槛后才提交。
 - 在教学阶段，如果已经确认某个站点的验证码刷新方式有效，可以把“如何刷新验证码”的稳定选择器/动作记录为该巡检的恢复知识；不要记录某一次具体验证码值。若站点没有独立刷新方式，再记录“整页 reload + 重填登录字段”作为最后恢复策略。
 - 普通 image-code 在测试模式允许点击/按键刷新验证码；允许用户或模型在调试过程中提供 CURRENT 验证码作为辅助证据。验证码刷新或登录提交后应重新观察当前值，避免复用旧验证码。
+- 当页面出现“动态口令”“APP 口令”“TOTP”“Authenticator”“双因子认证”等二次认证输入框，并且用户明确要求使用当前/已配置令牌时，先调用 patrol_list_totp_profiles 查询本机令牌 profile；匹配到 profile 后直接调用 patrol_type_totp_profile 生成并填写 CURRENT TOTP，然后再提交。不要先留空点击确定，也不要在已有匹配 profile 时要求用户去手机查看或发送 6 位动态码。只有没有可用 profile、无法可靠匹配或专用 TOTP 输入实际失败时，才退回人工 OTP/checkpoint。
 - recovery circuit breaker 在测试模式关闭。允许为了定位问题重复 detector、wait、snapshot、read_page、screenshot、doctor、navigate 等诊断动作，不得再以恢复预算为理由停止。
 - 测试模式允许模型直接调用已挂载且位于 Patrol safe browser allowlist 内的 browser_* 工具做诊断。直接 browser_* 不自动记录 Runbook；需要正式记录时仍优先使用 patrol_*，但这是记录建议而不是禁止。
 - image-code 在测试模式也允许人工 checkpoint/handoff，仅用于调试。OTP、设备确认等仍可正常 handoff；真正的密码、TOTP/OTP、token 等敏感值仍不得写入 Runbook、notes、报告或用户可见总结。
