@@ -2,12 +2,14 @@ import { randomBytes } from 'node:crypto'
 import { decodeQrImageDataUrl } from './qr-code.js'
 import {
   deleteTotpProfile,
+  generateTotpForProfile,
   listTotpProfiles,
   saveTotpProfilesFromPayload,
 } from './totp-store.js'
 
 const MAX_JSON_BYTES = 24 * 1024
 const MAX_IMAGE_JSON_BYTES = 12 * 1024 * 1024
+const MAX_PREVIEW_PROFILES = 100
 
 export function registerTotpManagementRoutes(ctx, basePath) {
   const csrf = randomBytes(32).toString('base64url')
@@ -20,6 +22,41 @@ export function registerTotpManagementRoutes(ctx, basePath) {
     handler: async (req, res) => {
       if (req.method !== 'GET') return methodNotAllowed(res, ['GET'])
       return sendJson(res, 200, { ok: true, csrf, profiles: listTotpProfiles() })
+    },
+  }))
+
+  // This route is intentionally local-management-UI only. Unlike Patrol's
+  // browser_type_totp_profile tool, it returns the current digits so the human
+  // owner can use the Token panel as an authenticator replacement. CSRF plus
+  // same-origin browser policy keeps this separate from model/tool output.
+  disposers.push(ctx.webServer.register({
+    kind: 'exact',
+    path: `${prefix}/preview`,
+    handler: async (req, res) => {
+      if (req.method !== 'POST') return methodNotAllowed(res, ['POST'])
+      if (!timingSafeHeader(req.headers['x-dsh-patrol-csrf'], csrf)) return sendJson(res, 403, { ok: false, error: 'invalid local TOTP management session' })
+      try {
+        const body = await readJsonBody(req, MAX_JSON_BYTES)
+        const profileIds = Array.isArray(body?.profileIds)
+          ? body.profileIds.filter(value => typeof value === 'string').slice(0, MAX_PREVIEW_PROFILES)
+          : []
+        const requested = profileIds.length > 0
+          ? [...new Set(profileIds)]
+          : listTotpProfiles().slice(0, MAX_PREVIEW_PROFILES).map(profile => profile.id)
+        const codes = requested.map(profileId => {
+          const generated = generateTotpForProfile(profileId)
+          return {
+            profileId,
+            code: generated.code,
+            digits: generated.profile.digits,
+            period: generated.profile.period,
+            validForSeconds: generated.validForSeconds,
+          }
+        })
+        return sendJson(res, 200, { ok: true, codes })
+      } catch (error) {
+        return sendJson(res, 400, { ok: false, error: safeManagementError(error) })
+      }
     },
   }))
 
