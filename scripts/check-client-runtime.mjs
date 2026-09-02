@@ -10,6 +10,7 @@ const carrierIndex = readFileSync(resolve(carrierRoot, 'index.js'), 'utf8')
 const clientPath = resolve(carrierRoot, 'client.js')
 const client = readFileSync(clientPath, 'utf8')
 const installer = readFileSync(resolve(root, 'scripts', 'install-local.ps1'), 'utf8')
+const uninstaller = readFileSync(resolve(root, 'scripts', 'uninstall-local.ps1'), 'utf8')
 
 if (rootPackage.dsh?.client !== undefined) {
   throw new Error('root dsh-patrol package must not declare dsh.client; its agent and browser-tool Loader sources would collide')
@@ -46,13 +47,22 @@ if (carrierIndex.includes("../browser-bridge-runtime/index.js")) {
   throw new Error('client host anchor must not reuse the browser bridge host row')
 }
 for (const marker of [
+  'function Install-ClientHostDependency',
+  'pnpm add --save-prod $ClientHostRoot',
   'browser-bridge-runtime\\index.js',
-  'client-host-runtime\\index.js',
+  'client-host-runtime',
   'id: dsh-patrol-browser-host',
   'id: dsh-patrol-client-host',
-  '-ClientHostUri $ClientHostIndex',
+  "name: 'dsh-patrol-client-host'",
+  'node_modules\\dsh-patrol-client-host\\package.json',
 ]) {
-  if (!installer.includes(marker)) throw new Error(`install-local.ps1 is missing client/bridge row marker: ${marker}`)
+  if (!installer.includes(marker)) throw new Error(`install-local.ps1 is missing client profile dependency marker: ${marker}`)
+}
+for (const forbidden of ['-ClientHostUri $ClientHostIndex', "$ClientHostIndex ="] ) {
+  if (installer.includes(forbidden)) throw new Error(`install-local.ps1 still contains obsolete file-URL carrier marker: ${forbidden}`)
+}
+if (!uninstaller.includes('pnpm remove dsh-patrol-client-host')) {
+  throw new Error('uninstall-local.ps1 must remove the Patrol client carrier profile dependency')
 }
 for (const marker of [
   "window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host'",
