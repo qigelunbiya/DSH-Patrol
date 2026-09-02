@@ -8,8 +8,10 @@ import {
   generateTotp,
   generateTotpForProfile,
   listTotpProfiles,
+  parseTotpImportPayload,
   parseTotpUri,
   saveTotpProfileFromUri,
+  saveTotpProfilesFromPayload,
   totpProfileStorePath,
 } from '../browser-bridge-runtime/totp-store.js'
 
@@ -33,6 +35,45 @@ async function isolatedStores() {
   process.env.DSH_PATROL_SECRET_DIR = join(root, 'secrets')
   clearTransientSecrets()
   return root
+}
+
+function varint(value: number | bigint) {
+  const output: number[] = []
+  let current = BigInt(value)
+  do {
+    let byte = Number(current & 0x7fn)
+    current >>= 7n
+    if (current) byte |= 0x80
+    output.push(byte)
+  } while (current)
+  return Buffer.from(output)
+}
+
+function fieldVarint(field: number, value: number | bigint) {
+  return Buffer.concat([varint((field << 3) | 0), varint(value)])
+}
+
+function fieldBytes(field: number, value: Buffer) {
+  return Buffer.concat([varint((field << 3) | 2), varint(value.length), value])
+}
+
+function googleMigrationUri() {
+  const otp = Buffer.concat([
+    fieldBytes(1, Buffer.from('Hello!')),
+    fieldBytes(2, Buffer.from('alice@example.com')),
+    fieldBytes(3, Buffer.from('Example')),
+    fieldVarint(4, 1),
+    fieldVarint(5, 1),
+    fieldVarint(6, 2),
+  ])
+  const payload = Buffer.concat([
+    fieldBytes(1, otp),
+    fieldVarint(2, 1),
+    fieldVarint(3, 1),
+    fieldVarint(4, 0),
+    fieldVarint(5, 123),
+  ])
+  return `otpauth-migration://offline?data=${encodeURIComponent(payload.toString('base64'))}`
 }
 
 describe('Patrol TOTP profiles', () => {
@@ -60,6 +101,54 @@ describe('Patrol TOTP profiles', () => {
         digits: 6,
         period: 30,
       })
+  })
+
+  it('parses Authing exported account JSON and supports bulk profiles', async () => {
+    await isolatedStores()
+    const payload = JSON.stringify([
+      {
+        account: 'alice',
+        accountId: 'alice',
+        algorithm: 'SHA1',
+        digits: 6,
+        interval: 30,
+        issuer: 'USM',
+        platform: 'Android',
+        secret: 'JBSWY3DPEHPK3PXP',
+        uuid: '1',
+      },
+      {
+        account: 'bob',
+        algorithm: 'SHA256',
+        digits: 8,
+        interval: 60,
+        issuer: 'Example',
+        secret: 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ',
+      },
+    ])
+
+    const parsed = parseTotpImportPayload(payload)
+    expect(parsed).toHaveLength(2)
+    expect(parsed[0]).toMatchObject({ issuer: 'USM', account: 'alice', algorithm: 'SHA1', digits: 6, period: 30 })
+    const imported = saveTotpProfilesFromPayload('', payload)
+    expect(imported).toEqual([
+      expect.objectContaining({ id: 'usm-alice', issuer: 'USM', account: 'alice' }),
+      expect.objectContaining({ id: 'example-bob', issuer: 'Example', account: 'bob', digits: 8, period: 60 }),
+    ])
+    expect(JSON.stringify(imported)).not.toContain('JBSWY3DPEHPK3PXP')
+  })
+
+  it('parses Google Authenticator migration protobuf payloads', () => {
+    const parsed = parseTotpImportPayload(googleMigrationUri())
+    expect(parsed).toHaveLength(1)
+    expect(parsed[0]).toMatchObject({
+      issuer: 'Example',
+      account: 'alice@example.com',
+      algorithm: 'SHA1',
+      digits: 6,
+      period: 30,
+    })
+    expect(parsed[0].secret).toMatch(/^[A-Z2-7]+$/)
   })
 
   it('stores only profile metadata plus an opaque encrypted-secret reference', async () => {
@@ -93,10 +182,11 @@ describe('Patrol TOTP profiles', () => {
     expect(listTotpProfiles()).toEqual([])
   })
 
-  it('rejects HOTP, missing secrets, and unsafe profile identifiers', async () => {
+  it('rejects HOTP, missing secrets, unsafe profile identifiers, and unknown migration payloads', async () => {
     await isolatedStores()
     expect(() => parseTotpUri('otpauth://hotp/Test?secret=JBSWY3DPEHPK3PXP&counter=1')).toThrow(/Only otpauth:\/\/totp/i)
     expect(() => parseTotpUri('otpauth://totp/Test')).toThrow(/Base32 secret/i)
     expect(() => saveTotpProfileFromUri('../escape', 'otpauth://totp/Test?secret=JBSWY3DPEHPK3PXP')).toThrow(/profile id/i)
+    expect(() => parseTotpImportPayload('not-a-token')).toThrow(/Unsupported TOTP import payload/i)
   })
 })
