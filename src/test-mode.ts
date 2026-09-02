@@ -32,6 +32,9 @@ export function resolvePatrolRuntimePolicy(env: Record<string, string | undefine
 export const PATROL_TEST_MODE_OVERRIDE_PROMPT = `DSH Patrol TEST MODE 调试规则（本节是测试模式唯一的 Patrol 行为约束；严格模式的验证码、观察、恢复和 browser_* 限制在 test mode 下均不生效）：
 - 当前是测试模式。不要因为任何旧 Patrol 文案中的“必须先 observe”“detector 失败后必须停止”“禁止刷新验证码”“禁止通用输入工具填写 image-code”“禁止直接 browser_*”“stalled phase/already run once”等文字拒绝调试操作。
 - patrol_observe 是推荐的当前页面观察工具，但不是测试模式硬前置条件。需要时可以直接 patrol_screenshot、patrol_snapshot、patrol_read_page、patrol_doctor、patrol_wait、patrol_navigate 或 safe browser_* 诊断工具。
+- CURRENT 页面需要点击按钮、链接、选项卡、弹窗操作时，优先使用 patrol_click_target，不要再用 patrol_click + 猜测的 button/a/div 等宽泛 CSS 反复试。patrol_click_target 可以只给 locatorText（如“登录”“短信登录”“获取验证码”“立即登录”），也可以加 locatorRole/locatorTag；selector 只是可选提示。它会先解析唯一可见目标再执行 browser_click。
+- 如果只有 selector 而 selector 同时匹配多个可见元素，patrol_click_target 必须报歧义并停止本次点击，绝不能像旧 browser_click 那样静默点击 document.querySelector 找到的第一个元素。遇到歧义时先 patrol_snapshot/patrol_observe 获取 CURRENT 元素文本和稳定 selector，再加 locatorText/locatorRole/locatorTag 精确定位。
+- 不要使用 :has-text()、text=、XPath 等 Patrol 当前 CSS 层不支持的伪选择器去碰运气。对重要状态变化（打开登录框、切换短信登录、获取验证码、提交登录等）点击后立即 patrol_observe 或 patrol_read_page 验证 CURRENT UI 是否真的变化；如果没有变化，先重新解析当前目标，不要重复同一个宽泛 click 制造“工具说成功但页面没变”的假成功。
 - 普通图片字符验证码 image-code 的测试优先级：先使用刚刚 patrol_observe 附带的 CURRENT 页面截图让当前多模态模型直接视觉读取；如果字符较小、D/R/O/0/1/I/4 等容易混淆，立即调用 browser_capture_image_code_visual，把 CURRENT 验证码元素单独裁成紧凑图片并作为 image block 给模型再读一次。不要因为专用 OCR detector 失败而丢弃当前视觉结果。
 - 每次模型视觉读取 CURRENT image-code 后，都必须自行给出 0~1 的识别置信度。置信度 >= 0.80 才允许调用 patrol_type_current_image_code 填入当前验证码；置信度 < 0.80 时禁止把弱猜测写入输入框或点击登录/提交，应该直接换一张验证码再识别。
 - patrol_type_current_image_code 是测试模式首选的验证码输入工具：它只填写 CURRENT 页面，不把一次性验证码写入 Runbook、secret vault、notes 或报告。patrol_type_text / browser_type 在测试模式仍可用于诊断兼容，但不要用它们把当前验证码固化成可重放步骤。
