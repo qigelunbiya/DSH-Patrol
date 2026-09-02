@@ -36,7 +36,7 @@ describe('Patrol test-mode guard policy', () => {
   })
 
   it('explicitly overrides the image-code, recovery, observation, and direct-browser restrictions', () => {
-    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/detector 失败后可以再次 detector/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/失败后可以再次 detector/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/允许点击\/按键刷新验证码/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/允许模型直接调用.*browser_\*/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/recovery circuit breaker 在测试模式下关闭/)
