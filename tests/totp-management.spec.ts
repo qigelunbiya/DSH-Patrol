@@ -60,10 +60,11 @@ function response() {
 }
 
 describe('local TOTP management API', () => {
-  it('uses a same-origin-readable CSRF session and never echoes imported seed material', async () => {
+  it('uses a same-origin-readable CSRF session, previews current codes locally, and never echoes seed material', async () => {
     const { routes } = await setup()
     expect(routes.map(route => route.path)).toEqual([
       '/patrol-browser-bridge/totp/session',
+      '/patrol-browser-bridge/totp/preview',
       '/patrol-browser-bridge/totp/import',
       '/patrol-browser-bridge/totp/import-image',
       '/patrol-browser-bridge/totp/delete',
@@ -84,7 +85,7 @@ describe('local TOTP management API', () => {
     const secret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'
     const uri = `otpauth://totp/Operations:alice?secret=${secret}&issuer=Operations&digits=6&period=30`
     const imported = response()
-    await routes[1].handler(request('POST', JSON.stringify({ profileId: 'ops-login', uri }), {
+    await routes[2].handler(request('POST', JSON.stringify({ profileId: 'ops-login', uri }), {
       'content-type': 'application/json',
       'x-dsh-patrol-csrf': session.csrf,
     }), imported)
@@ -96,8 +97,21 @@ describe('local TOTP management API', () => {
       profiles: [expect.objectContaining({ id: 'ops-login', issuer: 'Operations', account: 'alice' })],
     })
 
+    const preview = response()
+    await routes[1].handler(request('POST', JSON.stringify({ profileIds: ['ops-login'] }), {
+      'content-type': 'application/json',
+      'x-dsh-patrol-csrf': session.csrf,
+    }), preview)
+    expect(preview.status).toBe(200)
+    expect(preview.body).not.toContain(secret)
+    expect(JSON.parse(preview.body)).toMatchObject({
+      ok: true,
+      codes: [expect.objectContaining({ profileId: 'ops-login', digits: 6, period: 30 })],
+    })
+    expect(JSON.parse(preview.body).codes[0].code).toMatch(/^\d{6}$/)
+
     const deleted = response()
-    await routes[3].handler(request('POST', JSON.stringify({ profileId: 'ops-login' }), {
+    await routes[4].handler(request('POST', JSON.stringify({ profileId: 'ops-login' }), {
       'content-type': 'application/json',
       'x-dsh-patrol-csrf': session.csrf,
     }), deleted)
@@ -116,7 +130,7 @@ describe('local TOTP management API', () => {
     ])
 
     const imported = response()
-    await routes[1].handler(request('POST', JSON.stringify({ payload }), {
+    await routes[2].handler(request('POST', JSON.stringify({ payload }), {
       'content-type': 'application/json',
       'x-dsh-patrol-csrf': session.csrf,
     }), imported)
