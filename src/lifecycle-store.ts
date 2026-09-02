@@ -12,10 +12,10 @@ interface ActiveTeachingRun {
  * Store variant used by the Patrol runtime.
  *
  * Interactive teaching is a real patrol from the moment the user starts it,
- * not only after a draft is eventually confirmed. We therefore persist one
- * WAITING run immediately when patrol_observe begins and keep updating the same
- * run while steps are taught. A later DRAFT -> READY transition compacts the
- * reusable runbook and finalizes that same record as PASSED.
+ * not only after a draft is eventually confirmed. A WAITING run is therefore
+ * created as soon as the first new teaching step is recorded and the same run
+ * is updated throughout the conversation. A later DRAFT -> READY transition
+ * compacts the reusable runbook and finalizes that same record as PASSED.
  */
 export class PatrolLifecycleStore extends PatrolStore {
   private readonly activeTeachingRuns = new Map<string, ActiveTeachingRun>()
@@ -49,9 +49,25 @@ export class PatrolLifecycleStore extends PatrolStore {
     if (await this.exists(definition.id)) previous = await this.load(definition.id)
 
     const completingTeaching = previous?.status === 'draft' && definition.status === 'ready'
-    const active = this.activeTeachingRuns.get(definition.id)
-    let compaction: FlowCompactionResult | undefined
+    let active = this.activeTeachingRuns.get(definition.id)
 
+    // Existing drafts are commonly reused in a new conversation. The first
+    // successfully recorded step is sufficient evidence that a new patrol has
+    // actually started, so create its WAITING history row immediately instead
+    // of waiting for patrol_confirm.
+    if (definition.status === 'draft' && active === undefined && hasNewTeachingStep(previous, definition)) {
+      const firstNewStepIndex = previous?.steps.length ?? 0
+      const firstNewStep = definition.steps[firstNewStepIndex]
+      const startedAt = firstNewStep?.recordedAt || new Date().toISOString()
+      active = {
+        runId: teachingRunId(startedAt),
+        startedAt,
+        ...(definition.metadata.workspaceRoot === undefined ? {} : { workspaceRoot: definition.metadata.workspaceRoot }),
+      }
+      this.activeTeachingRuns.set(definition.id, active)
+    }
+
+    let compaction: FlowCompactionResult | undefined
     if (completingTeaching) {
       compaction = compactTeachingFlow(definition)
       definition.metadata.updatedAt = new Date().toISOString()
@@ -113,6 +129,13 @@ export class PatrolLifecycleStore extends PatrolStore {
   }
 }
 
+function hasNewTeachingStep(previous: InspectionDefinition | undefined, current: InspectionDefinition): boolean {
+  if (current.steps.length === 0) return false
+  if (previous === undefined) return current.steps.length > 0
+  if (previous.status !== 'draft') return false
+  return current.steps.length > previous.steps.length
+}
+
 function createTeachingReport(
   definition: InspectionDefinition,
   compaction: FlowCompactionResult,
@@ -125,6 +148,7 @@ function createTeachingReport(
     ? definition.steps
     : teachingSessionSteps(definition, active.startedAt)
   const results: StepRunResult[] = sessionSteps.map(step => teachingStepResult(step, finishedAt, 'passed'))
+  const outputWorkspace = active?.workspaceRoot ?? definition.metadata.workspaceRoot
 
   return {
     schemaVersion: '0.2',
@@ -139,9 +163,7 @@ function createTeachingReport(
     summary: compaction.removedSteps > 0
       ? `交互教学巡检已完成；从 ${compaction.originalSteps} 个教学步骤中移除 ${compaction.removedSteps} 个试探/诊断步骤，固化为 ${compaction.finalSteps} 个可复用步骤。`
       : `交互教学巡检已完成并固化为 ${compaction.finalSteps} 个可复用步骤。`,
-    ...(active?.workspaceRoot ?? definition.metadata.workspaceRoot) === undefined
-      ? {}
-      : { outputWorkspace: active?.workspaceRoot ?? definition.metadata.workspaceRoot },
+    ...(outputWorkspace === undefined ? {} : { outputWorkspace }),
   }
 }
 
