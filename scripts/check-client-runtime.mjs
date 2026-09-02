@@ -25,8 +25,8 @@ for (const dependency of [
 }
 for (const marker of [
   "window.__ModuleLoader__.load({ id: 'dsh-patrol'",
-  "id: 'patrol-flow', 30, '流程管理'",
-  "id: 'patrol-records', 40, '巡检记录'",
+  "registerView(ctx, 'patrol-flow', 30, '流程管理'",
+  "registerView(ctx, 'patrol-records', 40, '巡检记录'",
   "name: 'conversation.view'",
 ]) {
   if (!client.includes(marker)) throw new Error(`client bundle is missing marker: ${marker}`)
