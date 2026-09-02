@@ -26,6 +26,7 @@ function Install-ManagedHostBridgePatch {
     param(
         [Parameter(Mandatory = $true)][string]$PatchPath,
         [Parameter(Mandatory = $true)][string]$BridgeHostUri,
+        [Parameter(Mandatory = $true)][string]$ClientHostUri,
         [Parameter(Mandatory = $true)][string]$ScreenshotDir
     )
 
@@ -37,13 +38,15 @@ function Install-ManagedHostBridgePatch {
     $existing = if (Test-Path $PatchPath) { [System.IO.File]::ReadAllText($PatchPath) } else { "" }
     $pattern = "(?ms)^" + [regex]::Escape($begin) + "\r?\n.*?^" + [regex]::Escape($end) + "\r?\n?"
     $clean = [regex]::Replace($existing, $pattern, "").TrimEnd()
+    $safeBridgeHostUri = ConvertTo-YamlSingleQuoted -Value $BridgeHostUri
+    $safeClientHostUri = ConvertTo-YamlSingleQuoted -Value $ClientHostUri
     $safeScreenshotDir = ConvertTo-YamlSingleQuoted -Value $ScreenshotDir
 
     $block = @"
 $begin
 - insert:
     - id: dsh-patrol-browser-host
-      name: '$BridgeHostUri'
+      name: '$safeBridgeHostUri'
       config:
         path: /patrol-browser-bridge
         commandTimeoutMs: 60000
@@ -52,6 +55,9 @@ $begin
         browserStartTimeoutMs: 30000
         browserConnectTimeoutMs: 15000
         screenshotDir: '$safeScreenshotDir'
+
+    - id: dsh-patrol-client-host
+      name: '$safeClientHostUri'
 $end
 "@
 
@@ -161,7 +167,8 @@ if ($CredentialHelperSourceHash -ne $CredentialHelperTargetHash) {
 }
 
 $PatrolIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "lib\index.js")))).AbsoluteUri
-$BridgeHostIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "client-host-runtime\index.js")))).AbsoluteUri
+$BridgeHostIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "browser-bridge-runtime\index.js")))).AbsoluteUri
+$ClientHostIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "client-host-runtime\index.js")))).AbsoluteUri
 $BrowserToolsIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "browser-bridge-runtime\tools-plugin.js")))).AbsoluteUri
 $SafeStoragePath = ConvertTo-YamlSingleQuoted -Value $PatrolStorage
 
@@ -215,10 +222,14 @@ Copy-Item -LiteralPath $CleanupSource -Destination $CleanupTarget -Force
 $CleanupUri = (New-Object System.Uri((Resolve-Path $CleanupTarget))).AbsoluteUri
 
 $WebPatch = Join-Path $DshHome "profiles\$Profile\cordis.patch.yml"
-Install-ManagedHostBridgePatch -PatchPath $WebPatch -BridgeHostUri $BridgeHostIndex -ScreenshotDir $PatrolScreenshotDir
+Install-ManagedHostBridgePatch -PatchPath $WebPatch -BridgeHostUri $BridgeHostIndex -ClientHostUri $ClientHostIndex -ScreenshotDir $PatrolScreenshotDir
 Install-ManagedCleanupPatch -PatchPath $WebPatch -CleanupUri $CleanupUri -ProfileName $Profile
 
 if (Test-Path $WebPatch) {
+    $patchText = [System.IO.File]::ReadAllText($WebPatch)
+    if (-not $patchText.Contains("id: dsh-patrol-client-host") -or -not $patchText.Contains($ClientHostIndex)) {
+        throw "Patrol web client host row was not written to profile patch: $WebPatch"
+    }
     $oldGlobal = Select-String -Path $WebPatch -Pattern "^\s*-?\s*id:\s*dsh-patrol\s*$|DSH-Patrol/lib/index" -Quiet
     if ($oldGlobal) {
         Write-Warning "The profile patch still appears to contain an old global DSH Patrol row: $WebPatch. Remove that old row so Patrol orchestration is available only in the dedicated Patrol preset."
@@ -228,6 +239,7 @@ if (Test-Path $WebPatch) {
 Write-Host ""
 Write-Host "Local Patrol preset installed and UTF-8 verified: $PresetDir" -ForegroundColor Green
 Write-Host "Host browser bridge patch installed: $WebPatch" -ForegroundColor Green
+Write-Host "Patrol web client host patch installed: $ClientHostIndex" -ForegroundColor Green
 Write-Host "Lifecycle cleanup coordinator installed: $CleanupTarget" -ForegroundColor Green
 Write-Host "Patrol workspace storage: $PatrolStorage" -ForegroundColor Green
 Write-Host "Patrol screenshot temp storage: $PatrolScreenshotDir" -ForegroundColor Green

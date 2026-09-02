@@ -1,7 +1,11 @@
-// Host-plane carrier for both the Patrol browser bridge and Patrol web UI.
+// Host-side anchor for the Patrol browser UI companion.
 //
-// The Loader entry points at this nested package so ClientModuleRegistry sees a
-// single dedicated dsh.client package row. The actual host bridge implementation
-// remains in browser-bridge-runtime; Patrol orchestration/tools remain scoped to
-// the dedicated Agent Preset and are not registered globally by this carrier.
-export { name, inject, apply } from '../browser-bridge-runtime/index.js'
+// Keep this row independent from the process-global browser bridge host. The
+// web profile loads this nested package only so ClientModuleRegistry sees one
+// stable dsh.client package row and publishes client-host-runtime/client.js in
+// window.__DSH_BOOT__. Patrol orchestration/tools remain scoped to the Patrol
+// Agent Preset, while the browser bridge continues to use its own host row.
+export const name = 'dsh-patrol-client-host'
+export const inject = []
+
+export function apply() {}

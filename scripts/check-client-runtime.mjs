@@ -35,11 +35,24 @@ for (const dependency of [
 if (carrierPackage.dsh.client.inject?.includes('@deepseek-ai/dsh-client-ui-slots')) {
   throw new Error('client host dsh.client.inject must not include static package @deepseek-ai/dsh-client-ui-slots')
 }
-if (!carrierIndex.includes("export { name, inject, apply } from '../browser-bridge-runtime/index.js'")) {
-  throw new Error('client host must carry the existing host browser bridge implementation')
+for (const marker of [
+  "export const name = 'dsh-patrol-client-host'",
+  'export const inject = []',
+  'export function apply() {}',
+]) {
+  if (!carrierIndex.includes(marker)) throw new Error(`client host anchor is missing marker: ${marker}`)
 }
-if (!installer.includes('client-host-runtime\\index.js')) {
-  throw new Error('install-local.ps1 must point the managed host entry at client-host-runtime/index.js')
+if (carrierIndex.includes("../browser-bridge-runtime/index.js")) {
+  throw new Error('client host anchor must not reuse the browser bridge host row')
+}
+for (const marker of [
+  'browser-bridge-runtime\\index.js',
+  'client-host-runtime\\index.js',
+  'id: dsh-patrol-browser-host',
+  'id: dsh-patrol-client-host',
+  '-ClientHostUri $ClientHostIndex',
+]) {
+  if (!installer.includes(marker)) throw new Error(`install-local.ps1 is missing client/bridge row marker: ${marker}`)
 }
 for (const marker of [
   "window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host'",
