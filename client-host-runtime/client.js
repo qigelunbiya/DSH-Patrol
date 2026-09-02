@@ -224,13 +224,16 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
     return logoOwner instanceof HTMLElement ? logoOwner : (column.firstElementChild instanceof HTMLElement ? column.firstElementChild : undefined);
   }
 
-  function mountTokenSidebarEntry() {
+  function mountTokenSidebarEntry(openTokenSurface) {
     if (typeof document === 'undefined' || typeof MutationObserver !== 'function') return () => {};
     const disposeStyle = installTokenEntryStyles();
     const entry = document.createElement('button');
     entry.type = 'button'; entry.setAttribute('data-dsh-patrol-token-entry', ''); entry.setAttribute('data-dsh-plugin', 'patrol-token'); entry.setAttribute('data-dsh-part', 'sidebar-entry'); entry.title = '令牌';
     entry.innerHTML = '<span style="display:inline-flex;width:22px;justify-content:center"><svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.5"/><path d="M8 4.5v3.75l2.35 1.55"/></svg></span><span class="dsh-patrol-token-label">令牌</span>';
-    entry.addEventListener('click', () => window.dispatchEvent(new Event(TOTP_OPEN_EVENT)));
+    entry.addEventListener('click', () => {
+      if (typeof openTokenSurface === 'function' && openTokenSurface()) return;
+      window.dispatchEvent(new Event(TOTP_OPEN_EVENT));
+    });
     let root;
     const place = () => {
       root = sidebarRoot();
@@ -259,14 +262,26 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
       scope.effect(() => service.registerTab({ id: TOTP_TAB_ID, title: () => '令牌', icon: size => React.createElement(TokenIcon, { size }), order: 46, single: true, component: TokenBetterSidebarTab }), 'dsh-patrol-client-host: Better Sidebar token tab');
       scope.effect(() => () => { if (betterSidebar === service) betterSidebar = null; }, 'dsh-patrol-client-host: clear Better Sidebar token handle');
     });
+
+    const openTokenTab = () => {
+      if (!betterSidebar || typeof betterSidebar.openTab !== 'function') return false;
+      try {
+        // Better Sidebar intentionally does not expand its panel for a type-only open.
+        // Supplying an internal content path makes the open visible while the token tab
+        // itself ignores the path payload.
+        betterSidebar.openTab({ type: TOTP_TAB_ID, title: '令牌', path: 'dsh-patrol://totp' });
+        return true;
+      } catch (error) {
+        console.warn('[dsh-patrol] Better Sidebar token tab open failed; using dialog fallback:', error);
+        return false;
+      }
+    };
+
     const footerDispose = ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
       name: 'sidebar.footer.action', id: 'dsh-patrol-token-bridge', order: 1000,
-      inject: () => ({ openTokenTab: () => {
-        if (!betterSidebar || typeof betterSidebar.openTab !== 'function') return false;
-        try { betterSidebar.openTab({ type: TOTP_TAB_ID, title: '令牌' }); return true; } catch { return false; }
-      } }),
+      inject: () => ({ openTokenTab }),
     }, TokenDialogBridge));
-    const entryDispose = mountTokenSidebarEntry();
+    const entryDispose = mountTokenSidebarEntry(openTokenTab);
     return () => { entryDispose(); footerDispose(); setTokenEntryActive(false); };
   }
 
