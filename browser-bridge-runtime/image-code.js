@@ -1,16 +1,63 @@
 import { recognizeScreenshotText } from './screenshot-ocr.js'
 import { recognizeImageCodeWithDdddocr } from './image-code-ddddocr.js'
+import { refreshCurrentImageCode } from './image-code-refresh-tool.js'
 
 const IMAGE_CODE_INPUT_HINT = /(captcha|image[-_ ]?code|img[-_ ]?code|verify[-_ ]?code|verification[-_ ]?code|validation[-_ ]?code|check[-_ ]?code|auth[-_ ]?code|\bcode\b|验证码|校验码|图形码)/i
 const VISUAL_NOISE_HINT = /(logo|brand|avatar|favicon|icon|qrcode|qr[-_ ]?code|二维码)/i
 export const IMAGE_CODE_MIN_CONFIDENCE = 0.80
+export const IMAGE_CODE_MAX_REFRESH_ATTEMPTS = 3
 
 export async function tryFillImageCode(bridge, tabId, options = {}) {
   if (process.platform !== 'win32') return false
 
+  const diagnostics = []
+  let inputSelector = ''
+
+  for (let refreshAttempt = 0; refreshAttempt <= IMAGE_CODE_MAX_REFRESH_ATTEMPTS; refreshAttempt += 1) {
+    const current = await recognizeCurrentImageCode(bridge, tabId, options, diagnostics)
+    if (current.inputSelector) inputSelector = current.inputSelector
+
+    if (inputSelector && isPlausibleImageCode(current.code)) {
+      const typed = await bridge.request('type', {
+        selector: inputSelector,
+        text: current.code,
+        clear: true,
+        tabId,
+      }, options)
+      if (!typed || typeof typed !== 'object' || typed.ok === false) {
+        throw new Error(`recognized image code but browser typing failed: ${shortDiagnostic(typed?.error || 'invalid type result')}`)
+      }
+
+      // Recognition/fill only. The deterministic Runbook owns form submission.
+      return true
+    }
+
+    if (refreshAttempt >= IMAGE_CODE_MAX_REFRESH_ATTEMPTS) break
+
+    try {
+      const refreshed = await refreshCurrentImageCode(bridge, {
+        tabId,
+        inputSelector,
+        allowPageReload: false,
+      }, options)
+      if (!refreshed || refreshed.changed !== true) {
+        diagnostics.push(`captcha refresh ${refreshAttempt + 1}: no independently refreshable image-code target changed`)
+        break
+      }
+      inputSelector = refreshed.inputSelector || inputSelector
+      diagnostics.push(`captcha refresh ${refreshAttempt + 1}: method=${refreshed.method}${refreshed.selector ? ` selector=${refreshed.selector}` : ''}; previous OCR guess discarded`)
+    } catch (error) {
+      diagnostics.push(`captcha refresh ${refreshAttempt + 1}: ${shortDiagnostic(error)}`)
+      break
+    }
+  }
+
+  throw new Error(`image-code recognition exhausted confidence-qualified paths after at most ${IMAGE_CODE_MAX_REFRESH_ATTEMPTS} CAPTCHA refreshes: ${diagnostics.filter(Boolean).slice(0, 28).join(' | ') || 'no diagnostic detail'}`)
+}
+
+async function recognizeCurrentImageCode(bridge, tabId, options, diagnostics) {
   let inputSelector
   let code = ''
-  const diagnostics = []
 
   // Primary path: ask the extension for the cleanest visual captcha capture.
   // Newer extensions can return the original data:image bytes directly; older
@@ -64,22 +111,7 @@ export async function tryFillImageCode(bridge, tabId, options = {}) {
     }
   }
 
-  if (!inputSelector || !isPlausibleImageCode(code)) {
-    throw new Error(`image-code recognition exhausted confidence-qualified paths: ${diagnostics.filter(Boolean).slice(0, 12).join(' | ') || 'no diagnostic detail'}`)
-  }
-
-  const typed = await bridge.request('type', {
-    selector: inputSelector,
-    text: code,
-    clear: true,
-    tabId,
-  }, options)
-  if (!typed || typeof typed !== 'object' || typed.ok === false) {
-    throw new Error(`recognized image code but browser typing failed: ${shortDiagnostic(typed?.error || 'invalid type result')}`)
-  }
-
-  // Recognition/fill only. The deterministic Runbook owns form submission.
-  return true
+  return { inputSelector: inputSelector || '', code }
 }
 
 async function recognizeCapturedImageCode(dataUrl, captureMode, options, diagnostics) {

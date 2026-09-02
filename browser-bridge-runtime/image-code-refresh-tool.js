@@ -61,80 +61,92 @@ export function registerImageCodeRefreshTool(ctx, bridge, config = {}) {
       },
     }),
     async execute(args, exec) {
-      assertImageCodeCaptureCapability(bridge)
-      const options = { timeoutMs, signal: exec?.signal }
-      const before = await capture(bridge, {
+      const result = await refreshCurrentImageCode(bridge, {
         tabId: args.tabId,
         inputSelector: args.inputSelector,
         imageSelector: args.imageSelector,
-      }, options)
-      const beforeFingerprint = imageFingerprint(before.dataUrl)
-      const inputSelector = before.inputSelector || args.inputSelector || ''
-      const imageSelector = before.imageSelector || args.imageSelector || ''
-
-      let snapshot
-      try {
-        snapshot = await bridge.request('snapshot', {
-          maxElements: 300,
-          includeHidden: false,
-          tabId: args.tabId,
-        }, options)
-      } catch {
-        snapshot = { elements: [] }
+        allowPageReload: args.allowPageReload !== false,
+      }, { timeoutMs, signal: exec?.signal })
+      if (result === undefined) {
+        throw new Error('Could not verify a fresh CAPTCHA after bounded refresh attempts. No login submission was performed.')
       }
-
-      const candidates = findImageCodeRefreshCandidates(snapshot, imageSelector, inputSelector).slice(0, 6)
-      let attempts = 0
-      for (const candidate of candidates) {
-        attempts += 1
-        try {
-          await bridge.request('click', { selector: candidate.selector, tabId: args.tabId }, options)
-        } catch {
-          continue
-        }
-        const after = await waitForChangedCapture(bridge, {
-          tabId: args.tabId,
-          inputSelector,
-        }, beforeFingerprint, options)
-        if (after !== undefined) {
-          return {
-            ok: true,
-            changed: true,
-            method: candidate.method,
-            selector: candidate.selector,
-            inputSelector: after.inputSelector || inputSelector,
-            imageSelector: after.imageSelector || imageSelector,
-            captureMode: after.captureMode || '',
-            attempts,
-            requiresCredentialRefill: false,
-          }
-        }
-      }
-
-      if (args.allowPageReload !== false) {
-        attempts += 1
-        await bridge.request('navigate', { action: 'reload', tabId: args.tabId }, options)
-        const after = await waitForChangedCapture(bridge, {
-          tabId: args.tabId,
-          inputSelector: '',
-        }, beforeFingerprint, options, [280, 650, 1200])
-        return {
-          ok: true,
-          changed: after !== undefined,
-          method: 'page-reload',
-          inputSelector: after?.inputSelector || '',
-          imageSelector: after?.imageSelector || '',
-          captureMode: after?.captureMode || '',
-          attempts,
-          requiresCredentialRefill: true,
-        }
-      }
-
-      throw new Error(`Could not verify a fresh CAPTCHA after ${attempts} bounded refresh attempts. No login submission was performed.`)
+      return result
     },
   })
 
   return ctx.tools.register(definition)
+}
+
+export async function refreshCurrentImageCode(bridge, args = {}, options = {}) {
+  assertImageCodeCaptureCapability(bridge)
+  const before = await capture(bridge, {
+    tabId: args.tabId,
+    inputSelector: args.inputSelector,
+    imageSelector: args.imageSelector,
+  }, options)
+  const beforeFingerprint = imageFingerprint(before.dataUrl)
+  const inputSelector = before.inputSelector || args.inputSelector || ''
+  const imageSelector = before.imageSelector || args.imageSelector || ''
+
+  let snapshot
+  try {
+    snapshot = await bridge.request('snapshot', {
+      maxElements: 300,
+      includeHidden: false,
+      tabId: args.tabId,
+    }, options)
+  } catch {
+    snapshot = { elements: [] }
+  }
+
+  const candidates = findImageCodeRefreshCandidates(snapshot, imageSelector, inputSelector).slice(0, 6)
+  let attempts = 0
+  for (const candidate of candidates) {
+    attempts += 1
+    try {
+      await bridge.request('click', { selector: candidate.selector, tabId: args.tabId }, options)
+    } catch {
+      continue
+    }
+    const after = await waitForChangedCapture(bridge, {
+      tabId: args.tabId,
+      inputSelector,
+    }, beforeFingerprint, options)
+    if (after !== undefined) {
+      return {
+        ok: true,
+        changed: true,
+        method: candidate.method,
+        selector: candidate.selector,
+        inputSelector: after.inputSelector || inputSelector,
+        imageSelector: after.imageSelector || imageSelector,
+        captureMode: after.captureMode || '',
+        attempts,
+        requiresCredentialRefill: false,
+      }
+    }
+  }
+
+  if (args.allowPageReload === true) {
+    attempts += 1
+    await bridge.request('navigate', { action: 'reload', tabId: args.tabId }, options)
+    const after = await waitForChangedCapture(bridge, {
+      tabId: args.tabId,
+      inputSelector: '',
+    }, beforeFingerprint, options, [280, 650, 1200])
+    return {
+      ok: true,
+      changed: after !== undefined,
+      method: 'page-reload',
+      inputSelector: after?.inputSelector || '',
+      imageSelector: after?.imageSelector || '',
+      captureMode: after?.captureMode || '',
+      attempts,
+      requiresCredentialRefill: true,
+    }
+  }
+
+  return undefined
 }
 
 export function findImageCodeRefreshCandidates(snapshot, imageSelector = '', inputSelector = '') {
