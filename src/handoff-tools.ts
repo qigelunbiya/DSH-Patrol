@@ -11,6 +11,7 @@ const TEXT_OUTPUT = {
 
 export interface PatrolHandoffToolsOptions {
   maxSteps: number
+  allowImageCodeHandoff?: boolean
 }
 
 export function registerPatrolHandoffTools(
@@ -21,7 +22,9 @@ export function registerPatrolHandoffTools(
 ): () => void {
   const handoff = defineTool({
     name: 'patrol_prepare_verification_handoff',
-    description: 'Record a human-verification handoff ONLY for genuinely human-only verification such as OTP/device approval/passkey/third-party CAPTCHA. Conventional image-code is forbidden here: this tool re-checks the detector first and refuses to record any checkpoint for image-code, which must auto-fill or fail.',
+    description: options.allowImageCodeHandoff
+      ? 'Record a verification handoff for debugging. In test mode conventional image-code may also be handed off if desired; normal mode keeps image-code automation-only.'
+      : 'Record a human-verification handoff ONLY for genuinely human-only verification such as OTP/device approval/passkey/third-party CAPTCHA. Conventional image-code is forbidden here: this tool re-checks the detector first and refuses to record any checkpoint for image-code, which must auto-fill or fail.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       detectorStepId: { type: 'string', required: true, description: 'Existing browser_detect_auth_challenge step id.' },
@@ -38,9 +41,6 @@ export function registerPatrolHandoffTools(
         throw new Error(`verification handoff already exists for detector step ${args.detectorStepId}`)
       }
 
-      // Re-check BEFORE mutating the Runbook. This is the hard runtime boundary
-      // that prevents a model from turning an ordinary image-code failure into
-      // a manual checkpoint even if older prompt text asks it to do so.
       const detected = await runner.dispatch('browser_detect_auth_challenge', compactObject({ tabId: args.tabId }), exec)
       if (!detected.ok) {
         throw new Error(`Verification detector failed; no human handoff was recorded. ${detected.error ?? detected.text}`)
@@ -50,15 +50,18 @@ export function registerPatrolHandoffTools(
       const observedSubtype = objectString(detected.value, 'observedSubtype') ?? challengeObservedSubtypeFromText(detected.text)
       const autoFilled = objectBoolean(detected.value, 'autoFilled')
       const handoffRequired = objectBoolean(detected.value, 'handoffRequired') ?? kind !== 'none'
+      const imageCode = subtype === 'image-code' || observedSubtype === 'image-code'
 
-      if (subtype === 'image-code' || observedSubtype === 'image-code') {
+      if (imageCode) {
         if (autoFilled === true || kind === 'none') {
           return 'Conventional image-code was handled automatically by the Patrol solver. No human verification handoff was recorded; continue with the observed login/submit step.'
         }
-        throw new Error('Conventional image-code is automation-only. No human checkpoint was recorded; the patrol must fail if automatic recognition/fill did not succeed.')
+        if (options.allowImageCodeHandoff !== true) {
+          throw new Error('Conventional image-code is automation-only. No human checkpoint was recorded; the patrol must fail if automatic recognition/fill did not succeed.')
+        }
       }
 
-      if (kind === 'none' || handoffRequired === false) {
+      if ((kind === 'none' || handoffRequired === false) && !(imageCode && options.allowImageCodeHandoff === true)) {
         return 'No remaining human-only verification is visible. No handoff/checkpoint was recorded.'
       }
 
@@ -71,22 +74,28 @@ export function registerPatrolHandoffTools(
       const screenshotStep: ToolStep = {
         id: nextStepId(definition.steps),
         kind: 'tool',
-        name: 'Capture human-verification evidence',
+        name: imageCode ? 'Capture image-code debug evidence' : 'Capture human-verification evidence',
         tool: 'browser_screenshot',
         arguments: { format: 'png' },
         when: condition,
         artifact: 'screenshot',
-        notes: 'Evidence capture only for genuinely human-only verification.',
+        notes: imageCode
+          ? 'Test-mode debugging evidence for a conventional image-code CAPTCHA.'
+          : 'Evidence capture only for genuinely human-only verification.',
         recordedAt: new Date().toISOString(),
       }
       const checkpointStep: CheckpointStep = {
         id: nextStepId([...definition.steps, screenshotStep]),
         kind: 'checkpoint',
-        name: 'Complete human verification',
-        prompt: 'Complete the human-only verification shown in the managed Patrol browser. After completing it, ask Patrol to resume the same run.',
+        name: imageCode ? 'Complete image-code debug handoff' : 'Complete human verification',
+        prompt: imageCode
+          ? 'TEST MODE: complete the current image-code CAPTCHA in the managed Patrol browser if you want to continue this debugging run. After completing it, ask Patrol to resume the same run.'
+          : 'Complete the human-only verification shown in the managed Patrol browser. After completing it, ask Patrol to resume the same run.',
         reason: 'other',
         when: condition,
-        notes: 'For OTP, device approval, passkey, QR confirmation, third-party CAPTCHA, or other explicitly unsupported human-only verification. Conventional image-code is never allowed here.',
+        notes: imageCode
+          ? 'Test-mode-only image-code checkpoint. Normal mode forbids this handoff.'
+          : 'For OTP, device approval, passkey, QR confirmation, third-party CAPTCHA, or other explicitly unsupported human-only verification.',
         recordedAt: new Date().toISOString(),
       }
 
@@ -110,9 +119,9 @@ export function registerPatrolHandoffTools(
       }
       return [
         `Recorded ${screenshotStep.id} and ${checkpointStep.id}.`,
-        `Current human-only verification kind=${kind}; subtype=${subtype}.`,
+        `Current verification kind=${kind}; subtype=${subtype}${imageCode ? '; test-mode image-code handoff is enabled' : ''}.`,
         path === undefined ? 'Immediate verification screenshot was captured, but the provider returned no path.' : `Verification screenshot: ${path}`,
-        'Complete this human-only verification in the managed browser, then resume Patrol.',
+        'Complete this verification in the managed browser, then resume Patrol.',
       ].join('\n')
     },
   })
