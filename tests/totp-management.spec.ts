@@ -65,6 +65,7 @@ describe('local TOTP management API', () => {
     expect(routes.map(route => route.path)).toEqual([
       '/patrol-browser-bridge/totp/session',
       '/patrol-browser-bridge/totp/import',
+      '/patrol-browser-bridge/totp/import-image',
       '/patrol-browser-bridge/totp/delete',
     ])
 
@@ -95,7 +96,7 @@ describe('local TOTP management API', () => {
     ])
 
     const deleted = response()
-    await routes[2].handler(request('POST', JSON.stringify({ profileId: 'ops-login' }), {
+    await routes[3].handler(request('POST', JSON.stringify({ profileId: 'ops-login' }), {
       'content-type': 'application/json',
       'x-dsh-patrol-csrf': session.csrf,
     }), deleted)
