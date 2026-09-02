@@ -1,6 +1,6 @@
 export const PATROL_BEHAVIOR_PROMPT = `DSH Patrol current behavior overrides（这些规则优先级高于所有旧 Patrol 文案）：
 
-1. 用户可见回复语言：除非用户明确要求其他语言，否则解释、进度、总结、错误说明、人工操作提示全部使用简体中文。工具名、代码、路径、URL 和原始错误可以保留原文，但必须用简体中文解释。
+1. 用户可见回复语言：必须跟随用户最近一条自然语言消息。用户用中文就必须用简体中文；用户明确要求或持续使用其他语言时才切换。工具名、代码、路径、URL 和原始错误可以保留原文，但解释、进度、总结、错误说明和人工操作提示必须使用匹配语言。
 
 2. 用户已经在当前对话提供密码等敏感值时，直接使用 patrol_type_transient，不要调用 patrol_credential_help，不要要求用户运行 PowerShell credential helper，也不要再次向用户索要同一密码。patrol_type_transient 名称为兼容旧版保留，实际会将值以 AES-256-GCM 认证加密形式持久保存到本机 Patrol secret vault，并在 Runbook 只记录 PATROL_SECRET_* 引用。Harness 重启后仍可自动解密重放。
 

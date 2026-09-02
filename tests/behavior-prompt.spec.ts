@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { PATROL_BEHAVIOR_PROMPT } from '../src/behavior-prompt.js'
 
 describe('current Patrol behavior prompt', () => {
+  it('requires user-visible replies to follow the user language', () => {
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/跟随用户最近一条自然语言消息/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/用户用中文就必须用简体中文/s)
+  })
+
   it('forbids converting ordinary image-code failure into human handoff', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/image-code 完全禁止人工接管/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/失败就直接报错并停止/s)

@@ -15,6 +15,7 @@ import { PATROL_EXCEL_V5_PROMPT, registerPatrolExcelToolsV5 } from './excel-tool
 import { registerPatrolHandoffTools } from './handoff-tools.js'
 import { PatrolLifecycleStore } from './lifecycle-store.js'
 import { createManualVerificationGuard, PATROL_MANUAL_VERIFICATION_PROMPT } from './manual-verification-guard.js'
+import { registerPatrolModelRouteRecovery } from './model-route-recovery.js'
 import { createPatrolObservationGate, PATROL_OBSERVATION_PROMPT } from './observation-guard.js'
 import { registerPatrolObservationTools } from './observation-tools.js'
 import { PATROL_SYSTEM_PROMPT } from './prompt.js'
@@ -51,6 +52,7 @@ export * from './recovery-tools.js'
 export * from './totp-tools.js'
 export * from './transient-input-tools.js'
 export * from './manual-verification-guard.js'
+export * from './model-route-recovery.js'
 export * from './observation-guard.js'
 export * from './observation-tools.js'
 export * from './handoff-tools.js'
@@ -153,6 +155,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   ctx.effect(() => registerPatrolWorkspaceTools(ctx, store), 'dsh-patrol: workspace path tools')
   ctx.effect(() => registerPatrolExcelToolsV5(ctx), 'dsh-patrol: OpenXML workspace Excel v5 tools')
   ctx.effect(() => registerPatrolScheduleTools(ctx, store), 'dsh-patrol: schedule tools')
+  ctx.effect(() => registerPatrolModelRouteRecovery(ctx), 'dsh-patrol: legacy model route recovery')
 
   const scheduler = new PatrolScheduler(ctx, store)
   ctx.effect(() => scheduler.start(), 'dsh-patrol: scheduled patrol runner')
