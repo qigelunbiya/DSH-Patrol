@@ -12,6 +12,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { BrowserBridge } from './bridge.js'
+import { registerPatrolDashboardRoutes } from './dashboard.js'
 import { createManagedBrowserController, defaultProfilePath } from './managed-browser-controller.js'
 import { registerTotpManagementRoutes } from './totp-management.js'
 import { handleUpgrade } from './ws.js'
@@ -125,6 +126,9 @@ export function apply(ctx, config = {}) {
     },
   })
   ctx.effect(() => httpDispose, 'dsh-patrol/browser-bridge: info route')
+
+  const dashboardDispose = registerPatrolDashboardRoutes(ctx, path, config)
+  ctx.effect(() => dashboardDispose, 'dsh-patrol/browser-bridge: workspace dashboard routes')
 
   const totpDispose = registerTotpManagementRoutes(ctx, path)
   ctx.effect(() => totpDispose, 'dsh-patrol/browser-bridge: local TOTP management routes')
