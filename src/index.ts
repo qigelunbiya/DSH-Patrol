@@ -6,6 +6,7 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { registerPatrolActionTools } from './action-tools.js'
 import { PATROL_BEHAVIOR_PROMPT } from './behavior-prompt.js'
+import { registerPatrolClickTargetTool } from './click-target-tools.js'
 import { registerPatrolCreationTools } from './creation-tools.js'
 import { registerPatrolCredentialTools } from './credential-tools.js'
 import { registerPatrolEditTools } from './edit-tools.js'
@@ -34,6 +35,7 @@ export * from './security.js'
 export * from './scheduler.js'
 export * from './edit-tools.js'
 export * from './action-tools.js'
+export * from './click-target-tools.js'
 export * from './behavior-prompt.js'
 export * from './creation-tools.js'
 export * from './credential-tools.js'
@@ -120,6 +122,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   ctx.effect(
     () => registerPatrolActionTools(ctx, store, runner, { maxSteps: resolved.maxSteps }),
     'dsh-patrol: flat browser action tools',
+  )
+  ctx.effect(
+    () => registerPatrolClickTargetTool(ctx, store, runner, { maxSteps: resolved.maxSteps }),
+    'dsh-patrol: semantic current-page click target resolver',
   )
   ctx.effect(
     () => registerPatrolObservationTools(ctx, runner, observationGate),
@@ -264,5 +270,5 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   }
 
   const guardMode = runtimePolicy.testMode ? 'test-bypass' : 'normal-strict'
-  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; guard-mode=${guardMode}; build=${TEST_MODE_BUILD_MARKER}; scheduler=enabled; credential helper=optional; transient sensitive replay=enabled; encrypted TOTP profile replay=enabled; secret-safe creation=enabled; flat action tools=enabled; OpenXML Excel v5 tools=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled`)
+  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; guard-mode=${guardMode}; build=${TEST_MODE_BUILD_MARKER}; scheduler=enabled; credential helper=optional; transient sensitive replay=enabled; encrypted TOTP profile replay=enabled; semantic click resolver=enabled; secret-safe creation=enabled; flat action tools=enabled; OpenXML Excel v5 tools=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled`)
 }
