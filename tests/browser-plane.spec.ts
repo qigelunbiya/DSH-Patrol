@@ -50,9 +50,14 @@ describe('browser host/agent plane split', () => {
     })
 
     expect(fixture.upgrades).toHaveLength(1)
-    expect(fixture.routes).toHaveLength(1)
+    expect(fixture.routes).toHaveLength(4)
     expect(fixture.upgrades[0].path).toBe('/patrol-browser-bridge')
     expect(fixture.routes[0].path).toBe('/patrol-browser-bridge/info')
+    expect(fixture.routes.slice(1).map(route => route.path)).toEqual([
+      '/patrol-browser-bridge/totp/session',
+      '/patrol-browser-bridge/totp/import',
+      '/patrol-browser-bridge/totp/delete',
+    ])
     const service = fixture.services.get('patrolBrowserBridge')
     expect(service).toBeDefined()
     expect(service.bridge).toBeDefined()
@@ -94,6 +99,7 @@ describe('browser host/agent plane split', () => {
     expect(names).toContain('browser_navigate')
     expect(names).toContain('browser_click')
     expect(names).toContain('browser_type_credential')
+    expect(names).toContain('browser_type_totp_profile')
     expect(names).toContain('browser_screenshot')
     expect(names).not.toContain('browser_eval')
   })
