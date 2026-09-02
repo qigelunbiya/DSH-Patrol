@@ -126,7 +126,12 @@ export class BrowserBridge {
     try { message = JSON.parse(text) } catch { return }
     if (!message || typeof message !== 'object') return
     if (message.type === 'hello') {
-      this.extensionInfo = { name: String(message.name ?? 'unknown'), version: String(message.version ?? '?') }
+      const capabilities = normalizeCapabilities(message.capabilities)
+      this.extensionInfo = {
+        name: String(message.name ?? 'unknown'),
+        version: String(message.version ?? '?'),
+        ...(capabilities.length > 0 ? { capabilities } : {}),
+      }
       this.client?.send(JSON.stringify({ type: 'welcome', protocol: 1, server: 'dsh-patrol-browser-bridge', version: '0.2.0' }))
       return
     }
@@ -163,6 +168,15 @@ export class BrowserBridge {
     this.client = null
     this.clientOrigin = null
   }
+}
+
+function normalizeCapabilities(value) {
+  if (!Array.isArray(value)) return []
+  const normalized = value
+    .filter(item => typeof item === 'string')
+    .map(item => item.trim())
+    .filter(item => item.length > 0 && item.length <= 80)
+  return [...new Set(normalized)].slice(0, 64).sort()
 }
 
 function safeMessage(error) {

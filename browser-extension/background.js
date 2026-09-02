@@ -4,6 +4,13 @@ const DEFAULTS = {
 }
 
 const PAGE_BRIDGE_RETRY_MS = [0, 120, 280, 650]
+const EXTENSION_CAPABILITIES = Object.freeze([
+  'captureImageCode',
+  'visualSnapshot',
+  'captchaDemo',
+  'directImageSource',
+  'pageBridgeRetry',
+])
 let socket = null
 let state = 'disconnected'
 let reconnectTimer = null
@@ -26,7 +33,13 @@ async function connect(force = false) {
     ws.onopen = () => {
       if (socket !== ws) return
       state = 'connected'
-      send({ type: 'hello', name: 'dsh-patrol-browser-extension', version: '0.2.0' })
+      const manifest = chrome.runtime.getManifest()
+      send({
+        type: 'hello',
+        name: 'dsh-patrol-browser-extension',
+        version: typeof manifest?.version === 'string' ? manifest.version : '?',
+        capabilities: [...EXTENSION_CAPABILITIES],
+      })
     }
     ws.onmessage = event => onMessage(ws, event.data)
     ws.onerror = () => {
@@ -419,7 +432,14 @@ function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'bridge:getStatus') {
-    sendResponse({ connected: socket?.readyState === WebSocket.OPEN, state, bridgeUrl: currentUrl })
+    const manifest = chrome.runtime.getManifest()
+    sendResponse({
+      connected: socket?.readyState === WebSocket.OPEN,
+      state,
+      bridgeUrl: currentUrl,
+      extensionVersion: typeof manifest?.version === 'string' ? manifest.version : '?',
+      capabilities: [...EXTENSION_CAPABILITIES],
+    })
     return
   }
   if (message?.type === 'bridge:connect') {
