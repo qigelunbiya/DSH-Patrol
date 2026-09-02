@@ -1,7 +1,13 @@
 import { randomBytes } from 'node:crypto'
-import { deleteTotpProfile, listTotpProfiles, saveTotpProfileFromUri } from './totp-store.js'
+import { decodeQrImageDataUrl } from './qr-code.js'
+import {
+  deleteTotpProfile,
+  listTotpProfiles,
+  saveTotpProfilesFromPayload,
+} from './totp-store.js'
 
 const MAX_JSON_BYTES = 24 * 1024
+const MAX_IMAGE_JSON_BYTES = 12 * 1024 * 1024
 
 export function registerTotpManagementRoutes(ctx, basePath) {
   const csrf = randomBytes(32).toString('base64url')
@@ -24,11 +30,50 @@ export function registerTotpManagementRoutes(ctx, basePath) {
       if (req.method !== 'POST') return methodNotAllowed(res, ['POST'])
       if (!timingSafeHeader(req.headers['x-dsh-patrol-csrf'], csrf)) return sendJson(res, 403, { ok: false, error: 'invalid local TOTP management session' })
       try {
-        const body = await readJsonBody(req)
+        const body = await readJsonBody(req, MAX_JSON_BYTES)
         const profileId = typeof body?.profileId === 'string' ? body.profileId : ''
-        const uri = typeof body?.uri === 'string' ? body.uri : ''
-        const profile = saveTotpProfileFromUri(profileId, uri)
-        return sendJson(res, 200, { ok: true, profile, profiles: listTotpProfiles() })
+        const payload = typeof body?.payload === 'string'
+          ? body.payload
+          : (typeof body?.uri === 'string' ? body.uri : '')
+        const imported = saveTotpProfilesFromPayload(profileId, payload)
+        return sendJson(res, 200, { ok: true, imported, profiles: listTotpProfiles() })
+      } catch (error) {
+        return sendJson(res, 400, { ok: false, error: safeManagementError(error) })
+      }
+    },
+  }))
+
+  disposers.push(ctx.webServer.register({
+    kind: 'exact',
+    path: `${prefix}/import-image`,
+    handler: async (req, res) => {
+      if (req.method !== 'POST') return methodNotAllowed(res, ['POST'])
+      if (!timingSafeHeader(req.headers['x-dsh-patrol-csrf'], csrf)) return sendJson(res, 403, { ok: false, error: 'invalid local TOTP management session' })
+      try {
+        const body = await readJsonBody(req, MAX_IMAGE_JSON_BYTES)
+        const profileId = typeof body?.profileId === 'string' ? body.profileId : ''
+        const image = typeof body?.image === 'string' ? body.image : ''
+        if (!image.startsWith('data:image/')) throw new Error('二维码图片数据无效')
+
+        const decoded = await decodeQrImageDataUrl(image)
+        if (!decoded?.ok || !Array.isArray(decoded.values) || decoded.values.length === 0) {
+          throw new Error(decoded?.error || '二维码图片中没有识别到可导入内容')
+        }
+
+        const imported = []
+        let firstError = ''
+        for (let index = 0; index < decoded.values.length; index += 1) {
+          try {
+            const next = saveTotpProfilesFromPayload(index === 0 ? profileId : '', decoded.values[index])
+            imported.push(...next)
+          } catch (error) {
+            if (!firstError) firstError = safeManagementError(error)
+          }
+        }
+        if (imported.length === 0) {
+          throw new Error(firstError || '二维码已识别，但其中没有受支持的 TOTP 账号')
+        }
+        return sendJson(res, 200, { ok: true, imported, profiles: listTotpProfiles() })
       } catch (error) {
         return sendJson(res, 400, { ok: false, error: safeManagementError(error) })
       }
@@ -42,7 +87,7 @@ export function registerTotpManagementRoutes(ctx, basePath) {
       if (req.method !== 'POST') return methodNotAllowed(res, ['POST'])
       if (!timingSafeHeader(req.headers['x-dsh-patrol-csrf'], csrf)) return sendJson(res, 403, { ok: false, error: 'invalid local TOTP management session' })
       try {
-        const body = await readJsonBody(req)
+        const body = await readJsonBody(req, MAX_JSON_BYTES)
         const profileId = typeof body?.profileId === 'string' ? body.profileId : ''
         const deleted = deleteTotpProfile(profileId)
         return sendJson(res, 200, { ok: true, deleted, profiles: listTotpProfiles() })
@@ -59,13 +104,13 @@ export function registerTotpManagementRoutes(ctx, basePath) {
   }
 }
 
-async function readJsonBody(req) {
+async function readJsonBody(req, maxBytes) {
   const chunks = []
   let size = 0
   for await (const chunk of req) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
     size += buffer.length
-    if (size > MAX_JSON_BYTES) throw new Error('TOTP management request is too large')
+    if (size > maxBytes) throw new Error('TOTP management request is too large')
     chunks.push(buffer)
   }
   const text = Buffer.concat(chunks).toString('utf8')
@@ -109,7 +154,8 @@ function methodNotAllowed(res, allow) {
 function safeManagementError(error) {
   const text = error instanceof Error ? error.message : String(error || 'TOTP management failed')
   return text
-    .replace(/otpauth:\/\/\S+/gi, '[REDACTED OTPAUTH URI]')
-    .replace(/(secret|seed|otp|token)\s*[:=]\s*\S+/gi, '$1=[REDACTED]')
+    .replace(/otpauth(?:-migration)?:\/\/\S+/gi, '[REDACTED OTP IMPORT]')
+    .replace(/["']?(secret|seed)["']?\s*[:=]\s*["']?[^"',}\s]+/gi, '$1=[REDACTED]')
+    .replace(/(otp|token)\s*[:=]\s*\S+/gi, '$1=[REDACTED]')
     .slice(0, 240)
 }
