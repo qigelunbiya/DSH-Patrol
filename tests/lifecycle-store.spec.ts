@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -71,6 +71,65 @@ describe('PatrolLifecycleStore', () => {
     expect(report.summary).toContain('交互教学巡检已完成')
     expect(report.summary).toContain('移除 1 个')
     expect(report.results).toHaveLength(2)
+  })
+
+  it('carries interactive teaching artifacts into pending and finalized reports', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-lifecycle-artifacts-'))
+    roots.push(root)
+    const workspace = join(root, 'workspace')
+    const store = new PatrolLifecycleStore(root)
+    await store.init()
+
+    const draft: InspectionDefinition = {
+      schemaVersion: '0.2',
+      id: 'artifact-flow',
+      name: 'Artifact flow',
+      description: 'test',
+      status: 'draft',
+      target: { type: 'browser', url: 'https://example.test' },
+      expectedResult: 'done',
+      artifacts: ['screenshot'],
+      auth: { mode: 'none' },
+      schedule: null,
+      steps: [],
+      metadata: {
+        createdAt: '2026-09-02T01:00:00.000Z',
+        updatedAt: '2026-09-02T01:00:00.000Z',
+        workspaceRoot: workspace,
+      },
+    }
+    await store.create(draft)
+
+    const source = join(root, 'shot.png')
+    await writeFile(source, Buffer.from([1, 2, 3, 4]))
+
+    const teaching = await store.load('artifact-flow')
+    teaching.steps.push({
+      id: 'step-001',
+      kind: 'tool',
+      name: 'Capture result',
+      tool: 'browser_screenshot',
+      arguments: {},
+      artifact: 'screenshot',
+      recordedAt: '2026-09-02T02:00:00.000Z',
+    })
+    teaching.metadata.updatedAt = '2026-09-02T02:00:00.000Z'
+    await store.save(teaching)
+    const visible = await store.organizeTeachingScreenshot('artifact-flow', source, workspace)
+    await store.recordTeachingArtifact('artifact-flow', 'step-001', { kind: 'screenshot', path: visible })
+
+    const runIds = await readdir(join(root, 'runs', 'artifact-flow'))
+    const pending = await store.loadRun('artifact-flow', runIds[0]!)
+    expect(pending.results[0]?.artifacts).toEqual([{ kind: 'screenshot', path: visible }])
+
+    const ready = await store.load('artifact-flow')
+    ready.status = 'ready'
+    ready.metadata.validatedAt = '2026-09-02T02:00:03.000Z'
+    ready.metadata.updatedAt = '2026-09-02T02:00:03.000Z'
+    await store.save(ready)
+
+    const finalized = await store.loadRun('artifact-flow', runIds[0]!)
+    expect(finalized.results[0]?.artifacts).toEqual([{ kind: 'screenshot', path: visible }])
   })
 
   it('starts a new WAITING record when an existing draft receives its first new step', async () => {

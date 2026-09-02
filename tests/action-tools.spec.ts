@@ -1,10 +1,11 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { afterEach, describe, expect, it } from 'vitest'
 import { registerPatrolActionTools } from '../src/action-tools.ts'
+import { PatrolLifecycleStore } from '../src/lifecycle-store.ts'
 import { PatrolRunner } from '../src/runner.ts'
 import { PatrolStore } from '../src/store.ts'
 import type { InspectionDefinition, JsonObject } from '../src/types.ts'
@@ -130,5 +131,60 @@ describe('flat Patrol action tools', () => {
     const definition = await store.load('flat-actions')
     expect(definition.steps[0]?.kind === 'tool' ? definition.steps[0].artifact : undefined).toBe('page-text')
     expect(definition.steps[1]?.kind === 'tool' ? definition.steps[1].artifact : undefined).toBe('screenshot')
+  })
+
+  it('adds read-page and screenshot outputs to the live interactive teaching report', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-actions-live-'))
+    roots.push(root)
+    const workspace = join(root, 'workspace')
+    const shot = join(root, 'browser-shot.png')
+    await writeFile(shot, Buffer.from([1, 2, 3, 4]))
+
+    const store = new PatrolLifecycleStore(root)
+    await store.init()
+    const draft = draftDefinition()
+    draft.id = 'live-actions'
+    draft.metadata.workspaceRoot = workspace
+    await store.create(draft)
+
+    const definitions: any[] = []
+    const ctx = { tools: { register(definition: any) { definitions.push(definition); return () => {} } } } as unknown as Context
+    const runner = {
+      async dispatch(tool: string) {
+        if (tool === 'browser_read_page') return { ok: true, text: 'Page: Tasks\n\nrow one\nrow two', value: { ok: true, text: 'Page: Tasks\n\nrow one\nrow two' } }
+        if (tool === 'browser_screenshot') return { ok: true, text: `Screenshot saved: ${shot}`, value: { ok: true, path: shot } }
+        return { ok: true, text: 'ok', value: { ok: true } }
+      },
+    } as unknown as PatrolRunner
+    registerPatrolActionTools(ctx, store, runner, { maxSteps: 50 })
+    const tool = (name: string) => definitions.find(item => item.name === name)
+    const exec = {
+      token: Symbol('action-live-test'),
+      rootCallId: 'root',
+      signal: new AbortController().signal,
+      agent: { session: { header: { cwd: workspace } } },
+    } as unknown as ToolRunContext
+
+    await tool('patrol_read_page').execute({ inspectionId: 'live-actions', stepName: 'Read result' }, exec)
+    const screenshotOutput = await tool('patrol_screenshot').execute({ inspectionId: 'live-actions', stepName: 'Capture result', format: 'png' }, exec)
+    expect(screenshotOutput).toContain('![巡检截图](<')
+
+    const runIds = await readdir(join(root, 'runs', 'live-actions'))
+    const report = await store.loadRun('live-actions', runIds[0]!)
+    expect(report.results[0]?.output).toContain('Page: Tasks')
+    expect(report.results[0]?.artifacts?.[0]?.kind).toBe('page-text')
+    expect(report.results[1]?.artifacts?.[0]?.kind).toBe('screenshot')
+    expect(report.results[1]?.artifacts?.[0]?.path).toContain(join('patrol-results', 'live-actions', 'teaching', 'screenshots'))
+
+    const ready = await store.load('live-actions')
+    ready.status = 'ready'
+    ready.metadata.validatedAt = '2026-09-02T03:00:00.000Z'
+    ready.metadata.updatedAt = '2026-09-02T03:00:00.000Z'
+    await store.save(ready)
+
+    const finalized = await store.loadRun('live-actions', runIds[0]!)
+    expect(finalized.status).toBe('passed')
+    expect(finalized.summary).toContain('row one')
+    expect(finalized.results.flatMap(result => result.artifacts ?? []).map(artifact => artifact.kind)).toEqual(['page-text', 'screenshot'])
   })
 })

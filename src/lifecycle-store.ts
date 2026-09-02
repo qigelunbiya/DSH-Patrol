@@ -1,11 +1,18 @@
 import { compactTeachingFlow, type FlowCompactionResult } from './flow-optimizer.js'
+import { redactLikelySecrets } from './security.js'
 import { PatrolStore } from './store.js'
-import type { InspectionDefinition, RunReport, StepRunResult } from './types.js'
+import type { InspectionDefinition, RunArtifact, RunReport, StepRunResult } from './types.js'
 
 interface ActiveTeachingRun {
   runId: string
   startedAt: string
   workspaceRoot?: string
+  stepData: Map<string, TeachingStepData>
+}
+
+interface TeachingStepData {
+  output?: string
+  artifacts: RunArtifact[]
 }
 
 /**
@@ -38,6 +45,7 @@ export class PatrolLifecycleStore extends PatrolStore {
     const active: ActiveTeachingRun = {
       runId: teachingRunId(startedAt),
       startedAt,
+      stepData: new Map(),
       ...(workspaceRoot === undefined || workspaceRoot.trim() === '' ? {} : { workspaceRoot }),
     }
     this.activeTeachingRuns.set(inspectionId, active)
@@ -62,6 +70,7 @@ export class PatrolLifecycleStore extends PatrolStore {
       active = {
         runId: teachingRunId(startedAt),
         startedAt,
+        stepData: new Map(),
         ...(definition.metadata.workspaceRoot === undefined ? {} : { workspaceRoot: definition.metadata.workspaceRoot }),
       }
       this.activeTeachingRuns.set(definition.id, active)
@@ -94,13 +103,56 @@ export class PatrolLifecycleStore extends PatrolStore {
     }
   }
 
+  async recordTeachingStepResult(
+    inspectionId: string,
+    stepId: string,
+    update: { output?: string; artifacts?: RunArtifact[]; pageText?: string },
+  ): Promise<RunArtifact[]> {
+    const active = this.activeTeachingRuns.get(inspectionId)
+    if (active === undefined) return []
+    const definition = await this.load(inspectionId)
+    const step = definition.steps.find(item => item.id === stepId)
+    if (step === undefined) return []
+
+    const key = teachingStepKey(step)
+    const current = active.stepData.get(key) ?? { artifacts: [] }
+    const artifacts = [...current.artifacts]
+    if (update.artifacts !== undefined) {
+      for (const artifact of update.artifacts) {
+        if (!artifacts.some(item => item.kind === artifact.kind && item.path === artifact.path)) artifacts.push(artifact)
+      }
+    }
+    if (update.pageText !== undefined && step.kind === 'tool' && step.artifact === 'page-text') {
+      const saved = await this.saveTextArtifact(
+        inspectionId,
+        active.runId,
+        `${step.id}-page.txt`,
+        redactLikelySecrets(update.pageText),
+        active.workspaceRoot ?? definition.metadata.workspaceRoot,
+      )
+      if (!artifacts.some(item => item.kind === 'page-text' && item.path === saved)) artifacts.push({ kind: 'page-text', path: saved })
+    }
+
+    const output = update.output === undefined ? current.output : redactLikelySecrets(update.output)
+    active.stepData.set(key, {
+      ...(output === undefined ? {} : { output }),
+      artifacts,
+    })
+    await this.writePendingTeachingReport(definition, active)
+    return artifacts
+  }
+
+  async recordTeachingArtifact(inspectionId: string, stepId: string, artifact: RunArtifact): Promise<void> {
+    await this.recordTeachingStepResult(inspectionId, stepId, { artifacts: [artifact] })
+  }
+
   private async writePendingTeachingReport(
     definition: InspectionDefinition,
     active: ActiveTeachingRun,
   ): Promise<RunReport> {
     const now = new Date().toISOString()
     const sessionSteps = teachingSessionSteps(definition, active.startedAt)
-    const results = sessionSteps.map(step => teachingStepResult(step, now, step.kind === 'checkpoint' ? 'waiting' : 'passed'))
+    const results = sessionSteps.map(step => teachingStepResult(step, now, step.kind === 'checkpoint' ? 'waiting' : 'passed', active))
     const waitingCheckpoints = results.filter(result => result.status === 'waiting').length
     const passedSteps = results.filter(result => result.status === 'passed').length
     const summary = waitingCheckpoints > 0
@@ -147,8 +199,9 @@ function createTeachingReport(
   const sessionSteps = active === undefined
     ? definition.steps
     : teachingSessionSteps(definition, active.startedAt)
-  const results: StepRunResult[] = sessionSteps.map(step => teachingStepResult(step, finishedAt, 'passed'))
+  const results: StepRunResult[] = sessionSteps.map(step => teachingStepResult(step, finishedAt, 'passed', active))
   const outputWorkspace = active?.workspaceRoot ?? definition.metadata.workspaceRoot
+  const pageSummary = teachingPageSummary(results)
 
   return {
     schemaVersion: '0.2',
@@ -160,9 +213,9 @@ function createTeachingReport(
     status: 'passed',
     expectedResult: definition.expectedResult,
     results,
-    summary: compaction.removedSteps > 0
+    summary: pageSummary ?? (compaction.removedSteps > 0
       ? `交互教学巡检已完成；从 ${compaction.originalSteps} 个教学步骤中移除 ${compaction.removedSteps} 个试探/诊断步骤，固化为 ${compaction.finalSteps} 个可复用步骤。`
-      : `交互教学巡检已完成并固化为 ${compaction.finalSteps} 个可复用步骤。`,
+      : `交互教学巡检已完成并固化为 ${compaction.finalSteps} 个可复用步骤。`),
     ...(outputWorkspace === undefined ? {} : { outputWorkspace }),
   }
 }
@@ -175,8 +228,10 @@ function teachingStepResult(
   step: InspectionDefinition['steps'][number],
   fallback: string,
   status: StepRunResult['status'],
+  active?: ActiveTeachingRun,
 ): StepRunResult {
   const timestamp = step.recordedAt || fallback
+  const data = active?.stepData.get(teachingStepKey(step))
   return {
     stepId: step.id,
     name: step.name,
@@ -185,12 +240,34 @@ function teachingStepResult(
     startedAt: timestamp,
     finishedAt: timestamp,
     ...(step.kind === 'tool' ? { tool: step.tool } : {}),
-    output: step.kind === 'checkpoint'
+    output: data?.output ?? (step.kind === 'checkpoint'
       ? status === 'waiting'
         ? '交互巡检已到达人工检查点，等待用户完成后继续。'
         : '交互教学完成后由用户确认，该人工检查点已纳入最终流程。'
-      : '该步骤已在本轮交互巡检过程中成功执行。',
+      : '该步骤已在本轮交互巡检过程中成功执行。'),
+    ...(data !== undefined && data.artifacts.length > 0 ? { artifacts: data.artifacts } : {}),
   }
+}
+
+function teachingStepKey(step: InspectionDefinition['steps'][number]): string {
+  const tool = step.kind === 'tool' ? step.tool : step.reason
+  return [step.recordedAt || '', step.kind, tool, step.name].join('\u001f')
+}
+
+function teachingPageSummary(results: readonly StepRunResult[]): string | undefined {
+  const source = [...results].reverse().find(result => result.tool === 'browser_read_page' && result.status === 'passed' && result.output !== undefined)
+  if (source?.output === undefined) return undefined
+  if (source.output === '该步骤已在本轮交互巡检过程中成功执行。') return undefined
+  const clean = source.output
+    .replace(/^--- BEGIN UNTRUSTED PAGE DATA ---\n?/, '')
+    .replace(/\n?--- END UNTRUSTED PAGE DATA ---$/, '')
+    .split(/\r?\n/)
+    .map(line => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+  if (clean.length === 0) return '交互教学巡检已完成；页面已读取，但没有可见文本。'
+  const titleLine = clean[0]?.startsWith('Page:') ? clean.shift() : undefined
+  const body = clean.join(' · ')
+  return `${titleLine === undefined ? '交互教学巡检已完成。' : `交互教学巡检已完成。\n${titleLine}`}\n可见内容摘要（确定性摘录）：${body.slice(0, 1600)}${body.length > 1600 ? '…' : ''}`
 }
 
 function earliestRecordedAt(definition: InspectionDefinition): string | undefined {

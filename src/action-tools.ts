@@ -7,6 +7,7 @@ import type {
   InspectionDefinition,
   InspectionStep,
   JsonObject,
+  RunArtifact,
   SemanticLocator,
   StepCondition,
   TextExpectation,
@@ -42,6 +43,14 @@ interface RecordActionInput extends CommonRecordArgs {
   browserArgs: JsonObject
   artifact?: ToolStep['artifact']
   untrustedOutput?: boolean
+}
+
+interface TeachingResultRecorder {
+  recordTeachingStepResult?: (
+    inspectionId: string,
+    stepId: string,
+    update: { output?: string; artifacts?: RunArtifact[]; pageText?: string },
+  ) => Promise<RunArtifact[]>
 }
 
 export function registerPatrolActionTools(
@@ -423,15 +432,18 @@ async function recordAction(
   await store.save(definition)
 
   let displayText = dispatched.text
+  const teachingArtifacts: RunArtifact[] = []
   if (input.tool === 'browser_screenshot') {
     const providerPath = objectString(dispatched.value, 'path')
     const workspaceRoot = exec.agent?.session.header.cwd
     if (providerPath !== undefined && workspaceRoot !== undefined && workspaceRoot.trim() !== '') {
       try {
         const organizedPath = await store.organizeTeachingScreenshot(input.inspectionId, providerPath, workspaceRoot)
+        teachingArtifacts.push({ kind: 'screenshot', path: organizedPath })
         displayText = displayText.includes(providerPath)
           ? displayText.split(providerPath).join(organizedPath)
           : `${displayText}\nPatrol workspace screenshot: ${organizedPath}`
+        displayText = `${displayText}\n\n![巡检截图](${markdownImagePath(organizedPath)})`
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error)
         displayText = `${displayText}\nScreenshot organization warning: ${message}`
@@ -440,6 +452,11 @@ async function recordAction(
   }
 
   const output = input.untrustedOutput === true ? untrustedPageData(displayText) : displayText
+  await (store as TeachingResultRecorder).recordTeachingStepResult?.(input.inspectionId, step.id, {
+    output,
+    ...(teachingArtifacts.length === 0 ? {} : { artifacts: teachingArtifacts }),
+    ...(input.tool === 'browser_read_page' && input.artifact === 'page-text' ? { pageText: displayText } : {}),
+  })
   return `Executed and recorded ${step.id} (${input.tool}).\n${output}`
 }
 
@@ -472,6 +489,10 @@ function objectString(value: unknown, key: string): string | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
   const child = (value as Record<string, unknown>)[key]
   return typeof child === 'string' && child.length > 0 ? child : undefined
+}
+
+function markdownImagePath(path: string): string {
+  return `<${path.replace(/\\/g, '/')}>`
 }
 
 async function loadEditable(store: PatrolStore, inspectionId: string, maxSteps: number): Promise<InspectionDefinition> {
