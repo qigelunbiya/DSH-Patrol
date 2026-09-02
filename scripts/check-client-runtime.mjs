@@ -9,9 +9,10 @@ const carrierPackage = JSON.parse(readFileSync(resolve(carrierRoot, 'package.jso
 const carrierIndex = readFileSync(resolve(carrierRoot, 'index.js'), 'utf8')
 const clientPath = resolve(carrierRoot, 'client.js')
 const client = readFileSync(clientPath, 'utf8')
-const dashboardPath = resolve(root, 'browser-bridge-runtime', 'dashboard.js')
+const dashboardPath = resolve(root, 'browser-bridge-runtime', 'dashboard-fast.js')
 const dashboard = readFileSync(dashboardPath, 'utf8')
 const bridgeHost = readFileSync(resolve(root, 'browser-bridge-runtime', 'index.js'), 'utf8')
+const store = readFileSync(resolve(root, 'src', 'store.ts'), 'utf8')
 const installer = readFileSync(resolve(root, 'scripts', 'install-local.ps1'), 'utf8')
 const uninstaller = readFileSync(resolve(root, 'scripts', 'uninstall-local.ps1'), 'utf8')
 
@@ -106,23 +107,35 @@ for (const marker of [
   "path: `${prefix}/catalog`",
   "path: `${prefix}/run`",
   "path: `${prefix}/artifact`",
-  'function buildCatalog(storageRoot, workspace)',
+  'export async function buildPatrolDashboardCatalog(storageRoot, workspace)',
+  'async function loadRunSummary(storageRoot, definition, runId)',
+  'export function parseLegacyMarkdownSummary(markdown, definition, runId)',
+  'const MAX_FAST_JSON_BYTES = 512 * 1024',
+  'const MAX_RUNS_PER_INSPECTION = 2000',
+  'async function mapLimit(items, limit, worker)',
   'function artifactCandidates(storageRoot, report)',
   'function dashboardHtml(prefix)',
-  "const MODE=qs.get('mode')==='records'?'records':'flows'",
-  "function filterRecords()",
-  "function renderFlowDetail(x)",
-  "function flowDiagram(steps)",
-  "function renderRunDetail()",
+  "MODE=qs.get('mode')==='records'?'records':'flows'",
+  'async function get(path,timeout=12000)',
+  'function filterRecords()',
+  'function renderFlowDetail(x)',
+  'function renderRunDetail()',
   "[['overview','概述'],['steps','步骤'],['artifacts','产物'],['logs','日志']]",
 ]) {
   if (!dashboard.includes(marker)) throw new Error(`dashboard runtime is missing marker: ${marker}`)
 }
-if (!bridgeHost.includes("import { registerPatrolDashboardRoutes } from './dashboard.js'")) {
-  throw new Error('browser bridge host must import the Patrol dashboard routes')
+if (!bridgeHost.includes("import { registerPatrolDashboardRoutes } from './dashboard-fast.js'")) {
+  throw new Error('browser bridge host must import the bounded Patrol dashboard runtime')
 }
 if (!bridgeHost.includes('registerPatrolDashboardRoutes(ctx, path, config)')) {
   throw new Error('browser bridge host must mount the Patrol dashboard routes')
+}
+for (const marker of [
+  "join(internal.directory, 'summary.json')",
+  "join(dirname(visible.json), 'summary.json')",
+  'function runIndexSummary(report: RunReport)',
+]) {
+  if (!store.includes(marker)) throw new Error(`PatrolStore is missing lightweight run-index marker: ${marker}`)
 }
 
 for (const forbidden of [
