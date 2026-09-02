@@ -24,6 +24,7 @@ import { PATROL_SESSION_PROMPT } from './session-prompt.js'
 import { PatrolStore } from './store.js'
 import { PATROL_TEST_MODE_OVERRIDE_PROMPT, resolvePatrolRuntimePolicy } from './test-mode.js'
 import { registerPatrolTools } from './tools.js'
+import { registerPatrolTotpTools } from './totp-tools.js'
 import { PATROL_TRANSIENT_INPUT_PROMPT, registerPatrolTransientInputTools } from './transient-input-tools.js'
 import { registerPatrolWorkspaceTools } from './workspace-tools.js'
 
@@ -43,6 +44,7 @@ export * from './excel-tools-v4.js'
 export * from './excel-tools-v5.js'
 export * from './recovery-guard.js'
 export * from './recovery-tools.js'
+export * from './totp-tools.js'
 export * from './transient-input-tools.js'
 export * from './manual-verification-guard.js'
 export * from './observation-guard.js'
@@ -126,6 +128,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   ctx.effect(
     () => registerPatrolTransientInputTools(ctx, store, runner),
     'dsh-patrol: transient sensitive browser input',
+  )
+  ctx.effect(
+    () => registerPatrolTotpTools(ctx, store, runner, { maxSteps: resolved.maxSteps }),
+    'dsh-patrol: encrypted TOTP profile runbook input',
   )
   ctx.effect(
     () => registerPatrolHandoffTools(ctx, store, runner, {
@@ -256,5 +262,5 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   }
 
   const guardMode = runtimePolicy.testMode ? 'test-bypass' : 'normal-strict'
-  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; guard-mode=${guardMode}; build=${TEST_MODE_BUILD_MARKER}; scheduler=enabled; credential helper=optional; transient sensitive replay=enabled; secret-safe creation=enabled; flat action tools=enabled; OpenXML Excel v5 tools=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled`)
+  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; guard-mode=${guardMode}; build=${TEST_MODE_BUILD_MARKER}; scheduler=enabled; credential helper=optional; transient sensitive replay=enabled; encrypted TOTP profile replay=enabled; secret-safe creation=enabled; flat action tools=enabled; OpenXML Excel v5 tools=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled`)
 }
