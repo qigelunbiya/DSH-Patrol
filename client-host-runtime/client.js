@@ -32,7 +32,9 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
   }
 
   async function loadTotpSession() {
-    const response = await fetch(`${TOTP_API_ROOT}/session`, { method: 'GET', credentials: 'same-origin', cache: 'no-store', headers: { accept: 'application/json' } });
+    const response = await fetch(`${TOTP_API_ROOT}/session`, {
+      method: 'GET', credentials: 'same-origin', cache: 'no-store', headers: { accept: 'application/json' },
+    });
     const payload = await response.json();
     if (!response.ok || payload?.ok !== true || typeof payload.csrf !== 'string') throw new Error(payload?.error || '无法读取 TOTP 管理会话');
     return payload;
@@ -75,8 +77,8 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
     const reload = React.useCallback(async () => {
       try {
         const payload = await loadTotpSession();
-        setCsrf(payload.csrf);
         const next = Array.isArray(payload.profiles) ? payload.profiles : [];
+        setCsrf(payload.csrf);
         setProfiles(next);
         setStatus(`已加载 ${next.length} 个令牌配置。`);
         setStatusError(false);
@@ -210,6 +212,8 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
 
   function installTokenEntryStyles() {
     if (typeof document === 'undefined') return () => {};
+    const existing = document.querySelector('style[data-dsh-patrol-token-entry-style]');
+    if (existing instanceof HTMLStyleElement) return () => {};
     const style = document.createElement('style');
     style.setAttribute('data-dsh-patrol-token-entry-style', 'true');
     style.textContent = `${TOTP_ENTRY_SELECTOR}{box-sizing:border-box;display:flex;align-items:center;gap:10px;width:100%;min-height:36px;padding:0 10px;background:transparent;border:none;border-radius:8px;color:var(--dsw-alias-label-secondary,var(--dsh-color-text-secondary,#667085));cursor:pointer;font-size:13px;text-align:left}${TOTP_ENTRY_SELECTOR}:hover,${TOTP_ENTRY_SELECTOR}[data-active]{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.08));color:var(--dsw-alias-label-primary,var(--dsh-color-text,inherit))}${TOTP_ENTRY_SELECTOR}[data-rail]{justify-content:center;padding:0}${TOTP_ENTRY_SELECTOR}[data-rail] .dsh-patrol-token-label{display:none}`;
@@ -225,32 +229,49 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
   }
 
   function mountTokenSidebarEntry(openTokenSurface) {
-    if (typeof document === 'undefined' || typeof MutationObserver !== 'function') return () => {};
+    if (typeof document === 'undefined' || typeof MutationObserver !== 'function' || !document.body) return () => {};
+    const existing = document.querySelector(TOTP_ENTRY_SELECTOR);
+    if (existing instanceof HTMLElement) return () => {};
     const disposeStyle = installTokenEntryStyles();
     const entry = document.createElement('button');
-    entry.type = 'button'; entry.setAttribute('data-dsh-patrol-token-entry', ''); entry.setAttribute('data-dsh-plugin', 'patrol-token'); entry.setAttribute('data-dsh-part', 'sidebar-entry'); entry.title = '令牌';
+    entry.type = 'button';
+    entry.setAttribute('data-dsh-patrol-token-entry', '');
+    entry.setAttribute('data-dsh-plugin', 'patrol-token');
+    entry.setAttribute('data-dsh-part', 'sidebar-entry');
+    entry.title = '令牌';
     entry.innerHTML = '<span style="display:inline-flex;width:22px;justify-content:center"><svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.5"/><path d="M8 4.5v3.75l2.35 1.55"/></svg></span><span class="dsh-patrol-token-label">令牌</span>';
     entry.addEventListener('click', () => {
       if (typeof openTokenSurface === 'function' && openTokenSurface()) return;
       window.dispatchEvent(new Event(TOTP_OPEN_EVENT));
     });
+
     let root;
+    let scheduled = false;
     const place = () => {
+      scheduled = false;
       root = sidebarRoot();
       if (!root) return;
       const ssh = root.querySelector('[data-dsh-ssh-entry]');
-      if (ssh instanceof HTMLElement && ssh.parentElement === root) root.insertBefore(entry, ssh.nextElementSibling);
-      else {
+      if (ssh instanceof HTMLElement && ssh.parentElement === root) {
+        if (entry.parentElement !== root || entry.previousElementSibling !== ssh) root.insertBefore(entry, ssh.nextElementSibling);
+      } else {
         const button = root.querySelector('button[class*="newSession"]') || Array.from(root.children).find(child => child instanceof HTMLButtonElement);
-        if (button instanceof HTMLElement) root.insertBefore(entry, button.nextElementSibling);
+        if (button instanceof HTMLElement && (entry.parentElement !== root || entry.previousElementSibling !== button)) root.insertBefore(entry, button.nextElementSibling);
       }
-      if (root.getBoundingClientRect().width <= 88) entry.setAttribute('data-rail', 'true'); else entry.removeAttribute('data-rail');
+      const rail = root.getBoundingClientRect().width <= 88;
+      if (rail && !entry.hasAttribute('data-rail')) entry.setAttribute('data-rail', 'true');
+      else if (!rail && entry.hasAttribute('data-rail')) entry.removeAttribute('data-rail');
     };
-    const observer = new MutationObserver(place);
+    const schedulePlace = () => {
+      if (scheduled) return;
+      scheduled = true;
+      queueMicrotask(place);
+    };
+    const observer = new MutationObserver(schedulePlace);
     observer.observe(document.body, { childList: true, subtree: true });
-    window.addEventListener('resize', place);
+    window.addEventListener('resize', schedulePlace);
     place();
-    return () => { observer.disconnect(); window.removeEventListener('resize', place); entry.remove(); disposeStyle(); };
+    return () => { observer.disconnect(); window.removeEventListener('resize', schedulePlace); entry.remove(); disposeStyle(); };
   }
 
   function registerTokenSurfaces(ctx) {
@@ -266,9 +287,6 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
     const openTokenTab = () => {
       if (!betterSidebar || typeof betterSidebar.openTab !== 'function') return false;
       try {
-        // Better Sidebar intentionally does not expand its panel for a type-only open.
-        // Supplying an internal content path makes the open visible while the token tab
-        // itself ignores the path payload.
         betterSidebar.openTab({ type: TOTP_TAB_ID, title: '令牌', path: 'dsh-patrol://totp' });
         return true;
       } catch (error) {
@@ -309,7 +327,8 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
       if (id) candidates.push({ id, time: call.time || Number.MAX_SAFE_INTEGER });
     }
     candidates.sort((a, b) => a.time - b.time);
-    return candidates.at(-1)?.id || '';
+    const latest = candidates[candidates.length - 1];
+    return latest ? latest.id : '';
   }
 
   function DashboardFrame({ useSession, workspaceRoot, mode }) {
