@@ -17,14 +17,21 @@ for (const dependency of [
   '@deepseek-ai/dsh-api-session-controller',
   '@deepseek-ai/dsh-client-ui-conversation',
   '@deepseek-ai/dsh-client-ui-renderer',
-  '@deepseek-ai/dsh-client-ui-slots',
 ]) {
   if (!packageJson.dsh.client.inject?.includes(dependency)) {
     throw new Error(`dsh.client.inject is missing ${dependency}`)
   }
 }
+// dsh.client.inject contains client plugin package rows, not every runtime
+// service provider. ui-slots is statically linked into the web shell and does
+// not declare dsh.client, so listing it here creates an unsatisfiable client
+// graph dependency and prevents Patrol's browser plugin from activating.
+if (packageJson.dsh.client.inject?.includes('@deepseek-ai/dsh-client-ui-slots')) {
+  throw new Error('dsh.client.inject must not include static package @deepseek-ai/dsh-client-ui-slots')
+}
 for (const marker of [
   "window.__ModuleLoader__.load({ id: 'dsh-patrol'",
+  "exports.inject = ['slots', 'sessions'];",
   "registerView(ctx, 'patrol-flow', 30, '流程管理'",
   "registerView(ctx, 'patrol-records', 40, '巡检记录'",
   "name: 'conversation.view'",
