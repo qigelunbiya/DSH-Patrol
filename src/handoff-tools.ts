@@ -117,12 +117,19 @@ export function registerPatrolHandoffTools(
           // Keep the provider path as a fallback if workspace organization fails.
         }
       }
-      return [
-        `Recorded ${screenshotStep.id} and ${checkpointStep.id}.`,
-        `Current verification kind=${kind}; subtype=${subtype}${imageCode ? '; test-mode image-code handoff is enabled' : ''}.`,
-        path === undefined ? 'Immediate verification screenshot was captured, but the provider returned no path.' : `Verification screenshot: ${path}`,
-        'Complete this verification in the managed browser, then resume Patrol.',
-      ].join('\n')
+      return imageCode
+        ? [
+            `Recorded ${screenshotStep.id} and ${checkpointStep.id}.`,
+            `Current test-mode image-code verification kind=${kind}; subtype=${subtype}; test-mode image-code handoff is enabled.`,
+            path === undefined ? 'Immediate verification screenshot was captured, but the provider returned no path.' : `Verification screenshot: ${path}`,
+            'Complete this verification in the managed browser, then resume Patrol.',
+          ].join('\n')
+        : [
+            `Recorded ${screenshotStep.id} and ${checkpointStep.id}.`,
+            `Current human-only verification kind=${kind}; subtype=${subtype}.`,
+            path === undefined ? 'Immediate verification screenshot was captured, but the provider returned no path.' : `Verification screenshot: ${path}`,
+            'Complete this human-only verification in the managed browser, then resume Patrol.',
+          ].join('\n')
     },
   })
 
