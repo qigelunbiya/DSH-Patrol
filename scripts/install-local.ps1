@@ -22,11 +22,45 @@ function ConvertTo-YamlSingleQuoted {
     return $Value.Replace("'", "''")
 }
 
+function Install-ClientHostDependency {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProfileDir,
+        [Parameter(Mandatory = $true)][string]$ClientHostRoot
+    )
+
+    $profileManifestPath = Join-Path $ProfileDir "package.json"
+    if (-not (Test-Path -LiteralPath $profileManifestPath)) {
+        throw "Harness profile is not initialized: $ProfileDir. Start the profile once before installing DSH Patrol."
+    }
+
+    Push-Location $ProfileDir
+    try {
+        pnpm add --save-prod $ClientHostRoot
+        if ($LASTEXITCODE -ne 0) { throw "failed to install dsh-patrol-client-host into Harness profile $ProfileDir" }
+    } finally {
+        Pop-Location
+    }
+
+    $profileManifest = [System.IO.File]::ReadAllText($profileManifestPath) | ConvertFrom-Json
+    $dependency = $profileManifest.dependencies.'dsh-patrol-client-host'
+    if ([string]::IsNullOrWhiteSpace([string]$dependency)) {
+        throw "Harness profile dependency dsh-patrol-client-host was not recorded in $profileManifestPath"
+    }
+
+    $installedManifestPath = Join-Path $ProfileDir "node_modules\dsh-patrol-client-host\package.json"
+    if (-not (Test-Path -LiteralPath $installedManifestPath)) {
+        throw "Harness profile cannot resolve installed dsh-patrol-client-host: $installedManifestPath"
+    }
+    $installedManifest = [System.IO.File]::ReadAllText($installedManifestPath) | ConvertFrom-Json
+    if ($installedManifest.name -ne "dsh-patrol-client-host" -or $installedManifest.dsh.client.platform -ne "web") {
+        throw "Installed dsh-patrol-client-host manifest is missing its web client declaration: $installedManifestPath"
+    }
+}
+
 function Install-ManagedHostBridgePatch {
     param(
         [Parameter(Mandatory = $true)][string]$PatchPath,
         [Parameter(Mandatory = $true)][string]$BridgeHostUri,
-        [Parameter(Mandatory = $true)][string]$ClientHostUri,
         [Parameter(Mandatory = $true)][string]$ScreenshotDir
     )
 
@@ -39,7 +73,6 @@ function Install-ManagedHostBridgePatch {
     $pattern = "(?ms)^" + [regex]::Escape($begin) + "\r?\n.*?^" + [regex]::Escape($end) + "\r?\n?"
     $clean = [regex]::Replace($existing, $pattern, "").TrimEnd()
     $safeBridgeHostUri = ConvertTo-YamlSingleQuoted -Value $BridgeHostUri
-    $safeClientHostUri = ConvertTo-YamlSingleQuoted -Value $ClientHostUri
     $safeScreenshotDir = ConvertTo-YamlSingleQuoted -Value $ScreenshotDir
 
     $block = @"
@@ -57,7 +90,7 @@ $begin
         screenshotDir: '$safeScreenshotDir'
 
     - id: dsh-patrol-client-host
-      name: '$safeClientHostUri'
+      name: 'dsh-patrol-client-host'
 $end
 "@
 
@@ -144,6 +177,7 @@ if ($InstallCaptchaDemoSolver) {
 }
 
 $DshHome = if ($env:DSH_HOME) { $env:DSH_HOME } else { Join-Path $HOME ".dsh" }
+$ProfileDir = Join-Path $DshHome "profiles\$Profile"
 $PresetDir = Join-Path $DshHome ".agent-presets\patrol"
 New-Item -ItemType Directory -Force -Path $PresetDir | Out-Null
 
@@ -168,9 +202,14 @@ if ($CredentialHelperSourceHash -ne $CredentialHelperTargetHash) {
 
 $PatrolIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "lib\index.js")))).AbsoluteUri
 $BridgeHostIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "browser-bridge-runtime\index.js")))).AbsoluteUri
-$ClientHostIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "client-host-runtime\index.js")))).AbsoluteUri
+$ClientHostRoot = [System.IO.Path]::GetFullPath((Join-Path $ProjectRoot "client-host-runtime"))
 $BrowserToolsIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "browser-bridge-runtime\tools-plugin.js")))).AbsoluteUri
 $SafeStoragePath = ConvertTo-YamlSingleQuoted -Value $PatrolStorage
+
+# ClientModuleRegistry resolves bare package rows from the profile's dependency
+# closure. Install the client carrier there instead of relying on an out-of-tree
+# file URL to be rediscovered as a package during the browser roster scan.
+Install-ClientHostDependency -ProfileDir $ProfileDir -ClientHostRoot $ClientHostRoot
 
 # Keep this PowerShell source ASCII-only for Windows PowerShell 5.1 compatibility.
 # Copy the UTF-8 preset bytes directly instead of embedding non-ASCII literals here.
@@ -221,14 +260,14 @@ $CleanupTarget = Join-Path $PatrolRuntimeDir "integration-cleanup.mjs"
 Copy-Item -LiteralPath $CleanupSource -Destination $CleanupTarget -Force
 $CleanupUri = (New-Object System.Uri((Resolve-Path $CleanupTarget))).AbsoluteUri
 
-$WebPatch = Join-Path $DshHome "profiles\$Profile\cordis.patch.yml"
-Install-ManagedHostBridgePatch -PatchPath $WebPatch -BridgeHostUri $BridgeHostIndex -ClientHostUri $ClientHostIndex -ScreenshotDir $PatrolScreenshotDir
+$WebPatch = Join-Path $ProfileDir "cordis.patch.yml"
+Install-ManagedHostBridgePatch -PatchPath $WebPatch -BridgeHostUri $BridgeHostIndex -ScreenshotDir $PatrolScreenshotDir
 Install-ManagedCleanupPatch -PatchPath $WebPatch -CleanupUri $CleanupUri -ProfileName $Profile
 
 if (Test-Path $WebPatch) {
     $patchText = [System.IO.File]::ReadAllText($WebPatch)
-    if (-not $patchText.Contains("id: dsh-patrol-client-host") -or -not $patchText.Contains($ClientHostIndex)) {
-        throw "Patrol web client host row was not written to profile patch: $WebPatch"
+    if (-not $patchText.Contains("id: dsh-patrol-client-host") -or -not $patchText.Contains("name: 'dsh-patrol-client-host'")) {
+        throw "Patrol web client host package row was not written to profile patch: $WebPatch"
     }
     $oldGlobal = Select-String -Path $WebPatch -Pattern "^\s*-?\s*id:\s*dsh-patrol\s*$|DSH-Patrol/lib/index" -Quiet
     if ($oldGlobal) {
@@ -239,7 +278,7 @@ if (Test-Path $WebPatch) {
 Write-Host ""
 Write-Host "Local Patrol preset installed and UTF-8 verified: $PresetDir" -ForegroundColor Green
 Write-Host "Host browser bridge patch installed: $WebPatch" -ForegroundColor Green
-Write-Host "Patrol web client host patch installed: $ClientHostIndex" -ForegroundColor Green
+Write-Host "Patrol web client package installed into profile: $ProfileDir" -ForegroundColor Green
 Write-Host "Lifecycle cleanup coordinator installed: $CleanupTarget" -ForegroundColor Green
 Write-Host "Patrol workspace storage: $PatrolStorage" -ForegroundColor Green
 Write-Host "Patrol screenshot temp storage: $PatrolScreenshotDir" -ForegroundColor Green

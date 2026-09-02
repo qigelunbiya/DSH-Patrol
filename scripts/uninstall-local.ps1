@@ -41,13 +41,37 @@ function Test-ManifestReferencesPatrol {
         $section = $manifest.$sectionName
         if ($null -eq $section) { continue }
         foreach ($property in $section.PSObject.Properties) {
-            if ($property.Name -eq "dsh-patrol") { return $true }
+            if ($property.Name -eq "dsh-patrol" -or $property.Name -eq "dsh-patrol-client-host") { return $true }
             $spec = [string]$property.Value
             if ($spec -match "(?i)qigelunbiya[\\/]DSH-Patrol") { return $true }
-            if ($spec -match "(?i)(^|[/:@])dsh-patrol([#@/:]|$)") { return $true }
+            if ($spec -match "(?i)(^|[/:@])dsh-patrol(?:-client-host)?([#@/:]|$)") { return $true }
         }
     }
     return $false
+}
+
+function Remove-ClientHostDependency {
+    param([Parameter(Mandatory = $true)][string]$ProfileDir)
+    $packagePath = Join-Path $ProfileDir "package.json"
+    if (-not (Test-Path -LiteralPath $packagePath)) { return }
+    try {
+        $manifest = [System.IO.File]::ReadAllText($packagePath) | ConvertFrom-Json
+    } catch {
+        Write-Warning "Could not read Harness profile manifest while removing dsh-patrol-client-host: $packagePath"
+        return
+    }
+    $dependency = $manifest.dependencies.'dsh-patrol-client-host'
+    if ([string]::IsNullOrWhiteSpace([string]$dependency)) { return }
+
+    Push-Location $ProfileDir
+    try {
+        pnpm remove dsh-patrol-client-host
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Could not remove dsh-patrol-client-host from Harness profile dependencies: $ProfileDir"
+        }
+    } finally {
+        Pop-Location
+    }
 }
 
 function Test-ProfileHasPatrol {
@@ -110,10 +134,12 @@ $BridgeTempPath = Join-Path $PatrolRoot "browser-bridge"
 $CleanupRuntimePath = Join-Path $PatrolRoot "integration-cleanup.mjs"
 $PresetDir = Join-Path $DshHome ".agent-presets\patrol"
 $PresetMarker = Join-Path $PresetDir ".managed-by-dsh-patrol"
-$WebPatch = Join-Path $DshHome "profiles\$Profile\cordis.patch.yml"
+$ProfileDir = Join-Path $DshHome "profiles\$Profile"
+$WebPatch = Join-Path $ProfileDir "cordis.patch.yml"
 
 Remove-ManagedBlock -PatchPath $WebPatch -Begin "# BEGIN DSH-PATROL MANAGED HOST BRIDGE" -End "# END DSH-PATROL MANAGED HOST BRIDGE"
 Remove-ManagedBlock -PatchPath $WebPatch -Begin "# BEGIN DSH-PATROL MANAGED CLEANUP" -End "# END DSH-PATROL MANAGED CLEANUP"
+Remove-ClientHostDependency -ProfileDir $ProfileDir
 
 $AnotherInstallIsActive = Test-AnyProfileHasPatrol -DshHome $DshHome
 if (-not $AnotherInstallIsActive) {
