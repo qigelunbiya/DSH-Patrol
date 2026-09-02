@@ -42,6 +42,9 @@ async function setup(dispatchOk = true) {
         return () => {}
       },
     },
+    get() {
+      return undefined
+    },
   } as unknown as Context
   const calls: any[] = []
   const runner = {
