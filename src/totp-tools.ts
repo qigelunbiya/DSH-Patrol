@@ -1,5 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-system-prompt'
 import { defineTool, type ToolDefinition } from '@deepseek-ai/dsh-tools'
+import { listTotpProfiles } from '../browser-bridge-runtime/totp-store.js'
 import { assertSafePersistentText } from './security.js'
 import type { PatrolRunner } from './runner.js'
 import type { PatrolStore } from './store.js'
@@ -11,20 +13,50 @@ const TEXT_OUTPUT = {
   render: (_args: unknown, value: string) => [{ type: 'text' as const, text: value }],
 }
 
+export const PATROL_TOTP_PROMPT = `Patrol 已配置 TOTP/动态口令使用规则：
+- 当页面出现“动态口令”“APP 口令”“TOTP”“Authenticator”“双因子认证”等输入框，并且用户要求“使用现有令牌 / 基于现在的令牌 / 自动填写令牌”时，先调用 patrol_list_totp_profiles 查询本机已经配置的非敏感 profile 元数据。不要先把动态口令留空提交，也不要先要求用户去手机查看 6 位码。
+- 如果只有一个已配置 profile，且页面/账号信息没有明确冲突，优先使用这个 profile。如果有多个 profile，按 issuer、account、当前站点和登录账号选择最匹配的一个；无法可靠匹配时再向用户询问要用哪个 profileId，而不是询问当前 6 位动态码。
+- 选定 profile 后，直接调用 patrol_type_totp_profile，把 CURRENT 动态口令输入框 selector 与 profileId 交给专用工具。专用工具会在本机解密 seed、生成当前时间片 TOTP 并直接输入浏览器；模型不需要也不应该知道当前动态码数字。
+- patrol_type_totp_profile 成功后再点击“确定/验证/继续”等提交按钮，并观察登录结果。不要把 TOTP 当成普通 patrol_type_transient 文本，也不要把某次动态码写入 Runbook、notes、报告或回复。
+- 只有当没有任何可用 profile、profile 明确不匹配、或 patrol_type_totp_profile 实际执行失败时，才退回人工 OTP/checkpoint 流程。`
+
 export function registerPatrolTotpTools(
   ctx: Context,
   store: PatrolStore,
   runner: PatrolRunner,
   options: { maxSteps: number },
 ): () => void {
+  const listProfiles = defineTool({
+    name: 'patrol_list_totp_profiles',
+    description: 'List configured Patrol TOTP profiles using non-sensitive metadata only. Call this when a login page asks for an APP/dynamic/TOTP code and the user wants Patrol to use an already configured token. This never returns a seed or current dynamic code.',
+    parameters: {},
+    output: TEXT_OUTPUT,
+    async execute() {
+      const profiles = listTotpProfiles()
+      if (profiles.length === 0) {
+        return 'No configured Patrol TOTP profiles were found. Do not ask for a profile id that does not exist; use the human OTP/checkpoint path unless the user configures a token first.'
+      }
+      return [
+        `Configured Patrol TOTP profiles (${profiles.length}; non-sensitive metadata only):`,
+        ...profiles.map(profile => [
+          `- profileId=${profile.id}`,
+          `issuer=${profile.issuer || '(none)'}`,
+          `account=${profile.account || '(none)'}`,
+          `${profile.digits || 6} digits/${profile.period || 30}s`,
+        ].join(' | ')),
+        'If the current login asks for an APP/dynamic/TOTP code, choose the matching profile and call patrol_type_totp_profile. Do not ask the user to read the current 6-digit code when a matching configured profile exists.',
+      ].join('\n')
+    },
+  })
+
   const typeTotp = defineTool({
     name: 'patrol_type_totp_profile',
-    description: 'Generate and type a fresh TOTP from an already configured encrypted Patrol token profile, then record only the profile id and selector as a replayable Runbook step. The seed and dynamic digits are never model-visible or persisted in the inspection.',
+    description: 'Generate and type a fresh TOTP from an already configured encrypted Patrol token profile, then record only the profile id and selector as a replayable Runbook step. The seed and dynamic digits are never model-visible or persisted in the inspection. If the profile id is unknown, call patrol_list_totp_profiles first.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
       selector: { type: 'string', required: true },
-      profileId: { type: 'string', required: true, description: 'Configured Patrol TOTP profile id. Never pass an otpauth URI, seed, or current code here.' },
+      profileId: { type: 'string', required: true, description: 'Configured Patrol TOTP profile id. Never pass an otpauth URI, seed, or current code here. Use patrol_list_totp_profiles when unknown.' },
       clear: { type: 'boolean' },
       conditionSourceStepId: { type: 'string' },
       conditionExpectedText: { type: 'string' },
@@ -65,8 +97,16 @@ export function registerPatrolTotpTools(
     },
   })
 
-  const definitions: ToolDefinition[] = [typeTotp]
+  const definitions: ToolDefinition[] = [listProfiles, typeTotp]
   const disposers = definitions.map(definition => ctx.tools.register(definition))
+  const systemPrompt = ctx.get('systemPrompt')
+  if (systemPrompt !== undefined) {
+    disposers.push(systemPrompt.section({
+      name: 'agent:dsh-patrol-totp',
+      order: 134.5,
+      text: PATROL_TOTP_PROMPT,
+    }))
+  }
   return () => { for (const dispose of disposers) dispose() }
 }
 
