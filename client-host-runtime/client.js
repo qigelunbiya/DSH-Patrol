@@ -78,6 +78,7 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
   function TokenManager({ embedded = false }) {
     const [csrf, setCsrf] = React.useState('');
     const [profiles, setProfiles] = React.useState([]);
+    const [liveCodes, setLiveCodes] = React.useState({});
     const [profileId, setProfileId] = React.useState('');
     const [uri, setUri] = React.useState('');
     const [status, setStatus] = React.useState('正在读取本机令牌配置…');
@@ -100,6 +101,30 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
     }, []);
 
     React.useEffect(() => { reload(); }, [reload]);
+
+    React.useEffect(() => {
+      if (!csrf || profiles.length === 0) {
+        setLiveCodes({});
+        return undefined;
+      }
+      let cancelled = false;
+      const refreshLiveCodes = async () => {
+        try {
+          const payload = await totpPost('preview', csrf, { profileIds: profiles.map(profile => profile.id) });
+          if (cancelled) return;
+          const next = {};
+          for (const item of Array.isArray(payload.codes) ? payload.codes : []) {
+            if (item && typeof item.profileId === 'string' && typeof item.code === 'string') next[item.profileId] = item;
+          }
+          setLiveCodes(next);
+        } catch (error) {
+          if (!cancelled) console.warn('[dsh-patrol] TOTP preview refresh failed:', errorMessage(error));
+        }
+      };
+      refreshLiveCodes();
+      const timer = window.setInterval(refreshLiveCodes, 1000);
+      return () => { cancelled = true; window.clearInterval(timer); };
+    }, [csrf, profiles]);
 
     const importProfile = async () => {
       const id = profileId.trim();
@@ -168,18 +193,25 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
         ),
         React.createElement('button', { type: 'button', style: BUTTON, disabled: busy, onClick: reload }, '刷新'),
       ),
-      React.createElement('div', { style: { ...CARD, color: MUTED, fontSize: '12px', lineHeight: 1.65, marginBottom: '10px' } }, '支持标准 otpauth、Authing 导出二维码和 Google Authenticator 迁移二维码。二维码只在本机解码，TOTP seed 使用 Patrol vault 加密保存；界面和巡检日志不会显示 seed 或当前动态码。'),
+      React.createElement('div', { style: { ...CARD, color: MUTED, fontSize: '12px', lineHeight: 1.65, marginBottom: '10px' } }, '支持标准 otpauth、Authing 导出二维码和 Google Authenticator 迁移二维码。二维码只在本机解码，TOTP seed 使用 Patrol vault 加密保存；本机令牌页可查看当前动态码，Patrol 自动巡检工具与 Runbook 不会回显或保存这些动态数字。'),
       React.createElement('div', { role: statusError ? 'alert' : 'status', style: { minHeight: '20px', color: statusError ? '#dc2626' : MUTED, fontSize: '12px', marginBottom: '10px' } }, status),
       React.createElement('div', { style: { fontSize: '13px', fontWeight: 650, margin: '10px 0 8px' } }, '已配置令牌'),
       profiles.length === 0
         ? React.createElement('div', { style: { ...CARD, color: MUTED, fontSize: '12px', marginBottom: '14px' } }, '还没有配置 TOTP 令牌。')
-        : React.createElement('div', { style: { display: 'grid', gap: '8px', marginBottom: '16px' } }, profiles.map(profile => React.createElement('div', { key: profile.id, style: { ...CARD, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' } },
-          React.createElement('div', { style: { minWidth: 0 } },
-            React.createElement('div', { style: { fontSize: '13px', fontWeight: 650, overflow: 'hidden', textOverflow: 'ellipsis' } }, profile.issuer || profile.label || profile.id),
-            React.createElement('div', { style: { color: MUTED, fontSize: '11px', marginTop: '3px' } }, `${profile.account || ''} · ${profile.id} · ${profile.digits || 6}位/${profile.period || 30}s`),
-          ),
-          React.createElement('button', { type: 'button', style: BUTTON, disabled: busy, onClick: () => removeProfile(profile.id) }, '删除'),
-        ))),
+        : React.createElement('div', { style: { display: 'grid', gap: '8px', marginBottom: '16px' } }, profiles.map(profile => {
+          const live = liveCodes[profile.id];
+          return React.createElement('div', { key: profile.id, style: { ...CARD, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' } },
+            React.createElement('div', { style: { minWidth: 0, flex: '1 1 160px' } },
+              React.createElement('div', { style: { fontSize: '13px', fontWeight: 650, overflow: 'hidden', textOverflow: 'ellipsis' } }, profile.issuer || profile.label || profile.id),
+              React.createElement('div', { style: { color: MUTED, fontSize: '11px', marginTop: '3px' } }, `${profile.account || ''} · ${profile.id} · ${profile.digits || 6}位/${profile.period || 30}s`),
+            ),
+            React.createElement('div', { 'data-dsh-patrol-totp-preview': profile.id, style: { minWidth: '118px', textAlign: 'center' } },
+              React.createElement('div', { style: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: '24px', fontWeight: 760, letterSpacing: '3px', lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' } }, live?.code || '------'),
+              React.createElement('div', { style: { color: MUTED, fontSize: '10px', marginTop: '4px' } }, live ? `${live.validForSeconds}s 后刷新` : '正在生成当前码…'),
+            ),
+            React.createElement('button', { type: 'button', style: BUTTON, disabled: busy, onClick: () => removeProfile(profile.id) }, '删除'),
+          );
+        })),
       React.createElement('div', { style: { fontSize: '13px', fontWeight: 650, margin: '10px 0 8px' } }, '导入令牌'),
       React.createElement('input', { value: profileId, onChange: event => setProfileId(event.target.value), disabled: busy, placeholder: 'Profile ID（可选；批量导入时作为前缀）', autoComplete: 'off', style: INPUT }),
       React.createElement('input', { value: uri, onChange: event => setUri(event.target.value), disabled: busy, placeholder: '粘贴 otpauth://、otpauth-migration:// 或 Authing 导出 JSON', type: 'password', autoComplete: 'off', spellCheck: false, style: { ...INPUT, marginTop: '8px' }, 'data-dsh-patrol-totp-uri': 'true' }),
