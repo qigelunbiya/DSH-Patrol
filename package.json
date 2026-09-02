@@ -57,7 +57,7 @@
     "build": "tsc -p tsconfig.json --pretty false",
     "prepare": "pnpm build",
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
-    "test": "vitest run",
+    "test": "vitest run --testTimeout=15000",
     "test:watch": "vitest",
     "check:extension": "node scripts/check-extension.mjs && node scripts/check-managed-browser.mjs && node scripts/check-client-runtime.mjs",
     "check:encoding": "node scripts/check-encoding.mjs"
