@@ -3,7 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-system-prompt'
-import type {} from '@deepseek-ai/dsh-tools'
+import { defineTool } from '@deepseek-ai/dsh-tools'
 import { registerPatrolActionTools } from './action-tools.js'
 import { PATROL_BEHAVIOR_PROMPT } from './behavior-prompt.js'
 import { registerPatrolCreationTools } from './creation-tools.js'
@@ -58,6 +58,7 @@ export const inject = ['tools']
 const DEFAULT_STORAGE_PATH = resolve(process.cwd(), '.dsh-patrol')
 const DEFAULT_MAX_STEPS = 200
 const DEFAULT_REPORT_MAX_CHARS = 30_000
+const TEST_MODE_BUILD_MARKER = 'test-bypass-v3-visual-captcha'
 
 export interface Config {
   storagePath?: string
@@ -127,7 +128,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     'dsh-patrol: transient sensitive browser input',
   )
   ctx.effect(
-    () => registerPatrolHandoffTools(ctx, store, runner, { maxSteps: resolved.maxSteps }),
+    () => registerPatrolHandoffTools(ctx, store, runner, {
+      maxSteps: resolved.maxSteps,
+      allowImageCodeHandoff: runtimePolicy.testMode,
+    }),
     'dsh-patrol: human verification handoff tools',
   )
   ctx.effect(() => registerPatrolEditTools(ctx, store, runner), 'dsh-patrol: runbook edit and validation tools')
@@ -138,6 +142,24 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
   const scheduler = new PatrolScheduler(ctx, store)
   ctx.effect(() => scheduler.start(), 'dsh-patrol: scheduled patrol runner')
+
+  const runtimeModeTool = defineTool({
+    name: 'patrol_runtime_mode',
+    description: 'Report the actually loaded DSH Patrol runtime mode and debug restrictions. Use this instead of guessing from environment variables.',
+    parameters: {},
+    output: {
+      schema: { type: 'string' as const },
+      render: (_args, value: string) => [{ type: 'text' as const, text: value }],
+    },
+    execute: async () => [
+      `mode=${runtimePolicy.testMode ? 'test' : 'normal'}`,
+      `guards=${runtimePolicy.installGuards ? 'enabled' : 'disabled'}`,
+      `strictPrompts=${runtimePolicy.injectStrictWorkflowPrompt ? 'enabled' : 'disabled'}`,
+      `visualCaptchaFallback=${runtimePolicy.testMode ? 'enabled' : 'disabled'}`,
+      `build=${TEST_MODE_BUILD_MARKER}`,
+    ].join('; '),
+  })
+  ctx.effect(() => ctx.tools.register(runtimeModeTool), 'dsh-patrol: runtime mode diagnostic')
 
   if (runtimePolicy.installGuards) {
     ctx.effect(
@@ -164,11 +186,14 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
   const systemPrompt = ctx.get('systemPrompt')
   if (systemPrompt !== undefined) {
-    ctx.effect(() => systemPrompt.section({
-      name: 'agent:dsh-patrol',
-      order: 130,
-      text: PATROL_SYSTEM_PROMPT,
-    }), 'dsh-patrol: agent workflow prompt')
+    if (runtimePolicy.injectStrictWorkflowPrompt) {
+      ctx.effect(() => systemPrompt.section({
+        name: 'agent:dsh-patrol',
+        order: 130,
+        text: PATROL_SYSTEM_PROMPT,
+      }), 'dsh-patrol: agent workflow prompt')
+    }
+
     ctx.effect(() => systemPrompt.section({
       name: 'agent:dsh-patrol-excel',
       order: 131,
@@ -196,13 +221,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         order: 135,
         text: PATROL_RECOVERY_PROMPT,
       }), 'dsh-patrol: bounded recovery prompt')
+      ctx.effect(() => systemPrompt.section({
+        name: 'agent:dsh-patrol-targeted-recovery',
+        order: 136,
+        text: PATROL_TARGETED_RECOVERY_PROMPT,
+      }), 'dsh-patrol: targeted failed-step recovery prompt')
     }
-
-    ctx.effect(() => systemPrompt.section({
-      name: 'agent:dsh-patrol-targeted-recovery',
-      order: 136,
-      text: PATROL_TARGETED_RECOVERY_PROMPT,
-    }), 'dsh-patrol: targeted failed-step recovery prompt')
 
     if (runtimePolicy.injectStrictVerificationPrompt) {
       ctx.effect(() => systemPrompt.section({
@@ -212,16 +236,15 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       }), 'dsh-patrol: automation-first verification prompt')
     }
 
-    // Keep the normal behavior section late so it resolves legacy prompt
-    // conflicts. In test mode the observation prompt is omitted, and an even
-    // later explicit test override relaxes the remaining strict workflow text.
-    ctx.effect(() => systemPrompt.section({
-      name: 'agent:dsh-patrol-current-behavior',
-      order: 138,
-      text: runtimePolicy.injectObservationPrompt
-        ? `${PATROL_BEHAVIOR_PROMPT}\n\n${PATROL_OBSERVATION_PROMPT}`
-        : PATROL_BEHAVIOR_PROMPT,
-    }), 'dsh-patrol: current behavior, visual state gate, and Simplified Chinese prompt')
+    if (runtimePolicy.injectStrictWorkflowPrompt) {
+      ctx.effect(() => systemPrompt.section({
+        name: 'agent:dsh-patrol-current-behavior',
+        order: 138,
+        text: runtimePolicy.injectObservationPrompt
+          ? `${PATROL_BEHAVIOR_PROMPT}\n\n${PATROL_OBSERVATION_PROMPT}`
+          : PATROL_BEHAVIOR_PROMPT,
+      }), 'dsh-patrol: current behavior, visual state gate, and Simplified Chinese prompt')
+    }
 
     if (runtimePolicy.testMode) {
       ctx.effect(() => systemPrompt.section({
@@ -233,5 +256,5 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   }
 
   const guardMode = runtimePolicy.testMode ? 'test-bypass' : 'normal-strict'
-  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; guard-mode=${guardMode}; scheduler=enabled; credential helper=optional; transient sensitive replay=enabled; automation-first verification=enabled; visual-observation-first=enabled; secret-safe creation=enabled; flat action tools=enabled; OpenXML Excel v5 tools=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled`)
+  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; guard-mode=${guardMode}; build=${TEST_MODE_BUILD_MARKER}; scheduler=enabled; credential helper=optional; transient sensitive replay=enabled; secret-safe creation=enabled; flat action tools=enabled; OpenXML Excel v5 tools=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled`)
 }
