@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   findExplicitImageCodeInputSelector,
   findVisualImageCodeCandidateSelectors,
+  imageCodeConfidence,
+  IMAGE_CODE_MIN_CONFIDENCE,
   normalizeImageCodeText,
   selectImageCodeCandidate,
 } from '../browser-bridge-runtime/image-code.js'
@@ -46,5 +48,13 @@ describe('image-code OCR recovery', () => {
 
   it('keeps cropped OCR normalization compatible with compact image codes', () => {
     expect(normalizeImageCodeText(' A B 1 2 C ')).toBe('AB12C')
+  })
+
+  it('normalizes ddddocr confidence to the lockout-safe 0..1 policy', () => {
+    expect(IMAGE_CODE_MIN_CONFIDENCE).toBe(0.8)
+    expect(imageCodeConfidence({ confidence: 0.83 })).toBeCloseTo(0.83)
+    expect(imageCodeConfidence({ confidence: 3 })).toBe(1)
+    expect(imageCodeConfidence({ confidence: -1 })).toBe(0)
+    expect(imageCodeConfidence({})).toBe(0)
   })
 })

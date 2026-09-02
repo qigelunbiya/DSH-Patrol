@@ -3,6 +3,7 @@ import { recognizeImageCodeWithDdddocr } from './image-code-ddddocr.js'
 
 const IMAGE_CODE_INPUT_HINT = /(captcha|image[-_ ]?code|img[-_ ]?code|verify[-_ ]?code|verification[-_ ]?code|validation[-_ ]?code|check[-_ ]?code|auth[-_ ]?code|\bcode\b|验证码|校验码|图形码)/i
 const VISUAL_NOISE_HINT = /(logo|brand|avatar|favicon|icon|qrcode|qr[-_ ]?code|二维码)/i
+export const IMAGE_CODE_MIN_CONFIDENCE = 0.80
 
 export async function tryFillImageCode(bridge, tabId, options = {}) {
   if (process.platform !== 'win32') return false
@@ -49,22 +50,22 @@ export async function tryFillImageCode(bridge, tabId, options = {}) {
     }
   }
 
-  // Final recovery: whole-page system OCR. This remains useful for legacy
-  // pages where the captcha input is explicit but all visual-element discovery
-  // failed. The extension normally reaches this path only after direct source,
-  // element crop, input-neighbor visual crop, and alternate visual crops fail.
+  // Final recovery: whole-page OCR is now confirmation-only. A whole page has
+  // too much ordinary login text to safely submit one unscored OCR guess. The
+  // page path accepts a high-confidence ddddocr result or an exact independent
+  // ddddocr/Windows-OCR consensus, otherwise it fails without typing anything.
   if (!inputSelector || !isPlausibleImageCode(code)) {
     const fallback = await recognizeImageCodeFromPage(bridge, tabId, options, diagnostics)
     if (fallback) {
       inputSelector = fallback.inputSelector
       code = fallback.code
     } else {
-      diagnostics.push('page-level OCR: no plausible image-code candidate')
+      diagnostics.push('page-level OCR: no confidence-qualified image-code candidate')
     }
   }
 
   if (!inputSelector || !isPlausibleImageCode(code)) {
-    throw new Error(`image-code recognition exhausted automatic paths: ${diagnostics.filter(Boolean).slice(0, 12).join(' | ') || 'no diagnostic detail'}`)
+    throw new Error(`image-code recognition exhausted confidence-qualified paths: ${diagnostics.filter(Boolean).slice(0, 12).join(' | ') || 'no diagnostic detail'}`)
   }
 
   const typed = await bridge.request('type', {
@@ -82,12 +83,21 @@ export async function tryFillImageCode(bridge, tabId, options = {}) {
 }
 
 async function recognizeCapturedImageCode(dataUrl, captureMode, options, diagnostics) {
-  let code = ''
+  let ddddocrCode = ''
+  let ddddocrConfidence = 0
   try {
     const ddddocr = await recognizeImageCodeWithDdddocr(dataUrl, options)
     if (ddddocr?.ok === true && typeof ddddocr.text === 'string') {
-      code = normalizeImageCodeText(ddddocr.text)
-      if (!isPlausibleImageCode(code)) diagnostics.push(`ddddocr(${captureMode}): returned implausible text`)
+      ddddocrCode = normalizeImageCodeText(ddddocr.text)
+      ddddocrConfidence = imageCodeConfidence(ddddocr)
+      if (!isPlausibleImageCode(ddddocrCode)) {
+        diagnostics.push(`ddddocr(${captureMode}): returned implausible text`)
+      } else if (isStrongImageCode(ddddocrCode) && ddddocrConfidence >= IMAGE_CODE_MIN_CONFIDENCE) {
+        diagnostics.push(`ddddocr(${captureMode}): confidence=${ddddocrConfidence.toFixed(3)} accepted`)
+        return ddddocrCode
+      } else {
+        diagnostics.push(`ddddocr(${captureMode}): confidence=${ddddocrConfidence.toFixed(3)} below ${IMAGE_CODE_MIN_CONFIDENCE.toFixed(2)} or candidate not strong`)
+      }
     } else {
       diagnostics.push(`ddddocr(${captureMode}): ${shortDiagnostic(ddddocr?.error || 'no plausible text')}`)
     }
@@ -95,18 +105,26 @@ async function recognizeCapturedImageCode(dataUrl, captureMode, options, diagnos
     diagnostics.push(`ddddocr(${captureMode}): ${shortDiagnostic(error)}`)
   }
 
-  if (!isPlausibleImageCode(code)) {
-    try {
-      const recognized = await recognizeScreenshotText(dataUrl, { signal: options.signal })
-      code = selectImageCodeCandidate(recognized?.text ?? '')
-      if (!isPlausibleImageCode(code)) {
-        diagnostics.push(`windows-ocr(${captureMode}): ${shortDiagnostic(recognized?.status || 'no plausible text')}`)
-      }
-    } catch (error) {
-      diagnostics.push(`windows-ocr(${captureMode}): ${shortDiagnostic(error)}`)
+  // Windows OCR has no calibrated per-code confidence. It may confirm a weak
+  // ddddocr result, but is never trusted alone for an automatic login attempt.
+  try {
+    const recognized = await recognizeScreenshotText(dataUrl, { signal: options.signal })
+    const windowsCode = selectImageCodeCandidate(recognized?.text ?? '')
+    if (!isPlausibleImageCode(windowsCode)) {
+      diagnostics.push(`windows-ocr(${captureMode}): ${shortDiagnostic(recognized?.status || 'no plausible text')}`)
+      return ''
     }
+    if (isStrongImageCode(windowsCode)
+      && isStrongImageCode(ddddocrCode)
+      && cleanupComparable(windowsCode) === cleanupComparable(ddddocrCode)) {
+      diagnostics.push(`ocr-consensus(${captureMode}): ddddocr/windows agreed on a strong candidate`)
+      return windowsCode
+    }
+    diagnostics.push(`windows-ocr(${captureMode}): unscored candidate not auto-filled without ddddocr agreement`)
+  } catch (error) {
+    diagnostics.push(`windows-ocr(${captureMode}): ${shortDiagnostic(error)}`)
   }
-  return code
+  return ''
 }
 
 async function recognizeImageCodeFromVisualCandidates(bridge, tabId, preferredInputSelector, options, diagnostics) {
@@ -184,35 +202,46 @@ async function recognizeImageCodeFromPage(bridge, tabId, options, diagnostics = 
   } catch {
   }
 
+  let windowsCode = ''
   try {
     const recognized = await recognizeScreenshotText(shot.dataUrl, { signal: options.signal })
     if (recognized?.status === 'recognized' && recognized.text) {
-      const code = selectImageCodeCandidate(recognized.text, knownText)
-      if (isStrongImageCode(code)) return { inputSelector, code }
-      if (isPlausibleImageCode(code)) diagnostics.push('page-level Windows OCR: weak candidate rejected')
+      windowsCode = selectImageCodeCandidate(recognized.text, knownText)
+      if (!isStrongImageCode(windowsCode)) {
+        if (isPlausibleImageCode(windowsCode)) diagnostics.push('page-level Windows OCR: weak candidate rejected')
+        windowsCode = ''
+      }
     }
   } catch (error) {
     diagnostics.push(`page-level Windows OCR: ${shortDiagnostic(error)}`)
   }
 
-  // Last resort: let the captcha-specific recognizer inspect the visible page
-  // screenshot. It is deliberately accepted only with a strong, previously
-  // unseen alphanumeric result to avoid typing ordinary login-page text.
   try {
     const ddddocr = await recognizeImageCodeWithDdddocr(shot.dataUrl, options)
     if (ddddocr?.ok === true && typeof ddddocr.text === 'string') {
       const code = normalizeImageCodeText(ddddocr.text)
+      const confidence = imageCodeConfidence(ddddocr)
       const comparable = cleanupComparable(code)
-      if (isStrongImageCode(code) && comparable && !cleanupComparable(knownText).includes(comparable)) {
+      const unseen = comparable && !cleanupComparable(knownText).includes(comparable)
+      if (isStrongImageCode(code) && unseen && confidence >= IMAGE_CODE_MIN_CONFIDENCE) {
+        diagnostics.push(`page-level ddddocr: confidence=${confidence.toFixed(3)} accepted`)
         return { inputSelector, code }
       }
-      diagnostics.push('page-level ddddocr: returned no strong unseen candidate')
+      if (isStrongImageCode(code)
+        && unseen
+        && windowsCode
+        && cleanupComparable(windowsCode) === comparable) {
+        diagnostics.push('page-level OCR consensus: ddddocr/windows agreed on a strong unseen candidate')
+        return { inputSelector, code }
+      }
+      diagnostics.push(`page-level ddddocr: confidence=${confidence.toFixed(3)} insufficient and no Windows consensus`)
     } else {
       diagnostics.push(`page-level ddddocr: ${shortDiagnostic(ddddocr?.error || 'no plausible text')}`)
     }
   } catch (error) {
     diagnostics.push(`page-level ddddocr: ${shortDiagnostic(error)}`)
   }
+  if (windowsCode) diagnostics.push('page-level Windows OCR: unscored candidate not auto-filled alone')
   return undefined
 }
 
@@ -307,6 +336,12 @@ export function normalizeImageCodeText(value) {
   if (plausible[0]) return plausible[0]
   const compact = cleanupLine(String(value || '').replace(/\s+/g, ''))
   return compact.length >= 2 && compact.length <= 16 ? compact : ''
+}
+
+export function imageCodeConfidence(result) {
+  const value = Number(result?.confidence)
+  if (!Number.isFinite(value)) return 0
+  return Math.max(0, Math.min(1, value))
 }
 
 async function isExplicitImageCodeInput(bridge, selector, tabId, options) {

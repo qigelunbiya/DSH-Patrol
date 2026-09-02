@@ -46,39 +46,120 @@ def png_bytes(image: Image.Image) -> bytes:
     return output.getvalue()
 
 
-def solve_image_code(payload: dict[str, Any]) -> dict[str, Any]:
-    image_bytes = decode_image(payload.get("image", ""))
-    recognizer = ddddocr.DdddOcr(ocr=True, det=False, show_ad=False)
-    candidates: list[str] = []
+def probability_rows(value: Any) -> list[list[float]]:
+    if isinstance(value, np.ndarray):
+        value = value.tolist()
+    if not isinstance(value, (list, tuple)):
+        return []
+    if value and all(isinstance(item, (int, float, np.integer, np.floating)) for item in value):
+        row = [float(item) for item in value if np.isfinite(float(item))]
+        return [row] if row else []
+    rows: list[list[float]] = []
+    for item in value:
+        rows.extend(probability_rows(item))
+    return rows
 
-    def classify(data: bytes) -> None:
+
+def probability_confidence(result: Any) -> float | None:
+    if not isinstance(result, dict):
+        return None
+    direct = result.get("confidence")
+    if isinstance(direct, (int, float, np.integer, np.floating)):
+        value = float(direct)
+        if np.isfinite(value):
+            return max(0.0, min(1.0, value))
+
+    raw = result.get("probabilities")
+    if raw is None:
+        raw = result.get("probability")
+    rows = probability_rows(raw)
+    maxima = [max(row) for row in rows if row]
+    if not maxima:
+        return None
+    value = float(np.mean(maxima))
+    return max(0.0, min(1.0, value)) if np.isfinite(value) else None
+
+
+def classify_with_confidence(recognizer: Any, data: bytes, variant: str) -> dict[str, Any] | None:
+    probability_result: Any = None
+    try:
+        probability_result = recognizer.classification(data, probability=True)
+    except Exception:
+        # Compatibility fallback for older ddddocr builds. The Patrol JS layer
+        # treats missing/zero confidence as insufficient for automatic typing.
+        probability_result = None
+
+    text = ""
+    if isinstance(probability_result, str):
+        text = normalize_text(probability_result)
+    elif isinstance(probability_result, dict):
+        text = normalize_text(probability_result.get("text", ""))
+
+    if not text:
         try:
             text = normalize_text(recognizer.classification(data))
         except Exception:
+            return None
+
+    if not text:
+        return None
+    confidence = probability_confidence(probability_result)
+    return {
+        "text": text,
+        "confidence": 0.0 if confidence is None else confidence,
+        "variant": variant,
+    }
+
+
+def solve_image_code(payload: dict[str, Any]) -> dict[str, Any]:
+    image_bytes = decode_image(payload.get("image", ""))
+    recognizer = ddddocr.DdddOcr(ocr=True, det=False, show_ad=False)
+    candidates: dict[str, dict[str, Any]] = {}
+
+    def classify(data: bytes, variant: str) -> None:
+        try:
+            candidate = classify_with_confidence(recognizer, data, variant)
+        except Exception:
             return
-        if text and text not in candidates:
-            candidates.append(text)
+        if not candidate or not plausible_image_code(candidate["text"]):
+            return
+        existing = candidates.get(candidate["text"])
+        if existing is None or float(candidate["confidence"]) > float(existing["confidence"]):
+            candidates[candidate["text"]] = candidate
 
     # First use the raw crop; ddddocr is usually strongest on the untouched
     # distorted captcha. Then try a few deterministic enlarged/high-contrast
     # variants for very small legacy images such as 4-6 colored characters.
-    classify(image_bytes)
+    classify(image_bytes, "raw")
     try:
         with Image.open(io.BytesIO(image_bytes)).convert("RGB") as image:
             scale = 3 if max(image.size) < 500 else 2
             enlarged = image.resize((max(1, image.width * scale), max(1, image.height * scale)), Image.Resampling.LANCZOS)
-            classify(png_bytes(enlarged))
-            classify(png_bytes(ImageEnhance.Contrast(enlarged).enhance(1.8)))
+            classify(png_bytes(enlarged), "enlarged")
+            classify(png_bytes(ImageEnhance.Contrast(enlarged).enhance(1.8)), "high-contrast")
             gray = enlarged.convert("L").filter(ImageFilter.SHARPEN)
-            classify(png_bytes(gray))
+            classify(png_bytes(gray), "gray-sharpen")
     except Exception:
         pass
 
-    plausible = [value for value in candidates if plausible_image_code(value)]
+    plausible = list(candidates.values())
     if not plausible:
         raise ValueError("ddddocr did not recognize a plausible image code")
-    plausible.sort(key=lambda value: (abs(len(value) - 5), -sum(ch.isalnum() for ch in value), len(value)))
-    return {"ok": True, "operation": "image-code", "text": plausible[0], "candidates": plausible[:4]}
+    plausible.sort(key=lambda item: (
+        -float(item.get("confidence", 0.0)),
+        abs(len(str(item.get("text", ""))) - 5),
+        -sum(ch.isalnum() for ch in str(item.get("text", ""))),
+        len(str(item.get("text", ""))),
+    ))
+    best = plausible[0]
+    return {
+        "ok": True,
+        "operation": "image-code",
+        "text": best["text"],
+        "confidence": float(best.get("confidence", 0.0)),
+        "variant": best.get("variant", "unknown"),
+        "candidates": plausible[:4],
+    }
 
 
 def image_size(image_bytes: bytes) -> tuple[int, int]:
