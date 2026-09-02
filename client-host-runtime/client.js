@@ -28,15 +28,6 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
     background: 'var(--dsh-color-bg-secondary, transparent)', color: 'inherit', cursor: 'pointer', fontSize: '12px',
   };
 
-  function eventOf(entry) {
-    return entry && entry.type === 'event' ? entry.event : null;
-  }
-
-  function contentText(message) {
-    const content = message && Array.isArray(message.content) ? message.content : [];
-    return content.map((block) => block && typeof block.text === 'string' ? block.text : '').filter(Boolean).join('\n');
-  }
-
   function safeJson(value) {
     try { return JSON.stringify(value, null, 2); } catch { return String(value); }
   }
@@ -56,38 +47,62 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
     try { return new Date(time).toLocaleString(); } catch { return ''; }
   }
 
-  function collectPatrol(entries) {
-    const calls = new Map();
+  function contentText(content) {
+    if (!Array.isArray(content)) return '';
+    const text = content
+      .map((block) => block && typeof block.text === 'string' ? block.text : '')
+      .filter(Boolean)
+      .join('\n');
+    return text || safeJson(content);
+  }
+
+  function collectPatrol(nodes, runningCalls) {
+    const byCallId = new Map();
     const ordered = [];
-    for (const entry of entries) {
-      const event = eventOf(entry);
-      if (!event || event.type !== 'tool/call') continue;
-      const data = event.data || {};
-      if (typeof data.name !== 'string' || !PATROL_TOOL.test(data.name)) continue;
-      const call = {
-        callId: data.callId,
-        name: data.name,
-        args: parseArguments(data.arguments),
-        seq: event.seq,
-        time: event.time,
+
+    for (const node of Array.isArray(nodes) ? nodes : []) {
+      if (!node || node.kind !== 'tool-result') continue;
+      const head = node.call;
+      if (!head || typeof head.name !== 'string' || !PATROL_TOOL.test(head.name)) continue;
+      const record = {
+        callId: node.callId,
+        name: head.name,
+        args: parseArguments(head.argsRaw),
+        seq: node.seq,
+        time: typeof node.callTime === 'number' ? node.callTime : node.time,
+        result: contentText(node.content),
+        isError: Boolean(node.isError),
+        resultSeq: node.seq,
+        resultTime: node.time,
+      };
+      byCallId.set(record.callId, record);
+      ordered.push(record);
+    }
+
+    for (const running of Array.isArray(runningCalls) ? runningCalls : []) {
+      if (!running || typeof running.name !== 'string' || !PATROL_TOOL.test(running.name)) continue;
+      if (byCallId.has(running.callId)) continue;
+      const record = {
+        callId: running.callId,
+        name: running.name,
+        args: parseArguments(running.argsRaw),
+        seq: null,
+        time: running.time,
         result: null,
         isError: false,
       };
-      calls.set(data.callId, call);
-      ordered.push(call);
+      byCallId.set(record.callId, record);
+      ordered.push(record);
     }
-    for (const entry of entries) {
-      const event = eventOf(entry);
-      if (!event || event.type !== 'tool/result') continue;
-      const message = event.data && event.data.message;
-      const callId = message && message.callId;
-      const call = calls.get(callId);
-      if (!call) continue;
-      call.result = contentText(message);
-      call.isError = Boolean(message.isError);
-      call.resultSeq = event.seq;
-      call.resultTime = event.time;
-    }
+
+    ordered.sort((left, right) => {
+      const leftTime = typeof left.time === 'number' ? left.time : 0;
+      const rightTime = typeof right.time === 'number' ? right.time : 0;
+      if (leftTime !== rightTime) return leftTime - rightTime;
+      const leftSeq = typeof left.seq === 'number' ? left.seq : Number.MAX_SAFE_INTEGER;
+      const rightSeq = typeof right.seq === 'number' ? right.seq : Number.MAX_SAFE_INTEGER;
+      return leftSeq - rightSeq;
+    });
     return ordered;
   }
 
@@ -113,12 +128,6 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
     return recent.length === 0 ? [] : [{ id: '当前巡检会话', calls: recent, definition: null }];
   }
 
-  function useEventWindow(source) {
-    const subscribe = React.useCallback((listener) => source.subscribe(listener), [source]);
-    const getSnapshot = React.useCallback(() => source.getSnapshot(), [source]);
-    return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-  }
-
   function EmptyState({ children }) {
     return React.createElement('div', { style: { ...CARD_STYLE, ...MUTED_STYLE, padding: '24px' } }, children);
   }
@@ -136,9 +145,11 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
     }, loading ? '正在加载…' : '加载更早记录');
   }
 
-  function FlowView({ eventSource, loadOlder }) {
-    const windowState = useEventWindow(eventSource);
-    const calls = React.useMemo(() => collectPatrol(windowState.entries), [windowState]);
+  function FlowView({ useSession, loadOlder }) {
+    const nodes = useSession((snapshot) => snapshot.nodes);
+    const runningCalls = useSession((snapshot) => snapshot.runningCalls);
+    const hasMore = useSession((snapshot) => snapshot.hasMore);
+    const calls = React.useMemo(() => collectPatrol(nodes, runningCalls), [nodes, runningCalls]);
     const cards = React.useMemo(() => flowCards(calls), [calls]);
     return React.createElement('div', { style: VIEW_STYLE },
       React.createElement('div', { style: HEADER_STYLE },
@@ -146,7 +157,7 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
           React.createElement('h2', { style: TITLE_STYLE }, '流程管理'),
           React.createElement('div', { style: MUTED_STYLE }, '从当前巡检会话实时汇总巡检模板、目标与最近流程动作。'),
         ),
-        React.createElement(LoadOlder, { hasMore: windowState.hasMore, loadOlder }),
+        React.createElement(LoadOlder, { hasMore, loadOlder }),
       ),
       cards.length === 0
         ? React.createElement(EmptyState, null, '当前会话还没有巡检流程。创建或打开巡检后，这里会自动显示。')
@@ -171,9 +182,11 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
     );
   }
 
-  function RecordsView({ eventSource, loadOlder }) {
-    const windowState = useEventWindow(eventSource);
-    const calls = React.useMemo(() => collectPatrol(windowState.entries), [windowState]);
+  function RecordsView({ useSession, loadOlder }) {
+    const nodes = useSession((snapshot) => snapshot.nodes);
+    const runningCalls = useSession((snapshot) => snapshot.runningCalls);
+    const hasMore = useSession((snapshot) => snapshot.hasMore);
+    const calls = React.useMemo(() => collectPatrol(nodes, runningCalls), [nodes, runningCalls]);
     const records = calls.slice().reverse();
     return React.createElement('div', { style: VIEW_STYLE },
       React.createElement('div', { style: HEADER_STYLE },
@@ -181,7 +194,7 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
           React.createElement('h2', { style: TITLE_STYLE }, '巡检记录'),
           React.createElement('div', { style: MUTED_STYLE }, `当前已加载 ${records.length} 条 Patrol 工具记录，最新记录在前。`),
         ),
-        React.createElement(LoadOlder, { hasMore: windowState.hasMore, loadOlder }),
+        React.createElement(LoadOlder, { hasMore, loadOlder }),
       ),
       records.length === 0
         ? React.createElement(EmptyState, null, '当前会话还没有 Patrol 巡检记录。开始教学、编辑或运行巡检后会自动出现。')
@@ -210,11 +223,10 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
         const binding = ctx.sessions.binding(sessionId);
         if (!binding) throw new Error(`dsh-patrol client: session ${sessionId} is unavailable`);
         return {
-          eventSource: binding.eventSource,
           loadOlder: async () => {
-            const before = binding.eventSource.getSnapshot().revision;
+            const before = binding.session.getSnapshot();
             await binding.session.loadOlder();
-            return binding.eventSource.getSnapshot().revision !== before;
+            return binding.session.getSnapshot() !== before;
           },
         };
       },
@@ -225,9 +237,10 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
     const state = ctx.sessions.list.getSnapshot();
     const sessionId = state.current;
     if (sessionId === undefined) return false;
-    return state.byId && state.byId[sessionId] && state.byId[sessionId].projectionValues
-      ? state.byId[sessionId].projectionValues.agentPreset === PATROL_PRESET_ID
-      : false;
+    const summary = state.byId && state.byId[sessionId];
+    if (!summary) return false;
+    if (summary.agentPreset === PATROL_PRESET_ID) return true;
+    return summary.projectionValues && summary.projectionValues.agentPreset === PATROL_PRESET_ID;
   }
 
   exports.name = 'dsh-patrol-client-host';
