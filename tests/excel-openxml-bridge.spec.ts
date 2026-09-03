@@ -61,6 +61,26 @@ with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
     for name, data in parts.items(): z.writestr(name, data.encode('utf-8'))
 `
 
+const WRITE_WITH_FLAKY_REPLACE = String.raw`
+import importlib.util, json, sys
+bridge_path, workbook_path, payload_path = sys.argv[1:4]
+spec = importlib.util.spec_from_file_location("openxml_bridge_under_test", bridge_path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+real_replace = module.os.replace
+state = {"attempts": 0}
+def flaky_replace(src, dst):
+    state["attempts"] += 1
+    if state["attempts"] == 1:
+        raise PermissionError(5, "simulated transient lock", dst)
+    return real_replace(src, dst)
+module.os.replace = flaky_replace
+with open(payload_path, "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+result = module.write_workbook(workbook_path, payload)
+print(json.dumps({"attempts": state["attempts"], "written": result["written"]}, ensure_ascii=False))
+`
+
 async function runBridge(payloadPath: string) {
   const { stdout, stderr } = await execFileAsync('python', [bridge, payloadPath], { encoding: 'utf8' })
   if (stderr.trim()) throw new Error(stderr)
@@ -166,6 +186,27 @@ describe('OpenXML Excel bridge', () => {
       }), 'utf8')
       const written = await runBridge(correctPayload)
       expect(written.written[0]).toMatchObject({ cell: 'B2', text: '开发', previousText: '需求分析' })
+    } finally {
+      await rm(temp, { recursive: true, force: true })
+    }
+  })
+
+  it('retries a transient Windows replace lock when saving the workbook', async () => {
+    const temp = await mkdtemp(join(tmpdir(), 'dsh-patrol-openxml-retry-'))
+    try {
+      const workbook = join(temp, 'weekly_report.xlsx')
+      await execFileAsync('python', ['-c', CREATE_FIXTURE, workbook], { encoding: 'utf8' })
+
+      const payloadPath = join(temp, 'payload.json')
+      await writeFile(payloadPath, JSON.stringify({
+        sheetName: 'Sheet1',
+        updates: [{ cell: 'D3', value: '写入后重试替换', valueType: 'text' }],
+      }), 'utf8')
+      const { stdout } = await execFileAsync('python', ['-c', WRITE_WITH_FLAKY_REPLACE, bridge, workbook, payloadPath], { encoding: 'utf8' })
+
+      const result = JSON.parse(stdout.trim())
+      expect(result.attempts).toBe(2)
+      expect(result.written[0]).toMatchObject({ cell: 'D3', text: '写入后重试替换' })
     } finally {
       await rm(temp, { recursive: true, force: true })
     }

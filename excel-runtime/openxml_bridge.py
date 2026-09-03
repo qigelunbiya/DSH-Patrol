@@ -5,6 +5,7 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 import zipfile
 import xml.etree.ElementTree as ET
 
@@ -20,10 +21,22 @@ NS = {"m": MAIN, "r": DOC_REL, "pr": PKG_REL}
 ET.register_namespace("", MAIN)
 ET.register_namespace("r", DOC_REL)
 CELL_RE = re.compile(r"^([A-Z]+)([1-9][0-9]*)$")
+REPLACE_RETRY_DELAYS = (0.05, 0.1, 0.2, 0.4)
 
 
 def q(name):
     return f"{{{MAIN}}}{name}"
+
+
+def replace_with_retry(src, dst):
+    for delay in (*REPLACE_RETRY_DELAYS, None):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if delay is None:
+                raise
+            time.sleep(delay)
 
 
 def col_to_num(col):
@@ -501,7 +514,7 @@ def write_workbook(file_path, payload):
             for info, data in entries:
                 out.writestr(info, data)
         shutil.copystat(file_path, temp_path)
-        os.replace(temp_path, file_path)
+        replace_with_retry(temp_path, file_path)
     finally:
         if os.path.exists(temp_path):
             os.unlink(temp_path)
