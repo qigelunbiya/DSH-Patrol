@@ -3,7 +3,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { assertSafeForStorage, assertSafePersistentText } from './security.js'
 import { PatrolStore } from './store.js'
 import { INSPECTION_ARTIFACTS, type AuthMode, type InspectionArtifact, type InspectionDefinition, type RunReport } from './types.js'
-import { assertInspectionId } from './validation.js'
+import { assertInspectionId, normalizeInspectionId } from './validation.js'
 
 const TEXT_OUTPUT = {
   schema: { type: 'string' as const },
@@ -29,10 +29,11 @@ export function registerPatrolCreationTools(ctx: Context, store: PatrolStore): (
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
-      assertInspectionId(args.inspectionId)
+      const inspectionId = normalizeInspectionId(args.inspectionId)
+      assertInspectionId(inspectionId)
       const workspaceRoot = exec?.agent?.session.header.cwd
-      if (await store.exists(args.inspectionId)) {
-        const existing = await store.load(args.inspectionId)
+      if (await store.exists(inspectionId)) {
+        const existing = await store.load(inspectionId)
         if (existing.status === 'draft') await beginInteractivePatrol(store, existing.id, workspaceRoot ?? existing.metadata.workspaceRoot)
         return `Inspection ${existing.id} already exists with status=${existing.status} and ${existing.steps.length} step(s). Reuse it: call patrol_show, then continue the DRAFT or call patrol_begin_edit if it is READY. ${existing.status === 'draft' ? 'This interactive patrol has already been added to patrol history as an in-progress run.' : ''} Do not delete it just to recover from a tool-call error.`
       }
@@ -45,7 +46,7 @@ export function registerPatrolCreationTools(ctx: Context, store: PatrolStore): (
       const now = new Date().toISOString()
       const definition: InspectionDefinition = {
         schemaVersion: '0.2',
-        id: args.inspectionId,
+        id: inspectionId,
         name: args.name,
         description: args.description,
         status: 'draft',

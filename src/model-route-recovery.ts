@@ -75,7 +75,8 @@ export function shouldRetryPatrolModelRouteAfterFailure(
 
 function readDefaultModelSelection(ctx: Context): ModelSelection | undefined {
   try {
-    return (ctx as PatrolModelRecoveryContext).agentDefaultModel?.currentSelection()
+    return (ctx.get('agentDefaultModel') as AgentDefaultModelService | undefined)?.currentSelection()
+      ?? (ctx as PatrolModelRecoveryContext).agentDefaultModel?.currentSelection()
   } catch {
     return undefined
   }
@@ -88,6 +89,7 @@ export function registerPatrolModelRouteRecovery(ctx: Context): () => void {
       const resolved = await next()
       return choosePatrolModelRecovery(resolved, readDefaultModelSelection(ctx)) ?? resolved
     },
+    { prepend: true },
   )
 
   const disposeRequestError = ctx.on(
@@ -100,6 +102,7 @@ export function registerPatrolModelRouteRecovery(ctx: Context): () => void {
         ? { kind: 'retry' }
         : next()
     },
+    { prepend: true },
   )
 
   return () => {

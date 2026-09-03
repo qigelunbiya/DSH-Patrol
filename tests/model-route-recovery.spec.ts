@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
 import {
   choosePatrolModelRecovery,
   isAuthUnavailableFailure,
   isLegacyUnavailablePatrolRoute,
+  registerPatrolModelRouteRecovery,
   shouldRetryPatrolModelRouteAfterFailure,
 } from '../src/model-route-recovery.js'
 
@@ -73,5 +75,47 @@ describe('Patrol model route recovery', () => {
       provider: 'qwen-local',
       model: 'qwen3.5_122b_a10b_fp4',
     })).toBe(false)
+  })
+
+  it('reads the default model service from a runtime plugin context without declaring it as an injected property', async () => {
+    const ctx = new Context()
+    ctx.provide('tools', {})
+    ctx.provide('agentDefaultModel', {
+      currentSelection: () => ({ provider: 'openai', model: 'gpt-5.6-sol' }),
+    })
+
+    await ctx.plugin({
+      name: 'patrol-recovery-test-plugin',
+      inject: ['tools'],
+      apply(pluginCtx: Context) {
+        registerPatrolModelRouteRecovery(pluginCtx)
+      },
+    })
+
+    await expect(ctx.waterfall(
+      'agent/request',
+      { turn: 1, step: 1, signal: new AbortController().signal },
+      () => Promise.resolve({ provider: 'qwen-local', model: 'qwen3.5_122b_a10b_fp4' }),
+    )).resolves.toEqual({ provider: 'openai', model: 'gpt-5.6-sol' })
+    await ctx.fiber.dispose()
+  })
+
+  it('runs outside older model-selection listeners so stale persisted headers cannot override recovery', async () => {
+    const ctx = new Context()
+    ctx.provide('agentDefaultModel', {
+      currentSelection: () => ({ provider: 'openai', model: 'gpt-5.6-sol' }),
+    })
+    ctx.on('agent/request', async (_payload, next) => {
+      const resolved = await next()
+      return { ...resolved, provider: 'qwen-local', model: 'qwen3.5_122b_a10b_fp4' }
+    })
+    registerPatrolModelRouteRecovery(ctx)
+
+    await expect(ctx.waterfall(
+      'agent/request',
+      { turn: 1, step: 1, signal: new AbortController().signal },
+      () => Promise.resolve({ provider: 'openai', model: 'gpt-5.6-sol' }),
+    )).resolves.toEqual({ provider: 'openai', model: 'gpt-5.6-sol' })
+    await ctx.fiber.dispose()
   })
 })

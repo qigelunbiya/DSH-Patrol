@@ -1,6 +1,7 @@
 const SENSITIVE_INPUT = /(pass(word|wd)?|pwd|secret|token|api[-_]?key|authorization|cookie|session[-_]?id|otp|captcha|verification)/i
 const CHALLENGE_SIGNAL = /(captcha|recaptcha|hcaptcha|turnstile|geetest|slider|puzzle|human.?verify|verify.?human|verification.?code|otp|验证码|滑块|拼图|人机验证|机器人验证|二次验证|安全验证)/i
 const IMAGE_CODE_HINT = /(captcha|image[-_ ]?code|img[-_ ]?code|verify[-_ ]?code|verification[-_ ]?code|validation[-_ ]?code|check[-_ ]?code|auth[-_ ]?code|\bcode\b|验证码|校验码|图形码)/i
+const ACTION_TEXT_HINT = /(\[[^\]]{1,24}\]|\b(RDP|SSH|VNC|SFTP|FTP|HTTP|HTTPS)\b|登录|访问|打开|连接|进入|查看|详情|配置|下载|确定|提交)/i
 const BASE_INTERACTIVE_SELECTOR = 'a,button,input,select,textarea,[role="button"],[role="link"],[role="checkbox"],[role="tab"],[contenteditable="true"],[onclick]'
 const CUSTOM_INTERACTIVE_SELECTOR = '[tabindex],div,span,li,p,label,strong,img,svg'
 
@@ -61,9 +62,10 @@ function isLikelyClickable(element) {
   const tabindex = element.getAttribute('tabindex')
   if (tabindex !== null && Number(tabindex) >= 0) return true
   const style = getComputedStyle(element)
-  if (style.cursor !== 'pointer') return false
   const label = compactText(element.innerText || element.textContent || element.getAttribute('aria-label') || element.getAttribute('title') || '', 160)
-  return label.length > 0
+  if (label.length === 0) return false
+  if (style.cursor === 'pointer') return true
+  return ACTION_TEXT_HINT.test(label)
 }
 
 function semanticRole(element) {

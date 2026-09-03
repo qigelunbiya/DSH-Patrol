@@ -14,6 +14,18 @@ export function assertInspectionId(id: string): void {
   }
 }
 
+export function normalizeInspectionId(id: string): string {
+  const normalized = id
+    .normalize('NFKD')
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/^[^a-zA-Z0-9]+/, '')
+    .replace(/[^a-zA-Z0-9]+$/, '')
+    .replace(/[._-]{2,}/g, '-')
+    .slice(0, 64)
+    .replace(/[^a-zA-Z0-9]+$/, '')
+  return normalized.length > 0 ? normalized : 'patrol'
+}
+
 export function asJsonObject(value: JsonValue): JsonObject {
   if (value === null || Array.isArray(value) || typeof value !== 'object') {
     throw new Error('tool arguments must be a JSON object')

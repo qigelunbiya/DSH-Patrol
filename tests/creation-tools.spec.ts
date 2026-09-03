@@ -56,6 +56,22 @@ describe('secret-safe Patrol creation', () => {
     expect(definition.steps).toEqual([])
   })
 
+  it('normalizes a mixed Chinese inspection id instead of failing the first tool call', async () => {
+    const { store, tool } = await setup()
+    const result = await tool.execute({
+      inspectionId: 'adbba-fz-巡检',
+      name: 'ADBBA 运维巡检',
+      description: 'Inspect ADBBA RDP access',
+      targetUrl: 'https://10.192.1.125/u-s-m-ADBBAF-v8/login',
+      expectedResult: '完成截图',
+      authMode: 'secret-ref',
+      artifacts: ['markdown-report'],
+    })
+
+    expect(result).toContain('Created DRAFT adbba-fz')
+    expect(await store.exists('adbba-fz')).toBe(true)
+  })
+
   it('reuses an existing id instead of deleting or overwriting it', async () => {
     const { store, tool } = await setup()
     const args = {
