@@ -60,7 +60,7 @@ function textChars(message: any): number {
   return chars
 }
 
-function tokenMeter() {
+function tokenMeter(baseTokens = 24_000) {
   return {
     measure(session: ReturnType<typeof replayableAgent>['session']) {
       let surfaceTokens = 0
@@ -69,7 +69,7 @@ function tokenMeter() {
         if (event?.type !== 'tool/result') continue
         surfaceTokens += Math.ceil(textChars(event.data.message) / 4) + 12
       }
-      return { totalTokens: 24_000 + surfaceTokens }
+      return { totalTokens: baseTokens + surfaceTokens }
     },
     estimateMessage(message: unknown) {
       return Math.ceil(textChars(message) / 4) + 12
@@ -78,26 +78,36 @@ function tokenMeter() {
 }
 
 describe('Patrol model-free pressure recovery without ctx.compaction', () => {
-  it('prunes an oversized Qwen session even when the compaction service is absent', async () => {
+  it('never touches an uninjected compaction property after model-free pruning in a real plugin scope', async () => {
     const ctx = new Context()
     const agent = replayableAgent()
-    const meter = tokenMeter()
+    // Keep an irreducible base above the soft limit so the guard must perform
+    // its optional compaction lookup after pruning. This reproduces the Session
+    // failure that used to reach the direct ctx.compaction property fallback.
+    const meter = tokenMeter(31_000)
+    ctx.provide('tools', {})
     ctx.provide('tokenMeter', meter)
-    registerPatrolContextPressureGuard(ctx)
+    await ctx.plugin({
+      name: 'patrol-pressure-no-compaction-test-plugin',
+      inject: ['tools'],
+      apply(pluginCtx: Context) {
+        registerPatrolContextPressureGuard(pluginCtx)
+      },
+    })
 
     expect(meter.measure(agent.session).totalTokens).toBeGreaterThan(PATROL_QWEN_SOFT_REQUEST_LIMIT)
 
     const downstream = vi.fn(async () => ({ kind: 'enter' as const, messages: [] }))
-    await ctx.waterfall('agent/pre-step', {
+    await expect(ctx.waterfall('agent/pre-step', {
       agent,
       messages: [],
       turn: 1,
       step: 1,
       signal: new AbortController().signal,
-    } as never, downstream)
+    } as never, downstream)).resolves.toEqual({ kind: 'enter', messages: [] })
 
     expect(agent.session.events.some(event => event.type === 'compaction/prune')).toBe(true)
-    expect(meter.measure(agent.session).totalTokens).toBeLessThan(PATROL_QWEN_SOFT_REQUEST_LIMIT)
+    expect(meter.measure(agent.session).totalTokens).toBeGreaterThan(PATROL_QWEN_SOFT_REQUEST_LIMIT)
     expect(downstream).toHaveBeenCalledOnce()
     await ctx.fiber.dispose()
   })

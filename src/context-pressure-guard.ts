@@ -182,23 +182,22 @@ function replaceGeneration(session: SessionLike): number | undefined {
 
 function readTokenMeter(ctx: Context): TokenMeterLike | undefined {
   try {
-    const service = ctx.get('tokenMeter') as TokenMeterLike | undefined
-    if (service !== undefined) return service
+    return ctx.get('tokenMeter') as TokenMeterLike | undefined
   } catch {
-    // Some scoped Cordis contexts expose inherited services through properties
-    // even when an optional ctx.get() lookup is unavailable in that scope.
+    return undefined
   }
-  return (ctx as unknown as { tokenMeter?: TokenMeterLike }).tokenMeter
 }
 
 function readCompaction(ctx: Context): CompactionLike | undefined {
   try {
-    const service = ctx.get('compaction') as CompactionLike | undefined
-    if (service !== undefined) return service
+    return ctx.get('compaction') as CompactionLike | undefined
   } catch {
-    // Keep the direct service-property fallback for scoped Patrol contexts.
+    // compaction is intentionally optional for Patrol. Reading ctx.compaction
+    // directly from a scoped Cordis plugin without declaring it in `inject`
+    // throws "cannot get property compaction without inject". ctx.get() is the
+    // safe optional lookup; absence means the model-free path remains in charge.
+    return undefined
   }
-  return (ctx as unknown as { compaction?: CompactionLike }).compaction
 }
 
 function eventAt(session: SessionLike, seq: number): SessionEventLike | undefined {

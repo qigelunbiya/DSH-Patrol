@@ -15,10 +15,6 @@ interface AgentDefaultModelService {
   currentSelection(): ModelSelection
 }
 
-type PatrolModelRecoveryContext = Context & {
-  agentDefaultModel?: AgentDefaultModelService
-}
-
 interface FailureLike {
   code?: string
   message?: string
@@ -42,6 +38,14 @@ type RequestErrorAction = { kind: 'retry' } | undefined
 
 const LEGACY_UNAVAILABLE_MODEL = 'qwen3.5_122b_a10b_fp4'
 const LEGACY_UNAVAILABLE_PROVIDERS = new Set(['cliproxy', 'qwen-local'])
+
+/**
+ * CLIProxy clamps short model/auth cooldown hints to at least 10 seconds. The
+ * failing Patrol Session showed the route still unavailable through ~8 seconds
+ * and healthy again on the request issued around 15 seconds. Wait just beyond
+ * that floor once instead of producing five visible exponential retry events.
+ */
+export const PATROL_AUTH_UNAVAILABLE_SETTLE_MS = 10_500
 
 function positionKey(position: RequestPosition): string {
   return `${position.turn}:${position.step}`
@@ -118,10 +122,29 @@ export function shouldRetryPatrolModelRouteAfterFailure(
 function readDefaultModelSelection(ctx: Context): ModelSelection | undefined {
   try {
     return (ctx.get('agentDefaultModel') as AgentDefaultModelService | undefined)?.currentSelection()
-      ?? (ctx as PatrolModelRecoveryContext).agentDefaultModel?.currentSelection()
   } catch {
     return undefined
   }
+}
+
+async function waitForPatrolRouteSettle(signal: AbortSignal, delayMs: number): Promise<boolean> {
+  if (signal.aborted) return false
+  const normalized = Number.isFinite(delayMs)
+    ? Math.max(0, Math.floor(delayMs))
+    : PATROL_AUTH_UNAVAILABLE_SETTLE_MS
+  if (normalized === 0) return true
+
+  return new Promise<boolean>((resolve) => {
+    let timer: ReturnType<typeof setTimeout>
+    const finish = (ready: boolean): void => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+      resolve(ready)
+    }
+    const onAbort = (): void => finish(false)
+    timer = setTimeout(() => finish(true), normalized)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
 }
 
 /**
@@ -136,10 +159,14 @@ function readDefaultModelSelection(ctx: Context): ModelSelection | undefined {
  * affinity rewriting has therefore been removed instead of masking the actual
  * memory-pressure failure.
  */
-export function registerPatrolModelRouteRecovery(ctx: Context): () => void {
+export function registerPatrolModelRouteRecovery(
+  ctx: Context,
+  authUnavailableSettleMs = PATROL_AUTH_UNAVAILABLE_SETTLE_MS,
+): () => void {
   let lastResolvedRoute: ResolvedRequestRoute | undefined
   let pendingRecovery: PendingRecovery | undefined
   let attemptedPositionKey: string | undefined
+  let quietRetryPositionKey: string | undefined
   const disposePressureGuard = registerPatrolContextPressureGuard(ctx)
 
   const disposeRequest = ctx.on(
@@ -151,6 +178,9 @@ export function registerPatrolModelRouteRecovery(ctx: Context): () => void {
       const key = positionKey(payload)
       if (attemptedPositionKey !== undefined && attemptedPositionKey !== key) {
         attemptedPositionKey = undefined
+      }
+      if (quietRetryPositionKey !== undefined && quietRetryPositionKey !== key) {
+        quietRetryPositionKey = undefined
       }
       if (pendingRecovery !== undefined && !samePosition(pendingRecovery, payload)) {
         pendingRecovery = undefined
@@ -179,7 +209,7 @@ export function registerPatrolModelRouteRecovery(ctx: Context): () => void {
   const disposeRequestError = ctx.on(
     'agent/request-error',
     async (
-      payload: RequestPosition & { provider: string; failure: FailureLike },
+      payload: RequestPosition & { provider: string; failure: FailureLike; signal: AbortSignal },
       next: () => Promise<RequestErrorAction>,
     ): Promise<RequestErrorAction> => {
       const failedRoute = lastResolvedRoute
@@ -193,25 +223,45 @@ export function registerPatrolModelRouteRecovery(ctx: Context): () => void {
       if (attemptedPositionKey === key) return next()
 
       const selection = readDefaultModelSelection(ctx)
-      if (selection === undefined || !shouldRetryPatrolModelRouteAfterFailure(
+      if (selection !== undefined && shouldRetryPatrolModelRouteAfterFailure(
         failedRoute.provider,
         payload.failure,
         selection,
         failedRoute.model,
       )) {
+        attemptedPositionKey = key
+        pendingRecovery = {
+          turn: payload.turn,
+          step: payload.step,
+          selection,
+        }
+        ctx.logger.warn(
+          `[dsh-patrol/model-route-recovery] ${failedRoute.provider}/${failedRoute.model} returned auth_unavailable; `
+          + `retrying this step once with ${selection.provider}/${selection.model}`,
+        )
+        return { kind: 'retry' }
+      }
+
+      if (!isLegacyUnavailablePatrolRoute(failedRoute)
+        || !isAuthUnavailableFailure(payload.failure)
+        || quietRetryPositionKey === key) {
         return next()
       }
 
-      attemptedPositionKey = key
-      pendingRecovery = {
-        turn: payload.turn,
-        step: payload.step,
-        selection,
-      }
+      // A same-route auth_unavailable from qwen-local is normally a temporary
+      // CLIProxy eligibility/cooldown state, not a credential repair action.
+      // Consume exactly one such failure here, wait past the gateway's minimum
+      // cooldown floor, then retry without entering dsh-llm-retry. This prevents
+      // the UI from showing 5 doomed 0.5/1/2/4s probes. If the quiet retry still
+      // fails, the same position is marked and the next error delegates to the
+      // ordinary bounded Harness retry policy.
+      quietRetryPositionKey = key
       ctx.logger.warn(
         `[dsh-patrol/model-route-recovery] ${failedRoute.provider}/${failedRoute.model} returned auth_unavailable; `
-        + `retrying this step once with ${selection.provider}/${selection.model}`,
+        + `waiting ${authUnavailableSettleMs}ms for gateway cooldown before one quiet retry`,
       )
+      const settled = await waitForPatrolRouteSettle(payload.signal, authUnavailableSettleMs)
+      if (!settled || payload.signal.aborted) return next()
       return { kind: 'retry' }
     },
     { prepend: true },

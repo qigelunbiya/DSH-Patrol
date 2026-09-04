@@ -180,12 +180,12 @@ describe('Patrol model route recovery', () => {
     await ctx.fiber.dispose()
   })
 
-  it('does not bypass Harness retry when qwen-local is still the intended default route', async () => {
+  it('waits through one qwen-local auth cooldown quietly, then delegates a repeated failure', async () => {
     const ctx = new Context()
     ctx.provide('agentDefaultModel', {
       currentSelection: () => LEGACY_ROUTE,
     })
-    registerPatrolModelRouteRecovery(ctx)
+    registerPatrolModelRouteRecovery(ctx, 0)
 
     await ctx.waterfall(
       'agent/request',
@@ -194,6 +194,13 @@ describe('Patrol model route recovery', () => {
     )
 
     const downstream = vi.fn(() => Promise.resolve(undefined))
+    await expect(ctx.waterfall(
+      'agent/request-error',
+      requestErrorPayload(LEGACY_ROUTE.provider),
+      downstream,
+    )).resolves.toEqual({ kind: 'retry' })
+    expect(downstream).not.toHaveBeenCalled()
+
     await expect(ctx.waterfall(
       'agent/request-error',
       requestErrorPayload(LEGACY_ROUTE.provider),
