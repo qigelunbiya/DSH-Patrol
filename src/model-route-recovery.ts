@@ -154,8 +154,13 @@ function readDefaultModelSelection(ctx: Context): ModelSelection | undefined {
 }
 
 function readPatrolAgentId(ctx: Context): string | undefined {
-  const id = (ctx as PatrolModelRecoveryContext).agent?.id
-  return typeof id === 'string' && id.length > 0 ? id : undefined
+  try {
+    const agent = ctx.get('agent') as { id?: unknown } | undefined
+    const id = agent?.id
+    return typeof id === 'string' && id.length > 0 ? id : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /**
