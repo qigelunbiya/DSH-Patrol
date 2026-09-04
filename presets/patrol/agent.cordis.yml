@@ -17,6 +17,9 @@
 - id: tool-fs
   name: '@deepseek-ai/dsh-tool-fs'
 
+# Tool schemas are registered once into the Patrol preset, but the top-level
+# Patrol Shell hides them with ToolRuntime.restrict(). Managed Chromium itself
+# is started only when an actual browser command is dispatched.
 - id: browser-tools
   name: 'dsh-patrol/browser-tools'
   config:
@@ -28,3 +31,81 @@
     storagePath: .dsh-patrol
     maxSteps: 200
     reportMaxChars: 30000
+
+# Heavy capabilities are delegated into fresh subagents with narrow tool
+# filters. The shell therefore stays small even as Patrol grows new features.
+# Teaching is broader by nature but remains isolated from ordinary chat history.
+- id: patrol-teaching-worker
+  name: '@deepseek-ai/dsh-tool-subagent'
+  config:
+    provider: spawn
+    toolName: patrol_teach
+    enableRunInBackground: false
+    backgroundMode: one-shot
+    maxDepth: 2
+    persona: >-
+      You are the isolated DSH Patrol teaching worker. Follow the self-contained
+      task from the parent, use only the supplied Patrol teaching tools, and
+      return the final flow/result rather than narrating hidden intermediate work.
+    toolFilter:
+      allow:
+        - patrol_runtime_mode
+        - patrol_create_inspection
+        - patrol_create_draft
+        - patrol_doctor
+        - patrol_show
+        - patrol_select_flow
+        - patrol_begin_edit
+        - patrol_update_inspection
+        - patrol_observe
+        - patrol_navigate
+        - patrol_snapshot
+        - patrol_read_page
+        - patrol_count
+        - patrol_login_state
+        - patrol_detect_auth_challenge
+        - patrol_click
+        - patrol_click_target
+        - patrol_press
+        - patrol_scroll
+        - patrol_wait
+        - patrol_screenshot
+        - patrol_type_text
+        - patrol_type_credential
+        - patrol_type_transient
+        - patrol_type_current_image_code
+        - patrol_list_totp_profiles
+        - patrol_type_totp_profile
+        - patrol_add_checkpoint
+        - patrol_finalize_flow
+        - patrol_confirm
+        - patrol_reteach_browser_step
+        - patrol_reteach_text
+        - patrol_reteach_credential
+        - patrol_reteach_checkpoint
+        - patrol_reteach_transient
+        - patrol_validate
+        - patrol_resume_validation
+        - patrol_confirm_edit
+
+# Recovery is intentionally tiny and non-mutating. It may observe the current
+# page, perform a few transient actions, then hand execution back to the same
+# deterministic run through patrol_resume_flow.
+- id: patrol-recovery-worker
+  name: '@deepseek-ai/dsh-tool-subagent'
+  config:
+    provider: spawn
+    toolName: patrol_recover
+    enableRunInBackground: false
+    backgroundMode: one-shot
+    maxDepth: 2
+    persona: >-
+      You are the isolated DSH Patrol transient recovery worker. Unblock only
+      the current deterministic run; never edit or reteach its Runbook.
+    toolFilter:
+      allow:
+        - patrol_last_failure
+        - patrol_observe
+        - patrol_recovery_action
+        - patrol_resume_flow
+        - patrol_show
