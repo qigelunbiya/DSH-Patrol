@@ -3,6 +3,7 @@ import type {
   LlmCallConfig,
   ReasoningEffortId,
 } from '@deepseek-ai/dsh-llm'
+import { registerPatrolContextPressureGuard } from './context-pressure-guard.js'
 
 interface ModelSelection {
   provider: string
@@ -139,6 +140,7 @@ export function registerPatrolModelRouteRecovery(ctx: Context): () => void {
   let lastResolvedRoute: ResolvedRequestRoute | undefined
   let pendingRecovery: PendingRecovery | undefined
   let attemptedPositionKey: string | undefined
+  const disposePressureGuard = registerPatrolContextPressureGuard(ctx)
 
   const disposeRequest = ctx.on(
     'agent/request',
@@ -216,6 +218,7 @@ export function registerPatrolModelRouteRecovery(ctx: Context): () => void {
   )
 
   return () => {
+    disposePressureGuard()
     disposeRequest()
     disposeRequestError()
   }
