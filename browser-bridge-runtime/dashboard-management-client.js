@@ -37,11 +37,6 @@
   function schedulePatch() {
     if (patchQueued) return
     patchQueued = true
-    // Do not use a self-sustaining microtask loop here. The dashboard itself
-    // replaces large DOM sections when returning from a flow detail view, and
-    // management decorations also mutate that subtree. A task boundary plus
-    // idempotent writes guarantees the observer settles after at most one
-    // follow-up patch instead of starving the whole Harness UI.
     setTimeout(() => {
       patchQueued = false
       patchCards()
@@ -61,9 +56,7 @@
       if (time) {
         const nextText = `更新 ${fmt(item.definition?.metadata?.updatedAt)}`
         if (time.textContent !== nextText) time.textContent = nextText
-        if (time.getAttribute('title') !== '流程定义最近更新时间') {
-          time.setAttribute('title', '流程定义最近更新时间')
-        }
+        if (time.getAttribute('title') !== '流程定义最近更新时间') time.setAttribute('title', '流程定义最近更新时间')
       }
 
       if (!card.querySelector('[data-flow-tools]')) {
@@ -72,7 +65,7 @@
         tools.className = 'flow-manage-actions'
         tools.innerHTML = [
           `<button class="mini-btn" data-manage-action="rename" data-manage-id="${escapeAttr(id)}">改名</button>`,
-          `<button class="mini-btn" title="只清理教学试错/探针步骤，不删除真实操作" data-manage-action="optimize" data-manage-id="${escapeAttr(id)}">清理试错</button>`,
+          `<button class="mini-btn" title="清理探针、被后续重置废弃的轮次和重复输入修正" data-manage-action="optimize" data-manage-id="${escapeAttr(id)}">清理试错</button>`,
           `<button class="mini-btn danger" data-manage-action="delete" data-manage-id="${escapeAttr(id)}">删除</button>`,
         ].join('')
         meta?.before(tools)
@@ -92,7 +85,7 @@
     wrap.className = 'detail-flow-actions'
     wrap.innerHTML = [
       `<button class="btn" data-manage-action="rename" data-manage-id="${escapeAttr(id)}">编辑名称</button>`,
-      `<button class="btn" title="清理 snapshot/count/无依赖重复读取等教学试错步骤" data-manage-action="optimize" data-manage-id="${escapeAttr(id)}">清理试错步骤</button>`,
+      `<button class="btn" title="清理探针、重置前的废弃轮次和被后续输入覆盖的修正步骤" data-manage-action="optimize" data-manage-id="${escapeAttr(id)}">清理试错步骤</button>`,
       `<button class="btn danger-btn" data-manage-action="delete" data-manage-id="${escapeAttr(id)}">删除流程</button>`,
     ].join('')
     actions.prepend(wrap)
@@ -102,11 +95,12 @@
     const item = cardsById.get(id)
     if (!item) return
     const current = item.definition?.name || id
-    const value = window.prompt('编辑流程名称（流程 ID 保持不变，以保证历史巡检仍能关联）', current)
+    const value = window.prompt('编辑流程名称（稳定流程 ID 保持不变，以保证引用关系不损坏；工作区会同步生成以新名称命名的 .flow.md 文件）', current)
     if (value === null) return
     const name = value.trim()
     if (!name || name === current) return
-    await postAction('/flow/rename', { inspectionId: id, name })
+    const result = await postAction('/flow/rename', { inspectionId: id, name })
+    if (result.workspaceFlowFile) window.alert(`流程已改名并写入真实 Runbook。\n工作区流程文件：${result.workspaceFlowFile}`)
     location.reload()
   }
 
@@ -117,10 +111,11 @@
     const message = [
       '这是“清理教学试错步骤”，不是删除流程。',
       '',
-      '会清理：snapshot、count、无依赖的重复页面读取等仅用于模型探索/试错的步骤。',
-      '会保留：导航、点击、输入、人工检查点、条件依赖、断言，以及最终截图/页面产物。',
+      '会自动清理：snapshot/count 探针、无依赖的重复页面读取、重新导航到目标页之前已废弃的试错轮次、同一输入框被后续值覆盖的重复输入。',
+      '会保留：最终有效导航/点击、人工检查点、条件依赖、断言，以及最终截图/页面产物。',
       '',
-      '注意：确认后会直接更新真实 Runbook；历史巡检记录不会被删除。',
+      '新教学流程在对话结束时还会由 patrol_finalize_flow 根据“真正成功路径”做语义精简；这里主要用于清理已有旧流程。',
+      '确认后会直接更新真实 Runbook 和工作区流程文件。',
       `当前流程共 ${count} 个步骤。是否继续清理？`,
     ].join('\n')
     if (!window.confirm(message)) return
@@ -133,8 +128,18 @@
     const item = cardsById.get(id)
     if (!item) return
     const name = item.definition?.name || id
-    if (!window.confirm(`确定删除流程“${name}”吗？\n\n会删除当前流程定义、工作区 Runbook 和教学临时文件；历史巡检报告保留在磁盘，不会被物理删除。`)) return
-    await postAction('/flow/delete', { inspectionId: id, confirmed: true })
+    const message = [
+      `确定彻底删除流程“${name}”吗？`,
+      '',
+      '这是物理删除，不是从界面隐藏：',
+      '• 删除内部流程定义和 pending 状态',
+      '• 删除该流程全部内部巡检历史',
+      '• 删除工作区 patrol-results/<flow-id>/ 整个目录（Runbook、教学产物、历史报告和截图）',
+      '',
+      '删除后无法从“流程管理”或“巡检记录”恢复。',
+    ].join('\n')
+    if (!window.confirm(message)) return
+    await postAction('/flow/delete', { inspectionId: id, confirmed: true, deleteHistory: true })
     location.reload()
   }
 
