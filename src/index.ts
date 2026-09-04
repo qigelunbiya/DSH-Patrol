@@ -12,6 +12,7 @@ import { registerPatrolCredentialTools } from './credential-tools.js'
 import { registerPatrolEditTools } from './edit-tools.js'
 import { PATROL_EXCEL_PROMPT } from './excel-tools.js'
 import { PATROL_EXCEL_V5_PROMPT, registerPatrolExcelToolsV5 } from './excel-tools-v5.js'
+import { registerPatrolFlowTools } from './flow-tools.js'
 import { registerPatrolHandoffTools } from './handoff-tools.js'
 import { PatrolLifecycleStore } from './lifecycle-store.js'
 import { createManualVerificationGuard, PATROL_MANUAL_VERIFICATION_PROMPT } from './manual-verification-guard.js'
@@ -46,6 +47,7 @@ export * from './excel-tools-v3.js'
 export * from './excel-tools-v4.js'
 export * from './excel-tools-v5.js'
 export * from './flow-optimizer.js'
+export * from './flow-tools.js'
 export * from './lifecycle-store.js'
 export * from './recovery-guard.js'
 export * from './recovery-tools.js'
@@ -66,7 +68,19 @@ export const inject = ['tools']
 const DEFAULT_STORAGE_PATH = resolve(process.cwd(), '.dsh-patrol')
 const DEFAULT_MAX_STEPS = 200
 const DEFAULT_REPORT_MAX_CHARS = 30_000
-const TEST_MODE_BUILD_MARKER = 'test-bypass-v3-visual-captcha'
+const TEST_MODE_BUILD_MARKER = 'test-bypass-v4-recorded-patrol'
+const TEST_MODE_DIRECT_BROWSER_READ_ONLY = new Set([
+  'browser_status',
+  'browser_list_tabs',
+  'browser_activate_tab',
+  'browser_snapshot',
+  'browser_read_page',
+  'browser_count',
+  'browser_login_state',
+  'browser_wait',
+  'browser_screenshot',
+  'browser_capture_image_code_visual',
+])
 
 export interface Config {
   storagePath?: string
@@ -122,6 +136,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     'dsh-patrol: patrol tools',
   )
   ctx.effect(() => registerPatrolCreationTools(ctx, store), 'dsh-patrol: secret-safe inspection creation')
+  ctx.effect(() => registerPatrolFlowTools(ctx, store), 'dsh-patrol: current-flow selection and successful-path finalization')
   ctx.effect(() => registerPatrolCredentialTools(ctx, store), 'dsh-patrol: credential setup guidance')
   ctx.effect(
     () => registerPatrolActionTools(ctx, store, runner, { maxSteps: resolved.maxSteps }),
@@ -170,7 +185,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     },
     execute: async () => [
       `mode=${runtimePolicy.testMode ? 'test' : 'normal'}`,
-      `guards=${runtimePolicy.installGuards ? 'enabled' : 'disabled'}`,
+      `guards=${runtimePolicy.installGuards ? 'enabled' : 'diagnostic-only-direct-browser'}`,
       `strictPrompts=${runtimePolicy.injectStrictWorkflowPrompt ? 'enabled' : 'disabled'}`,
       `visualCaptchaFallback=${runtimePolicy.testMode ? 'enabled' : 'disabled'}`,
       `build=${TEST_MODE_BUILD_MARKER}`,
@@ -195,6 +210,20 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     ctx.effect(
       () => ctx.tools.guard(execution => runner.browserGuard(execution.name, execution.parent)),
       'dsh-patrol: deny direct model browser calls',
+    )
+  } else {
+    // Test mode still permits direct read-only provider diagnostics, but direct
+    // page mutations would bypass PatrolLifecycleStore and therefore disappear
+    // from both the selected flow's recent patrols and the global record list.
+    // Force mutations through patrol_* while preserving low-level observation
+    // freedom for CAPTCHA/browser debugging.
+    ctx.effect(
+      () => ctx.tools.guard(execution => {
+        if (!execution.name.startsWith('browser_')) return undefined
+        if (TEST_MODE_DIRECT_BROWSER_READ_ONLY.has(execution.name)) return undefined
+        return runner.browserGuard(execution.name, execution.parent)
+      }),
+      'dsh-patrol: test-mode browser mutations must be recordable patrol actions',
     )
   }
 
@@ -270,10 +299,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         name: 'agent:dsh-patrol-test-mode-override',
         order: 999,
         text: PATROL_TEST_MODE_OVERRIDE_PROMPT,
-      }), 'dsh-patrol: unrestricted test-mode debugging override')
+      }), 'dsh-patrol: test-mode debugging override with recordable patrol mutations')
     }
   }
 
-  const guardMode = runtimePolicy.testMode ? 'test-bypass' : 'normal-strict'
+  const guardMode = runtimePolicy.testMode ? 'test-diagnostics-recorded-mutations' : 'normal-strict'
   ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; guard-mode=${guardMode}; build=${TEST_MODE_BUILD_MARKER}; scheduler=enabled; credential helper=optional; transient sensitive replay=enabled; encrypted TOTP profile replay=enabled; semantic click resolver=enabled; secret-safe creation=enabled; flat action tools=enabled; OpenXML Excel v5 tools=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled`)
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compactTeachingFlow } from '../src/flow-optimizer.ts'
+import { compactTeachingFlow, selectSuccessfulTeachingPath } from '../src/flow-optimizer.ts'
 import type { InspectionDefinition, InspectionStep } from '../src/types.ts'
 
 function definition(steps: InspectionStep[]): InspectionDefinition {
@@ -35,7 +35,7 @@ const tool = (id: string, name: string, browserTool: string, extra: Partial<Insp
 describe('flow compaction', () => {
   it('removes teaching probes while keeping real actions and final requested outputs', () => {
     const value = definition([
-      tool('step-001', 'Navigate', 'browser_navigate'),
+      tool('step-001', 'Navigate', 'browser_navigate', { arguments: { url: 'https://example.test' } } as Partial<InspectionStep>),
       tool('step-002', 'Probe snapshot', 'browser_snapshot'),
       tool('step-003', 'Probe count', 'browser_count'),
       tool('step-004', 'Early read', 'browser_read_page', { artifact: 'page-text' } as Partial<InspectionStep>),
@@ -81,5 +81,65 @@ describe('flow compaction', () => {
       tool: 'browser_click',
       when: { sourceStepId: 'step-001' },
     })
+  })
+
+  it('drops an abandoned teaching round after a clean reset to the target page', () => {
+    const value = definition([
+      tool('step-001', 'First navigate', 'browser_navigate', { arguments: { url: 'https://example.test/' } } as Partial<InspectionStep>),
+      tool('step-002', 'Wrong menu', 'browser_click', { arguments: { selector: '#wrong' } } as Partial<InspectionStep>),
+      tool('step-003', 'Probe wrong page', 'browser_snapshot'),
+      tool('step-004', 'Reset to target', 'browser_navigate', { arguments: { url: 'https://example.test' } } as Partial<InspectionStep>),
+      tool('step-005', 'Correct menu', 'browser_click', { arguments: { selector: '#correct' } } as Partial<InspectionStep>),
+      tool('step-006', 'Final read', 'browser_read_page', { artifact: 'page-text' } as Partial<InspectionStep>),
+      tool('step-007', 'Final screenshot', 'browser_screenshot', { artifact: 'screenshot' } as Partial<InspectionStep>),
+    ])
+
+    const result = compactTeachingFlow(value)
+
+    expect(result).toEqual({ originalSteps: 7, finalSteps: 4, removedSteps: 3 })
+    expect(value.steps.map(step => step.name)).toEqual(['Reset to target', 'Correct menu', 'Final read', 'Final screenshot'])
+  })
+
+  it('drops an input value that is corrected before the next interaction boundary', () => {
+    const value = definition([
+      tool('step-001', 'Navigate', 'browser_navigate', { arguments: { url: 'https://example.test' } } as Partial<InspectionStep>),
+      tool('step-002', 'Wrong username', 'browser_type', { arguments: { selector: '#user', text: 'wrong' } } as Partial<InspectionStep>),
+      tool('step-003', 'Correct username', 'browser_type', { arguments: { selector: '#user', text: 'right' } } as Partial<InspectionStep>),
+      tool('step-004', 'Submit', 'browser_click', { arguments: { selector: '#submit' } } as Partial<InspectionStep>),
+      tool('step-005', 'Final read', 'browser_read_page', { artifact: 'page-text' } as Partial<InspectionStep>),
+      tool('step-006', 'Final screenshot', 'browser_screenshot', { artifact: 'screenshot' } as Partial<InspectionStep>),
+    ])
+
+    compactTeachingFlow(value)
+    expect(value.steps.map(step => step.name)).toEqual(['Navigate', 'Correct username', 'Submit', 'Final read', 'Final screenshot'])
+  })
+
+  it('uses the model-selected successful route instead of keeping successful wrong-branch clicks', () => {
+    const value = definition([
+      tool('step-001', 'Navigate', 'browser_navigate', { arguments: { url: 'https://example.test' } } as Partial<InspectionStep>),
+      tool('step-002', 'Explore wrong tab', 'browser_click', { arguments: { selector: '#wrong-tab' } } as Partial<InspectionStep>),
+      tool('step-003', 'Wrong page read', 'browser_read_page'),
+      tool('step-004', 'Open correct tab', 'browser_click', { arguments: { selector: '#correct-tab' } } as Partial<InspectionStep>),
+      tool('step-005', 'State source', 'browser_read_page'),
+      tool('step-006', 'Conditional submit', 'browser_click', {
+        arguments: { selector: '#submit' },
+        when: { sourceStepId: 'step-005', mode: 'contains', value: 'ready', caseSensitive: false },
+      } as Partial<InspectionStep>),
+      tool('step-007', 'Final read', 'browser_read_page', { artifact: 'page-text' } as Partial<InspectionStep>),
+      tool('step-008', 'Final screenshot', 'browser_screenshot', { artifact: 'screenshot' } as Partial<InspectionStep>),
+    ])
+
+    const result = selectSuccessfulTeachingPath(value, ['step-001', 'step-004', 'step-006'])
+
+    expect(result).toEqual({ originalSteps: 8, finalSteps: 6, removedSteps: 2, autoKeptDependencies: 3 })
+    expect(value.steps.map(step => step.name)).toEqual([
+      'Navigate',
+      'Open correct tab',
+      'State source',
+      'Conditional submit',
+      'Final read',
+      'Final screenshot',
+    ])
+    expect(value.steps[3]).toMatchObject({ when: { sourceStepId: 'step-003' } })
   })
 })

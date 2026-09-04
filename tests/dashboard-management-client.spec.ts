@@ -11,8 +11,20 @@ describe('dashboard flow-management client', () => {
     expect(source).not.toContain('queueMicrotask(() => {')
   })
 
-  it('explains that flow cleanup removes teaching probes rather than real operations', () => {
-    expect(source).toContain('这是“清理教学试错步骤”，不是删除流程。')
-    expect(source).toContain('会保留：导航、点击、输入、人工检查点、条件依赖、断言，以及最终截图/页面产物。')
+  it('explains stronger teaching cleanup and semantic finalization', () => {
+    expect(source).toContain('重新导航到目标页之前已废弃的试错轮次')
+    expect(source).toContain('patrol_finalize_flow')
+    expect(source).toContain('真正成功路径')
+  })
+
+  it('makes dashboard deletion an explicit physical history cleanup', () => {
+    expect(source).toContain('这是物理删除，不是从界面隐藏')
+    expect(source).toContain('deleteHistory: true')
+    expect(source).toContain('patrol-results/<flow-id>/ 整个目录')
+  })
+
+  it('shows that rename writes a human-readable workspace flow file', () => {
+    expect(source).toContain('.flow.md')
+    expect(source).toContain('workspaceFlowFile')
   })
 })

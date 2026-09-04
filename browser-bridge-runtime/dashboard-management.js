@@ -1,10 +1,11 @@
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { compactTeachingFlow } from './flow-optimizer.js'
 
 const ID = /^[A-Za-z0-9._-]+$/
 const MAX_BODY_BYTES = 32 * 1024
 const WORKSPACE_OUTPUT_ROOT = 'patrol-results'
+const NAMED_RUNBOOK_SUFFIX = '.flow.md'
 
 export function registerPatrolDashboardManagementRoutes(ctx, basePath, config = {}) {
   const prefix = `${String(basePath || '/patrol-browser-bridge').replace(/\/$/, '')}/dashboard`
@@ -25,8 +26,14 @@ export function registerPatrolDashboardManagementRoutes(ctx, basePath, config = 
         assertWorkspace(definition, workspace)
         definition.name = name
         definition.metadata = { ...(definition.metadata || {}), updatedAt: new Date().toISOString() }
-        await persistDefinition(storageRoot, definition)
-        return sendJson(res, 200, { ok: true, inspectionId, name, updatedAt: definition.metadata.updatedAt })
+        const persisted = await persistDefinition(storageRoot, definition)
+        return sendJson(res, 200, {
+          ok: true,
+          inspectionId,
+          name,
+          updatedAt: definition.metadata.updatedAt,
+          workspaceFlowFile: persisted.namedRunbook,
+        })
       } catch (error) {
         return sendJson(res, 400, { ok: false, error: safeError(error) })
       }
@@ -46,8 +53,14 @@ export function registerPatrolDashboardManagementRoutes(ctx, basePath, config = 
         assertWorkspace(definition, workspace)
         const result = compactTeachingFlow(definition)
         definition.metadata = { ...(definition.metadata || {}), updatedAt: new Date().toISOString() }
-        await persistDefinition(storageRoot, definition)
-        return sendJson(res, 200, { ok: true, inspectionId, ...result, updatedAt: definition.metadata.updatedAt })
+        const persisted = await persistDefinition(storageRoot, definition)
+        return sendJson(res, 200, {
+          ok: true,
+          inspectionId,
+          ...result,
+          updatedAt: definition.metadata.updatedAt,
+          workspaceFlowFile: persisted.namedRunbook,
+        })
       } catch (error) {
         return sendJson(res, 400, { ok: false, error: safeError(error) })
       }
@@ -66,21 +79,30 @@ export function registerPatrolDashboardManagementRoutes(ctx, basePath, config = 
         if (body.confirmed !== true) throw new Error('explicit deletion confirmation is required')
         const definition = await loadDefinition(storageRoot, inspectionId)
         assertWorkspace(definition, workspace)
+        const deleteHistory = body.deleteHistory !== false
 
         await rm(join(storageRoot, 'inspections', inspectionId), { recursive: true, force: true })
         await rm(join(storageRoot, 'resumes', `${inspectionId}.json`), { force: true })
 
-        // Delete the live workspace runbook and teaching-only artifacts, but
-        // deliberately retain historical run reports. Stable inspection IDs are
-        // not renamed because run history uses them as the foreign key.
         const workspaceFlowRoot = join(workspace, WORKSPACE_OUTPUT_ROOT, inspectionId)
-        await rm(join(workspaceFlowRoot, 'runbook'), { recursive: true, force: true })
-        await rm(join(workspaceFlowRoot, 'teaching'), { recursive: true, force: true })
+        if (deleteHistory) {
+          // Dashboard deletion is a real cleanup operation, not a hide flag.
+          // Remove the internal history index and the complete workspace flow
+          // directory so test flows do not survive in巡检记录 or on disk.
+          await rm(join(storageRoot, 'runs', inspectionId), { recursive: true, force: true })
+          await rm(workspaceFlowRoot, { recursive: true, force: true })
+        } else {
+          // API callers may explicitly preserve historical reports, while the
+          // Dashboard UI defaults to full cleanup.
+          await rm(join(workspaceFlowRoot, 'runbook'), { recursive: true, force: true })
+          await rm(join(workspaceFlowRoot, 'teaching'), { recursive: true, force: true })
+        }
 
         return sendJson(res, 200, {
           ok: true,
           inspectionId,
-          retainedHistoricalRuns: true,
+          retainedHistoricalRuns: !deleteHistory,
+          deletedWorkspaceFlowRoot: deleteHistory ? workspaceFlowRoot : null,
         })
       } catch (error) {
         return sendJson(res, 400, { ok: false, error: safeError(error) })
@@ -148,10 +170,37 @@ async function persistDefinition(storageRoot, definition) {
   await atomicWrite(internal, `${JSON.stringify(definition, null, 2)}\n`)
 
   const workspace = definition?.metadata?.workspaceRoot
-  if (typeof workspace !== 'string' || !workspace.trim()) return
+  if (typeof workspace !== 'string' || !workspace.trim()) return { namedRunbook: null }
   const runbook = join(workspace, WORKSPACE_OUTPUT_ROOT, definition.id, 'runbook')
+  const markdown = renderRunbookMarkdown(definition)
   await atomicWrite(join(runbook, 'inspection.json'), `${JSON.stringify(definition, null, 2)}\n`)
-  await atomicWrite(join(runbook, 'runbook.md'), renderRunbookMarkdown(definition))
+  await atomicWrite(join(runbook, 'runbook.md'), markdown)
+  const namedRunbook = await syncNamedRunbook(runbook, definition.name || definition.id, markdown)
+  return { namedRunbook }
+}
+
+async function syncNamedRunbook(runbookRoot, name, markdown) {
+  await mkdir(runbookRoot, { recursive: true })
+  try {
+    const entries = await readdir(runbookRoot)
+    await Promise.all(entries
+      .filter(entry => entry.endsWith(NAMED_RUNBOOK_SUFFIX))
+      .map(entry => rm(join(runbookRoot, entry), { force: true })))
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error
+  }
+  const path = join(runbookRoot, `${safeFileStem(name)}${NAMED_RUNBOOK_SUFFIX}`)
+  await atomicWrite(path, markdown)
+  return path
+}
+
+function safeFileStem(value) {
+  const cleaned = String(value || '')
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-')
+    .replace(/[. ]+$/g, '')
+    .trim()
+    .slice(0, 96)
+  return cleaned || 'patrol-flow'
 }
 
 function renderRunbookMarkdown(definition) {
