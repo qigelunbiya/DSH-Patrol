@@ -436,7 +436,7 @@ function createDefinitions(ctx: Context, store: PatrolStore, runner: PatrolRunne
 
   const list = defineTool({
     name: 'patrol_list',
-    description: 'List stored inspections and their draft/ready state.',
+    description: 'List stored inspections and their draft/ready state. When the user supplies a flow name or @name, use patrol_resolve_flow instead of interpreting this list yourself.',
     parameters: {},
     output: TEXT_OUTPUT,
     async execute() {

@@ -14,6 +14,7 @@ import { PATROL_EXCEL_PROMPT } from './excel-tools.js'
 import { PATROL_EXCEL_V5_PROMPT, registerPatrolExcelToolsV5 } from './excel-tools-v5.js'
 import { registerPatrolFlowTools } from './flow-tools.js'
 import { registerPatrolHandoffTools } from './handoff-tools.js'
+import { PATROL_FLOW_REFERENCE_PROMPT, registerPatrolFlowReferenceTools } from './flow-reference-tools.js'
 import { PatrolLifecycleStore } from './lifecycle-store.js'
 import { createManualVerificationGuard, PATROL_MANUAL_VERIFICATION_PROMPT } from './manual-verification-guard.js'
 import { registerPatrolModelRouteRecovery } from './model-route-recovery.js'
@@ -58,6 +59,7 @@ export * from './model-route-recovery.js'
 export * from './observation-guard.js'
 export * from './observation-tools.js'
 export * from './handoff-tools.js'
+export * from './flow-reference-tools.js'
 export * from './test-mode.js'
 export { PatrolStore } from './store.js'
 export { PatrolRunner, conditionMatches, evaluateExpectation } from './runner.js'
@@ -136,6 +138,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     'dsh-patrol: patrol tools',
   )
   ctx.effect(() => registerPatrolCreationTools(ctx, store), 'dsh-patrol: secret-safe inspection creation')
+  ctx.effect(() => registerPatrolFlowReferenceTools(ctx, store, runner), 'dsh-patrol: deterministic flow resolution and non-mutating replay')
   ctx.effect(() => registerPatrolFlowTools(ctx, store), 'dsh-patrol: current-flow selection and successful-path finalization')
   ctx.effect(() => registerPatrolCredentialTools(ctx, store), 'dsh-patrol: credential setup guidance')
   ctx.effect(
@@ -229,6 +232,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
   const systemPrompt = ctx.get('systemPrompt')
   if (systemPrompt !== undefined) {
+    ctx.effect(() => systemPrompt.section({
+      name: 'agent:dsh-patrol-flow-reference-replay',
+      order: 1000,
+      text: PATROL_FLOW_REFERENCE_PROMPT,
+    }), 'dsh-patrol: deterministic flow reference and existing-flow replay prompt')
+
     if (runtimePolicy.injectStrictWorkflowPrompt) {
       ctx.effect(() => systemPrompt.section({
         name: 'agent:dsh-patrol',

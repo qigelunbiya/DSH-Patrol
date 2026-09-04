@@ -67,6 +67,7 @@
           `<button class="mini-btn" data-manage-action="rename" data-manage-id="${escapeAttr(id)}">改名</button>`,
           `<button class="mini-btn" title="清理探针、被后续重置废弃的轮次和重复输入修正" data-manage-action="optimize" data-manage-id="${escapeAttr(id)}">清理试错</button>`,
           `<button class="mini-btn danger" data-manage-action="delete" data-manage-id="${escapeAttr(id)}">删除</button>`,
+          `<button class="mini-btn run" data-manage-action="run" data-manage-id="${escapeAttr(id)}">▶ 运行</button>`,
         ].join('')
         meta?.before(tools)
       }
@@ -84,6 +85,7 @@
     wrap.setAttribute('data-detail-flow-tools', '')
     wrap.className = 'detail-flow-actions'
     wrap.innerHTML = [
+      `<button class="btn run-btn" data-manage-action="run" data-manage-id="${escapeAttr(id)}">▶ 运行流程</button>`,
       `<button class="btn" data-manage-action="rename" data-manage-id="${escapeAttr(id)}">编辑名称</button>`,
       `<button class="btn" title="清理探针、重置前的废弃轮次和被后续输入覆盖的修正步骤" data-manage-action="optimize" data-manage-id="${escapeAttr(id)}">清理试错步骤</button>`,
       `<button class="btn danger-btn" data-manage-action="delete" data-manage-id="${escapeAttr(id)}">删除流程</button>`,
@@ -91,7 +93,19 @@
     actions.prepend(wrap)
   }
 
+  function runFlow(id) {
+    const item = cardsById.get(id)
+    if (!item) return
+    const flowName = String(item.definition?.name || id).trim() || id
+    window.parent.postMessage({
+      type: 'dsh-patrol:run-flow',
+      inspectionId: id,
+      flowName,
+    }, location.origin)
+  }
+
   async function renameFlow(id) {
+
     const item = cardsById.get(id)
     if (!item) return
     const current = item.definition?.name || id
@@ -169,6 +183,8 @@
       .flow-manage-actions{display:flex;gap:6px;margin:2px 0 10px;position:relative;z-index:2}
       .mini-btn{border:1px solid #e5e9f0;background:#fff;border-radius:8px;padding:5px 9px;font-size:11px;color:#475467;cursor:pointer}
       .mini-btn:hover{border-color:#b9c6da;background:#f8fafc}
+      .mini-btn.run{margin-left:auto}.mini-btn.run,.run-btn{color:#1d4ed8!important;border-color:#bfd0f6!important;background:#f7faff!important}
+      .mini-btn.run:hover,.run-btn:hover{background:#eff6ff!important;border-color:#93b4ef!important}
       .mini-btn.danger,.danger-btn{color:#c43225!important;border-color:#f0c7c3!important}
       .mini-btn.danger:hover,.danger-btn:hover{background:#fef3f2!important}
       .detail-flow-actions{display:inline-flex;gap:8px}
@@ -185,7 +201,8 @@
     const action = target.getAttribute('data-manage-action') || ''
     const id = target.getAttribute('data-manage-id') || ''
     if (!id) return
-    if (action === 'rename') void renameFlow(id)
+    if (action === 'run') runFlow(id)
+    else if (action === 'rename') void renameFlow(id)
     else if (action === 'optimize') void optimizeFlow(id)
     else if (action === 'delete') void deleteFlow(id)
   }, true)

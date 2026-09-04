@@ -372,7 +372,8 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
     return latest ? latest.id : '';
   }
 
-  function DashboardFrame({ useSession, workspaceRoot, mode }) {
+  function DashboardFrame({ useSession, workspaceRoot, mode, inputActions }) {
+    const iframeRef = React.useRef(null);
     const nodes = useSession(snapshot => snapshot.nodes);
     const runningCalls = useSession(snapshot => snapshot.runningCalls);
     const current = React.useMemo(() => currentInspectionId(nodes, runningCalls), [nodes, runningCalls]);
@@ -381,7 +382,28 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
       if (mode === 'flows' && current) params.set('current', current);
       return `${DASHBOARD_UI}?${params.toString()}`;
     }, [mode, workspaceRoot, current]);
+
+    React.useEffect(() => {
+      const onMessage = event => {
+        if (event.origin !== window.location.origin) return;
+        if (event.source !== iframeRef.current?.contentWindow) return;
+        const data = event.data;
+        if (!data || data.type !== 'dsh-patrol:run-flow') return;
+        const inspectionId = String(data.inspectionId || '').trim();
+        if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(inspectionId)) return;
+        const flowName = String(data.flowName || inspectionId).trim();
+        const label = flowName && flowName !== inspectionId ? `（${flowName}）` : '';
+        inputActions.setDraft(
+          `运行巡检流程 ${inspectionId}${label}。请直接使用 patrol_run_flow 重放已有流程，不要修改、重教或新增流程步骤。`,
+        );
+        setTimeout(() => inputActions.submit(), 0);
+      };
+      window.addEventListener('message', onMessage);
+      return () => window.removeEventListener('message', onMessage);
+    }, [inputActions]);
+
     return React.createElement('iframe', {
+      ref: iframeRef,
       src,
       title: mode === 'flows' ? '流程管理' : '巡检记录',
       style: { display: 'block', width: '100%', height: '100%', minHeight: '520px', border: 0, background: '#f6f8fb' },

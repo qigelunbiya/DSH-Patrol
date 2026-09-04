@@ -1,6 +1,6 @@
 import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
-import { compactTeachingFlow } from './flow-optimizer.js'
+import { compactFlowConservatively } from './safe-flow-cleanup.js'
 
 const ID = /^[A-Za-z0-9._-]+$/
 const MAX_BODY_BYTES = 32 * 1024
@@ -51,7 +51,7 @@ export function registerPatrolDashboardManagementRoutes(ctx, basePath, config = 
         const workspace = requireWorkspace(body.workspace)
         const definition = await loadDefinition(storageRoot, inspectionId)
         assertWorkspace(definition, workspace)
-        const result = compactTeachingFlow(definition)
+        const result = compactFlowConservatively(definition)
         definition.metadata = { ...(definition.metadata || {}), updatedAt: new Date().toISOString() }
         const persisted = await persistDefinition(storageRoot, definition)
         return sendJson(res, 200, {
