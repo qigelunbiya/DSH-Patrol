@@ -202,6 +202,7 @@ function scoreSemanticCandidates(elements: SnapshotElement[], locator: SemanticL
         exactText = true
       } else if (text !== undefined && (text.includes(wantedText) || wantedText.includes(text))) {
         score += 55
+        score += semanticContainmentSpecificity(text, wantedText, selector)
       } else {
         continue
       }
@@ -214,6 +215,26 @@ function scoreSemanticCandidates(elements: SnapshotElement[], locator: SemanticL
 
   ranked.sort((a, b) => b.score - a.score)
   return ranked
+}
+
+/**
+ * Prefer the smallest/deepest semantic leaf when both a real action and one or
+ * more layout ancestors merely CONTAIN the requested text. React/Ant pages
+ * often make a whole table/root div look clickable to heuristic snapshots
+ * because its descendant text contains an action word such as RDP or 登录.
+ * Clicking the leaf is safe because DOM click bubbles to a parent handler, while
+ * choosing the page-sized ancestor is both ambiguous and usually wrong.
+ *
+ * Exact-text ties remain ties: two rows that both literally say "RDP" still
+ * require a row-specific selector rather than silently choosing one.
+ */
+function semanticContainmentSpecificity(text: string, wantedText: string, selector: string): number {
+  const extraText = Math.max(0, text.length - wantedText.length)
+  const compactTextBonus = Math.max(0, 30 - Math.min(extraText, 30))
+  const selectorDepth = Math.max(0, selector.split('>').length - 1)
+  const depthBonus = Math.min(selectorDepth, 12)
+  const bracketedActionBonus = text.includes(`[${wantedText}]`) ? 12 : 0
+  return compactTextBonus + depthBonus + bracketedActionBonus
 }
 
 function semanticLocatorMatches(element: SnapshotElement, locator: SemanticLocator, exactOnly: boolean): boolean {
