@@ -241,7 +241,7 @@ describe('Patrol constrained-Qwen context pressure guard', () => {
     await ctx.fiber.dispose()
   })
 
-  it('lets Harness apply its retry backoff after OOM compaction advances the durable surface', async () => {
+  it('performs one quiet OOM recovery retry and suppresses generic retries if OOM repeats', async () => {
     const ctx = new Context()
     const agent = fakeAgent()
     const compactIfNeeded = vi.fn(async () => {
@@ -249,11 +249,9 @@ describe('Patrol constrained-Qwen context pressure guard', () => {
       return { shadowedSeqs: [1] }
     })
     ctx.provide('compaction', { compactIfNeeded })
-    registerPatrolContextPressureGuard(ctx)
+    registerPatrolContextPressureGuard(ctx, PATROL_QWEN_SOFT_REQUEST_LIMIT, 0)
 
-    const downstream = vi.fn()
-      .mockResolvedValueOnce({ kind: 'retry' as const })
-      .mockResolvedValueOnce(undefined)
+    const downstream = vi.fn(async () => ({ kind: 'retry' as const }))
     await expect(ctx.waterfall(
       'agent/request-error',
       requestErrorPayload(agent, '500: CUDA out of memory. Tried to allocate 576.00 MiB.') as never,
@@ -261,7 +259,7 @@ describe('Patrol constrained-Qwen context pressure guard', () => {
     )).resolves.toEqual({ kind: 'retry' })
 
     expect(compactIfNeeded).toHaveBeenCalledOnce()
-    expect(downstream).toHaveBeenCalledOnce()
+    expect(downstream).not.toHaveBeenCalled()
 
     await expect(ctx.waterfall(
       'agent/request-error',
@@ -269,7 +267,7 @@ describe('Patrol constrained-Qwen context pressure guard', () => {
       downstream,
     )).resolves.toBeUndefined()
     expect(compactIfNeeded).toHaveBeenCalledOnce()
-    expect(downstream).toHaveBeenCalledTimes(2)
+    expect(downstream).not.toHaveBeenCalled()
     await ctx.fiber.dispose()
   })
 
@@ -280,7 +278,7 @@ describe('Patrol constrained-Qwen context pressure guard', () => {
     const compactIfNeeded = vi.fn(async () => null)
     ctx.provide('tokenMeter', tokenMeter)
     ctx.provide('compaction', { compactIfNeeded })
-    registerPatrolContextPressureGuard(ctx)
+    registerPatrolContextPressureGuard(ctx, PATROL_QWEN_SOFT_REQUEST_LIMIT, 0)
 
     const before = tokenMeter.measure(agent.session).totalTokens
     expect(before).toBeLessThan(PATROL_QWEN_SOFT_REQUEST_LIMIT)
@@ -296,7 +294,7 @@ describe('Patrol constrained-Qwen context pressure guard', () => {
     expect(after).toBeLessThan(before)
     expect(agent.session.surface.replaceGeneration).toBeGreaterThan(0)
     expect(compactIfNeeded).not.toHaveBeenCalled()
-    expect(downstream).toHaveBeenCalledOnce()
+    expect(downstream).not.toHaveBeenCalled()
     await ctx.fiber.dispose()
   })
 

@@ -243,9 +243,15 @@ export function registerPatrolModelRouteRecovery(
       }
 
       if (!isLegacyUnavailablePatrolRoute(failedRoute)
-        || !isAuthUnavailableFailure(payload.failure)
-        || quietRetryPositionKey === key) {
+        || !isAuthUnavailableFailure(payload.failure)) {
         return next()
+      }
+      if (quietRetryPositionKey === key) {
+        ctx.logger.warn(
+          `[dsh-patrol/model-route-recovery] ${failedRoute.provider}/${failedRoute.model} is still auth_unavailable after the quiet cooldown retry; `
+          + 'ending this step without entering the generic Harness retry storm',
+        )
+        return undefined
       }
 
       // A same-route auth_unavailable from qwen-local is normally a temporary

@@ -242,6 +242,7 @@ export class PatrolStore {
     sourcePath: string,
     suggestedName: string,
     workspaceRoot?: string,
+    preserveSource = false,
   ): Promise<string> {
     const directory = join(this.runDirectory(inspectionId, runId), 'artifacts')
     await mkdir(directory, { recursive: true, mode: 0o700 })
@@ -259,7 +260,7 @@ export class PatrolStore {
     const visible = join(visibleDirectory, safeName)
     await copyFile(sourcePath, visible)
     await chmod(visible, 0o600)
-    await cleanupLooseWorkspaceSource(sourcePath, workspaceRoot, visible)
+    if (!preserveSource) await cleanupLooseWorkspaceSource(sourcePath, workspaceRoot, visible)
     return visible
   }
 

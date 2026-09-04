@@ -81,9 +81,9 @@ if (!uninstaller.includes('pnpm remove dsh-patrol-client-host')) {
 
 for (const marker of [
   "window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host'",
-  "exports.inject = ['slots', 'sessions'];",
+  "exports.inject = ['slots', 'sessions', 'remote', 'remote.agentPresets'];",
   "const DASHBOARD_UI = '/patrol-browser-bridge/dashboard/ui';",
-  'function DashboardFrame({ useSession, workspaceRoot, mode, inputActions })',
+  'function DashboardFrame({ useSession, workspaceRoot, mode, runFlow })',
   'function currentInspectionId(nodes, runningCalls)',
   "mode: 'flows'",
   "mode: 'records'",
@@ -118,7 +118,8 @@ for (const marker of [
   'const MAX_FAST_JSON_BYTES = 512 * 1024',
   'const MAX_RUNS_PER_INSPECTION = 2000',
   'async function mapLimit(items, limit, worker)',
-  'function artifactCandidates(storageRoot, report)',
+  'export async function discoverLegacyTeachingScreenshots(workspace, report)',
+  'async function artifactCandidates(storageRoot, workspace, report)',
 ]) {
   if (!dashboard.includes(marker)) throw new Error(`dashboard data runtime is missing marker: ${marker}`)
 }

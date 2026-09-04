@@ -119,7 +119,19 @@ export class PatrolLifecycleStore extends PatrolStore {
     const artifacts = [...current.artifacts]
     if (update.artifacts !== undefined) {
       for (const artifact of update.artifacts) {
-        if (!artifacts.some(item => item.kind === artifact.kind && item.path === artifact.path)) artifacts.push(artifact)
+        let normalized = artifact
+        if (artifact.kind === 'screenshot' && typeof artifact.path === 'string' && artifact.path.trim() !== '') {
+          const runOwnedPath = await this.copyArtifact(
+            inspectionId,
+            active.runId,
+            artifact.path,
+            `${step.id}-screenshot`,
+            active.workspaceRoot ?? definition.metadata.workspaceRoot,
+            true,
+          )
+          normalized = { ...artifact, path: runOwnedPath }
+        }
+        if (!artifacts.some(item => item.kind === normalized.kind && item.path === normalized.path)) artifacts.push(normalized)
       }
     }
     if (update.pageText !== undefined && step.kind === 'tool' && step.artifact === 'page-text') {
@@ -155,9 +167,10 @@ export class PatrolLifecycleStore extends PatrolStore {
     const results = sessionSteps.map(step => teachingStepResult(step, now, step.kind === 'checkpoint' ? 'waiting' : 'passed', active))
     const waitingCheckpoints = results.filter(result => result.status === 'waiting').length
     const passedSteps = results.filter(result => result.status === 'passed').length
+    const status: RunReport['status'] = waitingCheckpoints > 0 ? 'waiting' : 'passed'
     const summary = waitingCheckpoints > 0
       ? `巡检进行中：本轮已完成 ${passedSteps} 个步骤，当前有 ${waitingCheckpoints} 个人工检查点等待处理。即使本轮未继续完成，这条巡检记录也会保留。`
-      : `巡检进行中：本轮已记录 ${passedSteps} 个成功步骤。巡检从开始时即计入历史，不需要等到流程确认完成。`
+      : `交互巡检本轮已完成 ${passedSteps} 个步骤；流程定义仍可继续编辑或确认固化。`
 
     const report: RunReport = {
       schemaVersion: '0.2',
@@ -166,7 +179,7 @@ export class PatrolLifecycleStore extends PatrolStore {
       inspectionName: definition.name,
       startedAt: active.startedAt,
       finishedAt: now,
-      status: 'waiting',
+      status,
       expectedResult: definition.expectedResult,
       results,
       summary,

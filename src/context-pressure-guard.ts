@@ -110,6 +110,9 @@ export const PATROL_QWEN_EMERGENCY_TARGET = 29_500
  */
 export const PATROL_QWEN_OOM_RECOVERY_RATIO = 0.72
 
+/** One bounded quiet wait before retrying a Qwen request that actually OOMed. */
+export const PATROL_QWEN_OOM_SETTLE_MS = 10_500
+
 export function patrolQwenOomRecoveryTarget(
   totalTokens: number,
   softLimit = PATROL_QWEN_SOFT_REQUEST_LIMIT,
@@ -178,6 +181,23 @@ function routeFromAgent(agent: AgentLike): RequestRoute | undefined {
 function replaceGeneration(session: SessionLike): number | undefined {
   const generation = session.surface?.replaceGeneration
   return typeof generation === 'number' && Number.isFinite(generation) ? generation : undefined
+}
+
+async function waitForPatrolOomSettle(signal: AbortSignal, delayMs: number): Promise<boolean> {
+  if (signal.aborted) return false
+  const normalized = Number.isFinite(delayMs) ? Math.max(0, Math.floor(delayMs)) : PATROL_QWEN_OOM_SETTLE_MS
+  if (normalized === 0) return true
+  return new Promise<boolean>((resolve) => {
+    let timer: ReturnType<typeof setTimeout>
+    const finish = (ready: boolean): void => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+      resolve(ready)
+    }
+    const onAbort = (): void => finish(false)
+    timer = setTimeout(() => finish(true), normalized)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
 }
 
 function readTokenMeter(ctx: Context): TokenMeterLike | undefined {
@@ -389,8 +409,14 @@ export function emergencyPrunePatrolToolResults(
 export function registerPatrolContextPressureGuard(
   ctx: Context,
   softLimit = PATROL_QWEN_SOFT_REQUEST_LIMIT,
+  oomSettleMs = PATROL_QWEN_OOM_SETTLE_MS,
 ): () => void {
   const attemptedOomRecovery = new WeakMap<object, string>()
+  const quietOomRetry = async (signal: AbortSignal, detail: string): Promise<{ kind: 'retry' } | undefined> => {
+    ctx.logger.warn(`[dsh-patrol/context-pressure] ${detail}; waiting ${oomSettleMs}ms before one quiet retry`)
+    const settled = await waitForPatrolOomSettle(signal, oomSettleMs)
+    return settled && !signal.aborted ? { kind: 'retry' } : undefined
+  }
 
   const disposePreStep = ctx.on(
     'agent/pre-step',
@@ -487,7 +513,10 @@ export function registerPatrolContextPressureGuard(
 
       const key = `${payload.turn}:${payload.step}`
       const agentKey = payload.agent as unknown as object
-      if (attemptedOomRecovery.get(agentKey) === key) return next()
+      if (attemptedOomRecovery.get(agentKey) === key) {
+        ctx.logger.warn('[dsh-patrol/context-pressure] Qwen still OOMed after the bounded recovery retry; ending the step without generic Harness retries')
+        return undefined
+      }
       attemptedOomRecovery.set(agentKey, key)
 
       const tokenMeter = readTokenMeter(ctx)
@@ -511,13 +540,10 @@ export function registerPatrolContextPressureGuard(
           if (emergency.pruned > 0
             && emergency.afterTokens < emergency.beforeTokens
             && !payload.signal.aborted) {
-            ctx.logger.warn(
-              `[dsh-patrol/context-pressure] OOM recovery used model-free relative pruning `
-              + `(${emergency.beforeTokens} -> ${emergency.afterTokens} tokens; target ${recoveryTarget}); `
-              + 'delegating retry timing to Harness so gateway cooldown/backoff is preserved',
+            return await quietOomRetry(
+              payload.signal,
+              `OOM recovery used model-free relative pruning (${emergency.beforeTokens} -> ${emergency.afterTokens} tokens; target ${recoveryTarget})`,
             )
-            const downstreamDecision = await next()
-            return downstreamDecision ?? { kind: 'retry' as const }
           }
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : String(error)
@@ -529,13 +555,10 @@ export function registerPatrolContextPressureGuard(
       if (compaction === undefined) {
         const after = replaceGeneration(agent.session)
         if (!payload.signal.aborted && before !== undefined && after !== undefined && after > before) {
-          ctx.logger.warn(
-            '[dsh-patrol/context-pressure] OOM recovery advanced the durable surface without compaction; delegating retry timing to Harness',
-          )
-          const downstreamDecision = await next()
-          return downstreamDecision ?? { kind: 'retry' as const }
+          return await quietOomRetry(payload.signal, 'OOM recovery advanced the durable surface without compaction')
         }
-        return next()
+        ctx.logger.warn('[dsh-patrol/context-pressure] OOM recovery could not reduce the request and will fail fast instead of entering generic retries')
+        return undefined
       }
 
       try {
@@ -544,24 +567,20 @@ export function registerPatrolContextPressureGuard(
         const advanced = result !== null
           || (before !== undefined && after !== undefined && after > before)
         if (advanced && !payload.signal.aborted) {
-          ctx.logger.warn('[dsh-patrol/context-pressure] OOM recovery reduced the durable surface; delegating retry timing to Harness')
-          const downstreamDecision = await next()
-          return downstreamDecision ?? { kind: 'retry' as const }
+          return await quietOomRetry(payload.signal, 'OOM recovery reduced the durable surface')
         }
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error)
         const after = replaceGeneration(agent.session)
         if (!payload.signal.aborted && before !== undefined && after !== undefined && after > before) {
-          ctx.logger.warn(
-            `[dsh-patrol/context-pressure] OOM compaction reported ${message}, but durable pruning advanced the surface; `
-            + 'delegating retry timing to Harness',
+          return await quietOomRetry(
+            payload.signal,
+            `OOM compaction reported ${message}, but durable pruning advanced the surface`,
           )
-          const downstreamDecision = await next()
-          return downstreamDecision ?? { kind: 'retry' as const }
         }
-        ctx.logger.warn(`[dsh-patrol/context-pressure] OOM compaction failed: ${message}; delegating to Harness retry policy`)
+        ctx.logger.warn(`[dsh-patrol/context-pressure] OOM compaction failed: ${message}; failing fast without generic retries`)
       }
-      return next()
+      return undefined
     },
     { prepend: true },
   )

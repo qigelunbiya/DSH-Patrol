@@ -180,7 +180,7 @@ describe('Patrol model route recovery', () => {
     await ctx.fiber.dispose()
   })
 
-  it('waits through one qwen-local auth cooldown quietly, then delegates a repeated failure', async () => {
+  it('waits through one qwen-local auth cooldown quietly, then suppresses generic retries on repeated failure', async () => {
     const ctx = new Context()
     ctx.provide('agentDefaultModel', {
       currentSelection: () => LEGACY_ROUTE,
@@ -206,7 +206,7 @@ describe('Patrol model route recovery', () => {
       requestErrorPayload(LEGACY_ROUTE.provider),
       downstream,
     )).resolves.toBeUndefined()
-    expect(downstream).toHaveBeenCalledOnce()
+    expect(downstream).not.toHaveBeenCalled()
 
     await ctx.fiber.dispose()
   })

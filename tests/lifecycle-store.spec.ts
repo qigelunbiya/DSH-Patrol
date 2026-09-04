@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -49,8 +49,8 @@ describe('PatrolLifecycleStore', () => {
     const startedRunIds = await readdir(join(root, 'runs', 'teaching-flow'))
     expect(startedRunIds).toHaveLength(1)
     const started = await store.loadRun('teaching-flow', startedRunIds[0]!)
-    expect(started.status).toBe('waiting')
-    expect(started.summary).toContain('巡检进行中')
+    expect(started.status).toBe('passed')
+    expect(started.summary).toContain('交互巡检本轮已完成')
     expect(started.results).toHaveLength(3)
 
     const ready = await store.load('teaching-flow')
@@ -120,7 +120,11 @@ describe('PatrolLifecycleStore', () => {
 
     const runIds = await readdir(join(root, 'runs', 'artifact-flow'))
     const pending = await store.loadRun('artifact-flow', runIds[0]!)
-    expect(pending.results[0]?.artifacts).toEqual([{ kind: 'screenshot', path: visible }])
+    const pendingArtifact = pending.results[0]?.artifacts?.[0]
+    expect(pendingArtifact?.kind).toBe('screenshot')
+    expect(pendingArtifact?.path).toContain(join('patrol-results', 'artifact-flow', runIds[0]!, 'screenshots'))
+    expect(pendingArtifact?.path).not.toBe(visible)
+    await expect(readFile(visible)).resolves.toBeInstanceOf(Buffer)
 
     const ready = await store.load('artifact-flow')
     ready.status = 'ready'
@@ -129,10 +133,10 @@ describe('PatrolLifecycleStore', () => {
     await store.save(ready)
 
     const finalized = await store.loadRun('artifact-flow', runIds[0]!)
-    expect(finalized.results[0]?.artifacts).toEqual([{ kind: 'screenshot', path: visible }])
+    expect(finalized.results[0]?.artifacts?.[0]?.path).toBe(pendingArtifact?.path)
   })
 
-  it('starts a new WAITING record when an existing draft receives its first new step', async () => {
+  it('starts a completed run record when an existing draft receives a successful new step', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-lifecycle-existing-draft-'))
     roots.push(root)
     const store = new PatrolLifecycleStore(root)
@@ -173,7 +177,7 @@ describe('PatrolLifecycleStore', () => {
     const runIds = await readdir(join(root, 'runs', 'existing-draft'))
     expect(runIds).toHaveLength(1)
     const report = await store.loadRun('existing-draft', runIds[0]!)
-    expect(report.status).toBe('waiting')
+    expect(report.status).toBe('passed')
     expect(report.results).toHaveLength(1)
     expect(report.results[0]).toMatchObject({ name: 'Navigate', status: 'passed' })
   })

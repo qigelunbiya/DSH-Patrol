@@ -1,8 +1,8 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { buildPatrolDashboardCatalog, parseLegacyMarkdownSummary } from '../browser-bridge-runtime/dashboard-fast.js'
+import { buildPatrolDashboardCatalog, discoverLegacyTeachingScreenshots, parseLegacyMarkdownSummary } from '../browser-bridge-runtime/dashboard-fast.js'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -120,6 +120,49 @@ describe('fast Patrol dashboard catalog', () => {
       failedSteps: 1,
       artifactCount: 8,
     })
+  })
+
+  it('normalizes old all-passed teaching rows that were incorrectly persisted as waiting', async () => {
+    const value = await fixture()
+    const runId = 'teaching-2026-09-02T09-30-00-000Z'
+    const runRoot = join(value.storageRoot, 'runs', value.inspectionId, runId)
+    await mkdir(runRoot, { recursive: true })
+    await writeFile(join(runRoot, 'summary.json'), JSON.stringify({
+      schemaVersion: 1,
+      runId,
+      inspectionId: value.inspectionId,
+      inspectionName: 'Fast flow',
+      status: 'waiting',
+      startedAt: '2026-09-02T09:30:00.000Z',
+      finishedAt: '2026-09-02T09:30:03.000Z',
+      summary: '巡检进行中：本轮已记录 1 个成功步骤。',
+      stepCount: 1,
+      passedSteps: 1,
+      failedSteps: 0,
+      waitingSteps: 0,
+      artifactCount: 2,
+    }))
+    const catalog = await buildPatrolDashboardCatalog(value.storageRoot, value.workspace)
+    expect(catalog.runs[0]).toMatchObject({ status: 'passed', passedSteps: 1, waitingSteps: 0 })
+    expect(catalog.runs[0].summary).toContain('交互巡检本轮已完成')
+  })
+
+  it('recovers an undeclared historical teaching screenshot from the workspace time window', async () => {
+    const value = await fixture()
+    const runId = 'teaching-2026-09-02T10-00-00-000Z'
+    const screenshotDir = join(value.workspace, 'patrol-results', value.inspectionId, 'teaching', 'screenshots')
+    await mkdir(screenshotDir, { recursive: true })
+    const screenshot = join(screenshotDir, 'legacy.png')
+    await writeFile(screenshot, Buffer.from([1, 2, 3]))
+    const stamp = new Date('2026-09-02T10:00:02.000Z')
+    await utimes(screenshot, stamp, stamp)
+    const found = await discoverLegacyTeachingScreenshots(value.workspace, {
+      runId,
+      inspectionId: value.inspectionId,
+      startedAt: '2026-09-02T10:00:00.000Z',
+      finishedAt: '2026-09-02T10:00:05.000Z',
+    })
+    expect(found.map(item => item.path)).toEqual([screenshot])
   })
 
   it('parses the bounded markdown report format used by historical runs', async () => {

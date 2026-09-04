@@ -174,7 +174,8 @@ describe('flat Patrol action tools', () => {
     expect(report.results[0]?.output).toContain('Page: Tasks')
     expect(report.results[0]?.artifacts?.[0]?.kind).toBe('page-text')
     expect(report.results[1]?.artifacts?.[0]?.kind).toBe('screenshot')
-    expect(report.results[1]?.artifacts?.[0]?.path).toContain(join('patrol-results', 'live-actions', 'teaching', 'screenshots'))
+    expect(report.status).toBe('passed')
+    expect(report.results[1]?.artifacts?.[0]?.path).toContain(join('patrol-results', 'live-actions', runIds[0]!, 'screenshots'))
 
     const ready = await store.load('live-actions')
     ready.status = 'ready'

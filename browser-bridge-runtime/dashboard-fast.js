@@ -56,7 +56,8 @@ export function registerPatrolDashboardRoutes(ctx, basePath, config = {}) {
         const runId = requireId(url.searchParams.get('runId'), 'runId')
         const definition = await loadDefinition(storageRoot, inspectionId)
         assertWorkspace(definition, workspace)
-        const report = await loadRun(storageRoot, inspectionId, runId)
+        const rawReport = await loadRun(storageRoot, inspectionId, runId)
+        const report = normalizeRunReport(rawReport)
         const artifacts = await describeArtifacts(storageRoot, workspace, definition, report, prefix)
         return sendJson(res, 200, { ok: true, definition, report, artifacts })
       } catch (error) {
@@ -264,23 +265,57 @@ function validSummary(value, inspectionId, runId) {
 }
 
 function enrichSummary(value, definition, source) {
+  const stepCount = safeCount(value.stepCount)
+  const passedSteps = safeCount(value.passedSteps)
+  const failedSteps = safeCount(value.failedSteps)
+  const waitingSteps = safeCount(value.waitingSteps)
+  const status = effectiveRunStatus(value.status, passedSteps, failedSteps, waitingSteps, stepCount)
   return {
     runId: value.runId,
     inspectionId: value.inspectionId,
     inspectionName: value.inspectionName || definition?.name || value.inspectionId,
-    status: value.status || 'waiting',
+    status,
     startedAt: value.startedAt || '',
     finishedAt: value.finishedAt || '',
-    summary: value.summary || '巡检已完成，打开详情查看步骤结果。',
+    summary: effectiveRunSummary(value.summary, status, passedSteps),
     targetUrl: definition?.target?.url || '',
     expectedResult: value.expectedResult || definition?.expectedResult || '',
-    stepCount: safeCount(value.stepCount),
-    passedSteps: safeCount(value.passedSteps),
-    failedSteps: safeCount(value.failedSteps),
+    stepCount,
+    passedSteps,
+    failedSteps,
+    waitingSteps,
     artifactCount: safeCount(value.artifactCount),
     partial: Boolean(value.partial),
     source,
   }
+}
+
+function effectiveRunStatus(status, passedSteps, failedSteps, waitingSteps, stepCount) {
+  const normalized = typeof status === 'string' && status ? status : 'waiting'
+  if (normalized === 'waiting'
+    && stepCount > 0
+    && failedSteps === 0
+    && waitingSteps === 0
+    && passedSteps === stepCount) return 'passed'
+  return normalized
+}
+
+function effectiveRunSummary(summary, status, passedSteps) {
+  const value = typeof summary === 'string' ? summary : ''
+  if (status === 'passed' && /^巡检进行中[：:]/u.test(value)) {
+    return `交互巡检本轮已完成 ${passedSteps} 个步骤。`
+  }
+  return value || '巡检已完成，打开详情查看步骤结果。'
+}
+
+function normalizeRunReport(report) {
+  const results = Array.isArray(report?.results) ? report.results : []
+  const passedSteps = results.filter(result => result.status === 'passed').length
+  const failedSteps = results.filter(result => result.status === 'failed').length
+  const waitingSteps = results.filter(result => result.status === 'waiting').length
+  const status = effectiveRunStatus(report?.status, passedSteps, failedSteps, waitingSteps, results.length)
+  if (status === report?.status && !(status === 'passed' && /^巡检进行中[：:]/u.test(String(report?.summary || '')))) return report
+  return { ...report, status, summary: effectiveRunSummary(report?.summary, status, passedSteps) }
 }
 
 function safeCount(value) {
@@ -292,19 +327,22 @@ function summarizeRun(report, definition, source = 'json') {
   const artifactCount = results.reduce((count, result) => count + (Array.isArray(result.artifacts) ? result.artifacts.length : 0), 0) + 2
   const passedSteps = results.filter(result => result.status === 'passed').length
   const failedSteps = results.filter(result => result.status === 'failed').length
+  const waitingSteps = results.filter(result => result.status === 'waiting').length
+  const status = effectiveRunStatus(report.status, passedSteps, failedSteps, waitingSteps, results.length)
   return {
     runId: report.runId,
     inspectionId: report.inspectionId,
     inspectionName: report.inspectionName || definition?.name || report.inspectionId,
-    status: report.status || 'waiting',
+    status,
     startedAt: report.startedAt || '',
     finishedAt: report.finishedAt || '',
-    summary: report.summary || summarizeResults(results),
+    summary: effectiveRunSummary(report.summary || summarizeResults(results), status, passedSteps),
     targetUrl: definition?.target?.url || '',
     expectedResult: report.expectedResult || definition?.expectedResult || '',
     stepCount: results.length,
     passedSteps,
     failedSteps,
+    waitingSteps,
     artifactCount,
     partial: false,
     source,
@@ -407,7 +445,7 @@ async function loadRun(storageRoot, inspectionId, runId) {
 }
 
 async function describeArtifacts(storageRoot, workspace, definition, report, prefix) {
-  const rows = artifactCandidates(storageRoot, report)
+  const rows = await artifactCandidates(storageRoot, workspace, report)
   const described = []
   for (const row of rows) {
     try {
@@ -429,7 +467,7 @@ async function describeArtifacts(storageRoot, workspace, definition, report, pre
   return described
 }
 
-function artifactCandidates(storageRoot, report) {
+async function artifactCandidates(storageRoot, workspace, report) {
   const runRoot = join(storageRoot, 'runs', report.inspectionId, report.runId)
   const rows = [
     { token: 'report-json', kind: 'json-report', name: '巡检报告.json', path: join(runRoot, 'report.json') },
@@ -442,11 +480,44 @@ function artifactCandidates(storageRoot, report) {
       rows.push({ token: `step-${index++}`, kind: artifact.kind || 'artifact', name: basename(artifact.path), path: artifact.path, stepId: result.stepId })
     }
   }
+  const known = new Set(rows.map(row => normalizedPath(row.path)).filter(Boolean))
+  for (const legacy of await discoverLegacyTeachingScreenshots(workspace, report)) {
+    if (known.has(normalizedPath(legacy.path))) continue
+    rows.push({ token: `legacy-screenshot-${index++}`, kind: 'screenshot', name: basename(legacy.path), path: legacy.path, stepId: null })
+  }
+  return rows
+}
+
+export async function discoverLegacyTeachingScreenshots(workspace, report) {
+  if (typeof workspace !== 'string' || !workspace.trim()) return []
+  if (!report || typeof report.runId !== 'string' || !report.runId.startsWith('teaching-')) return []
+  if (typeof report.inspectionId !== 'string' || !ID.test(report.inspectionId)) return []
+  const root = join(workspace, 'patrol-results', report.inspectionId, 'teaching', 'screenshots')
+  let entries
+  try { entries = await readdir(root, { withFileTypes: true }) } catch (error) {
+    if (error?.code === 'ENOENT') return []
+    throw error
+  }
+  const started = Date.parse(String(report.startedAt || ''))
+  const finished = Date.parse(String(report.finishedAt || report.startedAt || ''))
+  const lower = Number.isFinite(started) ? started - 120_000 : Number.NEGATIVE_INFINITY
+  const upper = Number.isFinite(finished) ? finished + 120_000 : Number.POSITIVE_INFINITY
+  const rows = []
+  for (const entry of entries) {
+    if (!entry.isFile() || !['.png', '.jpg', '.jpeg', '.webp'].includes(extname(entry.name).toLowerCase())) continue
+    const path = join(root, entry.name)
+    try {
+      const info = await stat(path)
+      if (info.mtimeMs < lower || info.mtimeMs > upper) continue
+      rows.push({ path, mtimeMs: info.mtimeMs })
+    } catch {}
+  }
+  rows.sort((a, b) => a.mtimeMs - b.mtimeMs)
   return rows
 }
 
 async function resolveArtifact(storageRoot, workspace, definition, report, token) {
-  const row = artifactCandidates(storageRoot, report).find(item => item.token === token)
+  const row = (await artifactCandidates(storageRoot, workspace, report)).find(item => item.token === token)
   if (!row) throw new Error('artifact not found')
   const path = await safeArtifactPath(storageRoot, workspace, definition, report, row.path)
   await access(path)

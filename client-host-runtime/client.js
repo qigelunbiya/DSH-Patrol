@@ -372,7 +372,24 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
     return latest ? latest.id : '';
   }
 
-  function DashboardFrame({ useSession, workspaceRoot, mode, inputActions }) {
+  function isolatedFlowRunPrompt(inspectionId, flowName) {
+    const label = flowName && flowName !== inspectionId ? `（${flowName}）` : '';
+    return `运行巡检流程 ${inspectionId}${label}。仅调用一次 patrol_run_flow 重放此已有流程。无论成功或失败，调用完成后直接报告结果并停止；不要修改、重教、恢复、观察或新增流程步骤，也不要调用 patrol_last_failure、patrol_begin_edit、patrol_observe。`;
+  }
+
+  async function runFlowInFreshPatrolSession(ctx, workspaceRoot, inspectionId, flowName) {
+    const sessionId = await ctx.sessions.create(workspaceRoot ? { cwd: workspaceRoot } : {});
+    const selected = await ctx.remote.agentPresets.select(sessionId, PATROL_PRESET_ID);
+    if (!selected.ok) throw new Error(`无法为新巡检会话启用巡检模式：${selected.error?.message || selected.error?.code || 'unknown error'}`);
+    const binding = ctx.sessions.binding(sessionId);
+    if (!binding) throw new Error(`新巡检会话 ${sessionId} 无法访问`);
+    ctx.sessions.open(sessionId);
+    const prompt = isolatedFlowRunPrompt(inspectionId, flowName);
+    const result = await binding.session.prompt([{ type: 'text', text: prompt }], 'queue');
+    if (!result.ok) throw new Error(`巡检执行请求提交失败：${result.error?.message || result.error?.code || 'unknown error'}`);
+  }
+
+  function DashboardFrame({ useSession, workspaceRoot, mode, runFlow }) {
     const iframeRef = React.useRef(null);
     const nodes = useSession(snapshot => snapshot.nodes);
     const runningCalls = useSession(snapshot => snapshot.runningCalls);
@@ -392,15 +409,13 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
         const inspectionId = String(data.inspectionId || '').trim();
         if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(inspectionId)) return;
         const flowName = String(data.flowName || inspectionId).trim();
-        const label = flowName && flowName !== inspectionId ? `（${flowName}）` : '';
-        inputActions.setDraft(
-          `运行巡检流程 ${inspectionId}${label}。请直接使用 patrol_run_flow 重放已有流程，不要修改、重教或新增流程步骤。`,
-        );
-        setTimeout(() => inputActions.submit(), 0);
+        void runFlow(inspectionId, flowName).catch(error => {
+          console.error('[dsh-patrol] isolated flow run failed:', error);
+        });
       };
       window.addEventListener('message', onMessage);
       return () => window.removeEventListener('message', onMessage);
-    }, [inputActions]);
+    }, [runFlow]);
 
     return React.createElement('iframe', {
       ref: iframeRef,
@@ -421,7 +436,11 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
         if (!binding) throw new Error(`dsh-patrol client: session ${sessionId} is unavailable`);
         const state = ctx.sessions.list.getSnapshot();
         const summary = state.byId && state.byId[sessionId];
-        return { workspaceRoot: typeof summary?.cwd === 'string' ? summary.cwd : '' };
+        const workspaceRoot = typeof summary?.cwd === 'string' ? summary.cwd : '';
+        return {
+          workspaceRoot,
+          runFlow: (inspectionId, flowName) => runFlowInFreshPatrolSession(ctx, workspaceRoot, inspectionId, flowName),
+        };
       },
     }, Component));
   }
@@ -437,7 +456,7 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
   }
 
   exports.name = 'dsh-patrol-client-host';
-  exports.inject = ['slots', 'sessions'];
+  exports.inject = ['slots', 'sessions', 'remote', 'remote.agentPresets'];
   exports.apply = function apply(ctx) {
     ctx.effect(() => registerTokenSurfaces(ctx), 'dsh-patrol-client-host: token management surfaces');
     ctx.effect(() => {
