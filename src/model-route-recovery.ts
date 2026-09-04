@@ -1,5 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
-import LlmRuntime, {
+import type LlmRuntime from '@deepseek-ai/dsh-llm'
+import {
   isAgentLoopRequest,
   markAgentLoopRequest,
   type GenerateOptions,
@@ -18,9 +19,8 @@ interface AgentDefaultModelService {
   currentSelection(): ModelSelection
 }
 
-interface PatrolModelRecoveryContext extends Context {
+type PatrolModelRecoveryContext = Context & {
   agentDefaultModel?: AgentDefaultModelService
-  agent?: { id?: unknown }
 }
 
 interface FailureLike {
