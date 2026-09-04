@@ -75,6 +75,14 @@ export function shouldForcePatrolCompaction(
     && totalTokens >= softLimit
 }
 
+function asAgentLike(value: unknown): AgentLike | undefined {
+  if (value === null || typeof value !== 'object') return undefined
+  const session = (value as { session?: unknown }).session
+  if (session === null || typeof session !== 'object') return undefined
+  if (typeof (session as { requestHeader?: unknown }).requestHeader !== 'function') return undefined
+  return value as AgentLike
+}
+
 function routeFromAgent(agent: AgentLike): RequestRoute | undefined {
   const config = agent.session.requestHeader()?.config
   if (config === undefined || config.provider.length === 0 || config.model.length === 0) return undefined
@@ -125,7 +133,8 @@ export function registerPatrolContextPressureGuard(
   const disposePreStep = ctx.on(
     'agent/pre-step',
     async (payload, next) => {
-      const agent = payload.agent as unknown as AgentLike
+      const agent = asAgentLike(payload.agent)
+      if (agent === undefined) return next()
       const route = routeFromAgent(agent)
       if (route === undefined || !isPatrolQwenConstrainedRoute(route) || payload.signal.aborted) {
         return next()
@@ -172,7 +181,8 @@ export function registerPatrolContextPressureGuard(
   const disposeRequestError = ctx.on(
     'agent/request-error',
     async (payload, next) => {
-      const agent = payload.agent as unknown as AgentLike
+      const agent = asAgentLike(payload.agent)
+      if (agent === undefined) return next()
       const route = routeFromAgent(agent)
       if (route === undefined
         || !isPatrolQwenConstrainedRoute(route)
