@@ -156,18 +156,23 @@ function replaceGeneration(session: SessionLike): number | undefined {
 
 function readTokenMeter(ctx: Context): TokenMeterLike | undefined {
   try {
-    return ctx.get('tokenMeter') as TokenMeterLike | undefined
+    const service = ctx.get('tokenMeter') as TokenMeterLike | undefined
+    if (service !== undefined) return service
   } catch {
-    return undefined
+    // Some scoped Cordis contexts expose inherited services through properties
+    // even when an optional ctx.get() lookup is unavailable in that scope.
   }
+  return (ctx as unknown as { tokenMeter?: TokenMeterLike }).tokenMeter
 }
 
 function readCompaction(ctx: Context): CompactionLike | undefined {
   try {
-    return ctx.get('compaction') as CompactionLike | undefined
+    const service = ctx.get('compaction') as CompactionLike | undefined
+    if (service !== undefined) return service
   } catch {
-    return undefined
+    // Keep the direct service-property fallback for scoped Patrol contexts.
   }
+  return (ctx as unknown as { compaction?: CompactionLike }).compaction
 }
 
 function eventAt(session: SessionLike, seq: number): SessionEventLike | undefined {
@@ -372,9 +377,11 @@ export function registerPatrolContextPressureGuard(
         return next()
       }
 
+      // The model-free emergency pass only needs tokenMeter. Do not gate it on
+      // ctx.compaction: the real exported Session proved that optional compaction
+      // lookup can be absent while the oversized Qwen request still dispatches.
       const tokenMeter = readTokenMeter(ctx)
-      const compaction = readCompaction(ctx)
-      if (tokenMeter === undefined || compaction === undefined) return next()
+      if (tokenMeter === undefined) return next()
 
       let measurement: TokenMeasurementLike
       try {
@@ -409,6 +416,16 @@ export function registerPatrolContextPressureGuard(
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error)
         ctx.logger.warn(`[dsh-patrol/context-pressure] model-free emergency prune failed: ${message}; trying normal compaction`)
+      }
+
+      // Only the model-backed fallback depends on the compaction service.
+      const compaction = readCompaction(ctx)
+      if (compaction === undefined) {
+        ctx.logger.warn(
+          `[dsh-patrol/context-pressure] request remains above ${softLimit} tokens after model-free pruning, `
+          + 'but compaction service is unavailable in this scope; continuing with the reduced surface',
+        )
+        return next()
       }
 
       const before = replaceGeneration(agent.session)
@@ -449,15 +466,14 @@ export function registerPatrolContextPressureGuard(
       attemptedOomRecovery.set(agentKey, key)
 
       const tokenMeter = readTokenMeter(ctx)
-      const compaction = readCompaction(ctx)
-      if (compaction === undefined) return next()
-
       const before = replaceGeneration(agent.session)
       ctx.logger.warn(
         `[dsh-patrol/context-pressure] ${route.provider}/${route.model} returned CUDA OOM at turn ${payload.turn} `
         + `step ${payload.step}; pruning old tool results before any summary call`,
       )
 
+      // The first recovery phase is model-free and must remain available even
+      // when the optional model-backed compaction service cannot be resolved.
       if (tokenMeter !== undefined) {
         try {
           const emergency = emergencyPrunePatrolToolResults(
@@ -476,6 +492,18 @@ export function registerPatrolContextPressureGuard(
           const message = error instanceof Error ? error.message : String(error)
           ctx.logger.warn(`[dsh-patrol/context-pressure] OOM model-free prune failed: ${message}; trying normal compaction`)
         }
+      }
+
+      const compaction = readCompaction(ctx)
+      if (compaction === undefined) {
+        const after = replaceGeneration(agent.session)
+        if (!payload.signal.aborted && before !== undefined && after !== undefined && after > before) {
+          ctx.logger.warn(
+            '[dsh-patrol/context-pressure] OOM recovery advanced the durable surface without compaction; retrying this model step once',
+          )
+          return { kind: 'retry' as const }
+        }
+        return next()
       }
 
       try {
