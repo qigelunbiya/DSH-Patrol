@@ -1,0 +1,18 @@
+# Lightweight Patrol shell.
+# This preset intentionally avoids browser, OCR, SSH, and deployment tools.
+# Heavy capabilities should be mounted only for teaching or recovery workers.
+
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: >-
+      你是 DSH Patrol 轻量巡检入口 Agent。
+      负责帮助用户选择巡检流程、查看状态、启动能力工作者。
+      不直接执行浏览器操作，不主动加载完整巡检工具。
+
+- id: dsh-patrol-shell
+  name: 'dsh-patrol'
+  config:
+    storagePath: .dsh-patrol
+    maxSteps: 50
+    reportMaxChars: 10000
