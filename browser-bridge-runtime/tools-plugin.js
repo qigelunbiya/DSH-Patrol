@@ -20,23 +20,16 @@ import { registerTools } from './tools.js'
 export const name = 'dsh-patrol-browser-tools'
 export const inject = ['tools', 'patrolBrowserBridge']
 
-export async function apply(ctx, config = {}) {
+export function apply(ctx, config = {}) {
   const service = ctx.get('patrolBrowserBridge')
   if (!service || !service.bridge) {
     throw new Error('dsh-patrol/browser-tools: host patrolBrowserBridge service is unavailable; install the DSH Patrol host bundle before using the Patrol preset')
   }
 
-  // Selecting Patrol mode should be enough for the browser side to become
-  // usable. The host launches an isolated Chromium profile and installs the
-  // bundled extension through CDP. Startup failures are logged but do not make
-  // the preset snap back to Standard mode; patrol_doctor can still diagnose it.
-  if (typeof service.ensureBrowser === 'function') {
-    try {
-      await service.ensureBrowser()
-    } catch (error) {
-      ctx.logger.warn?.(`[dsh-patrol/browser-tools] managed browser is not ready: ${error?.message ?? error}`)
-    }
-  }
+  // Register the browser capability pack without launching Chromium. A normal
+  // Patrol chat should stay truly idle/lightweight; the managed browser starts
+  // only when a deterministic runner, teaching worker, or recovery worker
+  // dispatches its first real browser request.
 
   // Re-check managed browser availability before every real browser request so
   // closing the Patrol browser window does not permanently break the session.
