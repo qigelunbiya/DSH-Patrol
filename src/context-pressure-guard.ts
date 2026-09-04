@@ -98,6 +98,32 @@ export const PATROL_QWEN_SOFT_REQUEST_LIMIT = 30_000
 export const PATROL_QWEN_EMERGENCY_TARGET = 29_500
 
 /**
+ * A real CUDA OOM can happen below the ordinary Patrol soft limit when another
+ * process is already occupying most of the GPU. In that case an absolute
+ * 29.5k target is a no-op, which lets the raw OOM fall into the gateway retry
+ * chain and often turns the user-visible error into a misleading
+ * auth_unavailable cooldown failure.
+ *
+ * After an observed OOM, shrink the durable request proportionally as well as
+ * respecting the normal emergency ceiling. This path runs only after a genuine
+ * CUDA OOM, so it can be deliberately more aggressive than preflight pruning.
+ */
+export const PATROL_QWEN_OOM_RECOVERY_RATIO = 0.72
+
+export function patrolQwenOomRecoveryTarget(
+  totalTokens: number,
+  softLimit = PATROL_QWEN_SOFT_REQUEST_LIMIT,
+): number {
+  const current = Number.isFinite(totalTokens) ? Math.max(1, Math.floor(totalTokens)) : 1
+  if (current <= 1) return 1
+  const limit = Number.isFinite(softLimit)
+    ? Math.max(2, Math.floor(softLimit))
+    : PATROL_QWEN_SOFT_REQUEST_LIMIT
+  const proportional = Math.max(1, Math.floor(current * PATROL_QWEN_OOM_RECOVERY_RATIO))
+  return Math.min(current - 1, limit - 1, PATROL_QWEN_EMERGENCY_TARGET, proportional)
+}
+
+/**
  * Harness' stock tool-result pruner only touches results above 8192 characters.
  * The real failing Patrol session had dozens of browser results around 1-3k
  * characters, so the stock pass removed nothing and compaction immediately fell
@@ -476,17 +502,23 @@ export function registerPatrolContextPressureGuard(
       // when the optional model-backed compaction service cannot be resolved.
       if (tokenMeter !== undefined) {
         try {
+          const measuredBefore = tokenMeter.measure(agent.session).totalTokens
+          const recoveryTarget = patrolQwenOomRecoveryTarget(measuredBefore, softLimit)
           const emergency = emergencyPrunePatrolToolResults(
             agent.session,
             tokenMeter,
-            Math.min(PATROL_QWEN_EMERGENCY_TARGET, softLimit - 1),
+            recoveryTarget,
           )
-          if (emergency.pruned > 0 && emergency.afterTokens < softLimit && !payload.signal.aborted) {
+          if (emergency.pruned > 0
+            && emergency.afterTokens < emergency.beforeTokens
+            && !payload.signal.aborted) {
             ctx.logger.warn(
-              `[dsh-patrol/context-pressure] OOM recovery used only model-free pruning `
-              + `(${emergency.beforeTokens} -> ${emergency.afterTokens} tokens); retrying this step once`,
+              `[dsh-patrol/context-pressure] OOM recovery used model-free relative pruning `
+              + `(${emergency.beforeTokens} -> ${emergency.afterTokens} tokens; target ${recoveryTarget}); `
+              + 'delegating retry timing to Harness so gateway cooldown/backoff is preserved',
             )
-            return { kind: 'retry' as const }
+            const downstreamDecision = await next()
+            return downstreamDecision ?? { kind: 'retry' as const }
           }
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : String(error)
@@ -499,9 +531,10 @@ export function registerPatrolContextPressureGuard(
         const after = replaceGeneration(agent.session)
         if (!payload.signal.aborted && before !== undefined && after !== undefined && after > before) {
           ctx.logger.warn(
-            '[dsh-patrol/context-pressure] OOM recovery advanced the durable surface without compaction; retrying this model step once',
+            '[dsh-patrol/context-pressure] OOM recovery advanced the durable surface without compaction; delegating retry timing to Harness',
           )
-          return { kind: 'retry' as const }
+          const downstreamDecision = await next()
+          return downstreamDecision ?? { kind: 'retry' as const }
         }
         return next()
       }
@@ -512,8 +545,9 @@ export function registerPatrolContextPressureGuard(
         const advanced = result !== null
           || (before !== undefined && after !== undefined && after > before)
         if (advanced && !payload.signal.aborted) {
-          ctx.logger.warn('[dsh-patrol/context-pressure] OOM recovery reduced the durable surface; retrying this model step once')
-          return { kind: 'retry' as const }
+          ctx.logger.warn('[dsh-patrol/context-pressure] OOM recovery reduced the durable surface; delegating retry timing to Harness')
+          const downstreamDecision = await next()
+          return downstreamDecision ?? { kind: 'retry' as const }
         }
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error)
@@ -521,9 +555,10 @@ export function registerPatrolContextPressureGuard(
         if (!payload.signal.aborted && before !== undefined && after !== undefined && after > before) {
           ctx.logger.warn(
             `[dsh-patrol/context-pressure] OOM compaction reported ${message}, but durable pruning advanced the surface; `
-            + 'retrying this model step once',
+            + 'delegating retry timing to Harness',
           )
-          return { kind: 'retry' as const }
+          const downstreamDecision = await next()
+          return downstreamDecision ?? { kind: 'retry' as const }
         }
         ctx.logger.warn(`[dsh-patrol/context-pressure] OOM compaction failed: ${message}; delegating to Harness retry policy`)
       }

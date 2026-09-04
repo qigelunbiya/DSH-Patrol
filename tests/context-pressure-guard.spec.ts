@@ -6,6 +6,7 @@ import {
   isPatrolQwenConstrainedRoute,
   PATROL_QWEN_EMERGENCY_TARGET,
   PATROL_QWEN_SOFT_REQUEST_LIMIT,
+  patrolQwenOomRecoveryTarget,
   registerPatrolContextPressureGuard,
   shouldForcePatrolCompaction,
 } from '../src/context-pressure-guard.js'
@@ -81,7 +82,7 @@ function textChars(message: any): number {
   return chars
 }
 
-function replayTokenMeter() {
+function replayTokenMeter(baseTokens = 24_000) {
   return {
     measure(session: ReturnType<typeof replayableAgent>['session']) {
       let surfaceTokens = 0
@@ -90,7 +91,7 @@ function replayTokenMeter() {
         if (event?.type !== 'tool/result') continue
         surfaceTokens += Math.ceil(textChars(event.data.message) / 4) + 12
       }
-      return { totalTokens: 24_000 + surfaceTokens }
+      return { totalTokens: baseTokens + surfaceTokens }
     },
     estimateMessage(message: unknown) {
       return Math.ceil(textChars(message) / 4) + 12
@@ -143,6 +144,12 @@ describe('Patrol constrained-Qwen context pressure guard', () => {
       code: 'SERVER',
       message: '503: auth_unavailable: no auth available',
     })).toBe(false)
+  })
+
+  it('chooses a proportional OOM target even when the failing request is below the normal soft limit', () => {
+    expect(patrolQwenOomRecoveryTarget(21_000)).toBe(15_120)
+    expect(patrolQwenOomRecoveryTarget(35_000)).toBe(25_200)
+    expect(patrolQwenOomRecoveryTarget(60_000)).toBe(PATROL_QWEN_EMERGENCY_TARGET)
   })
 
   it('model-free emergency pruning shrinks old browser results while preserving the newest four', () => {
@@ -234,7 +241,7 @@ describe('Patrol constrained-Qwen context pressure guard', () => {
     await ctx.fiber.dispose()
   })
 
-  it('owns one immediate retry when CUDA OOM recovery advances the durable surface', async () => {
+  it('lets Harness apply its retry backoff after OOM compaction advances the durable surface', async () => {
     const ctx = new Context()
     const agent = fakeAgent()
     const compactIfNeeded = vi.fn(async () => {
@@ -244,7 +251,9 @@ describe('Patrol constrained-Qwen context pressure guard', () => {
     ctx.provide('compaction', { compactIfNeeded })
     registerPatrolContextPressureGuard(ctx)
 
-    const downstream = vi.fn(async () => undefined)
+    const downstream = vi.fn()
+      .mockResolvedValueOnce({ kind: 'retry' as const })
+      .mockResolvedValueOnce(undefined)
     await expect(ctx.waterfall(
       'agent/request-error',
       requestErrorPayload(agent, '500: CUDA out of memory. Tried to allocate 576.00 MiB.') as never,
@@ -252,13 +261,41 @@ describe('Patrol constrained-Qwen context pressure guard', () => {
     )).resolves.toEqual({ kind: 'retry' })
 
     expect(compactIfNeeded).toHaveBeenCalledOnce()
-    expect(downstream).not.toHaveBeenCalled()
+    expect(downstream).toHaveBeenCalledOnce()
 
     await expect(ctx.waterfall(
       'agent/request-error',
       requestErrorPayload(agent, '500: CUDA out of memory. Tried to allocate 576.00 MiB.') as never,
       downstream,
     )).resolves.toBeUndefined()
+    expect(compactIfNeeded).toHaveBeenCalledOnce()
+    expect(downstream).toHaveBeenCalledTimes(2)
+    await ctx.fiber.dispose()
+  })
+
+  it('recovers a real low-pressure OOM with model-free pruning before any Qwen-backed summary call', async () => {
+    const ctx = new Context()
+    const agent = replayableAgent(8, 1600)
+    const tokenMeter = replayTokenMeter(18_000)
+    const compactIfNeeded = vi.fn(async () => null)
+    ctx.provide('tokenMeter', tokenMeter)
+    ctx.provide('compaction', { compactIfNeeded })
+    registerPatrolContextPressureGuard(ctx)
+
+    const before = tokenMeter.measure(agent.session).totalTokens
+    expect(before).toBeLessThan(PATROL_QWEN_SOFT_REQUEST_LIMIT)
+    const downstream = vi.fn(async () => ({ kind: 'retry' as const }))
+
+    await expect(ctx.waterfall(
+      'agent/request-error',
+      requestErrorPayload(agent, '500: CUDA out of memory. Tried to allocate 576.00 MiB.') as never,
+      downstream,
+    )).resolves.toEqual({ kind: 'retry' })
+
+    const after = tokenMeter.measure(agent.session).totalTokens
+    expect(after).toBeLessThan(before)
+    expect(agent.session.surface.replaceGeneration).toBeGreaterThan(0)
+    expect(compactIfNeeded).not.toHaveBeenCalled()
     expect(downstream).toHaveBeenCalledOnce()
     await ctx.fiber.dispose()
   })
