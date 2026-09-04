@@ -83,7 +83,7 @@ for (const marker of [
   "window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host'",
   "exports.inject = ['slots', 'sessions'];",
   "const DASHBOARD_UI = '/patrol-browser-bridge/dashboard/ui';",
-  'function DashboardFrame({ useSession, workspaceRoot, mode })',
+  'function DashboardFrame({ useSession, workspaceRoot, mode, inputActions })',
   'function currentInspectionId(nodes, runningCalls)',
   "mode: 'flows'",
   "mode: 'records'",
