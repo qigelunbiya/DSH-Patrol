@@ -146,6 +146,10 @@ export interface ResumeState {
   definitionUpdatedAt: string
   nextStepIndex: number
   results: StepRunResult[]
+  /** Why this run is resumable: a user checkpoint or a transient runtime blocker. */
+  reason?: 'checkpoint' | 'recovery'
+  /** Stable Runbook step that should be retried after transient recovery. */
+  blockedStepId?: string
 }
 
 export interface SavedRunPaths {
