@@ -1,8 +1,10 @@
 import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  emergencyPrunePatrolToolResults,
   isCudaOutOfMemoryFailure,
   isPatrolQwenConstrainedRoute,
+  PATROL_QWEN_EMERGENCY_TARGET,
   PATROL_QWEN_SOFT_REQUEST_LIMIT,
   registerPatrolContextPressureGuard,
   shouldForcePatrolCompaction,
@@ -22,6 +24,77 @@ function fakeAgent(totalReplaceGeneration = 0) {
     id: 'patrol-session',
     session,
     options: QWEN_ROUTE,
+  }
+}
+
+function replayableAgent(toolResultCount = 16, charsPerResult = 2000) {
+  const events: Array<Record<string, any>> = []
+  const nodes: number[] = []
+  for (let index = 0; index < toolResultCount; index += 1) {
+    const seq = events.length
+    const message = {
+      role: 'user',
+      source: { kind: 'tool', callId: `call-${index}` },
+      content: [{
+        type: 'tool-result',
+        toolCallId: `call-${index}`,
+        content: [{ type: 'text', text: String(index).padStart(2, '0') + '-'.repeat(charsPerResult - 2) }],
+        isError: false,
+      }],
+    }
+    events.push({ type: 'tool/result', seq, data: { turn: 1, step: index + 1, message }, surfaceOp: 'append' })
+    nodes.push(seq)
+  }
+
+  const session = {
+    requestHeader: () => ({ config: QWEN_ROUTE }),
+    surface: { replaceGeneration: 0, nodes },
+    events,
+    append(type: string, data: unknown, options?: { surfaceOp?: any; sourceEventSeqs?: number[] }) {
+      const seq = events.length
+      const event = { type, seq, data, ...options }
+      events.push(event)
+      const replace = options?.surfaceOp
+      if (replace && typeof replace === 'object' && replace.op === 'replace') {
+        const index = nodes.indexOf(replace.start)
+        if (index >= 0) nodes[index] = seq
+        session.surface.replaceGeneration += 1
+      }
+      return { seq }
+    },
+  }
+  return {
+    id: 'patrol-session',
+    session,
+    options: QWEN_ROUTE,
+  }
+}
+
+function textChars(message: any): number {
+  let chars = 0
+  for (const outer of message?.content ?? []) {
+    if (outer?.type !== 'tool-result') continue
+    for (const block of outer.content ?? []) {
+      if (block?.type === 'text') chars += String(block.text ?? '').length
+    }
+  }
+  return chars
+}
+
+function replayTokenMeter() {
+  return {
+    measure(session: ReturnType<typeof replayableAgent>['session']) {
+      let surfaceTokens = 0
+      for (const seq of session.surface.nodes) {
+        const event = session.events[seq]
+        if (event?.type !== 'tool/result') continue
+        surfaceTokens += Math.ceil(textChars(event.data.message) / 4) + 12
+      }
+      return { totalTokens: 24_000 + surfaceTokens }
+    },
+    estimateMessage(message: unknown) {
+      return Math.ceil(textChars(message) / 4) + 12
+    },
   }
 }
 
@@ -72,7 +145,53 @@ describe('Patrol constrained-Qwen context pressure guard', () => {
     })).toBe(false)
   })
 
-  it('compacts before dispatch when measured request pressure crosses the soft limit', async () => {
+  it('model-free emergency pruning shrinks old browser results while preserving the newest four', () => {
+    const agent = replayableAgent()
+    const meter = replayTokenMeter()
+    const newestFour = [...agent.session.surface.nodes].slice(-4)
+    const before = meter.measure(agent.session).totalTokens
+
+    const result = emergencyPrunePatrolToolResults(agent.session, meter)
+
+    expect(before).toBeGreaterThan(PATROL_QWEN_SOFT_REQUEST_LIMIT)
+    expect(result.pruned).toBeGreaterThan(0)
+    expect(result.afterTokens).toBeLessThan(PATROL_QWEN_EMERGENCY_TARGET)
+    expect(agent.session.surface.replaceGeneration).toBe(result.pruned)
+    for (const seq of newestFour) {
+      expect(agent.session.surface.nodes).toContain(seq)
+      expect(textChars(agent.session.events[seq]?.data?.message)).toBe(2000)
+    }
+  })
+
+  it('avoids the Qwen-backed summarizer when model-free pruning creates enough headroom', async () => {
+    const ctx = new Context()
+    const agent = replayableAgent()
+    const tokenMeter = replayTokenMeter()
+    const compactIfNeeded = vi.fn(async () => null)
+    ctx.provide('tokenMeter', tokenMeter)
+    ctx.provide('compaction', { compactIfNeeded })
+    registerPatrolContextPressureGuard(ctx)
+
+    const downstream = vi.fn(async () => ({ kind: 'enter' as const, messages: [] }))
+    await ctx.waterfall(
+      'agent/pre-step',
+      {
+        agent,
+        messages: [],
+        turn: 1,
+        step: 1,
+        signal: new AbortController().signal,
+      } as never,
+      downstream,
+    )
+
+    expect(tokenMeter.measure(agent.session).totalTokens).toBeLessThan(PATROL_QWEN_SOFT_REQUEST_LIMIT)
+    expect(compactIfNeeded).not.toHaveBeenCalled()
+    expect(downstream).toHaveBeenCalledOnce()
+    await ctx.fiber.dispose()
+  })
+
+  it('compacts before dispatch when measured request pressure crosses the soft limit and model-free pruning is unavailable', async () => {
     const ctx = new Context()
     const agent = fakeAgent()
     const compactIfNeeded = vi.fn(async () => {
