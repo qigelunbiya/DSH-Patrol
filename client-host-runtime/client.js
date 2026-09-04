@@ -378,9 +378,7 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
   }
 
   async function runFlowInFreshPatrolSession(ctx, workspaceRoot, inspectionId, flowName) {
-    const sessionId = await ctx.sessions.create(workspaceRoot ? { cwd: workspaceRoot } : {});
-    const selected = await ctx.remote.agentPresets.select(sessionId, PATROL_PRESET_ID);
-    if (!selected.ok) throw new Error(`无法为新巡检会话启用巡检模式：${selected.error?.message || selected.error?.code || 'unknown error'}`);
+    const sessionId = await ctx.sessions.create({ ...(workspaceRoot ? { cwd: workspaceRoot } : {}), agentPreset: PATROL_PRESET_ID });
     const binding = ctx.sessions.binding(sessionId);
     if (!binding) throw new Error(`新巡检会话 ${sessionId} 无法访问`);
     ctx.sessions.open(sessionId);
@@ -456,7 +454,7 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
   }
 
   exports.name = 'dsh-patrol-client-host';
-  exports.inject = ['slots', 'sessions', 'remote', 'remote.agentPresets'];
+  exports.inject = ['slots', 'sessions'];
   exports.apply = function apply(ctx) {
     ctx.effect(() => registerTokenSurfaces(ctx), 'dsh-patrol-client-host: token management surfaces');
     ctx.effect(() => {

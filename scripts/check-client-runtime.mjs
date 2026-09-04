@@ -81,7 +81,7 @@ if (!uninstaller.includes('pnpm remove dsh-patrol-client-host')) {
 
 for (const marker of [
   "window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host'",
-  "exports.inject = ['slots', 'sessions', 'remote', 'remote.agentPresets'];",
+  "exports.inject = ['slots', 'sessions'];",
   "const DASHBOARD_UI = '/patrol-browser-bridge/dashboard/ui';",
   'function DashboardFrame({ useSession, workspaceRoot, mode, runFlow })',
   'function currentInspectionId(nodes, runningCalls)',
