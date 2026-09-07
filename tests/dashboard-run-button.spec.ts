@@ -2,29 +2,26 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-const management = readFileSync(join(process.cwd(), 'browser-bridge-runtime', 'dashboard-management-client.js'), 'utf8')
-const host = readFileSync(join(process.cwd(), 'client-host-runtime', 'client.js'), 'utf8')
+const managementClient = readFileSync(join(process.cwd(), 'browser-bridge-runtime', 'dashboard-management-client.js'), 'utf8')
+const managementHost = readFileSync(join(process.cwd(), 'browser-bridge-runtime', 'dashboard-management.js'), 'utf8')
 
 describe('flow run button', () => {
-  it('posts the stable flow id to the parent conversation host', () => {
-    expect(management).toContain('data-manage-action="run"')
-    expect(management).toContain("type: 'dsh-patrol:run-flow'")
-    expect(management).toContain('inspectionId: id')
-    expect(management).toContain('window.parent.postMessage')
+  it('posts the stable flow id directly to the host replay route instead of a conversation prompt', () => {
+    expect(managementClient).toContain('data-manage-action="run"')
+    expect(managementClient).toContain("postAction('/flow/run', { inspectionId: id })")
+    expect(managementClient).toContain('zeroModelReplay')
+    expect(managementClient).not.toContain("type: 'dsh-patrol:run-flow'")
+    expect(managementClient).not.toContain('window.parent.postMessage')
   })
 
-  it('validates same-origin iframe messages and runs the replay in a fresh Patrol session', () => {
-    expect(host).toContain("data.type !== 'dsh-patrol:run-flow'")
-    expect(host).toContain('event.origin !== window.location.origin')
-    expect(host).toContain('event.source !== iframeRef.current?.contentWindow')
-    expect(host).toContain('ctx.sessions.create')
-    expect(host).toContain('agentPreset: PATROL_PRESET_ID')
-    expect(host).not.toContain('ctx.remote.agentPresets.select')
-    expect(host).toContain('ctx.sessions.binding')
-    expect(host).toContain("binding.session.prompt([{ type: 'text', text: prompt }], 'queue')")
-    expect(host).toContain('ctx.sessions.open(sessionId)')
-    expect(host).toContain('仅调用一次 patrol_run_flow')
-    expect(host).toContain('不要调用 patrol_last_failure、patrol_begin_edit、patrol_observe')
-    expect(host).not.toContain('inputActions.setDraft')
+  it('executes replay inside runMaintenance and starts Recovery only after a real browser failure', () => {
+    expect(managementHost).toContain("path: `${prefix}/flow/run`")
+    expect(managementHost).toContain("const replayTool = pending === undefined ? 'patrol_run_flow' : 'patrol_resume_flow'")
+    expect(managementHost).toContain('runMaintenance(async signal =>')
+    expect(managementHost).toContain("name: replayTool")
+    expect(managementHost).toContain("const RECOVERY_PRESET = 'patrol-recovery'")
+    expect(managementHost).toContain("item.tool.startsWith('browser_')")
+    expect(managementHost).toContain('zeroModelReplay: true')
+    expect(managementHost).not.toContain('.session.prompt(')
   })
 })
