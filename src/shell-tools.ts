@@ -16,12 +16,12 @@ const RUN_OUTPUT = {
     type: 'object' as const,
     additionalProperties: false,
     properties: {
-      inspectionId: { type: 'string' as const, required: true },
-      runId: { type: 'string' as const, required: true },
-      status: { type: 'string' as const, required: true, enum: ['passed', 'failed', 'waiting'] as const },
-      report: { type: 'string' as const, required: true },
+      inspectionId: { type: 'string' as const, required: true as const },
+      runId: { type: 'string' as const, required: true as const },
+      status: { type: 'string' as const, required: true as const, enum: ['passed', 'failed', 'waiting'] as const },
+      report: { type: 'string' as const, required: true as const },
       recoverySessionId: { type: 'string' as const },
-      message: { type: 'string' as const, required: true },
+      message: { type: 'string' as const, required: true as const },
     },
   },
   render: (_args: unknown, value: {
@@ -163,17 +163,17 @@ export function registerPatrolShellTools(
 
       const pending = await store.loadResume(definition.id)
       if (pending?.reason === 'recovery') {
-        const report = await store.loadRun(definition.id, pending.runId)
+        await store.loadRun(definition.id, pending.runId)
         return {
           inspectionId: definition.id,
           runId: pending.runId,
-          status: 'failed',
+          status: 'failed' as const,
           report: `${definition.id}/${pending.runId}`,
           message: 'This run is already paused at a Recovery boundary. Do not start a second replay or Recovery worker; wait for the active Recovery worker to hand control back, or abort the pending run explicitly.',
         }
       }
 
-      const replayTool = pending === undefined ? 'patrol_run_flow' : 'patrol_resume_flow'
+      const replayTool = pending === undefined ? 'patrol_run_flow' as const : 'patrol_resume_flow' as const
       const replayText = await executeReplayWorker(ctx, replayPresetId, workspace, definition.id, replayTool)
       const runId = extractField(replayText, 'runId')
       if (!runId) throw new Error(`deterministic replay for ${definition.id} returned no runId`)
@@ -197,7 +197,7 @@ export function registerPatrolShellTools(
         return {
           inspectionId: definition.id,
           runId,
-          status: 'failed',
+          status: 'failed' as const,
           report: reportPath,
           message: 'Replay failed outside a recoverable browser step; no automatic Recovery worker was started.',
         }
@@ -213,7 +213,7 @@ export function registerPatrolShellTools(
       return {
         inspectionId: definition.id,
         runId,
-        status: 'failed',
+        status: 'failed' as const,
         report: reportPath,
         recoverySessionId,
         message: `Runner paused at ${failure.stepId}. A narrow Recovery worker was started only for this exception; after clearing the obstruction it must call patrol_resume_after_recovery once to hand control back to the deterministic runner.`,
