@@ -16,7 +16,7 @@ if (!manifest.content_scripts?.some(item => Array.isArray(item.js) && item.js.in
 for (const file of ['background.js', 'content.js', 'captcha-demo-content.js', 'popup.js', 'options.js']) {
   checkSyntax(join(extensionRoot, file), file)
 }
-for (const file of ['index.js', 'bridge.js', 'managed-browser.js', 'tools.js', 'count-tool.js', 'login-state-tool.js', 'challenge-tool.js', 'image-code.js', 'captcha-mode.js', 'captcha-demo.js', 'screenshot-ocr.js', 'tools-plugin.js', 'ws.js']) {
+for (const file of ['index.js', 'bridge.js', 'managed-browser.js', 'tools.js', 'count-tool.js', 'login-state-tool.js', 'challenge-tool.js', 'image-code.js', 'captcha-mode.js', 'captcha-demo.js', 'screenshot-ocr.js', 'tools-plugin.js', 'ws.js', 'internal-worker.js', 'dashboard-management.js']) {
   checkSyntax(join(runtimeRoot, file), `browser-bridge-runtime/${file}`)
 }
 
@@ -143,6 +143,11 @@ if (replayPreset.includes("name: '@deepseek-ai/dsh-persona'")) throw new Error('
 const internalWorker = readFileSync(join(projectRoot, 'src', 'internal-worker.ts'), 'utf8')
 if (!internalWorker.includes("'@deepseek-ai/dsh-agent-presets'")) throw new Error('hidden Patrol workers must load Harness own agent-presets mount implementation')
 if (!internalWorker.includes('mountPreset')) throw new Error('hidden Patrol workers must use low-level scoped preset mounting')
+const runtimeInternalWorker = readFileSync(join(runtimeRoot, 'internal-worker.js'), 'utf8')
+if (!runtimeInternalWorker.includes("'@deepseek-ai/dsh-agent-presets'") || !runtimeInternalWorker.includes('mountPreset')) throw new Error('browser runtime hidden worker helper must use the same Harness low-level mount path')
+const dashboardManagement = readFileSync(join(runtimeRoot, 'dashboard-management.js'), 'utf8')
+if (!dashboardManagement.includes("from './internal-worker.js'")) throw new Error('dashboard runtime must use its source/package-local hidden worker helper')
+if (dashboardManagement.includes('../lib/internal-worker.js')) throw new Error('dashboard runtime must not depend on a prebuilt lib/ tree')
 const installer = readFileSync(join(projectRoot, 'scripts', 'install-local.ps1'), 'utf8')
 if (installer.includes('Install-LazyPreset -PresetId "patrol-teaching"') || installer.includes('Install-LazyPreset -PresetId "patrol-replay"') || installer.includes('Install-LazyPreset -PresetId "patrol-recovery"')) throw new Error('internal Patrol workers must not be installed into Harness user preset discovery')
 if (!installer.includes('patrol\\internal-workers') || !installer.includes('Remove-LegacyManagedWorkerPreset')) throw new Error('installer must use a non-discoverable internal worker root and remove legacy visible worker presets')
