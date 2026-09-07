@@ -28,6 +28,33 @@ jobs:
         run: |
           sed -i '/if (text.indexOf(from, i + from.length) >= 0) throw new Error/d' scripts/apply-internal-worker-fix.mjs
           node scripts/apply-internal-worker-fix.mjs
+          node --input-type=module <<'NODE'
+          import { readFile, writeFile } from 'node:fs/promises'
+
+          const lazyPath = 'tests/lazy-patrol-architecture.spec.ts'
+          let lazy = await readFile(lazyPath, 'utf8')
+          const lazyBefore = lazy
+          lazy = lazy.split('\n').map(line => (
+            line.includes("expect(installer).toContain('patrol") && line.includes('internal-workers')
+              ? "    expect(installer).toContain('internal-workers')"
+              : line
+          )).join('\n')
+          if (lazy === lazyBefore) throw new Error('lazy worker-root expectation was not updated')
+          await writeFile(lazyPath, lazy, 'utf8')
+
+          const dashboardPath = 'tests/dashboard-run-button.spec.ts'
+          let dashboard = await readFile(dashboardPath, 'utf8')
+          const oldExpectation = `    expect(managementHost).toContain("const RECOVERY_PRESET = 'patrol-recovery'")`
+          const newExpectations = [
+            `    expect(managementHost).toContain("internalPatrolWorkerPath(String(workerRoot || ''), 'recovery')")`,
+            `    expect(managementHost).toContain("mountInternalPatrolWorker(agentCtx, compositionPath, 'recovery')")`,
+            `    expect(managementHost).not.toContain("const RECOVERY_PRESET = 'patrol-recovery'")`,
+            `    expect(managementHost).not.toContain("ctx.get('agentPresets')")`,
+          ].join('\n')
+          if (!dashboard.includes(oldExpectation)) throw new Error('legacy dashboard recovery preset expectation not found')
+          dashboard = dashboard.replace(oldExpectation, newExpectations)
+          await writeFile(dashboardPath, dashboard, 'utf8')
+          NODE
       - name: Remove staging helpers
         run: rm scripts/apply-internal-worker-fix.mjs .github/workflows/apply-internal-worker-fix.yml
       - name: Install dependencies
