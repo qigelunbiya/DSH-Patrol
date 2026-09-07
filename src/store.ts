@@ -306,11 +306,40 @@ function runIndexSummary(report: RunReport): Record<string, unknown> {
   }
 }
 
+interface AtomicWriteHooks {
+  rename?: typeof rename
+  sleep?: (ms: number) => Promise<void>
+}
+
 async function atomicWrite(path: string, content: string): Promise<void> {
+  await atomicWriteForTest(path, content)
+}
+
+export async function atomicWriteForTest(path: string, content: string, hooks: AtomicWriteHooks = {}): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
   const temp = `${path}.${process.pid}.${Date.now()}.tmp`
   await writeFile(temp, content, { encoding: 'utf8', mode: 0o600 })
-  await rename(temp, path)
+  const renameImpl = hooks.rename ?? rename
+  const sleep = hooks.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)))
+  const delays = [0, 50, 150, 350, 750]
+  let lastError: unknown
+  for (const delay of delays) {
+    if (delay > 0) await sleep(delay)
+    try {
+      await renameImpl(temp, path)
+      return
+    } catch (error: unknown) {
+      lastError = error
+      if (!isRetryableAtomicWriteError(error)) break
+    }
+  }
+  await rm(temp, { force: true }).catch(() => {})
+  throw lastError
+}
+
+function isRetryableAtomicWriteError(error: unknown): boolean {
+  if (!isNodeError(error)) return false
+  return ['EPERM', 'EBUSY', 'EACCES'].includes(error.code)
 }
 
 function renderRunbookMarkdown(definition: InspectionDefinition): string {

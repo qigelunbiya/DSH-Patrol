@@ -40,6 +40,20 @@ interface AgentLike {
   }
 }
 
+interface RequestErrorLike {
+  agent?: unknown
+  turn: number
+  step: number
+  provider: string
+  failure: FailureLike
+  signal: AbortSignal
+}
+
+interface SeenStep {
+  agent: AgentLike
+  route: RequestRoute
+}
+
 const QWEN_MODEL = 'qwen3.5_122b_a10b_fp4'
 const QWEN_ROUTE_PROVIDERS = new Set(['cliproxy', 'qwen-local'])
 
@@ -146,6 +160,18 @@ export function registerPatrolContextPressureGuard(
   softLimit = PATROL_QWEN_SOFT_REQUEST_LIMIT,
 ): () => void {
   const attemptedOomRecovery = new WeakMap<object, string>()
+  const seenSteps = new Map<string, SeenStep>()
+
+  function stepKey(turn: number, step: number): string {
+    return `${turn}:${step}`
+  }
+
+  function rememberStep(turn: number, step: number, agent: AgentLike, route: RequestRoute): void {
+    seenSteps.set(stepKey(turn, step), { agent, route })
+    if (seenSteps.size <= 24) return
+    const oldest = seenSteps.keys().next().value
+    if (typeof oldest === 'string') seenSteps.delete(oldest)
+  }
 
   const disposePreStep = ctx.on(
     'agent/pre-step',
@@ -156,6 +182,7 @@ export function registerPatrolContextPressureGuard(
       if (route === undefined || !isPatrolQwenConstrainedRoute(route) || payload.signal.aborted) {
         return next()
       }
+      rememberStep(payload.turn, payload.step, agent, route)
 
       const tokenMeter = readTokenMeter(ctx)
       const compaction = readCompaction(ctx)
@@ -197,10 +224,11 @@ export function registerPatrolContextPressureGuard(
 
   const disposeRequestError = ctx.on(
     'agent/request-error',
-    async (payload, next) => {
-      const agent = asAgentLike(payload.agent)
+    async (payload: RequestErrorLike, next) => {
+      const captured = seenSteps.get(stepKey(payload.turn, payload.step))
+      const agent = asAgentLike(payload.agent) ?? captured?.agent
       if (agent === undefined) return next()
-      const route = routeFromAgent(agent)
+      const route = routeFromAgent(agent) ?? captured?.route
       if (route === undefined
         || !isPatrolQwenConstrainedRoute(route)
         || (!isCudaOutOfMemoryFailure(payload.failure) && !isQwenLocalAuthUnavailableFailure(payload.failure))
@@ -209,7 +237,7 @@ export function registerPatrolContextPressureGuard(
       }
 
       const key = `${payload.turn}:${payload.step}`
-      const agentKey = payload.agent as unknown as object
+      const agentKey = agent as unknown as object
       if (attemptedOomRecovery.get(agentKey) === key) return next()
       attemptedOomRecovery.set(agentKey, key)
 

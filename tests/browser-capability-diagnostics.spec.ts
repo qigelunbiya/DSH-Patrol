@@ -1,6 +1,9 @@
 // @ts-nocheck
 import { describe, expect, it } from 'vitest'
-import { assertImageCodeCaptureCapability } from '../browser-bridge-runtime/image-code-visual-tool.js'
+import {
+  assertImageCodeCaptureCapability,
+  registerImageCodeVisualTool,
+} from '../browser-bridge-runtime/image-code-visual-tool.js'
 import { registerTools } from '../browser-bridge-runtime/tools.js'
 
 function fakeToolContext() {
@@ -9,6 +12,7 @@ function fakeToolContext() {
     definitions,
     ctx: {
       tools: {
+        get() { return undefined },
         register(definition) {
           definitions.push(definition)
           return () => {}
@@ -81,5 +85,30 @@ describe('browser capability diagnostics', () => {
     expect(() => assertImageCodeCaptureCapability({
       status: () => ({ extension: { version: '0.2.1', capabilities: ['captureImageCode'] } }),
     })).not.toThrow()
+  })
+
+  it('falls back to a full screenshot when an older extension does not support captureImageCode', async () => {
+    const fixture = fakeToolContext()
+    const calls = []
+    const bridge = {
+      status: () => ({ extension: { version: '0.2.0' } }),
+      async request(cmd) {
+        calls.push(cmd)
+        if (cmd === 'captureImageCode') throw new Error('unsupported browser command: captureImageCode')
+        if (cmd === 'screenshot') return { ok: true, dataUrl: 'data:image/png;base64,QUFB', bytes: 3 }
+        throw new Error(`unexpected ${cmd}`)
+      },
+      saveScreenshot: () => '/tmp/current-page.png',
+    }
+
+    registerImageCodeVisualTool(fixture.ctx, bridge)
+    const tool = fixture.definitions.find(definition => definition.name === 'browser_capture_image_code_visual')
+    const value = await tool.execute({}, { agent: { session: { header: { cwd: '/tmp' } } }, signal: new AbortController().signal })
+
+    expect(calls).toEqual(['captureImageCode', 'screenshot'])
+    expect(value.captureMode).toBe('full-page-screenshot-fallback')
+    expect(value.path).toBe('/tmp/current-page.png')
+    expect(value.imageStatus).toBe('tool-unavailable')
+    expect(value.imageError).toMatch(/unsupported browser command: captureImageCode/)
   })
 })

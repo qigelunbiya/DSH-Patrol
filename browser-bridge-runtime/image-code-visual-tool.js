@@ -77,11 +77,30 @@ export function registerImageCodeVisualTool(ctx, bridge, config = {}) {
     }),
     async execute(args, exec) {
       assertImageCodeCaptureCapability(bridge)
-      const captured = await bridge.request('captureImageCode', {
-        tabId: args.tabId,
-        inputSelector: args.inputSelector,
-        imageSelector: args.imageSelector,
-      }, { timeoutMs, signal: exec?.signal })
+      let captured
+      let captureError = ''
+      try {
+        captured = await bridge.request('captureImageCode', {
+          tabId: args.tabId,
+          inputSelector: args.inputSelector,
+          imageSelector: args.imageSelector,
+        }, { timeoutMs, signal: exec?.signal })
+      } catch (error) {
+        captureError = error instanceof Error ? error.message : String(error)
+        if (!/unsupported browser command:\s*captureImageCode/i.test(captureError)) throw error
+        const shot = await bridge.request('screenshot', {
+          tabId: args.tabId,
+          format: 'png',
+        }, { timeoutMs, signal: exec?.signal })
+        captured = {
+          ok: true,
+          dataUrl: shot.dataUrl,
+          captureMode: 'full-page-screenshot-fallback',
+          inputSelector: typeof args.inputSelector === 'string' ? args.inputSelector : '',
+          imageSelector: '',
+          imageError: captureError,
+        }
+      }
       if (!captured || typeof captured !== 'object' || captured.ok === false || typeof captured.dataUrl !== 'string') {
         throw new Error(String(captured?.error || 'captureImageCode did not return a CAPTCHA image'))
       }
@@ -100,7 +119,7 @@ export function registerImageCodeVisualTool(ctx, bridge, config = {}) {
         inputSelector: typeof captured.inputSelector === 'string' ? captured.inputSelector : '',
         imageSelector: typeof captured.imageSelector === 'string' ? captured.imageSelector : '',
         imageStatus: attached.status,
-        ...(attached.error ? { imageError: attached.error } : {}),
+        ...(captureError || attached.error ? { imageError: [captureError, attached.error].filter(Boolean).join('; ') } : {}),
         ...(attached.image === undefined ? {} : { image: attached.image }),
       }
     },

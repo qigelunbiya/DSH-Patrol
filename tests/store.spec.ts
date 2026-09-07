@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { PatrolStore } from '../src/store.ts'
+import { atomicWriteForTest, PatrolStore } from '../src/store.ts'
 import type { InspectionDefinition, ResumeState, RunReport } from '../src/types.ts'
 
 const roots: string[] = []
@@ -102,5 +102,27 @@ describe('PatrolStore', () => {
       artifactCount: 3,
       summary: 'done',
     })
+  })
+
+  it('retries atomic rename when Windows temporarily denies replacing the file', async () => {
+    const value = await store()
+    const target = join(value.root, 'ephemeral-lock.json')
+    let attempts = 0
+
+    await atomicWriteForTest(target, '{"ok":true}\n', {
+      sleep: async () => {},
+      rename: async (from: string, to: string) => {
+        attempts += 1
+        if (attempts < 3) {
+          const error = new Error('operation not permitted') as NodeJS.ErrnoException
+          error.code = 'EPERM'
+          throw error
+        }
+        await import('node:fs/promises').then(fs => fs.rename(from, to))
+      },
+    })
+
+    expect(attempts).toBe(3)
+    expect(await readFile(target, 'utf8')).toBe('{"ok":true}\n')
   })
 })

@@ -49,6 +49,17 @@ function requestErrorPayload(agent: ReturnType<typeof fakeAgent>, message: strin
   }
 }
 
+function requestErrorPayloadWithoutAgent(message: string) {
+  return {
+    turn: 1,
+    step: 1,
+    provider: QWEN_ROUTE.provider,
+    failure: { code: 'RATE_LIMIT', message },
+    retryPolicy: undefined,
+    signal: new AbortController().signal,
+  }
+}
+
 describe('Patrol constrained-Qwen context pressure guard', () => {
   it('matches the real cliproxy route from the failing Session log and the older direct alias', () => {
     expect(isPatrolQwenConstrainedRoute(QWEN_ROUTE)).toBe(true)
@@ -187,6 +198,32 @@ describe('Patrol constrained-Qwen context pressure guard', () => {
 
     expect(compactIfNeeded).toHaveBeenCalledOnce()
     expect(downstream).not.toHaveBeenCalled()
+    await ctx.fiber.dispose()
+  })
+
+  it('recovers request errors using the agent captured at pre-step', async () => {
+    const ctx = new Context()
+    const agent = fakeAgent()
+    const compactIfNeeded = vi.fn(async () => {
+      agent.session.surface.replaceGeneration += 1
+      return { shadowedSeqs: [1] }
+    })
+    ctx.provide('compaction', { compactIfNeeded })
+    registerPatrolContextPressureGuard(ctx)
+
+    await ctx.waterfall(
+      'agent/pre-step',
+      preStepPayload(agent) as never,
+      async () => ({ kind: 'enter' as const, messages: [] }),
+    )
+
+    await expect(ctx.waterfall(
+      'agent/request-error',
+      requestErrorPayloadWithoutAgent('503: auth_unavailable: no auth available') as never,
+      async () => undefined,
+    )).resolves.toEqual({ kind: 'retry' })
+
+    expect(compactIfNeeded).toHaveBeenCalledOnce()
     await ctx.fiber.dispose()
   })
 })
