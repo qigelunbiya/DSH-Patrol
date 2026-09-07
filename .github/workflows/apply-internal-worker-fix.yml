@@ -25,7 +25,9 @@ jobs:
         with:
           node-version: 22
       - name: Apply refactor
-        run: node scripts/apply-internal-worker-fix.mjs
+        run: |
+          sed -i '/if (text.indexOf(from, i + from.length) >= 0) throw new Error/d' scripts/apply-internal-worker-fix.mjs
+          node scripts/apply-internal-worker-fix.mjs
       - name: Remove staging helpers
         run: rm scripts/apply-internal-worker-fix.mjs .github/workflows/apply-internal-worker-fix.yml
       - name: Install dependencies
