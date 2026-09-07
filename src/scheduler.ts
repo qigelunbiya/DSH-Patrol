@@ -102,7 +102,8 @@ export class PatrolScheduler {
   private async runInspection(inspectionId: string): Promise<void> {
     const pending = await this.store.loadResume(inspectionId)
     if (pending !== undefined) {
-      this.ctx.logger.warn?.(`[dsh-patrol/scheduler] skipped ${inspectionId}; pending checkpoint run ${pending.runId} must be resumed or aborted first`)
+      const reason = pending.reason === 'recovery' ? 'recovery handoff' : 'checkpoint'
+      this.ctx.logger.warn?.(`[dsh-patrol/scheduler] skipped ${inspectionId}; pending ${reason} run ${pending.runId} must be resolved or aborted first`)
       return
     }
 
@@ -110,8 +111,8 @@ export class PatrolScheduler {
       const controller = new AbortController()
       const result = await this.ctx.tools.execute({
         callId: CallId(`patrol-schedule-${randomUUID()}`),
-        name: 'patrol_run',
-        arguments: { inspectionId },
+        name: 'patrol_run_flow',
+        arguments: { flow: inspectionId },
         signal: controller.signal,
       })
       const text = result.content.map(block => block.type === 'text' ? block.text : `[${block.type}]`).join('\n')
