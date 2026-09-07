@@ -180,7 +180,7 @@ async function executeReplayWorker(ctx, workerRoot, workspace, inspectionId, rep
   const handle = await agents.create({
     sessionId: `patrol-dashboard-replay-${randomUUID()}`,
     meta: { cwd: workspace },
-    setup: async agentCtx => { await mountInternalPatrolWorker(agentCtx, compositionPath, 'replay') },
+    setup: async agentCtx => { await mountInternalPatrolWorker(ctx, agentCtx, compositionPath, 'replay') },
   })
   try {
     return await handle.agent.runMaintenance(async signal => {
@@ -212,7 +212,7 @@ async function launchRecoveryWorker(ctx, workerRoot, workspace, definition, repo
     sessionId: `session-${randomUUID()}`,
     meta: { cwd: workspace },
     ...(agentOptions === undefined ? {} : { agentOptions }),
-    setup: async agentCtx => { await mountInternalPatrolWorker(agentCtx, compositionPath, 'recovery') },
+    setup: async agentCtx => { await mountInternalPatrolWorker(ctx, agentCtx, compositionPath, 'recovery') },
   })
   try {
     handle.agent.followup(createUserMessage({

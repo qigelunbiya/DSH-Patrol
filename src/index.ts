@@ -138,7 +138,7 @@ export function resolveConfig(config: Config): ResolvedConfig {
 }
 
 const PATROL_SHELL_PROMPT = `DSH Patrol lightweight shell rules:
-- 普通问候、解释和流程查看保持轻量，不要加载浏览器/文件/SSH/Excel 能力。
+- 普通问候和简单解释直接简短回答，不做深度推理、不调用工具；流程查看也保持轻量，不要加载浏览器/文件/SSH/Excel 能力。
 - 用户要运行已有流程：先解析名称（必要时 patrol_resolve_flow），然后调用 patrol_run_flow。正常重放由 deterministic runner 完成，不需要教学模型参与。
 - 用户明确要创建、重教、修改或修复 Runbook：调用 patrol_start_teaching，把任务交给独立 Teaching Worker；Shell 自己不做浏览器教学。
 - 页面异常只由 deterministic runner 失败后按需启动的 Recovery Worker 处理。不要在 Shell 里手工恢复浏览器。`

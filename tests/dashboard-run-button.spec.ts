@@ -19,7 +19,7 @@ describe('flow run button', () => {
     expect(managementHost).toContain('runMaintenance(async signal =>')
     expect(managementHost).toContain("name: replayTool")
     expect(managementHost).toContain("internalPatrolWorkerPath(String(workerRoot || ''), 'recovery')")
-    expect(managementHost).toContain("mountInternalPatrolWorker(agentCtx, compositionPath, 'recovery')")
+    expect(managementHost).toContain("mountInternalPatrolWorker(ctx, agentCtx, compositionPath, 'recovery')")
     expect(managementHost).not.toContain("const RECOVERY_PRESET = 'patrol-recovery'")
     expect(managementHost).not.toContain("ctx.get('agentPresets')")
     expect(managementHost).toContain("item.tool.startsWith('browser_')")
