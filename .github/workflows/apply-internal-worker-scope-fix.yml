@@ -1,0 +1,131 @@
+name: Apply internal worker scope fix
+
+on:
+  push:
+    branches:
+      - fix/internal-worker-scope-mount-20260907
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/internal-worker-scope-mount-20260907
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Apply fix
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one match, got {count}')
+              p.write_text(text.replace(old, new), encoding='utf-8')
+
+          src = Path('src/internal-worker.ts')
+          text = src.read_text(encoding='utf-8')
+          start = text.index('type AgentPresetsModuleLike = {')
+          func = text.index('/** Resolve a Patrol-owned worker composition', start)
+          prefix = text[:start]
+          suffix = text[func:]
+          types = '''type AgentPresetsModuleLike = {\n  mountPreset?: (\n    agentCtx: Context,\n    preset: { id: string; trust: 'user'; path: string },\n  ) => Promise<void>\n}\n\ntype ScopeKeyLike = Record<string, unknown>\n\ntype ScopeLike = {\n  ctx: Context\n  dispose(): Promise<void>\n}\n\ntype ScopeModuleLike = {\n  createScope?: (ctx: Context, key: ScopeKeyLike) => ScopeLike\n  scopeOf?: (ctx: Context) => ScopeKeyLike | undefined\n  bindScopeParent?: (key: ScopeKeyLike, parent: ScopeKeyLike) => unknown\n}\n\nfunction readLoader(ctx: Context): LoaderLike | undefined {\n  const read = (value: unknown): LoaderLike | undefined => {\n    try {\n      return (value as { get?(name: string): unknown } | undefined)?.get?.('loader') as LoaderLike | undefined\n    } catch {\n      return undefined\n    }\n  }\n  return read(ctx) ?? read((ctx as unknown as { root?: Context }).root)\n}\n\nfunction mountBaseContext(ctx: Context): Context {\n  return (ctx as unknown as { root?: Context }).root ?? ctx\n}\n\n'''
+          text = prefix + types + suffix
+          old_func_start = text.index('export async function mountInternalPatrolWorker(')
+          old_func_end = text.index('\n}\n', old_func_start) + 3
+          new_func = '''export async function mountInternalPatrolWorker(\n  hostCtx: Context,\n  agentCtx: Context,\n  compositionPath: string,\n  kind: PatrolInternalWorkerKind,\n): Promise<void> {\n  if (!isAbsolute(compositionPath)) throw new Error(`internal Patrol worker composition must be absolute: ${compositionPath}`)\n  await access(compositionPath)\n\n  // A freshly-created Agent context is intentionally bare until setup() joins\n  // it to a composition. The Harness Loader therefore has to be resolved from\n  // the already-running host/Patrol context, not from that bare agentCtx.\n  const loader = readLoader(hostCtx)\n  const baseUrl = loader?.config?.baseUrl\n  const importer = loader?.internal?.import\n  if (!baseUrl || typeof importer !== 'function') {\n    throw new Error('Harness Loader is unavailable on the Patrol host context; cannot mount a hidden Patrol worker composition')\n  }\n\n  const [presetModule, scopeModule] = await Promise.all([\n    Promise.resolve(importer.call(loader.internal, '@deepseek-ai/dsh-agent-presets', baseUrl, {})) as Promise<AgentPresetsModuleLike>,\n    Promise.resolve(importer.call(loader.internal, '@deepseek-ai/dsh-scope', baseUrl, {})) as Promise<ScopeModuleLike>,\n  ])\n  if (typeof presetModule?.mountPreset !== 'function') {\n    throw new Error('Harness @deepseek-ai/dsh-agent-presets does not export mountPreset; update Harness before using hidden Patrol workers')\n  }\n  if (typeof scopeModule?.createScope !== 'function' || typeof scopeModule.scopeOf !== 'function' || typeof scopeModule.bindScopeParent !== 'function') {\n    throw new Error('Harness @deepseek-ai/dsh-scope is missing worker scope APIs; update Harness before using hidden Patrol workers')\n  }\n\n  // Mirror AgentPresets' supported standing-mount shape without adding these\n  // workers to its discoverable roster: mount under a loader-bearing host scope,\n  // then parent the bare Agent scope to it during setup().\n  const workerKey: ScopeKeyLike = { agentPreset: `dsh-patrol-internal-${kind}` }\n  const workerScope = scopeModule.createScope(mountBaseContext(hostCtx), workerKey)\n  try {\n    await presetModule.mountPreset(workerScope.ctx, {\n      id: `dsh-patrol-internal-${kind}`,\n      trust: 'user',\n      path: compositionPath,\n    })\n    const agentKey = scopeModule.scopeOf(agentCtx)\n    if (agentKey === undefined) throw new Error('internal Patrol worker Agent has no Harness scope key')\n    scopeModule.bindScopeParent(agentKey, workerKey)\n    agentCtx.effect(\n      () => () => workerScope.dispose(),\n      `dsh-patrol/internal-${kind}: dispose hidden worker composition`,\n    )\n  } catch (error) {\n    await workerScope.dispose().catch(() => {})\n    throw error\n  }\n}\n'''
+          text = text[:old_func_start] + new_func + text[old_func_end:]
+          src.write_text(text, encoding='utf-8')
+
+          runtime = Path('browser-bridge-runtime/internal-worker.js')
+          rtext = runtime.read_text(encoding='utf-8')
+          old = '''export async function mountInternalPatrolWorker(agentCtx, compositionPath, kind) {\n  if (!isAbsolute(compositionPath)) throw new Error(`internal Patrol worker composition must be absolute: ${compositionPath}`)\n  await access(compositionPath)\n  const loader = agentCtx?.get?.('loader')\n  const baseUrl = loader?.config?.baseUrl\n  const importer = loader?.internal?.import\n  if (!baseUrl || typeof importer !== 'function') {\n    throw new Error('Harness Loader is unavailable; cannot mount a hidden Patrol worker composition')\n  }\n  const loaded = await Promise.resolve(importer.call(loader.internal, '@deepseek-ai/dsh-agent-presets', baseUrl, {}))\n  if (typeof loaded?.mountPreset !== 'function') {\n    throw new Error('Harness @deepseek-ai/dsh-agent-presets does not export mountPreset; update Harness before using hidden Patrol workers')\n  }\n  await loaded.mountPreset(agentCtx, {\n    id: `dsh-patrol-internal-${kind}`,\n    trust: 'user',\n    path: compositionPath,\n  })\n}\n'''
+          new = '''function readLoader(ctx) {\n  const read = value => {\n    try { return value?.get?.('loader') } catch { return undefined }\n  }\n  return read(ctx) ?? read(ctx?.root)\n}\n\nexport async function mountInternalPatrolWorker(hostCtx, agentCtx, compositionPath, kind) {\n  if (!isAbsolute(compositionPath)) throw new Error(`internal Patrol worker composition must be absolute: ${compositionPath}`)\n  await access(compositionPath)\n  const loader = readLoader(hostCtx)\n  const baseUrl = loader?.config?.baseUrl\n  const importer = loader?.internal?.import\n  if (!baseUrl || typeof importer !== 'function') {\n    throw new Error('Harness Loader is unavailable on the Patrol host context; cannot mount a hidden Patrol worker composition')\n  }\n  const [presetModule, scopeModule] = await Promise.all([\n    Promise.resolve(importer.call(loader.internal, '@deepseek-ai/dsh-agent-presets', baseUrl, {})),\n    Promise.resolve(importer.call(loader.internal, '@deepseek-ai/dsh-scope', baseUrl, {})),\n  ])\n  if (typeof presetModule?.mountPreset !== 'function') {\n    throw new Error('Harness @deepseek-ai/dsh-agent-presets does not export mountPreset; update Harness before using hidden Patrol workers')\n  }\n  if (typeof scopeModule?.createScope !== 'function' || typeof scopeModule.scopeOf !== 'function' || typeof scopeModule.bindScopeParent !== 'function') {\n    throw new Error('Harness @deepseek-ai/dsh-scope is missing worker scope APIs; update Harness before using hidden Patrol workers')\n  }\n  const workerKey = { agentPreset: `dsh-patrol-internal-${kind}` }\n  const workerScope = scopeModule.createScope(hostCtx?.root ?? hostCtx, workerKey)\n  try {\n    await presetModule.mountPreset(workerScope.ctx, {\n      id: `dsh-patrol-internal-${kind}`,\n      trust: 'user',\n      path: compositionPath,\n    })\n    const agentKey = scopeModule.scopeOf(agentCtx)\n    if (agentKey === undefined) throw new Error('internal Patrol worker Agent has no Harness scope key')\n    scopeModule.bindScopeParent(agentKey, workerKey)\n    agentCtx.effect(\n      () => () => workerScope.dispose(),\n      `dsh-patrol/internal-${kind}: dispose hidden worker composition`,\n    )\n  } catch (error) {\n    await workerScope.dispose().catch(() => {})\n    throw error\n  }\n}\n'''
+          if rtext.count(old) != 1:
+              raise SystemExit(f'runtime helper: expected one function block, got {rtext.count(old)}')
+          runtime.write_text(rtext.replace(old, new), encoding='utf-8')
+
+          replace('src/shell-tools.ts',
+              "setup: async agentCtx => { await mountInternalPatrolWorker(agentCtx, compositionPath, 'replay') },",
+              "setup: async agentCtx => { await mountInternalPatrolWorker(ctx, agentCtx, compositionPath, 'replay') },")
+          replace('src/shell-tools.ts',
+              'setup: async agentCtx => { await mountInternalPatrolWorker(agentCtx, compositionPath, kind) },',
+              'setup: async agentCtx => { await mountInternalPatrolWorker(ctx, agentCtx, compositionPath, kind) },')
+          replace('browser-bridge-runtime/dashboard-management.js',
+              "setup: async agentCtx => { await mountInternalPatrolWorker(agentCtx, compositionPath, 'replay') },",
+              "setup: async agentCtx => { await mountInternalPatrolWorker(ctx, agentCtx, compositionPath, 'replay') },")
+          replace('browser-bridge-runtime/dashboard-management.js',
+              "setup: async agentCtx => { await mountInternalPatrolWorker(agentCtx, compositionPath, 'recovery') },",
+              "setup: async agentCtx => { await mountInternalPatrolWorker(ctx, agentCtx, compositionPath, 'recovery') },")
+
+          # Ordinary greetings should stay cheap and avoid unnecessary long-form reasoning.
+          replace('src/index.ts',
+              '- 普通问候、解释和流程查看保持轻量，不要加载浏览器/文件/SSH/Excel 能力。',
+              '- 普通问候和简单解释直接简短回答，不做深度推理、不调用工具；流程查看也保持轻量，不要加载浏览器/文件/SSH/Excel 能力。')
+          replace('presets/patrol/agent.cordis.yml',
+              '      调用 patrol_start_teaching。不要直接执行浏览器操作，也不要为了普通问候或流程管理\n      加载浏览器、文件、SSH、Excel 等重能力。用户可见回复语言跟随用户最近一条自然语言消息。',
+              '      调用 patrol_start_teaching。不要直接执行浏览器操作；普通问候和简单解释直接简短回答，\n      不做深度推理、不调用工具，也不要加载浏览器、文件、SSH、Excel 等重能力。用户可见回复语言跟随用户最近一条自然语言消息。')
+
+          # Add a regression test that reproduces the real failure: bare agent has no loader,
+          # while the already-running host context does.
+          test = Path('tests/internal-worker-host-context.spec.ts')
+          test.write_text('''import { mkdtemp, writeFile } from 'node:fs/promises'\nimport { tmpdir } from 'node:os'\nimport { join } from 'node:path'\nimport { describe, expect, it, vi } from 'vitest'\nimport { mountInternalPatrolWorker } from '../src/internal-worker.js'\n\ndescribe('hidden Patrol worker mounting', () => {\n  it('loads Harness modules from the host context while the new Agent is still bare', async () => {\n    const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-worker-'))\n    const composition = join(root, 'teaching.cordis.yml')\n    await writeFile(composition, '[]\\n', 'utf8')\n\n    const workerScope = { ctx: { marker: 'worker-scope' }, dispose: vi.fn(async () => {}) }\n    const agentKey = { session: 'bare-agent' }\n    const createScope = vi.fn(() => workerScope)\n    const scopeOf = vi.fn(() => agentKey)\n    const bindScopeParent = vi.fn()\n    const mountPreset = vi.fn(async () => {})\n    const importer = vi.fn(async (name: string) => {\n      if (name === '@deepseek-ai/dsh-agent-presets') return { mountPreset }\n      if (name === '@deepseek-ai/dsh-scope') return { createScope, scopeOf, bindScopeParent }\n      throw new Error(`unexpected import ${name}`)\n    })\n    const hostRoot = {\n      get: vi.fn((name: string) => name === 'loader' ? { config: { baseUrl: 'file:///harness/' }, internal: { import: importer } } : undefined),\n    }\n    const hostCtx = { root: hostRoot, get: vi.fn(() => undefined) }\n    const disposers: Array<() => Promise<void> | void> = []\n    const agentCtx = {\n      get: vi.fn(() => undefined),\n      effect: vi.fn((factory: () => () => Promise<void> | void) => { disposers.push(factory()) }),\n    }\n\n    await mountInternalPatrolWorker(hostCtx as never, agentCtx as never, composition, 'teaching')\n\n    expect(agentCtx.get).not.toHaveBeenCalledWith('loader')\n    expect(importer).toHaveBeenCalledWith('@deepseek-ai/dsh-agent-presets', 'file:///harness/', {})\n    expect(importer).toHaveBeenCalledWith('@deepseek-ai/dsh-scope', 'file:///harness/', {})\n    expect(createScope).toHaveBeenCalledWith(hostRoot, { agentPreset: 'dsh-patrol-internal-teaching' })\n    expect(mountPreset).toHaveBeenCalledWith(workerScope.ctx, {\n      id: 'dsh-patrol-internal-teaching', trust: 'user', path: composition,\n    })\n    expect(bindScopeParent).toHaveBeenCalledWith(agentKey, { agentPreset: 'dsh-patrol-internal-teaching' })\n    expect(disposers).toHaveLength(1)\n    await disposers[0]?.()\n    expect(workerScope.dispose).toHaveBeenCalledOnce()\n  })\n})\n''', encoding='utf-8')
+
+          lazy = Path('tests/lazy-patrol-architecture.spec.ts')
+          ltext = lazy.read_text(encoding='utf-8')
+          needle = "    expect(internalWorker).toContain('mountPreset')\n"
+          if ltext.count(needle) != 1:
+              raise SystemExit('lazy architecture test insertion point missing')
+          ltext = ltext.replace(needle, needle + "    expect(internalWorker).toContain('createScope')\n    expect(internalWorker).toContain('bindScopeParent')\n    expect(internalWorker).toContain('hostCtx')\n")
+          lazy.write_text(ltext, encoding='utf-8')
+          PY
+      - name: Remove staging workflow
+        run: git rm .github/workflows/apply-internal-worker-scope-fix.yml
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+      - name: Reproduce source-only local state
+        run: rm -rf lib
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Full tests
+        run: pnpm test
+      - name: Browser/runtime checks
+        run: pnpm check:extension
+      - name: Encoding checks
+        run: pnpm check:encoding
+      - name: Build
+        run: pnpm build
+      - name: Package smoke test
+        run: |
+          pack_json="$(pnpm pack --json)"
+          node -e "const rows=JSON.parse(process.argv[1]); if(!rows[0]?.filename) process.exit(1)" "$pack_json"
+      - name: Commit validated fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            src/internal-worker.ts \
+            browser-bridge-runtime/internal-worker.js \
+            src/shell-tools.ts \
+            browser-bridge-runtime/dashboard-management.js \
+            src/index.ts \
+            presets/patrol/agent.cordis.yml \
+            tests/internal-worker-host-context.spec.ts \
+            tests/lazy-patrol-architecture.spec.ts \
+            .github/workflows/apply-internal-worker-scope-fix.yml
+          git commit -m "fix: mount hidden Patrol workers from host scope"
+          git push origin HEAD:fix/internal-worker-scope-mount-20260907
