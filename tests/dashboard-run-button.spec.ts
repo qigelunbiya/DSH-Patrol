@@ -17,6 +17,8 @@ describe('flow run button', () => {
     expect(host).toContain("data.type !== 'dsh-patrol:run-flow'")
     expect(host).toContain('event.origin !== window.location.origin')
     expect(host).toContain('event.source !== iframeRef.current?.contentWindow')
+    expect(host).toContain('function canSubmitDraft(inputActions)')
+    expect(host).toContain('if (!canSubmitDraft(inputActions))')
     expect(host).toContain('inputActions.setDraft')
     expect(host).toContain('inputActions.submit()')
     expect(host).toContain('不要修改、重教或新增流程步骤')

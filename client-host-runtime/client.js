@@ -372,6 +372,12 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
     return latest ? latest.id : '';
   }
 
+  function canSubmitDraft(inputActions) {
+    return inputActions
+      && typeof inputActions.setDraft === 'function'
+      && typeof inputActions.submit === 'function';
+  }
+
   function DashboardFrame({ useSession, workspaceRoot, mode, inputActions }) {
     const iframeRef = React.useRef(null);
     const nodes = useSession(snapshot => snapshot.nodes);
@@ -391,10 +397,14 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
         if (!data || data.type !== 'dsh-patrol:run-flow') return;
         const inspectionId = String(data.inspectionId || '').trim();
         if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(inspectionId)) return;
+        if (!canSubmitDraft(inputActions)) {
+          console.warn('[dsh-patrol] conversation input actions are unavailable; cannot submit Patrol flow replay');
+          return;
+        }
         const flowName = String(data.flowName || inspectionId).trim();
         const label = flowName && flowName !== inspectionId ? `（${flowName}）` : '';
         inputActions.setDraft(
-          `运行巡检流程 ${inspectionId}${label}。请直接使用 patrol_run_flow 重放已有流程，不要修改、重教或新增流程步骤。`,
+          `运行巡检流程 ${inspectionId}${label}。请直接使用 patrol_run_flow 重放已有流程，不要修改、重教或新增流程步骤。执行过程中用简体中文实时说明关键巡检进展、当前页面状态和最终结果。`,
         );
         setTimeout(() => inputActions.submit(), 0);
       };

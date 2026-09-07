@@ -56,6 +56,7 @@ describe('Patrol constrained-Qwen context pressure guard', () => {
   })
 
   it('forces early compaction at the Patrol soft limit instead of the advertised 262k context threshold', () => {
+    expect(PATROL_QWEN_SOFT_REQUEST_LIMIT).toBeLessThanOrEqual(24_000)
     expect(shouldForcePatrolCompaction(QWEN_ROUTE, PATROL_QWEN_SOFT_REQUEST_LIMIT - 1)).toBe(false)
     expect(shouldForcePatrolCompaction(QWEN_ROUTE, PATROL_QWEN_SOFT_REQUEST_LIMIT)).toBe(true)
     expect(shouldForcePatrolCompaction({ provider: 'openai', model: QWEN_ROUTE.model }, 100_000)).toBe(false)

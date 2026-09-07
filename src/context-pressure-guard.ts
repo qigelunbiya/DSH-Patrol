@@ -42,7 +42,7 @@ const QWEN_ROUTE_PROVIDERS = new Set(['cliproxy', 'qwen-local'])
 /**
  * The local 122B route advertises a 262k context window, but the real 24 GB
  * inference worker used by Patrol can exhaust CUDA memory far earlier. Session
- * evidence from a real failing Patrol run showed OOM around the mid-30k token
+ * evidence from real failing Patrol runs showed OOM around the mid-30k token
  * range, followed by the gateway putting qwen-local into cooldown and returning
  * misleading `auth_unavailable` errors for the remaining Harness retries.
  *
@@ -50,7 +50,7 @@ const QWEN_ROUTE_PROVIDERS = new Set(['cliproxy', 'qwen-local'])
  * Patrol-only soft limit, not a claim about the model's architectural context
  * length. The normal Harness compaction policy still owns every other route.
  */
-export const PATROL_QWEN_SOFT_REQUEST_LIMIT = 30_000
+export const PATROL_QWEN_SOFT_REQUEST_LIMIT = 24_000
 
 export function isPatrolQwenConstrainedRoute(
   route: Pick<LlmCallConfig, 'provider' | 'model'>,
