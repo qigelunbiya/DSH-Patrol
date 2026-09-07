@@ -232,7 +232,7 @@ async function executeReplayWorker(
   const handle = await agents.create({
     sessionId,
     meta: { cwd: workspace },
-    setup: async agentCtx => { await mountInternalPatrolWorker(agentCtx, compositionPath, 'replay') },
+    setup: async agentCtx => { await mountInternalPatrolWorker(ctx, agentCtx, compositionPath, 'replay') },
   })
   try {
     return await handle.agent.runMaintenance(async signal => {
@@ -267,7 +267,7 @@ async function launchWorker(
     sessionId,
     meta: { cwd: workspace },
     agentOptions: resolveAgentOptions(ctx, inheritedOptions),
-    setup: async agentCtx => { await mountInternalPatrolWorker(agentCtx, compositionPath, kind) },
+    setup: async agentCtx => { await mountInternalPatrolWorker(ctx, agentCtx, compositionPath, kind) },
   })
   try {
     handle.agent.followup(createUserMessage({

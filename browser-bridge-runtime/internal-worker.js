@@ -15,22 +15,49 @@ export function internalPatrolWorkerPath(root, kind) {
  * Browser runtime modules are executed directly from the source/package tree,
  * so this helper intentionally lives beside them instead of importing lib/.
  * The TypeScript Patrol shell keeps an equivalent typed helper under src/. */
-export async function mountInternalPatrolWorker(agentCtx, compositionPath, kind) {
+function readLoader(ctx) {
+  const read = value => {
+    try { return value?.get?.('loader') } catch { return undefined }
+  }
+  return read(ctx) ?? read(ctx?.root)
+}
+
+export async function mountInternalPatrolWorker(hostCtx, agentCtx, compositionPath, kind) {
   if (!isAbsolute(compositionPath)) throw new Error(`internal Patrol worker composition must be absolute: ${compositionPath}`)
   await access(compositionPath)
-  const loader = agentCtx?.get?.('loader')
+  const loader = readLoader(hostCtx)
   const baseUrl = loader?.config?.baseUrl
   const importer = loader?.internal?.import
   if (!baseUrl || typeof importer !== 'function') {
-    throw new Error('Harness Loader is unavailable; cannot mount a hidden Patrol worker composition')
+    throw new Error('Harness Loader is unavailable on the Patrol host context; cannot mount a hidden Patrol worker composition')
   }
-  const loaded = await Promise.resolve(importer.call(loader.internal, '@deepseek-ai/dsh-agent-presets', baseUrl, {}))
-  if (typeof loaded?.mountPreset !== 'function') {
+  const [presetModule, scopeModule] = await Promise.all([
+    Promise.resolve(importer.call(loader.internal, '@deepseek-ai/dsh-agent-presets', baseUrl, {})),
+    Promise.resolve(importer.call(loader.internal, '@deepseek-ai/dsh-scope', baseUrl, {})),
+  ])
+  if (typeof presetModule?.mountPreset !== 'function') {
     throw new Error('Harness @deepseek-ai/dsh-agent-presets does not export mountPreset; update Harness before using hidden Patrol workers')
   }
-  await loaded.mountPreset(agentCtx, {
-    id: `dsh-patrol-internal-${kind}`,
-    trust: 'user',
-    path: compositionPath,
-  })
+  if (typeof scopeModule?.createScope !== 'function' || typeof scopeModule.scopeOf !== 'function' || typeof scopeModule.bindScopeParent !== 'function') {
+    throw new Error('Harness @deepseek-ai/dsh-scope is missing worker scope APIs; update Harness before using hidden Patrol workers')
+  }
+  const workerKey = { agentPreset: `dsh-patrol-internal-${kind}` }
+  const workerScope = scopeModule.createScope(hostCtx?.root ?? hostCtx, workerKey)
+  try {
+    await presetModule.mountPreset(workerScope.ctx, {
+      id: `dsh-patrol-internal-${kind}`,
+      trust: 'user',
+      path: compositionPath,
+    })
+    const agentKey = scopeModule.scopeOf(agentCtx)
+    if (agentKey === undefined) throw new Error('internal Patrol worker Agent has no Harness scope key')
+    scopeModule.bindScopeParent(agentKey, workerKey)
+    agentCtx.effect(
+      () => () => workerScope.dispose(),
+      `dsh-patrol/internal-${kind}: dispose hidden worker composition`,
+    )
+  } catch (error) {
+    await workerScope.dispose().catch(() => {})
+    throw error
+  }
 }
