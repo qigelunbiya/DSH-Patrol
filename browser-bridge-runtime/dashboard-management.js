@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { CallId, createUserMessage } from '@deepseek-ai/dsh-llm'
-import { internalPatrolWorkerPath, mountInternalPatrolWorker } from '../lib/internal-worker.js'
+import { internalPatrolWorkerPath, mountInternalPatrolWorker } from './internal-worker.js'
 import { compactFlowConservatively } from './safe-flow-cleanup.js'
 
 const ID = /^[A-Za-z0-9._-]+$/

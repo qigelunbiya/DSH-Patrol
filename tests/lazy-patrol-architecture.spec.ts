@@ -12,6 +12,8 @@ const shellTools = read('src/shell-tools.ts')
 const browserPlugin = read('browser-bridge-runtime/tools-plugin.js')
 const installer = read('scripts/install-local.ps1')
 const internalWorker = read('src/internal-worker.ts')
+const runtimeInternalWorker = read('browser-bridge-runtime/internal-worker.js')
+const dashboardManagement = read('browser-bridge-runtime/dashboard-management.js')
 
 describe('lazy Patrol architecture', () => {
   it('keeps the user-facing Patrol preset as a lightweight shell', () => {
@@ -30,6 +32,10 @@ describe('lazy Patrol architecture', () => {
     expect(installer).toContain('Remove-LegacyManagedWorkerPreset')
     expect(internalWorker).toContain("'@deepseek-ai/dsh-agent-presets'")
     expect(internalWorker).toContain('mountPreset')
+    expect(runtimeInternalWorker).toContain("'@deepseek-ai/dsh-agent-presets'")
+    expect(runtimeInternalWorker).toContain('mountPreset')
+    expect(dashboardManagement).toContain("from './internal-worker.js'")
+    expect(dashboardManagement).not.toContain('../lib/internal-worker.js')
   })
 
   it('isolates heavy teaching, deterministic replay, and exception recovery', () => {
