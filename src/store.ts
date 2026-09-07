@@ -339,7 +339,7 @@ export async function atomicWriteForTest(path: string, content: string, hooks: A
 
 function isRetryableAtomicWriteError(error: unknown): boolean {
   if (!isNodeError(error)) return false
-  return ['EPERM', 'EBUSY', 'EACCES'].includes(error.code)
+  return typeof error.code === 'string' && ['EPERM', 'EBUSY', 'EACCES'].includes(error.code)
 }
 
 function renderRunbookMarkdown(definition: InspectionDefinition): string {
