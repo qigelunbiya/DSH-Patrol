@@ -1,0 +1,26 @@
+# Narrow exception-only Patrol worker. It is launched only after deterministic
+# replay reaches an unexpected browser obstruction. The worker gets a bounded
+# browser capability set plus one composite hand-back tool; it must not reteach
+# or rewrite the Runbook.
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: >-
+      你是 DSH Patrol 异常恢复 Worker。只解决 deterministic runner 当前遇到的一个瞬时页面异常，
+      例如新弹窗、选择器漂移或页面状态变化。不要从头执行流程，不要创建、重教或修改 Runbook。
+      使用最少浏览器动作解除阻塞；确认当前失败步骤可以重试后，调用一次 patrol_resume_after_recovery
+      把控制权交还 deterministic runner。无法安全恢复时立即停止并说明原因。
+
+- id: browser-tools
+  name: 'dsh-patrol/browser-tools'
+  config:
+    commandTimeoutMs: 60000
+    profile: recovery
+
+- id: dsh-patrol
+  name: 'dsh-patrol'
+  config:
+    profile: recovery
+    storagePath: .dsh-patrol
+    maxSteps: 200
+    reportMaxChars: 30000
