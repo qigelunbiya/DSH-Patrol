@@ -14,6 +14,7 @@ export const CLEANUP_BEGIN = '# BEGIN DSH-PATROL MANAGED CLEANUP'
 export const CLEANUP_END = '# END DSH-PATROL MANAGED CLEANUP'
 export const HOST_BEGIN = '# BEGIN DSH-PATROL MANAGED HOST BRIDGE'
 const PRESET_MARKER = '.managed-by-dsh-patrol'
+const MANAGED_PRESET_IDS = ['patrol', 'patrol-teaching', 'patrol-replay', 'patrol-recovery']
 
 export async function apply(ctx, config = {}) {
   const profile = typeof config.profile === 'string' ? config.profile.trim() : ''
@@ -46,7 +47,7 @@ export async function cleanupOrphanedIntegration({ dshHome, profile, logger = co
   // being removed, the row and this standalone runtime remain on disk so the
   // next Harness boot retries instead of silently stranding partial state.
   const removals = await Promise.all([
-    removeManagedPreset(home, logger),
+    removeManagedPresets(home, logger),
     safeRemove(join(home, 'patrol', 'browser-profile'), { recursive: true }, logger),
     safeRemove(join(home, 'patrol', 'managed-browser.json'), {}, logger),
     safeRemove(join(home, 'patrol', 'trusted-extension-origin.txt'), {}, logger),
@@ -65,7 +66,7 @@ export async function cleanupOrphanedIntegration({ dshHome, profile, logger = co
     // that would race with deleting its own currently loaded module.
     logger.warn?.('[dsh-patrol/cleanup] Patrol integration is clean, but the standalone cleanup file could not remove itself; it is no longer referenced by Harness')
   }
-  logger.info?.('[dsh-patrol/cleanup] removed orphaned Patrol preset/browser integration; inspections and historical runs were preserved')
+  logger.info?.('[dsh-patrol/cleanup] removed orphaned Patrol presets/browser integration; inspections and historical runs were preserved')
   return { active: false, sharedRemoved: true, retryPending: false }
 }
 
@@ -124,16 +125,19 @@ export async function removeManagedBlock(path, begin, end) {
   return true
 }
 
-async function removeManagedPreset(home, logger) {
-  const presetDir = join(home, '.agent-presets', 'patrol')
-  const marker = join(presetDir, PRESET_MARKER)
-  if (!await pathExists(marker)) {
-    if (await pathExists(presetDir)) {
-      logger.info?.('[dsh-patrol/cleanup] preserving user-owned patrol preset because the DSH Patrol managed marker is absent')
+async function removeManagedPresets(home, logger) {
+  const results = await Promise.all(MANAGED_PRESET_IDS.map(async presetId => {
+    const presetDir = join(home, '.agent-presets', presetId)
+    const marker = join(presetDir, PRESET_MARKER)
+    if (!await pathExists(marker)) {
+      if (await pathExists(presetDir)) {
+        logger.info?.(`[dsh-patrol/cleanup] preserving user-owned ${presetId} preset because the DSH Patrol managed marker is absent`)
+      }
+      return true
     }
-    return true
-  }
-  return await safeRemove(presetDir, { recursive: true }, logger)
+    return await safeRemove(presetDir, { recursive: true }, logger)
+  }))
+  return results.every(Boolean)
 }
 
 async function safeRemove(path, options, logger) {
@@ -179,10 +183,10 @@ function resolveDshHome() {
   return resolve(configured.length > 0 ? configured : join(homedir(), '.dsh'))
 }
 
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error)
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
