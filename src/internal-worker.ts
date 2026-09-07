@@ -5,6 +5,9 @@ import type { Context } from '@deepseek-ai/cordis'
 export type PatrolInternalWorkerKind = 'teaching' | 'replay' | 'recovery'
 
 type LoaderLike = {
+  /** Loader's own context. App boot stores the active module base here. */
+  ctx?: { baseUrl?: string }
+  /** Compatibility only: normal Harness app boot does not populate this field. */
   config?: { baseUrl?: string }
   internal?: {
     import(name: string, baseUrl: string, options: Record<string, never>): unknown
@@ -42,6 +45,27 @@ function readLoader(ctx: Context): LoaderLike | undefined {
   return read(ctx) ?? read((ctx as unknown as { root?: Context }).root)
 }
 
+function nonEmptyBaseUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed === '' ? undefined : trimmed
+}
+
+/**
+ * Harness app boot sets `ctx.baseUrl` before applying Loader and normally calls
+ * `ctx.plugin(Loader)` with no `Loader.Config.baseUrl`. Therefore
+ * `loader.config.baseUrl` is not an availability signal. Prefer the Loader's
+ * own context/root base and keep config only as a compatibility fallback.
+ */
+function readHarnessBaseUrl(ctx: Context, loader: LoaderLike): string | undefined {
+  const root = (ctx as unknown as { root?: { baseUrl?: string } }).root
+  const local = ctx as unknown as { baseUrl?: string }
+  return nonEmptyBaseUrl(loader.ctx?.baseUrl)
+    ?? nonEmptyBaseUrl(root?.baseUrl)
+    ?? nonEmptyBaseUrl(loader.config?.baseUrl)
+    ?? nonEmptyBaseUrl(local.baseUrl)
+}
+
 function mountBaseContext(ctx: Context): Context {
   return (ctx as unknown as { root?: Context }).root ?? ctx
 }
@@ -71,13 +95,16 @@ export async function mountInternalPatrolWorker(
   await access(compositionPath)
 
   // A freshly-created Agent context is intentionally bare until setup() joins
-  // it to a composition. The Harness Loader therefore has to be resolved from
-  // the already-running host/Patrol context, not from that bare agentCtx.
+  // it to a composition. Resolve Loader from the already-running host/Patrol
+  // context, then resolve the import base the same way Harness app boot does.
   const loader = readLoader(hostCtx)
-  const baseUrl = loader?.config?.baseUrl
   const importer = loader?.internal?.import
-  if (!baseUrl || typeof importer !== 'function') {
-    throw new Error('Harness Loader is unavailable on the Patrol host context; cannot mount a hidden Patrol worker composition')
+  if (loader === undefined || typeof importer !== 'function') {
+    throw new Error('Harness Loader module importer is unavailable on the Patrol host context; cannot mount a hidden Patrol worker composition')
+  }
+  const baseUrl = readHarnessBaseUrl(hostCtx, loader)
+  if (baseUrl === undefined) {
+    throw new Error('Harness module base URL is unavailable on the Loader/root context; cannot mount a hidden Patrol worker composition')
   }
 
   const [presetModule, scopeModule] = await Promise.all([
