@@ -1,0 +1,80 @@
+name: Validate internal worker scope fix v2
+
+on:
+  push:
+    branches:
+      - fix/internal-worker-scope-mount-20260907
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/internal-worker-scope-mount-20260907
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply source fix and refresh stale assertion
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/apply-internal-worker-scope-fix.yml').read_text(encoding='utf-8')
+          marker = "          python - <<'PY'\n"
+          start = workflow.index(marker) + len(marker)
+          end = workflow.index("\n          PY", start)
+          lines = workflow[start:end].splitlines()
+          body = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines)
+          exec(compile(body, '<embedded-fix>', 'exec'))
+
+          p = Path('tests/dashboard-run-button.spec.ts')
+          text = p.read_text(encoding='utf-8')
+          old = "mountInternalPatrolWorker(agentCtx, compositionPath, 'recovery')"
+          new = "mountInternalPatrolWorker(ctx, agentCtx, compositionPath, 'recovery')"
+          if text.count(old) != 1:
+              raise SystemExit(f'dashboard-run-button stale assertion expected once, got {text.count(old)}')
+          p.write_text(text.replace(old, new), encoding='utf-8')
+          PY
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+      - name: Reproduce source-only local state
+        run: rm -rf lib
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Full tests
+        run: pnpm test
+      - name: Browser/runtime checks
+        run: pnpm check:extension
+      - name: Encoding checks
+        run: pnpm check:encoding
+      - name: Build
+        run: pnpm build
+      - name: Package smoke test
+        run: |
+          pack_json="$(pnpm pack --json)"
+          node -e "const rows=JSON.parse(process.argv[1]); if(!rows[0]?.filename) process.exit(1)" "$pack_json"
+      - name: Commit validated source fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            src/internal-worker.ts \
+            browser-bridge-runtime/internal-worker.js \
+            src/shell-tools.ts \
+            browser-bridge-runtime/dashboard-management.js \
+            src/index.ts \
+            presets/patrol/agent.cordis.yml \
+            tests/internal-worker-host-context.spec.ts \
+            tests/lazy-patrol-architecture.spec.ts \
+            tests/dashboard-run-button.spec.ts
+          git commit -m "fix: mount hidden Patrol workers from host scope"
+          git push origin HEAD:fix/internal-worker-scope-mount-20260907
