@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { CallId, createUserMessage } from '@deepseek-ai/dsh-llm'
-import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
+import { defineTool } from '@deepseek-ai/dsh-tools'
 import { resolveFlowReference, type FlowReferenceResult } from './flow-reference-tools.js'
 import { PatrolStore } from './store.js'
 import type { InspectionDefinition, RunReport } from './types.js'
@@ -148,7 +148,7 @@ export function registerPatrolShellTools(
 
   const runFlow = defineTool({
     name: 'patrol_run_flow',
-    description: 'Run an existing Patrol flow with the deterministic runner. Normal replay makes zero LLM calls. If an unexpected step failure occurs, a fresh narrow Patrol Recovery worker is started automatically.',
+    description: 'Run or continue an existing Patrol flow with the deterministic runner. Normal replay makes zero additional LLM calls. A human-checkpoint run resumes through the same tool after the user completes the checkpoint. Unexpected browser failures start one narrow Recovery worker.',
     parameters: {
       flow: { type: 'string', required: true, description: 'Stable inspectionId, display name, or @name.' },
     },
@@ -161,7 +161,20 @@ export function registerPatrolShellTools(
       const workspace = exec.agent?.session.header.cwd ?? definition.metadata.workspaceRoot
       if (!workspace) throw new Error(`inspection ${definition.id} has no workspace; open it from a workspace before replay`)
 
-      const replayText = await executeReplayWorker(ctx, replayPresetId, workspace, definition.id)
+      const pending = await store.loadResume(definition.id)
+      if (pending?.reason === 'recovery') {
+        const report = await store.loadRun(definition.id, pending.runId)
+        return {
+          inspectionId: definition.id,
+          runId: pending.runId,
+          status: 'failed',
+          report: `${definition.id}/${pending.runId}`,
+          message: 'This run is already paused at a Recovery boundary. Do not start a second replay or Recovery worker; wait for the active Recovery worker to hand control back, or abort the pending run explicitly.',
+        }
+      }
+
+      const replayTool = pending === undefined ? 'patrol_run_flow' : 'patrol_resume_flow'
+      const replayText = await executeReplayWorker(ctx, replayPresetId, workspace, definition.id, replayTool)
       const runId = extractField(replayText, 'runId')
       if (!runId) throw new Error(`deterministic replay for ${definition.id} returned no runId`)
       const report = await store.loadRun(definition.id, runId)
@@ -174,12 +187,12 @@ export function registerPatrolShellTools(
           status: report.status,
           report: reportPath,
           message: report.status === 'passed'
-            ? 'Deterministic replay completed without invoking a conversation model.'
-            : 'Deterministic replay paused at an explicit human checkpoint; no recovery model was started.',
+            ? 'Deterministic replay completed without invoking an additional conversation model.'
+            : 'Deterministic replay paused at an explicit human checkpoint; complete the checkpoint, then invoke patrol_run_flow again to continue from there.',
         }
       }
 
-      const failure = lastFailedResult(report)
+      const failure = lastRecoverableFailure(report)
       if (failure === undefined) {
         return {
           inspectionId: definition.id,
@@ -217,6 +230,7 @@ async function executeReplayWorker(
   presetId: string,
   workspace: string,
   inspectionId: string,
+  replayTool: 'patrol_run_flow' | 'patrol_resume_flow',
 ): Promise<string> {
   const { agents, presets } = workerServices(ctx)
   const resolved = (await presets.resolve(presetId)).id
@@ -230,7 +244,7 @@ async function executeReplayWorker(
     return await handle.agent.runMaintenance(async signal => {
       const result = await handle.agent.ctx.tools.execute({
         callId: CallId(`patrol-shell-replay-${randomUUID()}`),
-        name: 'patrol_run_flow',
+        name: replayTool,
         arguments: { flow: inspectionId },
         signal,
         agent: handle.agent as never,
@@ -273,8 +287,8 @@ async function launchWorker(
 }
 
 function workerServices(ctx: Context): { agents: AgentRegistryLike; presets: AgentPresetsLike } {
-  const agents = ctx.get('agents') as AgentRegistryLike | undefined
-  const presets = ctx.get('agentPresets') as AgentPresetsLike | undefined
+  const agents = lookupService<AgentRegistryLike>(ctx, 'agents')
+  const presets = lookupService<AgentPresetsLike>(ctx, 'agentPresets')
   if (agents === undefined) throw new Error('Harness Agent registry is unavailable; cannot launch a lazy Patrol worker')
   if (presets === undefined) throw new Error('Harness Agent Presets service is unavailable; cannot launch a lazy Patrol worker')
   return { agents, presets }
@@ -282,8 +296,12 @@ function workerServices(ctx: Context): { agents: AgentRegistryLike; presets: Age
 
 function resolveAgentOptions(ctx: Context, inherited: AgentOptionsLike | undefined): AgentOptionsLike {
   if (inherited?.provider && inherited.model) return { ...inherited }
-  const defaults = ctx.get('agentDefaultModel') as AgentDefaultModelLike | undefined
+  const defaults = lookupService<AgentDefaultModelLike>(ctx, 'agentDefaultModel')
   return defaults?.currentSelection() ?? { ...inherited }
+}
+
+function lookupService<T>(ctx: Context, name: string): T | undefined {
+  return (ctx as unknown as { get(service: string): unknown }).get(name) as T | undefined
 }
 
 function requireUniqueResolution(query: string, result: FlowReferenceResult): InspectionDefinition {
@@ -319,12 +337,15 @@ function extractField(text: string, field: string): string | undefined {
   return value ? value : undefined
 }
 
-function lastFailedResult(report: RunReport): RunReport['results'][number] | undefined {
-  return [...report.results].reverse().find(item => item.status === 'failed' && item.stepId !== 'artifact-check')
+function lastRecoverableFailure(report: RunReport): RunReport['results'][number] | undefined {
+  return [...report.results].reverse().find(item => item.status === 'failed'
+    && item.stepId !== 'artifact-check'
+    && typeof item.tool === 'string'
+    && item.tool.startsWith('browser_'))
 }
 
 function recoveryPrompt(definition: InspectionDefinition, report: RunReport): string {
-  const failure = lastFailedResult(report)
+  const failure = lastRecoverableFailure(report)
   const failedIndex = failure === undefined ? -1 : report.results.findIndex(item => item === failure)
   const nearby = report.results.slice(Math.max(0, failedIndex - 2), Math.max(0, failedIndex) + 1)
   const context = nearby.map(item => [
