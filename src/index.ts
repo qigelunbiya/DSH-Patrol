@@ -96,6 +96,8 @@ export interface Config {
   reportMaxChars?: number
   /** Capability profile. `full` preserves the legacy all-in-one composition for compatibility. */
   profile?: PatrolProfile
+  /** Absolute directory containing Patrol-owned hidden worker compositions. */
+  workerRoot?: string
   /** Deprecated v0.1 compatibility; Patrol v0.2 uses an exact safe-browser allowlist. */
   allowedToolPrefixes?: string[]
 }
@@ -105,6 +107,7 @@ export const Config: z<Config> = z.object({
   maxSteps: z.number().step(1).min(1).default(DEFAULT_MAX_STEPS),
   reportMaxChars: z.number().step(1).min(1000).default(DEFAULT_REPORT_MAX_CHARS),
   profile: z.union(['full', 'shell', 'teaching', 'replay', 'recovery'] as const).default('full'),
+  workerRoot: z.string().default(''),
   allowedToolPrefixes: z.array(z.string()).default(['browser_']),
 })
 
@@ -113,6 +116,7 @@ interface ResolvedConfig {
   maxSteps: number
   reportMaxChars: number
   profile: PatrolProfile
+  workerRoot: string
 }
 
 export function resolveConfig(config: Config): ResolvedConfig {
@@ -121,6 +125,7 @@ export function resolveConfig(config: Config): ResolvedConfig {
     maxSteps: config.maxSteps ?? DEFAULT_MAX_STEPS,
     reportMaxChars: config.reportMaxChars ?? DEFAULT_REPORT_MAX_CHARS,
     profile: config.profile ?? 'full',
+    workerRoot: config.workerRoot?.trim() ? resolve(config.workerRoot) : '',
   }
   if (!Number.isInteger(resolved.maxSteps) || resolved.maxSteps < 1) throw new Error('dsh-patrol: maxSteps must be a positive integer')
   if (!Number.isInteger(resolved.reportMaxChars) || resolved.reportMaxChars < 1000) throw new Error('dsh-patrol: reportMaxChars must be an integer >= 1000')
@@ -151,7 +156,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const runner = new PatrolRunner(ctx, store, { reportMaxChars: resolved.reportMaxChars })
 
   if (resolved.profile === 'shell') {
-    ctx.effect(() => registerPatrolShellTools(ctx, store), 'dsh-patrol/shell: four orchestration tools')
+    ctx.effect(() => registerPatrolShellTools(ctx, store, { workerRoot: resolved.workerRoot }), 'dsh-patrol/shell: four orchestration tools')
     const scheduler = new PatrolScheduler(ctx, store)
     ctx.effect(() => scheduler.start(), 'dsh-patrol/shell: scheduled deterministic replay')
     installPrompt(ctx, 'agent:dsh-patrol-shell', 130, PATROL_SHELL_PROMPT, 'dsh-patrol/shell: compact orchestration prompt')

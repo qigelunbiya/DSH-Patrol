@@ -134,6 +134,7 @@ $BridgeTempPath = Join-Path $PatrolRoot "browser-bridge"
 $CleanupRuntimePath = Join-Path $PatrolRoot "integration-cleanup.mjs"
 $PresetDir = Join-Path $DshHome ".agent-presets\patrol"
 $PresetMarker = Join-Path $PresetDir ".managed-by-dsh-patrol"
+$InternalWorkerRoot = Join-Path $PatrolRoot "internal-workers"
 $ProfileDir = Join-Path $DshHome "profiles\$Profile"
 $WebPatch = Join-Path $ProfileDir "cordis.patch.yml"
 
@@ -151,6 +152,13 @@ if (-not $AnotherInstallIsActive) {
         Write-Warning "Patrol preset has no managed marker and is treated as user-owned; preserving: $PresetDir"
     }
 
+    foreach ($legacyWorkerId in @("patrol-teaching", "patrol-replay", "patrol-recovery")) {
+        $legacyWorkerDir = Join-Path $DshHome ".agent-presets\$legacyWorkerId"
+        if (Test-Path -LiteralPath (Join-Path $legacyWorkerDir ".managed-by-dsh-patrol")) {
+            Remove-Item -LiteralPath $legacyWorkerDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Remove-Item -LiteralPath $InternalWorkerRoot -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $ProfilePath -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $StatePath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $TrustPath -Force -ErrorAction SilentlyContinue

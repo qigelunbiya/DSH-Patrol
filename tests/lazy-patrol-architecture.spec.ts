@@ -10,12 +10,26 @@ const replayPreset = read('presets/patrol-replay/agent.cordis.yml')
 const recoveryPreset = read('presets/patrol-recovery/agent.cordis.yml')
 const shellTools = read('src/shell-tools.ts')
 const browserPlugin = read('browser-bridge-runtime/tools-plugin.js')
+const installer = read('scripts/install-local.ps1')
+const internalWorker = read('src/internal-worker.ts')
 
 describe('lazy Patrol architecture', () => {
   it('keeps the user-facing Patrol preset as a lightweight shell', () => {
     expect(shellPreset).toContain('profile: shell')
     expect(shellPreset).not.toContain("name: 'dsh-patrol/browser-tools'")
     expect(shellPreset).not.toContain("name: '@deepseek-ai/dsh-tool-fs'")
+  })
+
+
+  it('keeps internal workers out of the Harness preset roster', () => {
+    expect(installer).toContain('Install-LazyPreset -PresetId "patrol"')
+    expect(installer).not.toContain('Install-LazyPreset -PresetId "patrol-teaching"')
+    expect(installer).not.toContain('Install-LazyPreset -PresetId "patrol-replay"')
+    expect(installer).not.toContain('Install-LazyPreset -PresetId "patrol-recovery"')
+    expect(installer).toContain('internal-workers')
+    expect(installer).toContain('Remove-LegacyManagedWorkerPreset')
+    expect(internalWorker).toContain("'@deepseek-ai/dsh-agent-presets'")
+    expect(internalWorker).toContain('mountPreset')
   })
 
   it('isolates heavy teaching, deterministic replay, and exception recovery', () => {

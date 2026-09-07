@@ -116,7 +116,8 @@ function Install-ManagedHostBridgePatch {
     param(
         [Parameter(Mandatory = $true)][string]$PatchPath,
         [Parameter(Mandatory = $true)][string]$BridgeHostUri,
-        [Parameter(Mandatory = $true)][string]$ScreenshotDir
+        [Parameter(Mandatory = $true)][string]$ScreenshotDir,
+        [Parameter(Mandatory = $true)][string]$WorkerRoot
     )
 
     $patchDir = Split-Path -Parent $PatchPath
@@ -129,6 +130,7 @@ function Install-ManagedHostBridgePatch {
     $clean = [regex]::Replace($existing, $pattern, "").TrimEnd()
     $safeBridgeHostUri = ConvertTo-YamlSingleQuoted -Value $BridgeHostUri
     $safeScreenshotDir = ConvertTo-YamlSingleQuoted -Value $ScreenshotDir
+    $safeWorkerRoot = ConvertTo-YamlSingleQuoted -Value $WorkerRoot
 
     $block = @"
 $begin
@@ -143,6 +145,7 @@ $begin
         browserStartTimeoutMs: 30000
         browserConnectTimeoutMs: 15000
         screenshotDir: '$safeScreenshotDir'
+        workerRoot: '$safeWorkerRoot'
 
     - id: dsh-patrol-client-host
       name: 'dsh-patrol-client-host'
@@ -201,6 +204,34 @@ function Copy-LegacyPatrolData {
             Write-Host "Migrated legacy Patrol $name into workspace storage." -ForegroundColor Yellow
         }
     }
+}
+
+function Remove-LegacyManagedWorkerPreset {
+    param(
+        [Parameter(Mandatory = $true)][string]$DshHomePath,
+        [Parameter(Mandatory = $true)][string]$PresetId
+    )
+    $legacyDir = Join-Path $DshHomePath ".agent-presets\$PresetId"
+    if (-not (Test-Path -LiteralPath $legacyDir)) { return }
+    $marker = Join-Path $legacyDir ".managed-by-dsh-patrol"
+    if (Test-Path -LiteralPath $marker) {
+        Remove-Item -LiteralPath $legacyDir -Recurse -Force
+        Write-Host "Removed legacy user-visible Patrol worker preset: $PresetId" -ForegroundColor Yellow
+    } else {
+        Write-Warning "Legacy Patrol worker preset is not managed by DSH Patrol and was preserved: $legacyDir"
+    }
+}
+
+function Install-InternalWorkerComposition {
+    param(
+        [Parameter(Mandatory = $true)][string]$WorkerRoot,
+        [Parameter(Mandatory = $true)][string]$WorkerId,
+        [Parameter(Mandatory = $true)][string]$AgentYaml
+    )
+    New-Item -ItemType Directory -Force -Path $WorkerRoot | Out-Null
+    $target = Join-Path $WorkerRoot "$WorkerId.cordis.yml"
+    Write-Utf8NoBom -Path $target -Content $AgentYaml
+    return $target
 }
 
 function Install-LazyPreset {
@@ -263,6 +294,7 @@ if (-not (Test-Path -LiteralPath $WorkspaceRoot)) {
 }
 $PatrolStorage = Join-Path $WorkspaceRoot ".dsh-patrol"
 $PatrolScreenshotDir = Join-Path $PatrolStorage "browser-tmp"
+$InternalWorkerRoot = Join-Path $DshHome "patrol\internal-workers"
 New-Item -ItemType Directory -Force -Path $PatrolStorage | Out-Null
 New-Item -ItemType Directory -Force -Path $PatrolScreenshotDir | Out-Null
 Copy-LegacyPatrolData -LegacyRoot (Join-Path $DshHome "patrol") -WorkspaceRoot $PatrolStorage
@@ -281,6 +313,7 @@ $BridgeHostIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot 
 $ClientHostRoot = [System.IO.Path]::GetFullPath((Join-Path $ProjectRoot "client-host-runtime"))
 $BrowserToolsIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "browser-bridge-runtime\tools-plugin.js")))).AbsoluteUri
 $SafeStoragePath = ConvertTo-YamlSingleQuoted -Value $PatrolStorage
+$SafeWorkerRoot = ConvertTo-YamlSingleQuoted -Value $InternalWorkerRoot
 
 # Newer Harness versions resolve client rows from the profile's dependency
 # closure, while dsh@0.1.1-rc.2 (b150a55) resolves them from the Harness config
@@ -308,6 +341,7 @@ $ShellAgentYaml = @"
     storagePath: '$SafeStoragePath'
     maxSteps: 50
     reportMaxChars: 10000
+    workerRoot: '$SafeWorkerRoot'
 "@
 
 $TeachingAgentYaml = @"
@@ -372,9 +406,12 @@ $RecoveryAgentYaml = @"
 "@
 
 $PresetDir = Install-LazyPreset -PresetId "patrol" -AgentYaml $ShellAgentYaml -DshHomePath $DshHome -ProjectRootPath $ProjectRoot
-$TeachingPresetDir = Install-LazyPreset -PresetId "patrol-teaching" -AgentYaml $TeachingAgentYaml -DshHomePath $DshHome -ProjectRootPath $ProjectRoot
-$ReplayPresetDir = Install-LazyPreset -PresetId "patrol-replay" -AgentYaml $ReplayAgentYaml -DshHomePath $DshHome -ProjectRootPath $ProjectRoot
-$RecoveryPresetDir = Install-LazyPreset -PresetId "patrol-recovery" -AgentYaml $RecoveryAgentYaml -DshHomePath $DshHome -ProjectRootPath $ProjectRoot
+foreach ($legacyWorkerId in @("patrol-teaching", "patrol-replay", "patrol-recovery")) {
+    Remove-LegacyManagedWorkerPreset -DshHomePath $DshHome -PresetId $legacyWorkerId
+}
+$TeachingWorkerPath = Install-InternalWorkerComposition -WorkerRoot $InternalWorkerRoot -WorkerId "teaching" -AgentYaml $TeachingAgentYaml
+$ReplayWorkerPath = Install-InternalWorkerComposition -WorkerRoot $InternalWorkerRoot -WorkerId "replay" -AgentYaml $ReplayAgentYaml
+$RecoveryWorkerPath = Install-InternalWorkerComposition -WorkerRoot $InternalWorkerRoot -WorkerId "recovery" -AgentYaml $RecoveryAgentYaml
 
 # Copy a self-contained cleanup plugin outside the source checkout. If the
 # local Patrol source is later uninstalled, this small Node-only plugin can
@@ -387,7 +424,7 @@ Copy-Item -LiteralPath $CleanupSource -Destination $CleanupTarget -Force
 $CleanupUri = (New-Object System.Uri((Resolve-Path $CleanupTarget))).AbsoluteUri
 
 $WebPatch = Join-Path $ProfileDir "cordis.patch.yml"
-Install-ManagedHostBridgePatch -PatchPath $WebPatch -BridgeHostUri $BridgeHostIndex -ScreenshotDir $PatrolScreenshotDir
+Install-ManagedHostBridgePatch -PatchPath $WebPatch -BridgeHostUri $BridgeHostIndex -ScreenshotDir $PatrolScreenshotDir -WorkerRoot $InternalWorkerRoot
 Install-ManagedCleanupPatch -PatchPath $WebPatch -CleanupUri $CleanupUri -ProfileName $Profile
 
 if (Test-Path $WebPatch) {
@@ -403,9 +440,9 @@ if (Test-Path $WebPatch) {
 
 Write-Host ""
 Write-Host "Local Patrol shell preset installed and UTF-8 verified: $PresetDir" -ForegroundColor Green
-Write-Host "Lazy Patrol teaching worker preset installed: $TeachingPresetDir" -ForegroundColor Green
-Write-Host "Lazy Patrol replay worker preset installed: $ReplayPresetDir" -ForegroundColor Green
-Write-Host "Lazy Patrol recovery worker preset installed: $RecoveryPresetDir" -ForegroundColor Green
+Write-Host "Internal Patrol teaching worker installed (hidden from preset picker): $TeachingWorkerPath" -ForegroundColor Green
+Write-Host "Internal Patrol replay worker installed (hidden from preset picker): $ReplayWorkerPath" -ForegroundColor Green
+Write-Host "Internal Patrol recovery worker installed (hidden from preset picker): $RecoveryWorkerPath" -ForegroundColor Green
 Write-Host "Host browser bridge patch installed: $WebPatch" -ForegroundColor Green
 Write-Host "Patrol web client package installed into profile: $ProfileDir" -ForegroundColor Green
 if ($HarnessClientHostMirror) {

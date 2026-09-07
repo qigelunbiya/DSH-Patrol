@@ -140,6 +140,13 @@ for (const [presetId, profile] of [
 const replayPreset = readFileSync(join(projectRoot, 'presets', 'patrol-replay', 'agent.cordis.yml'), 'utf8')
 if (replayPreset.includes("name: '@deepseek-ai/dsh-persona'")) throw new Error('deterministic replay preset must remain persona-free so normal replay does not require a model prompt')
 
+const internalWorker = readFileSync(join(projectRoot, 'src', 'internal-worker.ts'), 'utf8')
+if (!internalWorker.includes("'@deepseek-ai/dsh-agent-presets'")) throw new Error('hidden Patrol workers must load Harness own agent-presets mount implementation')
+if (!internalWorker.includes('mountPreset')) throw new Error('hidden Patrol workers must use low-level scoped preset mounting')
+const installer = readFileSync(join(projectRoot, 'scripts', 'install-local.ps1'), 'utf8')
+if (installer.includes('Install-LazyPreset -PresetId "patrol-teaching"') || installer.includes('Install-LazyPreset -PresetId "patrol-replay"') || installer.includes('Install-LazyPreset -PresetId "patrol-recovery"')) throw new Error('internal Patrol workers must not be installed into Harness user preset discovery')
+if (!installer.includes('patrol\\internal-workers') || !installer.includes('Remove-LegacyManagedWorkerPreset')) throw new Error('installer must use a non-discoverable internal worker root and remove legacy visible worker presets')
+
 const hostPatch = readFileSync(join(projectRoot, 'cordis.patch.yml'), 'utf8')
 if (!hostPatch.includes("name: 'dsh-patrol/browser-bridge-host'")) throw new Error('DSH Patrol host patch must load the browser transport')
 
