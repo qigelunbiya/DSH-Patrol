@@ -5,23 +5,31 @@ import { describe, expect, it } from 'vitest'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const normalizeNewlines = (value: string) => value.replace(/\r\n/g, '\n')
+const preset = (id: string) => normalizeNewlines(readFileSync(join(root, 'presets', id, 'agent.cordis.yml'), 'utf8'))
 
-describe('Patrol preset workspace image tools', () => {
-  it('keeps the preset persona in Chinese with same-language reply guidance', () => {
-    const preset = normalizeNewlines(readFileSync(join(root, 'presets', 'patrol', 'agent.cordis.yml'), 'utf8'))
-    const installer = normalizeNewlines(readFileSync(join(root, 'scripts', 'install-local.ps1'), 'utf8'))
-
-    expect(preset).toContain('你是 DSH Patrol 专用巡检 Agent')
-    expect(preset).toContain('跟随用户最近一条自然语言消息')
-    expect(installer).toContain('\\u4f60\\u662f DSH Patrol')
-    expect(installer).toContain('\\u8ddf\\u968f\\u7528\\u6237\\u6700\\u8fd1\\u4e00\\u6761')
+describe('Patrol lazy presets', () => {
+  it('keeps the user-facing Patrol preset lightweight and Chinese', () => {
+    const shell = preset('patrol')
+    expect(shell).toContain('你是 DSH Patrol 轻量巡检入口 Agent')
+    expect(shell).toContain('跟随用户最近一条自然语言消息')
+    expect(shell).toContain('profile: shell')
+    expect(shell).not.toContain("name: 'dsh-patrol/browser-tools'")
+    expect(shell).not.toContain("name: '@deepseek-ai/dsh-tool-fs'")
   })
 
-  it('mounts Harness native filesystem/image tools in both source and installed preset templates', () => {
-    const preset = normalizeNewlines(readFileSync(join(root, 'presets', 'patrol', 'agent.cordis.yml'), 'utf8'))
-    const installer = normalizeNewlines(readFileSync(join(root, 'scripts', 'install-local.ps1'), 'utf8'))
+  it('mounts filesystem and browser capabilities only in the teaching worker', () => {
+    const teaching = preset('patrol-teaching')
+    expect(teaching).toContain("name: '@deepseek-ai/dsh-tool-fs'")
+    expect(teaching).toContain("name: 'dsh-patrol/browser-tools'")
+    expect(teaching).toContain('profile: teaching')
+  })
 
-    expect(preset).toContain("- id: tool-fs\n  name: '@deepseek-ai/dsh-tool-fs'")
-    expect(installer).toContain("- id: tool-fs\n  name: '@deepseek-ai/dsh-tool-fs'")
+  it('keeps deterministic replay persona-free and recovery separate', () => {
+    const replay = preset('patrol-replay')
+    const recovery = preset('patrol-recovery')
+    expect(replay).toContain('profile: replay')
+    expect(replay).not.toContain("name: '@deepseek-ai/dsh-persona'")
+    expect(recovery).toContain('profile: recovery')
+    expect(recovery).toContain('异常恢复 Worker')
   })
 })
