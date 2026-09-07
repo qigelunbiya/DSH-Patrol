@@ -36,7 +36,7 @@ export const PATROL_TEST_MODE_OVERRIDE_PROMPT = `DSH Patrol TEST MODE 调试规�
 - CURRENT 页面需要点击按钮、链接、选项卡、弹窗操作时，优先使用 patrol_click_target，不要再用 patrol_click + 猜测的 button/a/div 等宽泛 CSS 反复试。patrol_click_target 可以只给 locatorText（如“登录”“短信登录”“获取验证码”“立即登录”），也可以加 locatorRole/locatorTag；selector 只是可选提示。它会先解析唯一可见目标再执行 browser_click。
 - 如果只有 selector 而 selector 同时匹配多个可见元素，patrol_click_target 必须报歧义并停止本次点击，绝不能像旧 browser_click 那样静默点击 document.querySelector 找到的第一个元素。遇到歧义时先 patrol_snapshot/patrol_observe 获取 CURRENT 元素文本和稳定 selector，再加 locatorText/locatorRole/locatorTag 精确定位。
 - 不要使用 :has-text()、text=、XPath 等 Patrol 当前 CSS 层不支持的伪选择器去碰运气。对重要状态变化（打开登录框、切换短信登录、获取验证码、提交登录等）点击后立即 patrol_observe 或 patrol_read_page 验证 CURRENT UI 是否真的变化；如果没有变化，先重新解析当前目标，不要重复同一个宽泛 click 制造“工具说成功但页面没变”的假成功。
-- 普通图片字符验证码 image-code 的测试优先级：先使用刚刚 patrol_observe 附带的 CURRENT 页面截图让当前多模态模型直接视觉读取；如果字符较小、D/R/O/0/1/I/4 等容易混淆，立即调用 browser_capture_image_code_visual，把 CURRENT 验证码元素单独裁成紧凑图片并作为 image block 给模型再读一次。不要因为专用 OCR detector 失败而丢弃当前视觉结果。
+- 普通图片字符验证码 image-code 的测试优先级：先调用 browser_capture_image_code_visual，把 CURRENT 验证码元素单独裁成紧凑图片并作为 image block 给模型读取；patrol_observe 附带的 CURRENT 页面截图只用于确认页面状态和验证码位置。不要把全页截图里的小验证码当作高置信度依据，尤其是 I/1、X/K、D/O/0、B/8、S/5、Z/2 等容易混淆字符。不要因为专用 OCR detector 失败而丢弃当前紧凑视觉结果。
 - 每次模型视觉读取 CURRENT image-code 后，都必须自行给出 0~1 的识别置信度。置信度 >= 0.80 才允许调用 patrol_type_current_image_code 填入当前验证码；置信度 < 0.80 时禁止把弱猜测写入输入框或点击登录/提交，应该直接换一张验证码再识别。
 - patrol_type_current_image_code 是测试模式首选的验证码输入工具：它只填写 CURRENT 页面，不把一次性验证码写入 Runbook、secret vault、notes 或报告。patrol_type_text / browser_type 在测试模式仍可用于底层兼容诊断，但属于实际巡检的输入必须走 patrol_*，保证流程和巡检记录可追踪。
 - 模型视觉仍不确定时，再调用 patrol_detect_auth_challenge，让 ddddocr/Windows OCR 作为独立辅助证据。ddddocr 的数值置信度可用于复核；视觉和本地 OCR 一致时可提高整体可信度，但不得为了赶流程凭空提高置信度。

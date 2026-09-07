@@ -64,14 +64,16 @@ describe('browser capability diagnostics', () => {
     const rendered = status.output.render({}, value).map(block => block.text || '').join('\n')
 
     expect(rendered).toContain('NOT_ADVERTISED')
-    expect(rendered).toMatch(/older\/stale Patrol extension/i)
+    expect(rendered).toMatch(/will still try the legacy captureImageCode command/i)
   })
 
-  it('fails before captureImageCode when the live extension is stale or missing the capability', () => {
+  it('allows legacy extensions without advertised capabilities to try captureImageCode', () => {
     expect(() => assertImageCodeCaptureCapability({
       status: () => ({ extension: { version: '0.2.0' } }),
-    })).toThrow(/stale extension/i)
+    })).not.toThrow()
+  })
 
+  it('fails before captureImageCode when the live extension explicitly lacks the capability', () => {
     expect(() => assertImageCodeCaptureCapability({
       status: () => ({ extension: { version: '0.2.1', capabilities: ['visualSnapshot'] } }),
     })).toThrow(/runtime\/extension version mismatch/i)

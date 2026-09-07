@@ -117,7 +117,7 @@ export function assertImageCodeCaptureCapability(bridge) {
     ? extension.capabilities.filter(item => typeof item === 'string')
     : undefined
   if (capabilities === undefined) {
-    throw new Error(`Patrol browser extension ${extension.version || '?'} does not advertise runtime capabilities. A stale extension is probably still loaded; restart Harness so the managed browser reinstalls the bundled extension before using browser_capture_image_code_visual.`)
+    return
   }
   if (!capabilities.includes('captureImageCode')) {
     throw new Error(`Patrol browser extension ${extension.version || '?'} is missing capability captureImageCode. This is a runtime/extension version mismatch; restart Harness before CAPTCHA visual capture.`)

@@ -37,8 +37,9 @@ describe('Patrol test-mode guard policy', () => {
     expect(() => isPatrolTestMode({ DSH_PATROL_CAPTCHA_MODE: 'nromal' })).toThrow(/Unsupported DSH_PATROL_CAPTCHA_MODE/)
   })
 
-  it('prioritizes current model vision, confidence gating, bounded captcha refresh, and configured TOTP profiles', () => {
-    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/patrol_observe 附带的 CURRENT 页面截图/)
+  it('prioritizes tight captcha crops, confidence gating, bounded captcha refresh, and configured TOTP profiles', () => {
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/普通图片字符验证码 image-code 的测试优先级：先调用 browser_capture_image_code_visual/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/不要把全页截图里的小验证码当作高置信度依据/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/browser_capture_image_code_visual/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/置信度 >= 0\.80/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/patrol_type_current_image_code/)

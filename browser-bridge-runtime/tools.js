@@ -375,7 +375,7 @@ function renderBrowserStatus(value) {
     : []
   const base = `Patrol browser connected (${extension.name || 'unknown'} v${extension.version || '?'}).`
   if (capabilities.length === 0) {
-    return `${base} capabilities=NOT_ADVERTISED; this usually means an older/stale Patrol extension is still loaded. Restart Harness so the managed browser reinstalls the bundled extension before using CAPTCHA visual capture.`
+    return `${base} capabilities=NOT_ADVERTISED; this usually means an older/stale Patrol extension is still loaded, but CAPTCHA visual capture will still try the legacy captureImageCode command. Restart Harness after updating if capture fails.`
   }
   const imageCode = capabilities.includes('captureImageCode')
     ? 'captureImageCode=yes'
