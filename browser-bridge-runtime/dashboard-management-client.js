@@ -9,6 +9,7 @@
 
   let cardsById = new Map()
   let patchQueued = false
+  let runningFlowId = ''
 
   const fmt = value => {
     if (!value) return '—'
@@ -41,6 +42,7 @@
       patchQueued = false
       patchCards()
       patchDetail()
+      patchRunningState()
     }, 0)
   }
 
@@ -93,19 +95,43 @@
     actions.prepend(wrap)
   }
 
-  function runFlow(id) {
+  function patchRunningState() {
+    for (const button of root.querySelectorAll('[data-manage-action="run"]')) {
+      if (!(button instanceof HTMLButtonElement)) continue
+      const active = runningFlowId !== '' && button.getAttribute('data-manage-id') === runningFlowId
+      button.disabled = runningFlowId !== ''
+      if (active) button.textContent = '运行中…'
+      else button.textContent = button.classList.contains('run-btn') ? '▶ 运行流程' : '▶ 运行'
+    }
+  }
+
+  async function runFlow(id) {
     const item = cardsById.get(id)
-    if (!item) return
+    if (!item || runningFlowId) return
     const flowName = String(item.definition?.name || id).trim() || id
-    window.parent.postMessage({
-      type: 'dsh-patrol:run-flow',
-      inspectionId: id,
-      flowName,
-    }, location.origin)
+    runningFlowId = id
+    schedulePatch()
+    try {
+      const result = await postAction('/flow/run', { inspectionId: id })
+      if (result.status === 'passed') {
+        window.alert(`流程“${flowName}”巡检完成。\n本次重放由 deterministic runner 直接执行，正常路径没有调用对话模型。\nrunId: ${result.runId}`)
+      } else if (result.status === 'waiting') {
+        window.alert(`流程“${flowName}”已运行到人工检查点并暂停。\n完成页面上的人工操作后，再点击“运行流程”即可从检查点继续，不会从头重跑。\nrunId: ${result.runId}`)
+      } else if (result.recoverySessionId) {
+        window.alert(`流程“${flowName}”在运行中遇到异常，Runner 已停在失败步骤。\n已按需启动独立 Recovery Worker：${result.recoverySessionId}\n它只处理当前异常，成功后会从失败步骤把控制权交还 Runner。`)
+      } else {
+        window.alert(`流程“${flowName}”运行失败。\nrunId: ${result.runId}\n请在“巡检记录”中查看失败详情。`)
+      }
+      location.reload()
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : String(error))
+    } finally {
+      runningFlowId = ''
+      schedulePatch()
+    }
   }
 
   async function renameFlow(id) {
-
     const item = cardsById.get(id)
     if (!item) return
     const current = item.definition?.name || id
@@ -158,15 +184,10 @@
   }
 
   async function postAction(path, payload) {
-    try {
-      return await request(path, {
-        method: 'POST',
-        body: JSON.stringify({ workspace: WORKSPACE, ...payload }),
-      })
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : String(error))
-      throw error
-    }
+    return await request(path, {
+      method: 'POST',
+      body: JSON.stringify({ workspace: WORKSPACE, ...payload }),
+    })
   }
 
   function escapeAttr(value) {
@@ -183,6 +204,7 @@
       .flow-manage-actions{display:flex;gap:6px;margin:2px 0 10px;position:relative;z-index:2}
       .mini-btn{border:1px solid #e5e9f0;background:#fff;border-radius:8px;padding:5px 9px;font-size:11px;color:#475467;cursor:pointer}
       .mini-btn:hover{border-color:#b9c6da;background:#f8fafc}
+      .mini-btn:disabled,.btn:disabled{opacity:.55;cursor:wait}
       .mini-btn.run{margin-left:auto}.mini-btn.run,.run-btn{color:#1d4ed8!important;border-color:#bfd0f6!important;background:#f7faff!important}
       .mini-btn.run:hover,.run-btn:hover{background:#eff6ff!important;border-color:#93b4ef!important}
       .mini-btn.danger,.danger-btn{color:#c43225!important;border-color:#f0c7c3!important}
@@ -201,7 +223,7 @@
     const action = target.getAttribute('data-manage-action') || ''
     const id = target.getAttribute('data-manage-id') || ''
     if (!id) return
-    if (action === 'run') runFlow(id)
+    if (action === 'run') void runFlow(id)
     else if (action === 'rename') void renameFlow(id)
     else if (action === 'optimize') void optimizeFlow(id)
     else if (action === 'delete') void deleteFlow(id)
