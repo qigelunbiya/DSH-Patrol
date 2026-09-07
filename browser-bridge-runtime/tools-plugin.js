@@ -20,16 +20,45 @@ import { registerTools } from './tools.js'
 export const name = 'dsh-patrol-browser-tools'
 export const inject = ['tools', 'patrolBrowserBridge']
 
+// Recovery deliberately cannot see credential/TOTP/transient-secret tools or
+// CAPTCHA image-answer helpers. Secrets and verification values remain owned
+// by the deterministic Runbook; the model gets only enough browser capability
+// to inspect and clear transient layout/navigation obstructions.
+export const RECOVERY_BROWSER_TOOL_BUDGET = 15
+export const RECOVERY_BASE_TOOLS = new Set([
+  'browser_status',
+  'browser_list_tabs',
+  'browser_activate_tab',
+  'browser_navigate',
+  'browser_snapshot',
+  'browser_read_page',
+  'browser_click',
+  'browser_type',
+  'browser_press',
+  'browser_scroll',
+  'browser_wait',
+  'browser_screenshot',
+  'browser_count',
+  'browser_login_state',
+  'browser_detect_auth_challenge',
+])
+
 export async function apply(ctx, config = {}) {
   const service = ctx.get('patrolBrowserBridge')
   if (!service || !service.bridge) {
     throw new Error('dsh-patrol/browser-tools: host patrolBrowserBridge service is unavailable; install the DSH Patrol host bundle before using the Patrol preset')
   }
 
-  // Selecting Patrol mode should be enough for the browser side to become
-  // usable. The host launches an isolated Chromium profile and installs the
-  // bundled extension through CDP. Startup failures are logged but do not make
-  // the preset snap back to Standard mode; patrol_doctor can still diagnose it.
+  const profile = ['full', 'teaching', 'replay', 'recovery'].includes(config.profile)
+    ? config.profile
+    : 'full'
+  if (profile === 'recovery' && RECOVERY_BASE_TOOLS.size !== RECOVERY_BROWSER_TOOL_BUDGET) {
+    throw new Error(`dsh-patrol/browser-tools: recovery browser budget drifted to ${RECOVERY_BASE_TOOLS.size}; expected ${RECOVERY_BROWSER_TOOL_BUDGET}`)
+  }
+
+  // Selecting a worker that actually owns browser tools should be enough for
+  // the browser side to become usable. The lightweight shell never mounts this
+  // plugin, so ordinary Patrol conversation does not launch Chromium.
   if (typeof service.ensureBrowser === 'function') {
     try {
       await service.ensureBrowser()
@@ -73,30 +102,38 @@ export async function apply(ctx, config = {}) {
     },
   }
 
+  const allowedTools = profile === 'recovery' ? RECOVERY_BASE_TOOLS : undefined
   ctx.effect(() => registerTools(ctx, bridge, {
     commandTimeoutMs: config.commandTimeoutMs ?? 60000,
     bridgeUrlHint: typeof service.bridgeUrlHint === 'function' ? service.bridgeUrlHint : () => '',
-  }), 'dsh-patrol/browser-tools: scoped browser tools')
+    allowedTools,
+  }), `dsh-patrol/browser-tools: scoped browser tools (${profile})`)
+
   ctx.effect(() => registerCountTool(ctx, bridge, {
     commandTimeoutMs: config.commandTimeoutMs ?? 60000,
   }), 'dsh-patrol/browser-tools: scoped count tool')
   ctx.effect(() => registerChallengeTool(ctx, bridge, {
     commandTimeoutMs: config.commandTimeoutMs ?? 60000,
   }), 'dsh-patrol/browser-tools: scoped auth challenge detector')
-  ctx.effect(() => registerImageCodeVisualTool(ctx, bridge, {
-    commandTimeoutMs: config.commandTimeoutMs ?? 60000,
-  }), 'dsh-patrol/browser-tools: current image-code visual crop')
-  ctx.effect(() => registerImageCodeRefreshTool(ctx, bridge, {
-    commandTimeoutMs: config.commandTimeoutMs ?? 60000,
-  }), 'dsh-patrol/browser-tools: current image-code refresh recovery')
-  ctx.effect(() => registerTotpTool(ctx, bridge, {
-    commandTimeoutMs: config.commandTimeoutMs ?? 60000,
-    minimumValiditySeconds: config.totpMinimumValiditySeconds ?? 5,
-  }), 'dsh-patrol/browser-tools: encrypted TOTP profile input')
   ctx.effect(() => registerLoginStateTool(ctx, bridge, {
     commandTimeoutMs: config.commandTimeoutMs ?? 60000,
   }), 'dsh-patrol/browser-tools: scoped login-state detector')
-  ctx.effect(() => registerTransientTool(ctx, bridge, {
-    commandTimeoutMs: config.commandTimeoutMs ?? 60000,
-  }), 'dsh-patrol/browser-tools: scoped transient input replay')
+
+  if (profile !== 'recovery') {
+    ctx.effect(() => registerImageCodeVisualTool(ctx, bridge, {
+      commandTimeoutMs: config.commandTimeoutMs ?? 60000,
+    }), 'dsh-patrol/browser-tools: current image-code visual crop')
+    ctx.effect(() => registerImageCodeRefreshTool(ctx, bridge, {
+      commandTimeoutMs: config.commandTimeoutMs ?? 60000,
+    }), 'dsh-patrol/browser-tools: current image-code refresh recovery')
+    ctx.effect(() => registerTotpTool(ctx, bridge, {
+      commandTimeoutMs: config.commandTimeoutMs ?? 60000,
+      minimumValiditySeconds: config.totpMinimumValiditySeconds ?? 5,
+    }), 'dsh-patrol/browser-tools: encrypted TOTP profile input')
+    ctx.effect(() => registerTransientTool(ctx, bridge, {
+      commandTimeoutMs: config.commandTimeoutMs ?? 60000,
+    }), 'dsh-patrol/browser-tools: scoped transient input replay')
+  }
+
+  ctx.logger.info?.(`[dsh-patrol/browser-tools] profile=${profile}; model-visible browser schemas=${profile === 'recovery' ? RECOVERY_BROWSER_TOOL_BUDGET : 'full'}`)
 }
