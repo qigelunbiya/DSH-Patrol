@@ -2,14 +2,13 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { CallId, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { internalPatrolWorkerPath, mountInternalPatrolWorker } from '../lib/internal-worker.js'
 import { compactFlowConservatively } from './safe-flow-cleanup.js'
 
 const ID = /^[A-Za-z0-9._-]+$/
 const MAX_BODY_BYTES = 32 * 1024
 const WORKSPACE_OUTPUT_ROOT = 'patrol-results'
 const NAMED_RUNBOOK_SUFFIX = '.flow.md'
-const REPLAY_PRESET = 'patrol-replay'
-const RECOVERY_PRESET = 'patrol-recovery'
 
 export function registerPatrolDashboardManagementRoutes(ctx, basePath, config = {}) {
   const prefix = `${String(basePath || '/patrol-browser-bridge').replace(/\/$/, '')}/dashboard`
@@ -42,7 +41,7 @@ export function registerPatrolDashboardManagementRoutes(ctx, basePath, config = 
           })
         }
         const replayTool = pending === undefined ? 'patrol_run_flow' : 'patrol_resume_flow'
-        const replayText = await executeReplayWorker(ctx, workspace, inspectionId, replayTool)
+        const replayText = await executeReplayWorker(ctx, config.workerRoot, workspace, inspectionId, replayTool)
         const runId = extractField(replayText, 'runId')
         if (!runId) throw new Error(`deterministic replay for ${inspectionId} returned no runId`)
         const report = await loadRunReport(storageRoot, inspectionId, runId)
@@ -51,7 +50,7 @@ export function registerPatrolDashboardManagementRoutes(ctx, basePath, config = 
         let recoverySessionId
         const failure = lastRecoverableFailure(report)
         if (report.status === 'failed' && failure !== undefined) {
-          recoverySessionId = await launchRecoveryWorker(ctx, workspace, definition, report, failure)
+          recoverySessionId = await launchRecoveryWorker(ctx, config.workerRoot, workspace, definition, report, failure)
         }
 
         return sendJson(res, 200, {
@@ -174,15 +173,14 @@ export function registerPatrolDashboardManagementRoutes(ctx, basePath, config = 
   }
 }
 
-async function executeReplayWorker(ctx, workspace, inspectionId, replayTool) {
+async function executeReplayWorker(ctx, workerRoot, workspace, inspectionId, replayTool) {
   const agents = ctx.get('agents')
-  const presets = ctx.get('agentPresets')
-  if (!agents || !presets) throw new Error('Harness Agent services are unavailable for direct Dashboard replay')
-  const resolvedPreset = (await presets.resolve(REPLAY_PRESET)).id
+  if (!agents) throw new Error('Harness Agent registry is unavailable for direct Dashboard replay')
+  const compositionPath = internalPatrolWorkerPath(String(workerRoot || ''), 'replay')
   const handle = await agents.create({
     sessionId: `patrol-dashboard-replay-${randomUUID()}`,
-    meta: { cwd: workspace, agentPreset: resolvedPreset },
-    setup: async agentCtx => { await presets.mount(agentCtx, resolvedPreset) },
+    meta: { cwd: workspace },
+    setup: async agentCtx => { await mountInternalPatrolWorker(agentCtx, compositionPath, 'replay') },
   })
   try {
     return await handle.agent.runMaintenance(async signal => {
@@ -202,20 +200,19 @@ async function executeReplayWorker(ctx, workspace, inspectionId, replayTool) {
   }
 }
 
-async function launchRecoveryWorker(ctx, workspace, definition, report, failure) {
+async function launchRecoveryWorker(ctx, workerRoot, workspace, definition, report, failure) {
   const agents = ctx.get('agents')
-  const presets = ctx.get('agentPresets')
-  if (!agents || !presets) throw new Error('Harness Agent services are unavailable for Recovery')
-  const resolvedPreset = (await presets.resolve(RECOVERY_PRESET)).id
+  if (!agents) throw new Error('Harness Agent registry is unavailable for Recovery')
+  const compositionPath = internalPatrolWorkerPath(String(workerRoot || ''), 'recovery')
   const selection = ctx.get('agentDefaultModel')?.currentSelection?.()
   const agentOptions = selection?.provider && selection?.model
     ? { provider: selection.provider, model: selection.model, ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }) }
     : undefined
   const handle = await agents.create({
     sessionId: `session-${randomUUID()}`,
-    meta: { cwd: workspace, agentPreset: resolvedPreset },
+    meta: { cwd: workspace },
     ...(agentOptions === undefined ? {} : { agentOptions }),
-    setup: async agentCtx => { await presets.mount(agentCtx, resolvedPreset) },
+    setup: async agentCtx => { await mountInternalPatrolWorker(agentCtx, compositionPath, 'recovery') },
   })
   try {
     handle.agent.followup(createUserMessage({

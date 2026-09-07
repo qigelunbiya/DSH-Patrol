@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { CallId, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { resolveFlowReference, type FlowReferenceResult } from './flow-reference-tools.js'
+import { internalPatrolWorkerPath, mountInternalPatrolWorker, type PatrolInternalWorkerKind } from './internal-worker.js'
 import { PatrolStore } from './store.js'
 import type { InspectionDefinition, RunReport } from './types.js'
 
@@ -70,19 +71,12 @@ interface AgentRegistryLike {
   }): Promise<WorkerHandleLike>
 }
 
-interface AgentPresetsLike {
-  resolve(id?: string): Promise<{ id: string }>
-  mount(agentCtx: Context, id?: string): Promise<unknown>
-}
-
 interface AgentDefaultModelLike {
   currentSelection(): AgentOptionsLike
 }
 
 export interface PatrolShellOptions {
-  replayPresetId?: string
-  teachingPresetId?: string
-  recoveryPresetId?: string
+  workerRoot?: string
 }
 
 export function registerPatrolShellTools(
@@ -90,9 +84,7 @@ export function registerPatrolShellTools(
   store: PatrolStore,
   options: PatrolShellOptions = {},
 ): () => void {
-  const replayPresetId = options.replayPresetId ?? 'patrol-replay'
-  const teachingPresetId = options.teachingPresetId ?? 'patrol-teaching'
-  const recoveryPresetId = options.recoveryPresetId ?? 'patrol-recovery'
+  const workerRoot = options.workerRoot ?? ''
 
   const listFlows = defineTool({
     name: 'patrol_list_flows',
@@ -131,7 +123,8 @@ export function registerPatrolShellTools(
       if (!workspace) throw new Error('Patrol teaching requires a Harness workspace')
       const sessionId = await launchWorker(
         ctx,
-        teachingPresetId,
+        workerRoot,
+        'teaching',
         workspace,
         exec.agent?.options,
         [
@@ -174,7 +167,7 @@ export function registerPatrolShellTools(
       }
 
       const replayTool = pending === undefined ? 'patrol_run_flow' as const : 'patrol_resume_flow' as const
-      const replayText = await executeReplayWorker(ctx, replayPresetId, workspace, definition.id, replayTool)
+      const replayText = await executeReplayWorker(ctx, workerRoot, workspace, definition.id, replayTool)
       const runId = extractField(replayText, 'runId')
       if (!runId) throw new Error(`deterministic replay for ${definition.id} returned no runId`)
       const report = await store.loadRun(definition.id, runId)
@@ -205,7 +198,8 @@ export function registerPatrolShellTools(
 
       const recoverySessionId = await launchWorker(
         ctx,
-        recoveryPresetId,
+        workerRoot,
+        'recovery',
         workspace,
         exec.agent?.options,
         recoveryPrompt(definition, report),
@@ -227,18 +221,18 @@ export function registerPatrolShellTools(
 
 async function executeReplayWorker(
   ctx: Context,
-  presetId: string,
+  workerRoot: string,
   workspace: string,
   inspectionId: string,
   replayTool: 'patrol_run_flow' | 'patrol_resume_flow',
 ): Promise<string> {
-  const { agents, presets } = workerServices(ctx)
-  const resolved = (await presets.resolve(presetId)).id
+  const { agents } = workerServices(ctx)
+  const compositionPath = internalPatrolWorkerPath(workerRoot, 'replay')
   const sessionId = `patrol-replay-${randomUUID()}`
   const handle = await agents.create({
     sessionId,
-    meta: { cwd: workspace, agentPreset: resolved },
-    setup: async agentCtx => { await presets.mount(agentCtx, resolved) },
+    meta: { cwd: workspace },
+    setup: async agentCtx => { await mountInternalPatrolWorker(agentCtx, compositionPath, 'replay') },
   })
   try {
     return await handle.agent.runMaintenance(async signal => {
@@ -260,19 +254,20 @@ async function executeReplayWorker(
 
 async function launchWorker(
   ctx: Context,
-  presetId: string,
+  workerRoot: string,
+  kind: Extract<PatrolInternalWorkerKind, 'teaching' | 'recovery'>,
   workspace: string,
   inheritedOptions: AgentOptionsLike | undefined,
   prompt: string,
 ): Promise<string> {
-  const { agents, presets } = workerServices(ctx)
-  const resolved = (await presets.resolve(presetId)).id
+  const { agents } = workerServices(ctx)
+  const compositionPath = internalPatrolWorkerPath(workerRoot, kind)
   const sessionId = `session-${randomUUID()}`
   const handle = await agents.create({
     sessionId,
-    meta: { cwd: workspace, agentPreset: resolved },
+    meta: { cwd: workspace },
     agentOptions: resolveAgentOptions(ctx, inheritedOptions),
-    setup: async agentCtx => { await presets.mount(agentCtx, resolved) },
+    setup: async agentCtx => { await mountInternalPatrolWorker(agentCtx, compositionPath, kind) },
   })
   try {
     handle.agent.followup(createUserMessage({
@@ -286,12 +281,10 @@ async function launchWorker(
   return handle.agent.id
 }
 
-function workerServices(ctx: Context): { agents: AgentRegistryLike; presets: AgentPresetsLike } {
+function workerServices(ctx: Context): { agents: AgentRegistryLike } {
   const agents = lookupService<AgentRegistryLike>(ctx, 'agents')
-  const presets = lookupService<AgentPresetsLike>(ctx, 'agentPresets')
   if (agents === undefined) throw new Error('Harness Agent registry is unavailable; cannot launch a lazy Patrol worker')
-  if (presets === undefined) throw new Error('Harness Agent Presets service is unavailable; cannot launch a lazy Patrol worker')
-  return { agents, presets }
+  return { agents }
 }
 
 function resolveAgentOptions(ctx: Context, inherited: AgentOptionsLike | undefined): AgentOptionsLike {

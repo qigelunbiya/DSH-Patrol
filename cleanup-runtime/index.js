@@ -48,6 +48,7 @@ export async function cleanupOrphanedIntegration({ dshHome, profile, logger = co
   // next Harness boot retries instead of silently stranding partial state.
   const removals = await Promise.all([
     removeManagedPresets(home, logger),
+    safeRemove(join(home, 'patrol', 'internal-workers'), { recursive: true }, logger),
     safeRemove(join(home, 'patrol', 'browser-profile'), { recursive: true }, logger),
     safeRemove(join(home, 'patrol', 'managed-browser.json'), {}, logger),
     safeRemove(join(home, 'patrol', 'trusted-extension-origin.txt'), {}, logger),
