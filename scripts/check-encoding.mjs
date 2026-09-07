@@ -52,8 +52,12 @@ const installer = decoder.decode(await readFile(installerPath))
 if ([...installer].some(char => char.codePointAt(0) > 0x7f)) {
   failures.push('scripts/install-local.ps1 must remain ASCII-only so Windows PowerShell 5.1 cannot misdecode embedded Chinese literals')
 }
-if (!installer.includes('Copy-Item -LiteralPath $PresetSource -Destination $PresetTarget -Force')) {
-  failures.push('scripts/install-local.ps1 must copy preset.yml byte-for-byte instead of recreating localized text')
+if (!installer.includes('Copy-Item -LiteralPath $metadataSource -Destination $metadataTarget -Force')) {
+  failures.push('scripts/install-local.ps1 must copy every lazy preset.yml byte-for-byte instead of recreating localized text')
+}
+if (!installer.includes('Get-FileHash -Algorithm SHA256 -LiteralPath $metadataSource')
+  || !installer.includes('Get-FileHash -Algorithm SHA256 -LiteralPath $metadataTarget')) {
+  failures.push('scripts/install-local.ps1 must verify lazy preset.yml byte-for-byte copies with SHA256')
 }
 
 const presetPath = join(root, 'presets', 'patrol', 'preset.yml')
