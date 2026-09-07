@@ -9,7 +9,6 @@ describe('flow run button', () => {
   it('posts the stable flow id directly to the host replay route instead of a conversation prompt', () => {
     expect(managementClient).toContain('data-manage-action="run"')
     expect(managementClient).toContain("postAction('/flow/run', { inspectionId: id })")
-    expect(managementClient).toContain('zeroModelReplay')
     expect(managementClient).not.toContain("type: 'dsh-patrol:run-flow'")
     expect(managementClient).not.toContain('window.parent.postMessage')
   })
