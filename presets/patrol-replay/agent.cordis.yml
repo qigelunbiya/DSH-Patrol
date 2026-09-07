@@ -1,0 +1,16 @@
+# Deterministic Patrol replay worker. No user/model prompt is sent in the normal path.
+# It mounts the browser provider and the narrow Patrol replay profile so the Host can
+# execute patrol_run_flow directly through ToolRuntime.
+- id: browser-tools
+  name: 'dsh-patrol/browser-tools'
+  config:
+    commandTimeoutMs: 60000
+    profile: replay
+
+- id: dsh-patrol
+  name: 'dsh-patrol'
+  config:
+    profile: replay
+    storagePath: .dsh-patrol
+    maxSteps: 200
+    reportMaxChars: 30000
