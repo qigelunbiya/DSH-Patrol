@@ -22,14 +22,33 @@ function readLoader(ctx) {
   return read(ctx) ?? read(ctx?.root)
 }
 
+function nonEmptyBaseUrl(value) {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed === '' ? undefined : trimmed
+}
+
+// Harness app boot assigns ctx.baseUrl before applying Loader and normally does
+// not populate loader.config.baseUrl. Read the real loader/root context first;
+// config remains only a compatibility fallback for custom embeddings.
+function readHarnessBaseUrl(ctx, loader) {
+  return nonEmptyBaseUrl(loader?.ctx?.baseUrl)
+    ?? nonEmptyBaseUrl(ctx?.root?.baseUrl)
+    ?? nonEmptyBaseUrl(loader?.config?.baseUrl)
+    ?? nonEmptyBaseUrl(ctx?.baseUrl)
+}
+
 export async function mountInternalPatrolWorker(hostCtx, agentCtx, compositionPath, kind) {
   if (!isAbsolute(compositionPath)) throw new Error(`internal Patrol worker composition must be absolute: ${compositionPath}`)
   await access(compositionPath)
   const loader = readLoader(hostCtx)
-  const baseUrl = loader?.config?.baseUrl
   const importer = loader?.internal?.import
-  if (!baseUrl || typeof importer !== 'function') {
-    throw new Error('Harness Loader is unavailable on the Patrol host context; cannot mount a hidden Patrol worker composition')
+  if (!loader || typeof importer !== 'function') {
+    throw new Error('Harness Loader module importer is unavailable on the Patrol host context; cannot mount a hidden Patrol worker composition')
+  }
+  const baseUrl = readHarnessBaseUrl(hostCtx, loader)
+  if (!baseUrl) {
+    throw new Error('Harness module base URL is unavailable on the Loader/root context; cannot mount a hidden Patrol worker composition')
   }
   const [presetModule, scopeModule] = await Promise.all([
     Promise.resolve(importer.call(loader.internal, '@deepseek-ai/dsh-agent-presets', baseUrl, {})),
