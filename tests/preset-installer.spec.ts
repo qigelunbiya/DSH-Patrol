@@ -7,6 +7,7 @@ import { apply } from '../src/preset-installer.ts'
 
 const cleanup = []
 const previousDshHome = process.env.DSH_HOME
+const managedPresetIds = ['patrol', 'patrol-teaching', 'patrol-replay', 'patrol-recovery']
 
 afterEach(() => {
   if (previousDshHome === undefined) delete process.env.DSH_HOME
@@ -15,7 +16,7 @@ afterEach(() => {
 })
 
 describe('Patrol preset installer lifecycle', () => {
-  it('installs the preset and an idempotent persistent cleanup row for bundle profiles', async () => {
+  it('installs the shell and all lazy worker presets plus an idempotent cleanup row', async () => {
     const root = makeHome()
     const profileDir = join(root, 'profiles', 'web')
     mkdirSync(profileDir, { recursive: true })
@@ -25,11 +26,19 @@ describe('Patrol preset installer lifecycle', () => {
     const ctx = fakeContext()
     await apply(ctx)
 
-    const preset = join(root, '.agent-presets', 'patrol')
+    for (const id of managedPresetIds) {
+      const preset = join(root, '.agent-presets', id)
+      expect(existsSync(join(preset, '.managed-by-dsh-patrol'))).toBe(true)
+      expect(existsSync(join(preset, 'agent.cordis.yml'))).toBe(true)
+      expect(existsSync(join(preset, 'preset.yml'))).toBe(true)
+    }
+    expect(readFileSync(join(root, '.agent-presets', 'patrol', 'agent.cordis.yml'), 'utf8')).toContain('profile: shell')
+    expect(readFileSync(join(root, '.agent-presets', 'patrol-teaching', 'agent.cordis.yml'), 'utf8')).toContain('profile: teaching')
+    expect(readFileSync(join(root, '.agent-presets', 'patrol-replay', 'agent.cordis.yml'), 'utf8')).toContain('profile: replay')
+    expect(readFileSync(join(root, '.agent-presets', 'patrol-recovery', 'agent.cordis.yml'), 'utf8')).toContain('profile: recovery')
+
     const runtime = join(root, 'patrol', 'integration-cleanup.mjs')
     const firstPatch = readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')
-    expect(existsSync(join(preset, '.managed-by-dsh-patrol'))).toBe(true)
-    expect(readFileSync(join(preset, 'preset.yml'), 'utf8')).toContain('巡检模式')
     expect(readFileSync(runtime, 'utf8')).toContain('dsh-patrol-integration-cleanup')
     expect(firstPatch).toContain('# user row')
     expect(firstPatch).toContain('# BEGIN DSH-PATROL MANAGED CLEANUP')
@@ -39,7 +48,7 @@ describe('Patrol preset installer lifecycle', () => {
     expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toBe(firstPatch)
   })
 
-  it('preserves an unmanaged patrol preset while still installing the cleanup coordinator', async () => {
+  it('preserves an unmanaged preset while continuing to install the remaining managed workers', async () => {
     const root = makeHome()
     const profileDir = join(root, 'profiles', 'web')
     mkdirSync(profileDir, { recursive: true })
@@ -53,6 +62,9 @@ describe('Patrol preset installer lifecycle', () => {
 
     expect(readFileSync(join(preset, 'agent.cordis.yml'), 'utf8')).toContain('user-owned/plugin')
     expect(existsSync(join(preset, '.managed-by-dsh-patrol'))).toBe(false)
+    for (const id of ['patrol-teaching', 'patrol-replay', 'patrol-recovery']) {
+      expect(existsSync(join(root, '.agent-presets', id, '.managed-by-dsh-patrol'))).toBe(true)
+    }
     expect(existsSync(join(root, 'patrol', 'integration-cleanup.mjs'))).toBe(true)
     expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toContain('# BEGIN DSH-PATROL MANAGED CLEANUP')
   })

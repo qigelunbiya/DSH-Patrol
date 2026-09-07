@@ -120,10 +120,25 @@ if (!/registerCountTool\(ctx,\s*bridge,/.test(toolPlugin)) throw new Error('brow
 if (!/registerChallengeTool\(ctx,\s*bridge,/.test(toolPlugin)) throw new Error('browser tools plugin must register scoped auth challenge detection')
 if (!/registerLoginStateTool\(ctx,\s*bridge,/.test(toolPlugin)) throw new Error('browser tools plugin must register scoped login-state detection')
 
-const preset = readFileSync(join(projectRoot, 'presets', 'patrol', 'agent.cordis.yml'), 'utf8')
-if (!preset.includes("name: 'dsh-patrol/browser-tools'")) throw new Error('Patrol preset must load the agent-scoped browser tools plugin')
-if (preset.includes("name: 'dsh-patrol/browser-bridge'")) throw new Error('Patrol preset must not own the process-global browser transport')
-if (!preset.includes('storagePath: .dsh-patrol')) throw new Error('Patrol preset must default to workspace-local storage')
+const shellPreset = readFileSync(join(projectRoot, 'presets', 'patrol', 'agent.cordis.yml'), 'utf8')
+if (shellPreset.includes("name: 'dsh-patrol/browser-tools'")) throw new Error('lightweight Patrol shell must not load browser tools eagerly')
+if (shellPreset.includes("name: 'dsh-patrol/browser-bridge'")) throw new Error('Patrol shell must not own the process-global browser transport')
+if (!shellPreset.includes('profile: shell')) throw new Error('Patrol shell preset must load the shell profile')
+if (!shellPreset.includes('storagePath: .dsh-patrol')) throw new Error('Patrol shell preset must default to workspace-local storage')
+
+for (const [presetId, profile] of [
+  ['patrol-teaching', 'teaching'],
+  ['patrol-replay', 'replay'],
+  ['patrol-recovery', 'recovery'],
+]) {
+  const workerPreset = readFileSync(join(projectRoot, 'presets', presetId, 'agent.cordis.yml'), 'utf8')
+  if (!workerPreset.includes("name: 'dsh-patrol/browser-tools'")) throw new Error(`${presetId} must load the agent-scoped browser tools plugin`)
+  if (workerPreset.includes("name: 'dsh-patrol/browser-bridge'")) throw new Error(`${presetId} must not own the process-global browser transport`)
+  if (!workerPreset.includes(`profile: ${profile}`)) throw new Error(`${presetId} must load the ${profile} Patrol profile`)
+  if (!workerPreset.includes('storagePath: .dsh-patrol')) throw new Error(`${presetId} must default to workspace-local storage`)
+}
+const replayPreset = readFileSync(join(projectRoot, 'presets', 'patrol-replay', 'agent.cordis.yml'), 'utf8')
+if (replayPreset.includes("name: '@deepseek-ai/dsh-persona'")) throw new Error('deterministic replay preset must remain persona-free so normal replay does not require a model prompt')
 
 const hostPatch = readFileSync(join(projectRoot, 'cordis.patch.yml'), 'utf8')
 if (!hostPatch.includes("name: 'dsh-patrol/browser-bridge-host'")) throw new Error('DSH Patrol host patch must load the browser transport')

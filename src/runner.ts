@@ -99,7 +99,8 @@ export class PatrolRunner {
   async run(definition: InspectionDefinition, exec: ToolRunContext): Promise<{ report: RunReport; paths: SavedRunPaths }> {
     const pending = await this.store.loadResume(definition.id)
     if (pending !== undefined) {
-      throw new Error(`inspection ${definition.id} has a pending checkpoint in run ${pending.runId}; use patrol_resume instead of starting a second run`)
+      const reason = pending.reason === 'recovery' ? 'recovery handoff' : 'checkpoint'
+      throw new Error(`inspection ${definition.id} has a pending ${reason} in run ${pending.runId}; resume or abort it instead of starting a second run`)
     }
     await this.rememberInteractiveWorkspace(definition, exec)
     const startedAt = new Date().toISOString()
@@ -118,14 +119,32 @@ export class PatrolRunner {
   async resume(definition: InspectionDefinition, exec: ToolRunContext): Promise<{ report: RunReport; paths: SavedRunPaths }> {
     const state = await this.store.loadResume(definition.id)
     if (state === undefined) throw new Error(`inspection ${definition.id} has no pending checkpoint`)
-    if (state.definitionUpdatedAt !== definition.metadata.updatedAt) {
-      throw new Error(`inspection ${definition.id} changed after run ${state.runId} paused; abort the pending run before editing or starting over`)
+    if (state.reason === 'recovery') {
+      throw new Error(`inspection ${definition.id} is paused for targeted recovery; use patrol_resume_after_recovery after clearing the browser obstruction`)
     }
+    this.assertUnchanged(definition, state)
     await this.rememberInteractiveWorkspace(definition, exec)
     const results = state.results.map(result => result.status === 'waiting'
       ? { ...result, status: 'passed' as const, finishedAt: new Date().toISOString(), output: 'Checkpoint completed by the user before resume.' }
       : result)
-    return await this.executeFrom(definition, exec, { ...state, results })
+    return await this.executeFrom(definition, exec, { ...state, reason: 'checkpoint', results })
+  }
+
+  async resumeAfterRecovery(definition: InspectionDefinition, exec: ToolRunContext): Promise<{ report: RunReport; paths: SavedRunPaths }> {
+    const state = await this.store.loadResume(definition.id)
+    if (state === undefined) throw new Error(`inspection ${definition.id} has no paused recovery run`)
+    if (state.reason !== 'recovery') {
+      throw new Error(`inspection ${definition.id} is waiting at a human checkpoint, not a recovery boundary`)
+    }
+    this.assertUnchanged(definition, state)
+    await this.rememberInteractiveWorkspace(definition, exec)
+    return await this.executeFrom(definition, exec, state)
+  }
+
+  private assertUnchanged(definition: InspectionDefinition, state: ResumeState): void {
+    if (state.definitionUpdatedAt !== definition.metadata.updatedAt) {
+      throw new Error(`inspection ${definition.id} changed after run ${state.runId} paused; abort the pending run before editing or starting over`)
+    }
   }
 
   private async rememberInteractiveWorkspace(definition: InspectionDefinition, exec: ToolRunContext): Promise<void> {
@@ -144,6 +163,7 @@ export class PatrolRunner {
   ): Promise<{ report: RunReport; paths: SavedRunPaths }> {
     const results = [...state.results]
     let status: RunReport['status'] = 'passed'
+    let resumePreserved = false
     const outputWorkspace = exec.agent?.session.header.cwd ?? definition.metadata.workspaceRoot
 
     for (let index = state.nextStepIndex; index < definition.steps.length; index += 1) {
@@ -194,16 +214,33 @@ export class PatrolRunner {
           runId: state.runId,
           startedAt: state.startedAt,
           definitionUpdatedAt: state.definitionUpdatedAt,
+          reason: 'checkpoint',
           nextStepIndex: index + 1,
           results,
         })
+        resumePreserved = true
         break
       }
 
+      const priorResults = [...results]
       const result = await this.executeToolStep(definition, state.runId, step, exec, stepStartedAt, outputWorkspace)
       results.push(result)
       if (result.status === 'failed') {
         status = 'failed'
+        // Preserve the successful prefix, but not the failed attempt itself. A
+        // Recovery worker clears the transient obstruction and then the same
+        // deterministic step is retried exactly once from this boundary.
+        await this.store.saveResume({
+          schemaVersion: '0.2',
+          inspectionId: definition.id,
+          runId: state.runId,
+          startedAt: state.startedAt,
+          definitionUpdatedAt: state.definitionUpdatedAt,
+          reason: 'recovery',
+          nextStepIndex: index,
+          results: priorResults,
+        })
+        resumePreserved = true
         break
       }
     }
@@ -227,7 +264,7 @@ export class PatrolRunner {
         status = 'failed'
       }
     }
-    if (status !== 'waiting') await this.store.clearResume(definition.id)
+    if (!resumePreserved) await this.store.clearResume(definition.id)
     const report: RunReport = {
       schemaVersion: '0.2',
       runId: state.runId,

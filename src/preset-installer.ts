@@ -7,7 +7,7 @@ import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 export const name = 'dsh-patrol-preset-installer'
 export const inject: string[] = []
 
-const PRESET_ID = 'patrol'
+const MANAGED_PRESET_IDS = ['patrol', 'patrol-teaching', 'patrol-replay', 'patrol-recovery'] as const
 const MANAGED_MARKER = '.managed-by-dsh-patrol'
 const CLEANUP_BEGIN = '# BEGIN DSH-PATROL MANAGED CLEANUP'
 const CLEANUP_END = '# END DSH-PATROL MANAGED CLEANUP'
@@ -20,8 +20,14 @@ export async function apply(ctx: Context): Promise<void> {
   // which currently has no third-party uninstall hook.
   await installCleanupCoordinator(ctx)
 
-  const source = fileURLToPath(new URL('../presets/patrol/', import.meta.url))
-  const target = dshHomePath('.agent-presets', PRESET_ID)
+  for (const presetId of MANAGED_PRESET_IDS) {
+    await installManagedPreset(ctx, presetId)
+  }
+}
+
+async function installManagedPreset(ctx: Context, presetId: typeof MANAGED_PRESET_IDS[number]): Promise<void> {
+  const source = fileURLToPath(new URL(`../presets/${presetId}/`, import.meta.url))
+  const target = dshHomePath('.agent-presets', presetId)
   const marker = join(target, MANAGED_MARKER)
   const exists = await pathExists(target)
   const managed = await pathExists(marker)
@@ -37,7 +43,7 @@ export async function apply(ctx: Context): Promise<void> {
     await writeFile(join(target, file), content, { encoding: 'utf8', mode: 0o600 })
   }
   await writeFile(marker, 'managed by dsh-patrol; edit the package preset source or remove this marker to take ownership\n', { encoding: 'utf8', mode: 0o600 })
-  ctx.logger.info(`dsh-patrol: installed/updated Agent Preset "${PRESET_ID}" at ${target}`)
+  ctx.logger.info(`dsh-patrol: installed/updated Agent Preset "${presetId}" at ${target}`)
 }
 
 async function installCleanupCoordinator(ctx: Context): Promise<void> {

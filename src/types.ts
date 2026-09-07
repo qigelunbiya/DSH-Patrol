@@ -138,12 +138,16 @@ export interface RunReport {
   outputWorkspace?: string
 }
 
+export type ResumeReason = 'checkpoint' | 'recovery'
+
 export interface ResumeState {
   schemaVersion: '0.2'
   inspectionId: string
   runId: string
   startedAt: string
   definitionUpdatedAt: string
+  /** Why execution paused. Older persisted states omit this and are treated as checkpoint resumes. */
+  reason?: ResumeReason
   nextStepIndex: number
   results: StepRunResult[]
 }

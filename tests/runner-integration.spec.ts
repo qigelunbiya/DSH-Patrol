@@ -89,4 +89,46 @@ describe('PatrolRunner integration safety', () => {
     await expect(runner.resume(changed, exec)).rejects.toThrow(/changed after run/i)
     expect(await store.loadResume(def.id)).toBeDefined()
   })
+
+  it('preserves the successful prefix and retries only the failed step after recovery', async () => {
+    const calls: string[] = []
+    let clickAttempts = 0
+    const { store, runner, exec } = await setup(async input => {
+      calls.push(input.name)
+      if (input.name === 'browser_click') {
+        clickAttempts += 1
+        if (clickAttempts === 1) {
+          return {
+            isError: true,
+            error: { message: 'temporary overlay blocked the button' },
+            content: [{ type: 'text', text: 'temporary overlay blocked the button' }],
+          }
+        }
+      }
+      return {
+        isError: false,
+        value: { ok: true },
+        content: [{ type: 'text', text: `${input.name} ok` }],
+      }
+    })
+    const def = definition([
+      { id: 'step-001', kind: 'tool', name: 'read', tool: 'browser_read_page', arguments: {}, recordedAt: at },
+      { id: 'step-002', kind: 'tool', name: 'click', tool: 'browser_click', arguments: { selector: '#go' }, recordedAt: at },
+    ])
+
+    const first = await runner.run(def, exec)
+    expect(first.report.status).toBe('failed')
+    expect(first.report.results.map(item => item.stepId)).toEqual(['step-001', 'step-002'])
+    const paused = await store.loadResume(def.id)
+    expect(paused?.reason).toBe('recovery')
+    expect(paused?.nextStepIndex).toBe(1)
+    expect(paused?.results.map(item => item.stepId)).toEqual(['step-001'])
+
+    const resumed = await runner.resumeAfterRecovery(def, exec)
+    expect(resumed.report.status).toBe('passed')
+    expect(resumed.report.results.map(item => item.stepId)).toEqual(['step-001', 'step-002'])
+    expect(calls.filter(name => name === 'browser_read_page')).toHaveLength(1)
+    expect(calls.filter(name => name === 'browser_click')).toHaveLength(2)
+    expect(await store.loadResume(def.id)).toBeUndefined()
+  })
 })

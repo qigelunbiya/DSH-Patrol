@@ -1,16 +1,73 @@
+import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
+import { CallId, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { compactFlowConservatively } from './safe-flow-cleanup.js'
 
 const ID = /^[A-Za-z0-9._-]+$/
 const MAX_BODY_BYTES = 32 * 1024
 const WORKSPACE_OUTPUT_ROOT = 'patrol-results'
 const NAMED_RUNBOOK_SUFFIX = '.flow.md'
+const REPLAY_PRESET = 'patrol-replay'
+const RECOVERY_PRESET = 'patrol-recovery'
 
 export function registerPatrolDashboardManagementRoutes(ctx, basePath, config = {}) {
   const prefix = `${String(basePath || '/patrol-browser-bridge').replace(/\/$/, '')}/dashboard`
   const storageRoot = resolveDashboardStorage(config)
   const disposers = []
+
+  // Dashboard replay bypasses the conversation model completely. The Host
+  // creates a persona-free replay Agent, invokes patrol_run_flow (or checkpoint
+  // resume) inside runMaintenance, and disposes that Agent when the deterministic
+  // runner settles. Only a real unexpected browser-step failure launches a
+  // narrow Recovery model worker.
+  disposers.push(ctx.webServer.register({
+    kind: 'exact',
+    path: `${prefix}/flow/run`,
+    handler: async (req, res) => {
+      if (req.method !== 'POST') return methodNotAllowed(res, ['POST'])
+      try {
+        const body = await readJsonBody(req)
+        const inspectionId = requireId(body.inspectionId, 'inspectionId')
+        const workspace = requireWorkspace(body.workspace)
+        const definition = await loadDefinition(storageRoot, inspectionId)
+        assertWorkspace(definition, workspace)
+        if (definition.steps.length === 0) throw new Error(`inspection ${inspectionId} has no reusable steps`)
+
+        const pending = await loadResumeState(storageRoot, inspectionId)
+        if (pending?.reason === 'recovery') {
+          return sendJson(res, 409, {
+            ok: false,
+            error: `inspection ${inspectionId} is already paused for recovery in run ${pending.runId}`,
+          })
+        }
+        const replayTool = pending === undefined ? 'patrol_run_flow' : 'patrol_resume_flow'
+        const replayText = await executeReplayWorker(ctx, workspace, inspectionId, replayTool)
+        const runId = extractField(replayText, 'runId')
+        if (!runId) throw new Error(`deterministic replay for ${inspectionId} returned no runId`)
+        const report = await loadRunReport(storageRoot, inspectionId, runId)
+        const reportPath = extractField(replayText, 'report') || join(storageRoot, 'runs', inspectionId, runId, 'report.md')
+
+        let recoverySessionId
+        const failure = lastRecoverableFailure(report)
+        if (report.status === 'failed' && failure !== undefined) {
+          recoverySessionId = await launchRecoveryWorker(ctx, workspace, definition, report, failure)
+        }
+
+        return sendJson(res, 200, {
+          ok: true,
+          zeroModelReplay: true,
+          inspectionId,
+          runId,
+          status: report.status,
+          report: reportPath,
+          ...(recoverySessionId === undefined ? {} : { recoverySessionId }),
+        })
+      } catch (error) {
+        return sendJson(res, 400, { ok: false, error: safeError(error) })
+      }
+    },
+  }))
 
   disposers.push(ctx.webServer.register({
     kind: 'exact',
@@ -88,7 +145,7 @@ export function registerPatrolDashboardManagementRoutes(ctx, basePath, config = 
         if (deleteHistory) {
           // Dashboard deletion is a real cleanup operation, not a hide flag.
           // Remove the internal history index and the complete workspace flow
-          // directory so test flows do not survive in巡检记录 or on disk.
+          // directory so test flows do not survive in records or on disk.
           await rm(join(storageRoot, 'runs', inspectionId), { recursive: true, force: true })
           await rm(workspaceFlowRoot, { recursive: true, force: true })
         } else {
@@ -115,6 +172,122 @@ export function registerPatrolDashboardManagementRoutes(ctx, basePath, config = 
       try { dispose() } catch {}
     }
   }
+}
+
+async function executeReplayWorker(ctx, workspace, inspectionId, replayTool) {
+  const agents = ctx.get('agents')
+  const presets = ctx.get('agentPresets')
+  if (!agents || !presets) throw new Error('Harness Agent services are unavailable for direct Dashboard replay')
+  const resolvedPreset = (await presets.resolve(REPLAY_PRESET)).id
+  const handle = await agents.create({
+    sessionId: `patrol-dashboard-replay-${randomUUID()}`,
+    meta: { cwd: workspace, agentPreset: resolvedPreset },
+    setup: async agentCtx => { await presets.mount(agentCtx, resolvedPreset) },
+  })
+  try {
+    return await handle.agent.runMaintenance(async signal => {
+      const result = await handle.agent.ctx.tools.execute({
+        callId: CallId(`patrol-dashboard-${randomUUID()}`),
+        name: replayTool,
+        arguments: { flow: inspectionId },
+        signal,
+        agent: handle.agent,
+      })
+      if (result.isError) throw new Error(result.error.message)
+      if (typeof result.value === 'string') return result.value
+      return result.content.map(block => block.type === 'text' ? block.text : `[${block.type}]`).join('\n')
+    })
+  } finally {
+    await handle.dispose()
+  }
+}
+
+async function launchRecoveryWorker(ctx, workspace, definition, report, failure) {
+  const agents = ctx.get('agents')
+  const presets = ctx.get('agentPresets')
+  if (!agents || !presets) throw new Error('Harness Agent services are unavailable for Recovery')
+  const resolvedPreset = (await presets.resolve(RECOVERY_PRESET)).id
+  const selection = ctx.get('agentDefaultModel')?.currentSelection?.()
+  const agentOptions = selection?.provider && selection?.model
+    ? { provider: selection.provider, model: selection.model, ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }) }
+    : undefined
+  const handle = await agents.create({
+    sessionId: `session-${randomUUID()}`,
+    meta: { cwd: workspace, agentPreset: resolvedPreset },
+    ...(agentOptions === undefined ? {} : { agentOptions }),
+    setup: async agentCtx => { await presets.mount(agentCtx, resolvedPreset) },
+  })
+  try {
+    handle.agent.followup(createUserMessage({
+      content: [{ type: 'text', text: recoveryPrompt(definition, report, failure) }],
+      source: { kind: 'user' },
+    }))
+  } catch (error) {
+    await handle.dispose().catch(() => {})
+    throw error
+  }
+  return String(handle.agent.id)
+}
+
+function recoveryPrompt(definition, report, failure) {
+  const failedIndex = report.results.findIndex(item => item.stepId === failure.stepId && item.status === 'failed')
+  const nearby = report.results.slice(Math.max(0, failedIndex - 2), failedIndex + 1)
+  const context = nearby.map(item => [
+    `${item.stepId} ${item.name} [${item.status}]${item.tool ? ` tool=${item.tool}` : ''}`,
+    item.error ? `error=${trimContext(item.error, 700)}` : '',
+    item.output ? `output=${trimContext(item.output, 900)}` : '',
+  ].filter(Boolean).join('\n')).join('\n---\n')
+  return [
+    '你是 DSH Patrol 的按需 Recovery Worker。正常流程已经由 deterministic runner 执行；只有当前异常需要模型介入。',
+    '只解除当前浏览器阻塞，不从头重跑，不创建、不重教、不修改 Runbook，也不要处理明文秘密。',
+    '确认阻塞解除后调用一次 patrol_resume_after_recovery，把控制权交还 deterministic runner。无法安全恢复就停止并说明原因。',
+    '',
+    `flow=${definition.id} (${definition.name || definition.id})`,
+    `runId=${report.runId}`,
+    `failedStep=${failure.stepId}`,
+    '',
+    context || '(no nearby step context)',
+  ].join('\n')
+}
+
+function lastRecoverableFailure(report) {
+  return [...report.results].reverse().find(item => item.status === 'failed'
+    && item.stepId !== 'artifact-check'
+    && typeof item.tool === 'string'
+    && item.tool.startsWith('browser_'))
+}
+
+async function loadRunReport(storageRoot, inspectionId, runId) {
+  if (!ID.test(runId)) throw new Error('invalid runId returned by replay worker')
+  const raw = await readFile(join(storageRoot, 'runs', inspectionId, runId, 'report.json'), 'utf8')
+  const report = JSON.parse(raw)
+  if (!report || report.inspectionId !== inspectionId || report.runId !== runId || !Array.isArray(report.results)) {
+    throw new Error('stored run report is invalid')
+  }
+  return report
+}
+
+async function loadResumeState(storageRoot, inspectionId) {
+  try {
+    const raw = await readFile(join(storageRoot, 'resumes', `${inspectionId}.json`), 'utf8')
+    const state = JSON.parse(raw)
+    if (!state || state.inspectionId !== inspectionId || typeof state.runId !== 'string') throw new Error('stored resume state is invalid')
+    return state
+  } catch (error) {
+    if (error?.code === 'ENOENT') return undefined
+    throw error
+  }
+}
+
+function extractField(text, field) {
+  const line = String(text || '').split(/\r?\n/u).find(item => item.startsWith(`${field}=`))
+  const value = line?.slice(field.length + 1).trim()
+  return value || undefined
+}
+
+function trimContext(value, max) {
+  const normalized = String(value || '').replace(/\s+/gu, ' ').trim()
+  return normalized.length <= max ? normalized : `${normalized.slice(0, max)}...`
 }
 
 function resolveDashboardStorage(config) {

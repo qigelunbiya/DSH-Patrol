@@ -300,7 +300,9 @@ export function registerTools(ctx, bridge, config = {}) {
     }),
   ]
 
-  const disposers = definitions.map(definition => ctx.tools.register(definition))
+  const allowedTools = config.allowedTools instanceof Set ? config.allowedTools : undefined
+  const selected = allowedTools === undefined ? definitions : definitions.filter(definition => allowedTools.has(definition.name))
+  const disposers = selected.map(definition => ctx.tools.register(definition))
   return () => { for (const dispose of disposers) dispose() }
 }
 
