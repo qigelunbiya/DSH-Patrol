@@ -13,9 +13,11 @@ const QWEN_ROUTE = {
   model: 'qwen3.5_122b_a10b_fp4',
 }
 
-function fakeAgent(totalReplaceGeneration = 0) {
+const NO_REQUEST_HEADER = Symbol('no-request-header')
+
+function fakeAgent(totalReplaceGeneration = 0, requestConfig: any = QWEN_ROUTE) {
   const session = {
-    requestHeader: () => ({ config: QWEN_ROUTE }),
+    requestHeader: () => requestConfig === NO_REQUEST_HEADER ? undefined : ({ config: requestConfig }),
     surface: { replaceGeneration: totalReplaceGeneration },
   }
   return {
@@ -98,6 +100,27 @@ describe('Patrol constrained-Qwen context pressure guard', () => {
     await ctx.fiber.dispose()
   })
 
+  it('uses the agent option route before the first request header is available', async () => {
+    const ctx = new Context()
+    const agent = fakeAgent(0, NO_REQUEST_HEADER)
+    const compactIfNeeded = vi.fn(async () => {
+      agent.session.surface.replaceGeneration += 1
+      return { shadowedSeqs: [1] }
+    })
+    ctx.provide('tokenMeter', { measure: () => ({ totalTokens: PATROL_QWEN_SOFT_REQUEST_LIMIT + 500 }) })
+    ctx.provide('compaction', { compactIfNeeded })
+    registerPatrolContextPressureGuard(ctx)
+
+    await ctx.waterfall(
+      'agent/pre-step',
+      preStepPayload(agent) as never,
+      async () => ({ kind: 'enter' as const, messages: [] }),
+    )
+
+    expect(compactIfNeeded).toHaveBeenCalledOnce()
+    await ctx.fiber.dispose()
+  })
+
   it('does not compact healthy low-pressure steps', async () => {
     const ctx = new Context()
     const agent = fakeAgent()
@@ -145,10 +168,13 @@ describe('Patrol constrained-Qwen context pressure guard', () => {
     await ctx.fiber.dispose()
   })
 
-  it('delegates auth_unavailable because the Session log proves it is the post-OOM symptom', async () => {
+  it('compacts once for qwen auth_unavailable because it can be the post-OOM symptom', async () => {
     const ctx = new Context()
     const agent = fakeAgent()
-    const compactIfNeeded = vi.fn(async () => null)
+    const compactIfNeeded = vi.fn(async () => {
+      agent.session.surface.replaceGeneration += 1
+      return { shadowedSeqs: [1] }
+    })
     ctx.provide('compaction', { compactIfNeeded })
     registerPatrolContextPressureGuard(ctx)
 
@@ -157,10 +183,10 @@ describe('Patrol constrained-Qwen context pressure guard', () => {
       'agent/request-error',
       requestErrorPayload(agent, '503: auth_unavailable: no auth available') as never,
       downstream,
-    )).resolves.toBeUndefined()
+    )).resolves.toEqual({ kind: 'retry' })
 
-    expect(compactIfNeeded).not.toHaveBeenCalled()
-    expect(downstream).toHaveBeenCalledOnce()
+    expect(compactIfNeeded).toHaveBeenCalledOnce()
+    expect(downstream).not.toHaveBeenCalled()
     await ctx.fiber.dispose()
   })
 })

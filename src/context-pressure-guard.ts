@@ -34,6 +34,10 @@ interface SessionLike {
 
 interface AgentLike {
   session: SessionLike
+  options?: {
+    provider?: string
+    model?: string
+  }
 }
 
 const QWEN_MODEL = 'qwen3.5_122b_a10b_fp4'
@@ -85,8 +89,21 @@ function asAgentLike(value: unknown): AgentLike | undefined {
 
 function routeFromAgent(agent: AgentLike): RequestRoute | undefined {
   const config = agent.session.requestHeader()?.config
-  if (config === undefined || config.provider.length === 0 || config.model.length === 0) return undefined
-  return { provider: config.provider, model: config.model }
+  if (config !== undefined && config.provider.length > 0 && config.model.length > 0) {
+    return { provider: config.provider, model: config.model }
+  }
+  const provider = agent.options?.provider
+  const model = agent.options?.model
+  if (typeof provider !== 'string' || provider.length === 0 || typeof model !== 'string' || model.length === 0) return undefined
+  return { provider, model }
+}
+
+export function isQwenLocalAuthUnavailableFailure(failure: FailureLike): boolean {
+  const code = failure.code?.toLowerCase() ?? ''
+  const message = failure.message?.toLowerCase() ?? ''
+  return code === 'auth_unavailable'
+    || message.includes('auth_unavailable')
+    || message.includes('no auth available')
 }
 
 function replaceGeneration(session: SessionLike): number | undefined {
@@ -186,7 +203,7 @@ export function registerPatrolContextPressureGuard(
       const route = routeFromAgent(agent)
       if (route === undefined
         || !isPatrolQwenConstrainedRoute(route)
-        || !isCudaOutOfMemoryFailure(payload.failure)
+        || (!isCudaOutOfMemoryFailure(payload.failure) && !isQwenLocalAuthUnavailableFailure(payload.failure))
         || payload.signal.aborted) {
         return next()
       }
@@ -201,7 +218,7 @@ export function registerPatrolContextPressureGuard(
 
       const before = replaceGeneration(agent.session)
       ctx.logger.warn(
-        `[dsh-patrol/context-pressure] ${route.provider}/${route.model} returned CUDA OOM at turn ${payload.turn} `
+        `[dsh-patrol/context-pressure] ${route.provider}/${route.model} returned memory-pressure failure at turn ${payload.turn} `
         + `step ${payload.step}; attempting one immediate compaction before Harness retries`,
       )
       try {
