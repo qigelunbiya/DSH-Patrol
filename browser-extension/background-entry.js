@@ -1,6 +1,6 @@
-// Keep the legacy bridge as the compatibility core, then layer frame-aware DOM
-// routing on top. Classic service-worker scripts share the same worker global,
-// so frame-support.js can replace only sendDomCommand without duplicating the
-// WebSocket, screenshot, CAPTCHA, or managed-browser logic.
+// Keep the legacy bridge as the compatibility core, then layer the separately
+// audited all-frame DOM bridge on top without broadening the legacy content
+// scripts themselves.
 importScripts('background.js')
+importScripts('frame-registration.js')
 importScripts('frame-support.js')
