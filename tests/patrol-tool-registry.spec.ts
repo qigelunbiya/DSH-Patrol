@@ -31,13 +31,16 @@ const REGISTERED_TOOL_SOURCES = [
   'src/index.ts',
 ] as const
 
-const PATROL_TOOL_NAME = /\bname:\s*['"](patrol_[a-z0-9_]+)['"]/g
+// Match only ToolDefinitions, not ordinary runtime call objects such as the
+// scheduler's ctx.tools.execute({ name: 'patrol_run', ... }). A runtime call is
+// a consumer of the registered tool and must not be counted as another owner.
+const PATROL_TOOL_DEFINITION = /defineTool\s*\(\s*{\s*name:\s*['"](patrol_[a-z0-9_]+)['"]/g
 
 function registeredPatrolToolOwners(): Map<string, string[]> {
   const owners = new Map<string, string[]>()
   for (const source of REGISTERED_TOOL_SOURCES) {
     const text = readFileSync(join(root, source), 'utf8')
-    for (const match of text.matchAll(PATROL_TOOL_NAME)) {
+    for (const match of text.matchAll(PATROL_TOOL_DEFINITION)) {
       const toolName = match[1]
       if (toolName === undefined) continue
       const current = owners.get(toolName) ?? []
