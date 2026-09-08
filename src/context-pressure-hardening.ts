@@ -184,8 +184,9 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
  * Compared with the older guard this version has two important properties:
  * - it starts model-free pruning at 6k and compaction at 10k for the local 122B
  *   route, leaving more GPU headroom for the next tool result;
- * - when tokenMeter is unavailable it still has a deterministic step-count
- *   fallback, so a 30-40 step browser trace cannot bypass compaction entirely.
+ * - when tokenMeter is unavailable it still has a deterministic model-step
+ *   fallback carried across user turns, so a long browser trace cannot reset
+ *   the protection merely because Harness started a new turn at step 1.
  *
  * On a real CUDA-OOM/auth-unavailable failure it performs one bounded recovery
  * for that exact model step and waits briefly before retrying auth_unavailable,
@@ -195,6 +196,7 @@ export function registerPatrolContextPressureGuard(ctx: Context): () => void {
   const seenSteps = new Map<string, SeenStep>()
   const attemptedRecovery = new WeakMap<object, string>()
   const cudaOomAgents = new WeakSet<object>()
+  const cumulativeModelSteps = new WeakMap<object, number>()
 
   const keyOf = (turn: number, step: number) => `${turn}:${step}`
 
@@ -218,10 +220,15 @@ export function registerPatrolContextPressureGuard(ctx: Context): () => void {
       // keeps Harness' normal policy.
       if (route !== undefined && !isPatrolQwenConstrainedRoute(route)) return next()
 
+      const agentKey = agent as unknown as object
+      const cumulativeStep = (cumulativeModelSteps.get(agentKey) ?? 0) + 1
+      cumulativeModelSteps.set(agentKey, cumulativeStep)
+      const pressureStep = Math.max(payload.step, cumulativeStep)
+
       const tokenMeter = readTokenMeter(ctx)
       let tokens = measuredTokens(tokenMeter, agent.session)
       const shouldPrune = tokens === undefined
-        ? payload.step >= PATROL_QWEN_NO_METER_PRUNE_STEP
+        ? pressureStep >= PATROL_QWEN_NO_METER_PRUNE_STEP
         : tokens >= PATROL_QWEN_HARDENED_PRUNE_LIMIT
       const pruner = readToolResultPruner(ctx)
       if (pruner !== undefined && shouldPrune) {
@@ -242,7 +249,7 @@ export function registerPatrolContextPressureGuard(ctx: Context): () => void {
       }
 
       const shouldCompact = tokens === undefined
-        ? payload.step >= PATROL_QWEN_NO_METER_COMPACT_STEP
+        ? pressureStep >= PATROL_QWEN_NO_METER_COMPACT_STEP
         : tokens >= PATROL_QWEN_HARDENED_COMPACT_LIMIT
       if (!shouldCompact || payload.signal.aborted) return next()
 
@@ -259,7 +266,7 @@ export function registerPatrolContextPressureGuard(ctx: Context): () => void {
       try {
         ctx.logger.warn(
           `[dsh-patrol/context-pressure] compacting Patrol before local-Qwen dispatch`
-          + `${tokens === undefined ? ` at model step ${payload.step}` : ` at ~${tokens} tokens`}`,
+          + `${tokens === undefined ? ` at cumulative model step ${pressureStep}` : ` at ~${tokens} tokens`}`,
         )
         const result = await compaction.compactIfNeeded(payload.agent, 'context-overflow', payload.signal)
         const after = replaceGeneration(agent.session)
