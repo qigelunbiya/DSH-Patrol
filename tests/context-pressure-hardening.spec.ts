@@ -17,11 +17,11 @@ function agent() {
   return { session, options: QWEN_ROUTE }
 }
 
-function payload(value: ReturnType<typeof agent>, step: number) {
+function payload(value: ReturnType<typeof agent>, step: number, turn = 1) {
   return {
     agent: value,
     messages: [],
-    turn: 1,
+    turn,
     step,
     signal: new AbortController().signal,
   }
@@ -57,6 +57,27 @@ describe('mounted Patrol local-Qwen hardening', () => {
     expect(pruneSession).toHaveBeenCalledOnce()
     expect(compactIfNeeded).toHaveBeenCalledOnce()
     expect(compactIfNeeded).toHaveBeenCalledWith(current, 'context-overflow', expect.any(AbortSignal))
+    await ctx.fiber.dispose()
+  })
+
+  it('carries the no-meter fallback counter across Harness turns', async () => {
+    const ctx = new Context()
+    const current = agent()
+    const pruneSession = vi.fn(() => ({ pruned: [], charsRemoved: 0 }))
+    const compactIfNeeded = vi.fn(async () => null)
+    ctx.provide('toolResultPruner', { pruneSession })
+    ctx.provide('compaction', { compactIfNeeded })
+    registerPatrolContextPressureGuard(ctx)
+
+    for (let turn = 1; turn <= PATROL_QWEN_NO_METER_COMPACT_STEP; turn += 1) {
+      await ctx.waterfall(
+        'agent/pre-step',
+        payload(current, 1, turn) as never,
+        async () => ({ kind: 'enter' as const, messages: [] }),
+      )
+    }
+
+    expect(compactIfNeeded).toHaveBeenCalledOnce()
     await ctx.fiber.dispose()
   })
 
