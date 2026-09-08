@@ -126,10 +126,16 @@ describe('frame structured-table extraction primitives', () => {
     expect(vm.runInContext('frameCellHeader(cell, table, 0)', context)).toBe('工单号')
   })
 
-  it('ships an all-frame content script and webNavigation frame enumeration in the extension manifest', () => {
+  it('keeps legacy static scripts top-frame-only and dynamically registers the audited frame bridge', () => {
     const manifest = JSON.parse(readFileSync(join(process.cwd(), 'browser-extension', 'manifest.json'), 'utf8'))
+    const registration = readFileSync(join(process.cwd(), 'browser-extension', 'frame-registration.js'), 'utf8')
+    const entry = readFileSync(join(process.cwd(), 'browser-extension', 'background-entry.js'), 'utf8')
     expect(manifest.permissions).toContain('webNavigation')
+    expect(manifest.permissions).toContain('scripting')
     expect(manifest.background.service_worker).toBe('background-entry.js')
-    expect(manifest.content_scripts.some((entry: any) => entry.all_frames === true && entry.js.includes('frame-content.js'))).toBe(true)
+    expect(manifest.content_scripts.every((item: any) => item.all_frames !== true)).toBe(true)
+    expect(registration).toContain("js: ['frame-content.js']")
+    expect(registration).toContain('allFrames: true')
+    expect(entry).toContain("importScripts('frame-registration.js')")
   })
 })
