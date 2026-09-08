@@ -33,7 +33,7 @@ export function registerImageCodeVisualTool(ctx, bridge, config = {}) {
   const timeoutMs = config.commandTimeoutMs ?? 60000
   const definition = defineTool({
     name: 'browser_capture_image_code_visual',
-    description: 'Capture the CURRENT conventional image-code CAPTCHA as a tight image crop and attach that crop to the model. It also reports the local ddddocr preprocessing-ensemble hint for the exact same crop as secondary evidence; it never types or submits the hint automatically.',
+    description: 'Capture the CURRENT conventional image-code CAPTCHA as a tight enlarged image crop and attach it to the model. It also reports the local ddddocr preprocessing-ensemble hint for the exact same crop as secondary evidence; it never types or submits the hint automatically.',
     parameters: {
       tabId: optInt,
       inputSelector: optStr,
@@ -73,7 +73,7 @@ export function registerImageCodeVisualTool(ctx, bridge, config = {}) {
           lines.push('Local OCR produced no usable consensus for this crop. Do not compensate by inventing a low-confidence string.')
         }
         if (value.imageStatus === 'attached' && value.image !== undefined) {
-          lines.push('The attached image is a tight crop of the CURRENT CAPTCHA. Read this image visually; do not reuse any historical CAPTCHA text.')
+          lines.push('The attached image is a tight enlarged crop of the CURRENT CAPTCHA. Read this image visually; do not reuse any historical CAPTCHA text.')
         } else {
           lines.push(`The crop was saved but could not be attached as an image (${value.imageStatus}). Use read_image on the returned path.`)
           if (value.imageError) lines.push(`Image attachment note: ${value.imageError}`)
@@ -99,6 +99,7 @@ export function registerImageCodeVisualTool(ctx, bridge, config = {}) {
           tabId: args.tabId,
           inputSelector: args.inputSelector,
           imageSelector: args.imageSelector,
+          visualScale: 3,
         }, { timeoutMs, signal: exec?.signal })
       } catch (error) {
         captureError = error instanceof Error ? error.message : String(error)
