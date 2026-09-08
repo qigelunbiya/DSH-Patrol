@@ -8,11 +8,16 @@ import { registerTools } from '../browser-bridge-runtime/tools.js'
 
 function fakeToolContext() {
   const definitions = []
+  const services = new Map()
   return {
     definitions,
     ctx: {
       tools: {
-        get() { return undefined },
+        get(name) { return services.get(name) },
+        async execute({ name }) {
+          const tool = services.get(name)
+          return await tool()
+        },
         register(definition) {
           definitions.push(definition)
           return () => {}
@@ -20,6 +25,7 @@ function fakeToolContext() {
       },
       get() { return undefined },
     },
+    services,
   }
 }
 
@@ -110,5 +116,39 @@ describe('browser capability diagnostics', () => {
     expect(value.path).toBe('/tmp/current-page.png')
     expect(value.imageStatus).toBe('tool-unavailable')
     expect(value.imageError).toMatch(/unsupported browser command: captureImageCode/)
+  })
+
+  it('attaches only the read_image image payload to the CAPTCHA visual result', async () => {
+    const fixture = fakeToolContext()
+    fixture.services.set('read_image', async () => ({
+      isError: false,
+      value: {
+        path: '/tmp/captcha.png',
+        image: {
+          attachmentId: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          mediaType: 'image/png',
+          bytes: 3,
+          width: 80,
+          height: 24,
+        },
+      },
+    }))
+    const bridge = {
+      status: () => ({ extension: { version: '0.2.1', capabilities: ['captureImageCode'] } }),
+      async request(cmd) {
+        if (cmd === 'captureImageCode') return { ok: true, dataUrl: 'data:image/png;base64,QUFB', captureMode: 'element-crop' }
+        throw new Error(`unexpected ${cmd}`)
+      },
+      saveScreenshot: () => '/tmp/captcha.png',
+    }
+
+    registerImageCodeVisualTool(fixture.ctx, bridge)
+    const tool = fixture.definitions.find(definition => definition.name === 'browser_capture_image_code_visual')
+    const value = await tool.execute({}, { rootCallId: 'root', token: Symbol('visual'), agent: { session: { header: { cwd: '/tmp' } } }, signal: new AbortController().signal })
+    const rendered = tool.output.render({}, value)
+
+    expect(value.image).toMatchObject({ attachmentId: expect.stringMatching(/^sha256:/), mediaType: 'image/png' })
+    expect(value.image.path).toBeUndefined()
+    expect(rendered.find(block => block.type === 'image')?.attachment).toMatchObject({ attachmentId: expect.stringMatching(/^sha256:/) })
   })
 })

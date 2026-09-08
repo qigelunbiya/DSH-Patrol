@@ -39,11 +39,13 @@ describe('Patrol test-mode guard policy', () => {
 
   it('prioritizes tight captcha crops, confidence gating, bounded captcha refresh, and configured TOTP profiles', () => {
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/普通图片字符验证码 image-code 的测试优先级：先调用 browser_capture_image_code_visual/)
-    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/TEST MODE 下不要先调用 patrol_detect_auth_challenge 去自动 OCR 填写/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/TEST MODE 下不要调用 patrol_detect_auth_challenge/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/不要把全页截图里的小验证码当作高置信度依据/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/browser_capture_image_code_visual/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/置信度 >= 0\.90/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/patrol_type_current_image_code/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/patrol_refresh_image_code/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/视觉不确定就是换图/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/多个候选/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/置信度 < 0\.90 时禁止把弱猜测写入输入框/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/最多尝试 3 次验证码级刷新/)

@@ -160,10 +160,10 @@ async function tryReadImage(ctx, exec, path) {
     if (result.isError) {
       return { status: 'read-failed', error: String(result.error?.message || 'read_image failed') }
     }
-    if (!result.value || typeof result.value !== 'object') {
+    if (!result.value || typeof result.value !== 'object' || !result.value.image || typeof result.value.image !== 'object') {
       return { status: 'read-failed', error: 'read_image returned no image attachment value' }
     }
-    return { status: 'attached', image: result.value }
+    return { status: 'attached', image: result.value.image }
   } catch (error) {
     return { status: 'read-failed', error: error instanceof Error ? error.message : String(error) }
   }

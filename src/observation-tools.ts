@@ -121,12 +121,12 @@ export function registerPatrolObservationTools(
           lines.push('The attached screenshot image is the authoritative CURRENT browser state. Ignore stale CAPTCHA strings and stale page assumptions from earlier turns.')
         } else {
           lines.push('The browser screenshot itself succeeded, but this Harness route could not attach its pixels as an image. This is NOT a Patrol blocker: the current-state observation is complete and browser actions may continue in this Harness turn using the fresh OCR/DOM evidence below.')
-          lines.push('Do NOT retry patrol_observe, patrol_screenshot, patrol_snapshot, or patrol_read_page merely to obtain an image attachment. For a CAPTCHA, use patrol_detect_auth_challenge; never reuse a CAPTCHA string from history or from text already typed into the CAPTCHA input.')
+          lines.push('Do NOT retry patrol_observe, patrol_screenshot, patrol_snapshot, or patrol_read_page merely to obtain an image attachment. For a conventional image-code CAPTCHA in test mode, use browser_capture_image_code_visual to capture the CURRENT tight crop; if confidence is low, use patrol_refresh_image_code and capture again. Never reuse a CAPTCHA string from history or from text already typed into the CAPTCHA input.')
           if (value.imageError) lines.push(`Image attachment note: ${value.imageError}`)
         }
 
         if (value.ocrTextWithheld === true) {
-          lines.push('Whole-page OCR text is intentionally withheld because the current DOM contains a CAPTCHA/image-code input. This prevents a previously typed CAPTCHA value from contaminating the next decision; use the dedicated current CAPTCHA detector instead.')
+          lines.push('Whole-page OCR text is intentionally withheld because the current DOM contains a CAPTCHA/image-code input. This prevents a previously typed CAPTCHA value from contaminating the next decision; use the CURRENT tight CAPTCHA crop instead.')
         } else if (value.ocrText) {
           lines.push(`Fresh screenshot OCR (secondary evidence):\n${value.ocrText}`)
         }

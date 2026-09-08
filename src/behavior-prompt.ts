@@ -6,15 +6,15 @@ export const PATROL_BEHAVIOR_PROMPT = `DSH Patrol current behavior overrides（�
 
 3. 明文密码只允许在 patrol_type_transient 的一次受控执行和浏览器实际输入过程中短暂存在，不得写进 Runbook、notes、报告、checkpoint、总结或用户可见回复。用户可见的巡检总结、步骤列表、进度说明和错误说明里不得复述任何明文密码，即使用户刚刚在对话里提供过，也只能写“已加密保存”“已使用加密引用”或“敏感值已隐藏”。只有用户明确要求 Harness credential reference 时才使用 patrol_type_credential / patrol_credential_help。
 
-4. 普通图片字符验证码 image-code 完全禁止人工接管。调用 patrol_detect_auth_challenge 后，专用 solver 必须自动定位验证码图、优先 ddddocr、必要时 Windows OCR，并自动填入验证码输入框。成功就继续登录按钮；失败就直接报错并停止。不得让用户查看截图、告诉验证码、手动输入验证码或手动点击作为替代方案。image-code 自动识别一旦已经明确失败，不得再通过 screenshot/read_page/snapshot/navigate/retry detector 形成诊断循环；保留第一次具体错误并结束本轮巡检。
+4. 普通图片字符验证码 image-code 完全禁止人工接管。当前默认 test mode 下不要调用 patrol_detect_auth_challenge；使用 browser_capture_image_code_visual 获取 CURRENT 验证码紧凑裁图，由模型视觉只给出一个最终识别值，置信度 >= 0.90 才调用 patrol_type_current_image_code。多个候选或置信度不足时调用 patrol_refresh_image_code 换图后重抓，不要提交弱猜测，也不要通过 detector 形成卡死循环。
 
-5. 当前默认 test 模式下，普通 image-code 页面明确允许 screenshot OCR，不得返回 verification-suppressed，也不得把“检测到验证码”当作禁止 OCR 的理由。patrol_screenshot 可以对 image-code 整页截图执行 OCR，专用 solver 也可以继续使用验证码原图/裁图 OCR。只有 OTP、设备确认、第三方 reCAPTCHA/hCaptcha/Turnstile/Arkose 等非 image-code 验证才可以保持截图 OCR 抑制或人工交接。
+5. 当前默认 test 模式下，普通 image-code 页面明确允许紧凑截图视觉识别，不得把“检测到验证码”当作禁止识别的理由。patrol_screenshot 可以用于确认页面位置，但验证码答案必须来自 browser_capture_image_code_visual 的 CURRENT 裁图。只有 OTP、设备确认、第三方 reCAPTCHA/hCaptcha/Turnstile/Arkose 等非 image-code 验证才可以保持截图 OCR 抑制或人工交接。
 
 6. patrol_prepare_verification_handoff 只允许真正需要人的验证，例如 OTP/一次性动态码、设备确认、Passkey/二维码确认、第三方 reCAPTCHA/hCaptcha/Turnstile/Arkose 或其他明确不支持的验证。若 detector 的 observedSubtype=image-code，即使模型主动调用 handoff，运行时也会拒绝。
 
-7. “登录页已有 image-code，点击登录后再出现 OTP”的流程必须分两阶段：密码后先 detector 自动填 image-code → 点击登录 → 等待页面变化 → 再 detector 检测 OTP → 这时才 handoff。不要把登录页图片验证码和登录后的 OTP 合并成一个人工 checkpoint。
+7. “登录页已有 image-code，点击登录后再出现 OTP”的流程必须分两阶段：密码后先用 CURRENT 紧凑裁图识别并通过 patrol_type_current_image_code 填 image-code → 点击登录 → 等待页面变化 → 再处理 OTP/TOTP 或真正需要人工的二次认证。不要把登录页图片验证码和登录后的 OTP 合并成一个人工 checkpoint。
 
-8. 复用旧 DRAFT/READY Runbook 时，历史版本残留的“手动输入图片验证码/人工核对验证码”checkpoint 不再有效。新 detector 自动填写成功时旧 image-code checkpoint 会被跳过；自动识别失败则 detector 直接失败。OTP/设备确认等真正人工 checkpoint 保留。
+8. 复用旧 DRAFT/READY Runbook 时，历史版本残留的“手动输入图片验证码/人工核对验证码”checkpoint 不再有效。普通 image-code 只保留当前裁图识别、置信度门槛和刷新换图策略；OTP/设备确认等真正人工 checkpoint 保留。
 
 9. Excel 模板语义优先：先 patrol_excel_inspect，阅读 row-oriented template view、表头、合并区域、重复行模式和 blank-template-cell。禁止把源记录按顺序逐条塞进空行，除非模板明确是逐记录明细表。
 

@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, type ToolDefinition, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { assertSafeForStorage, assertSafePersistentText, untrustedPageData } from './security.js'
+import { isPatrolTestMode } from './test-mode.js'
 import { PatrolRunner } from './runner.js'
 import { PatrolStore } from './store.js'
 import type {
@@ -243,6 +244,42 @@ function createDefinitions(store: PatrolStore, runner: PatrolRunner, options: Pa
     },
   })
 
+  const refreshImageCode = defineTool({
+    name: 'patrol_refresh_image_code',
+    description: 'TEST MODE friendly: refresh the CURRENT conventional image-code CAPTCHA through Patrol-owned browser dispatch. This is transient recovery and is not recorded as a replayable Runbook step.',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+      stepName: { type: 'string', required: true },
+      tabId: { type: 'integer' },
+      inputSelector: { type: 'string' },
+      imageSelector: { type: 'string' },
+      allowPageReload: { type: 'boolean' },
+      notes: { type: 'string' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      assertSafePersistentText(args.stepName, 'stepName')
+      if (args.notes !== undefined) assertSafePersistentText(args.notes, 'step notes')
+      assertSafeForStorage(compactObject({
+        tabId: args.tabId,
+        inputSelector: args.inputSelector,
+        imageSelector: args.imageSelector,
+        allowPageReload: args.allowPageReload,
+      }))
+      await loadEditable(store, args.inspectionId, options.maxSteps)
+      const dispatched = await runner.dispatch('browser_refresh_image_code', compactObject({
+        tabId: args.tabId,
+        inputSelector: args.inputSelector,
+        imageSelector: args.imageSelector,
+        allowPageReload: args.allowPageReload,
+      }), exec)
+      if (!dispatched.ok) {
+        return `Image-code refresh failed and was NOT recorded. ${dispatched.error ?? 'Unknown browser error'}\n${dispatched.text}`
+      }
+      return `Refreshed CURRENT image-code and did NOT record a replayable Runbook step.\n${dispatched.text}`
+    },
+  })
+
   const click = defineTool({
     name: 'patrol_click',
     description: 'Click an observed CSS selector and record the step. Optional semantic locator fields enable conservative self-healing on replay.',
@@ -390,7 +427,20 @@ function createDefinitions(store: PatrolStore, runner: PatrolRunner, options: Pa
     },
   })
 
-  return [navigate, snapshot, readPage, count, loginState, detectAuthChallenge, click, press, scroll, wait, screenshot]
+  return [
+    navigate,
+    snapshot,
+    readPage,
+    count,
+    loginState,
+    ...(isPatrolTestMode() ? [] : [detectAuthChallenge]),
+    refreshImageCode,
+    click,
+    press,
+    scroll,
+    wait,
+    screenshot,
+  ]
 }
 
 async function recordAction(

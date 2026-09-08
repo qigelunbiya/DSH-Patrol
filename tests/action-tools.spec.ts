@@ -15,46 +15,57 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
-async function setup() {
-  const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-actions-'))
-  roots.push(root)
-  const store = new PatrolStore(root)
-  await store.init()
-  await store.create(draftDefinition())
+async function setup(env: Record<string, string | undefined> = {}) {
+  const previousCaptchaMode = process.env.DSH_PATROL_CAPTCHA_MODE
+  setCaptchaMode(env.DSH_PATROL_CAPTCHA_MODE)
+  try {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-actions-'))
+    roots.push(root)
+    const store = new PatrolStore(root)
+    await store.init()
+    await store.create(draftDefinition())
 
-  const definitions: any[] = []
-  const calls: Array<{ tool: string; args: JsonObject }> = []
-  const ctx = {
-    tools: {
-      register(definition: any) {
-        definitions.push(definition)
-        return () => {}
+    const definitions: any[] = []
+    const calls: Array<{ tool: string; args: JsonObject }> = []
+    const ctx = {
+      tools: {
+        register(definition: any) {
+          definitions.push(definition)
+          return () => {}
+        },
       },
-    },
-  } as unknown as Context
+    } as unknown as Context
 
-  const runner = {
-    async dispatch(tool: string, args: JsonObject) {
-      calls.push({ tool, args })
-      if (tool === 'browser_count') return { ok: true, text: `Count .row: 4 element(s) (visible only).`, value: { ok: true, count: 4 } }
-      if (tool === 'browser_read_page') return { ok: true, text: 'Page: Tasks\n\nrow one\nrow two', value: { ok: true } }
-      return { ok: true, text: 'ok', value: { ok: true } }
-    },
-  } as unknown as PatrolRunner
+    const runner = {
+      async dispatch(tool: string, args: JsonObject) {
+        calls.push({ tool, args })
+        if (tool === 'browser_count') return { ok: true, text: `Count .row: 4 element(s) (visible only).`, value: { ok: true, count: 4 } }
+        if (tool === 'browser_read_page') return { ok: true, text: 'Page: Tasks\n\nrow one\nrow two', value: { ok: true } }
+        return { ok: true, text: 'ok', value: { ok: true } }
+      },
+    } as unknown as PatrolRunner
 
-  registerPatrolActionTools(ctx, store, runner, { maxSteps: 50 })
-  const tool = (name: string) => {
-    const found = definitions.find(item => item.name === name)
-    if (!found) throw new Error(`tool ${name} not registered`)
-    return found
+    registerPatrolActionTools(ctx, store, runner, { maxSteps: 50 })
+    const tool = (name: string) => {
+      const found = definitions.find(item => item.name === name)
+      if (!found) throw new Error(`tool ${name} not registered`)
+      return found
+    }
+    const exec = {
+      token: Symbol('action-test'),
+      rootCallId: 'root',
+      signal: new AbortController().signal,
+    } as unknown as ToolRunContext
+
+    return { store, calls, tool, definitions, exec }
+  } finally {
+    setCaptchaMode(previousCaptchaMode)
   }
-  const exec = {
-    token: Symbol('action-test'),
-    rootCallId: 'root',
-    signal: new AbortController().signal,
-  } as unknown as ToolRunContext
+}
 
-  return { store, calls, tool, definitions, exec }
+function setCaptchaMode(value: string | undefined): void {
+  if (value === undefined) delete process.env.DSH_PATROL_CAPTCHA_MODE
+  else process.env.DSH_PATROL_CAPTCHA_MODE = value
 }
 
 function draftDefinition(): InspectionDefinition {
@@ -78,11 +89,32 @@ function draftDefinition(): InspectionDefinition {
 describe('flat Patrol action tools', () => {
   it('registers model-facing actions without a nested arguments parameter', async () => {
     const { definitions } = await setup()
-    for (const name of ['patrol_navigate', 'patrol_snapshot', 'patrol_read_page', 'patrol_count', 'patrol_detect_auth_challenge', 'patrol_click', 'patrol_wait', 'patrol_screenshot']) {
+    for (const name of ['patrol_navigate', 'patrol_snapshot', 'patrol_read_page', 'patrol_count', 'patrol_refresh_image_code', 'patrol_click', 'patrol_wait', 'patrol_screenshot']) {
       const definition = definitions.find(item => item.name === name)
       expect(definition).toBeDefined()
       expect(definition.parameters.arguments).toBeUndefined()
     }
+    expect(definitions.find(item => item.name === 'patrol_detect_auth_challenge')).toBeUndefined()
+  })
+
+  it('keeps the legacy auth challenge detector only in normal captcha mode', async () => {
+    const { definitions } = await setup({ DSH_PATROL_CAPTCHA_MODE: 'normal' })
+    expect(definitions.find(item => item.name === 'patrol_detect_auth_challenge')).toBeDefined()
+    expect(definitions.find(item => item.name === 'patrol_refresh_image_code')).toBeDefined()
+  })
+
+  it('refreshes the current image-code through a Patrol-owned wrapper without recording a runbook step', async () => {
+    const { store, calls, tool, exec } = await setup()
+    const result = await tool('patrol_refresh_image_code').execute({
+      inspectionId: 'flat-actions',
+      stepName: '换一张验证码',
+      inputSelector: '#captcha',
+      imageSelector: '#captcha-img',
+    }, exec)
+
+    expect(result).toContain('Refreshed CURRENT image-code')
+    expect(calls).toEqual([{ tool: 'browser_refresh_image_code', args: { inputSelector: '#captcha', imageSelector: '#captcha-img' } }])
+    expect((await store.load('flat-actions')).steps).toHaveLength(0)
   })
 
   it('navigates using flat URL fields and stores provider arguments as an object', async () => {

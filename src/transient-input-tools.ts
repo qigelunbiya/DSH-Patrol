@@ -22,7 +22,7 @@ export const PATROL_TRANSIENT_INPUT_PROMPT = `敏感输入规则：
 - patrol_validate、patrol_run、Harness 重启后的后续执行都可以自动解密该引用并填写密码。不要把明文密码写进 Runbook、报告、notes 或回复。
 - 只有用户明确要求使用 Harness credential reference 时才使用 patrol_type_credential / patrol_credential_help；它不是交互式巡检的前置条件。
 - 普通图片字符验证码 image-code 是一次性页面状态，不是密码、OTP 或长期 credential。不要把当前验证码保存进 Patrol secret vault，也不要把它作为固定 browser_type 值写进 Runbook。
-- TEST MODE 下，模型对 CURRENT 页面/验证码紧凑裁图完成视觉识别后，优先调用 patrol_type_current_image_code；该工具要求给出 0~1 的当前识别置信度，低于 0.80 时不会输入，高于或等于 0.80 时只填写当前页面且不记录一次性验证码值。验证码刷新或提交后旧值立即失效。
+- TEST MODE 下，模型对 CURRENT 页面/验证码紧凑裁图完成视觉识别后，优先调用 patrol_type_current_image_code；该工具要求给出 0~1 的当前识别置信度，低于 0.90 时不会输入，高于或等于 0.90 时只填写当前页面且不记录一次性验证码值。验证码刷新或提交后旧值立即失效。
 - NORMAL MODE 下继续由 patrol_detect_auth_challenge 的本地自动 solver 负责 image-code；密码、TOTP/OTP、token 等真正敏感值仍必须走专用敏感输入流程。`
 
 export function registerPatrolTransientInputTools(
@@ -97,7 +97,7 @@ export function registerPatrolTransientInputTools(
 
   const typeCurrentImageCode = defineTool({
     name: 'patrol_type_current_image_code',
-    description: 'TEST MODE only: type the CURRENT conventional image-text CAPTCHA without persisting its one-time value. Requires an explicit confidence from 0 to 1 and refuses to type below 0.80 so a weak visual guess is not submitted to lockout-prone sites.',
+    description: 'TEST MODE only: type the CURRENT conventional image-text CAPTCHA without persisting its one-time value. Requires an explicit confidence from 0 to 1 and refuses to type below 0.90 so a weak visual guess is not submitted to lockout-prone sites.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       selector: { type: 'string', required: true },
