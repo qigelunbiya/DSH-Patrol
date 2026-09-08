@@ -468,29 +468,9 @@ function createDefinitions(ctx: Context, store: PatrolStore, runner: PatrolRunne
     },
   })
 
-  const moveStep = defineTool({
-    name: 'patrol_move_step',
-    description: 'Move a step to a 1-based position without changing its stable step id. Any edit returns a READY runbook to DRAFT.',
-    parameters: {
-      inspectionId: { type: 'string', required: true },
-      stepId: { type: 'string', required: true },
-      position: { type: 'integer', required: true, description: '1-based target position.' },
-    },
-    output: TEXT_OUTPUT,
-    async execute(args) {
-      await assertNoPendingRun(store, args.inspectionId)
-      const definition = await store.load(args.inspectionId)
-      const index = definition.steps.findIndex(step => step.id === args.stepId)
-      if (index < 0) throw new Error(`unknown step ${args.stepId}`)
-      if (!Number.isInteger(args.position) || args.position < 1 || args.position > definition.steps.length) throw new Error('position is out of range')
-      const [step] = definition.steps.splice(index, 1)
-      if (step === undefined) throw new Error(`unknown step ${args.stepId}`)
-      definition.steps.splice(args.position - 1, 0, step)
-      markEdited(definition)
-      await store.save(definition)
-      return `Moved ${args.stepId} to position ${args.position}. Runbook is DRAFT until reconfirmed.`
-    },
-  })
+  // patrol_move_step is owned by edit-tools.ts. Keeping the older positional
+  // implementation here as well registers the same ToolRuntime name twice and
+  // makes the entire Patrol preset fail to mount before a session can start.
 
   const updateSelector = defineTool({
     name: 'patrol_update_selector',
@@ -604,7 +584,6 @@ function createDefinitions(ctx: Context, store: PatrolStore, runner: PatrolRunne
     show,
     list,
     deleteStep,
-    moveStep,
     updateSelector,
     abortRun,
     removeInspection,
