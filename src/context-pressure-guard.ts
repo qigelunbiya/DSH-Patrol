@@ -55,7 +55,7 @@ interface RequestErrorLike {
 
 interface SeenStep {
   agent: AgentLike
-  route: RequestRoute
+  route?: RequestRoute
 }
 
 const QWEN_MODEL = 'qwen3.5_122b_a10b_fp4'
@@ -63,16 +63,18 @@ const QWEN_ROUTE_PROVIDERS = new Set(['cliproxy', 'qwen-local'])
 
 /**
  * The local 122B route advertises a 262k context window, but the real 24 GB
- * inference worker used by Patrol can exhaust CUDA memory far earlier. Session
- * evidence from real failing Patrol runs showed OOM around the mid-30k token
- * range, followed by the gateway putting qwen-local into cooldown and returning
- * misleading `auth_unavailable` errors for the remaining Harness retries.
+ * inference worker used by Patrol can exhaust CUDA memory far earlier. Real
+ * failing Patrol sessions have shown the worker disappear after long chains of
+ * observe/snapshot/tool output even though the architectural context window was
+ * nowhere near full.
  *
- * Keep a conservative margin below that observed failure point. This is a
- * Patrol-only soft limit, not a claim about the model's architectural context
- * length. The normal Harness compaction policy still owns every other route.
+ * Keep two deliberately conservative Patrol-only thresholds. Tool-result
+ * pruning starts first, then full compaction is forced well before the observed
+ * failure range. This is a runtime capacity guard, not a statement about the
+ * model's architectural context length.
  */
-export const PATROL_QWEN_SOFT_REQUEST_LIMIT = 24_000
+export const PATROL_QWEN_EAGER_PRUNE_LIMIT = 10_000
+export const PATROL_QWEN_SOFT_REQUEST_LIMIT = 16_000
 
 export function isPatrolQwenConstrainedRoute(
   route: Pick<LlmCallConfig, 'provider' | 'model'>,
@@ -107,7 +109,8 @@ function asAgentLike(value: unknown): AgentLike | undefined {
 
 function routeFromAgent(agent: AgentLike): RequestRoute | undefined {
   const config = agent.session.requestHeader()?.config
-  if (config !== undefined && config.provider.length > 0 && config.model.length > 0) {
+  if (typeof config?.provider === 'string' && config.provider.length > 0
+    && typeof config.model === 'string' && config.model.length > 0) {
     return { provider: config.provider, model: config.model }
   }
   const provider = agent.options?.provider
@@ -177,19 +180,35 @@ function readToolResultPruner(ctx: Context): ToolResultPrunerLike | undefined {
   }
 }
 
+function measuredTokens(tokenMeter: TokenMeterLike | undefined, session: SessionLike): TokenMeasurementLike | undefined {
+  if (tokenMeter === undefined) return undefined
+  try {
+    const measurement = tokenMeter.measure(session)
+    return Number.isFinite(measurement.totalTokens) ? measurement : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function routeLabel(route: RequestRoute | undefined): string {
+  return route === undefined ? 'unresolved Patrol model route' : `${route.provider}/${route.model}`
+}
+
 /**
- * Add two Patrol-specific safeguards around Harness' ordinary compaction:
+ * Add Patrol-specific safeguards around Harness' ordinary compaction:
  *
- * 1. Before every model step, measure the real durable request and force an
- *    early reduction for the memory-constrained local Qwen route at 30k tokens.
- *    Harness' default pressure threshold is based on the advertised context
- *    window (80% of 262k), which is much too late for this worker.
- * 2. If an OOM still escapes the soft limit, intercept the FIRST CUDA OOM and
- *    give the compaction engine one bounded recovery attempt before the normal
- *    llm-retry layer turns the upstream failure into repeated auth cooldowns.
+ * 1. Capture every Patrol pre-step before request routing is fully resolved.
+ *    Older code skipped the guard when requestHeader/options did not yet expose
+ *    provider/model; that is exactly the timing window in which a long Patrol
+ *    request can reach qwen-local untrimmed.
+ * 2. For the constrained Qwen route, and conservatively for an unresolved
+ *    Patrol route, prune bulky historical tool results at 10k tokens and force
+ *    compaction at 16k tokens.
+ * 3. If CUDA OOM/auth-unavailable still escapes the preventive guard, perform
+ *    one bounded model-free prune/compaction recovery before normal retries.
  *
- * The plugin is mounted only inside the Patrol agent preset, so ordinary Harness
- * conversations keep the stock compaction policy.
+ * This plugin is mounted only inside the Patrol preset, so treating an
+ * unresolved Patrol route conservatively cannot affect ordinary Harness chats.
  */
 export function registerPatrolContextPressureGuard(
   ctx: Context,
@@ -202,8 +221,8 @@ export function registerPatrolContextPressureGuard(
     return `${turn}:${step}`
   }
 
-  function rememberStep(turn: number, step: number, agent: AgentLike, route: RequestRoute): void {
-    seenSteps.set(stepKey(turn, step), { agent, route })
+  function rememberStep(turn: number, step: number, agent: AgentLike, route?: RequestRoute): void {
+    seenSteps.set(stepKey(turn, step), { agent, ...(route === undefined ? {} : { route }) })
     if (seenSteps.size <= 24) return
     const oldest = seenSteps.keys().next().value
     if (typeof oldest === 'string') seenSteps.delete(oldest)
@@ -213,65 +232,68 @@ export function registerPatrolContextPressureGuard(
     'agent/pre-step',
     async (payload, next) => {
       const agent = asAgentLike(payload.agent)
-      if (agent === undefined) return next()
+      if (agent === undefined || payload.signal.aborted) return next()
+
       const route = routeFromAgent(agent)
-      if (route === undefined || !isPatrolQwenConstrainedRoute(route) || payload.signal.aborted) {
-        return next()
-      }
       rememberStep(payload.turn, payload.step, agent, route)
 
+      // A known non-Qwen route keeps Harness' stock policy. An unresolved route
+      // is protected because this hook runs before final request routing and is
+      // installed only for Patrol.
+      if (route !== undefined && !isPatrolQwenConstrainedRoute(route)) return next()
+
       const tokenMeter = readTokenMeter(ctx)
-      if (tokenMeter === undefined) return next()
-
-      let measurement: TokenMeasurementLike
-      try {
-        measurement = tokenMeter.measure(agent.session)
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error)
-        ctx.logger.warn(`[dsh-patrol/context-pressure] token measurement failed: ${message}; continuing the step`)
-        return next()
+      let measurement = measuredTokens(tokenMeter, agent.session)
+      if (tokenMeter !== undefined && measurement === undefined) {
+        ctx.logger.warn('[dsh-patrol/context-pressure] token measurement failed; falling back to bounded model-free pruning when the Patrol step is mature')
       }
 
-      if (!shouldForcePatrolCompaction(route, measurement.totalTokens, softLimit)) return next()
-
+      const eagerLimit = Math.min(PATROL_QWEN_EAGER_PRUNE_LIMIT, softLimit)
+      const shouldEagerPrune = measurement === undefined
+        ? payload.step >= 6
+        : measurement.totalTokens >= eagerLimit
       const pruner = readToolResultPruner(ctx)
-      if (pruner !== undefined) {
-        const pruneBefore = replaceGeneration(agent.session)
-        const result = pruner.pruneSession(agent.session)
-        const pruneAfter = replaceGeneration(agent.session)
-        measurement = tokenMeter.measure(agent.session)
-        const pruned = Array.isArray(result.pruned) ? result.pruned.length : 0
-        if (pruned > 0 || result.charsRemoved !== undefined || (pruneBefore !== undefined && pruneAfter !== undefined && pruneAfter > pruneBefore)) {
-          ctx.logger.warn(
-            `[dsh-patrol/context-pressure] pruned Patrol tool results before model dispatch; `
-            + `request pressure is now ~${measurement.totalTokens} tokens`,
-          )
+      if (pruner !== undefined && shouldEagerPrune) {
+        try {
+          const pruneBefore = replaceGeneration(agent.session)
+          const result = pruner.pruneSession(agent.session)
+          const pruneAfter = replaceGeneration(agent.session)
+          measurement = measuredTokens(tokenMeter, agent.session) ?? measurement
+          const pruned = Array.isArray(result.pruned) ? result.pruned.length : 0
+          if (pruned > 0 || result.charsRemoved !== undefined || (pruneBefore !== undefined && pruneAfter !== undefined && pruneAfter > pruneBefore)) {
+            const pressure = measurement === undefined ? '' : `; request pressure is now ~${measurement.totalTokens} tokens`
+            ctx.logger.warn(`[dsh-patrol/context-pressure] pruned historical Patrol tool results before model dispatch${pressure}`)
+          }
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error)
+          ctx.logger.warn(`[dsh-patrol/context-pressure] model-free pruning failed: ${message}; continuing with compaction checks`)
         }
-        if (!shouldForcePatrolCompaction(route, measurement.totalTokens, softLimit)) return next()
       }
+
+      if (measurement === undefined || measurement.totalTokens < softLimit) return next()
 
       const compaction = readCompaction(ctx)
       if (compaction === undefined) {
         ctx.logger.warn(
-          `[dsh-patrol/context-pressure] ${route.provider}/${route.model} request is ~${measurement.totalTokens} tokens `
-          + `(Patrol soft limit ${softLimit}), but no compaction service is available; model-side CUDA OOM is likely`,
+          `[dsh-patrol/context-pressure] ${routeLabel(route)} request is ~${measurement.totalTokens} tokens `
+          + `(Patrol soft limit ${softLimit}), but no compaction service is available; local-model memory pressure is likely`,
         )
         return next()
       }
 
       const before = replaceGeneration(agent.session)
       ctx.logger.warn(
-        `[dsh-patrol/context-pressure] ${route.provider}/${route.model} request is ~${measurement.totalTokens} tokens `
-        + `(Patrol soft limit ${softLimit}); compacting before model dispatch to avoid CUDA OOM`,
+        `[dsh-patrol/context-pressure] ${routeLabel(route)} request is ~${measurement.totalTokens} tokens `
+        + `(Patrol soft limit ${softLimit}); compacting before model dispatch`,
       )
       try {
         await compaction.compactIfNeeded(payload.agent, 'context-overflow', payload.signal)
         const after = replaceGeneration(agent.session)
         const compacted = before !== undefined && after !== undefined && after > before
-        const nextMeasurement = tokenMeter.measure(agent.session)
+        const nextMeasurement = measuredTokens(tokenMeter, agent.session)
+        const pressure = nextMeasurement === undefined ? '' : `; request pressure is now ~${nextMeasurement.totalTokens} tokens`
         ctx.logger.info(
-          `[dsh-patrol/context-pressure] early compaction ${compacted ? 'advanced the surface' : 'completed'}; `
-          + `request pressure is now ~${nextMeasurement.totalTokens} tokens`,
+          `[dsh-patrol/context-pressure] early compaction ${compacted ? 'advanced the surface' : 'completed'}${pressure}`,
         )
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error)
@@ -305,15 +327,21 @@ export function registerPatrolContextPressureGuard(
       const tokenMeter = readTokenMeter(ctx)
       const pruner = readToolResultPruner(ctx)
       if (pruner !== undefined) {
-        const pruneBefore = replaceGeneration(agent.session)
-        const result = pruner.pruneSession(agent.session)
-        const pruneAfter = replaceGeneration(agent.session)
-        const advanced = (Array.isArray(result.pruned) && result.pruned.length > 0)
-          || (pruneBefore !== undefined && pruneAfter !== undefined && pruneAfter > pruneBefore)
-        if (advanced && !payload.signal.aborted) {
-          const measured = tokenMeter === undefined ? '' : `; request pressure is now ~${tokenMeter.measure(agent.session).totalTokens} tokens`
-          ctx.logger.warn(`[dsh-patrol/context-pressure] model-free pruning advanced the durable surface after qwen failure${measured}; retrying this model step once`)
-          return { kind: 'retry' as const }
+        try {
+          const pruneBefore = replaceGeneration(agent.session)
+          const result = pruner.pruneSession(agent.session)
+          const pruneAfter = replaceGeneration(agent.session)
+          const advanced = (Array.isArray(result.pruned) && result.pruned.length > 0)
+            || (pruneBefore !== undefined && pruneAfter !== undefined && pruneAfter > pruneBefore)
+          if (advanced && !payload.signal.aborted) {
+            const measurement = measuredTokens(tokenMeter, agent.session)
+            const pressure = measurement === undefined ? '' : `; request pressure is now ~${measurement.totalTokens} tokens`
+            ctx.logger.warn(`[dsh-patrol/context-pressure] model-free pruning advanced the durable surface after qwen failure${pressure}; retrying this model step once`)
+            return { kind: 'retry' as const }
+          }
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error)
+          ctx.logger.warn(`[dsh-patrol/context-pressure] post-failure model-free pruning failed: ${message}`)
         }
       }
 

@@ -321,6 +321,82 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
     },
   })
 
+  const removeSteps = defineTool({
+    name: 'patrol_remove_steps',
+    description: 'Remove explicitly identified obsolete steps from a DRAFT runbook without renumbering surviving step ids. The edit is rejected when a surviving conditional step still depends on a removed step, so related steps must be deliberately repaired instead of silently broken.',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+      stepIds: { type: 'array', required: true, items: { type: 'string' } },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args) {
+      await assertNoPendingRun(store, args.inspectionId)
+      const definition = await loadDraft(store, args.inspectionId)
+      const stepIds = [...new Set((args.stepIds as string[]).map(value => String(value).trim()).filter(Boolean))]
+      if (stepIds.length === 0) throw new Error('stepIds must contain at least one step id')
+
+      const known = new Set(definition.steps.map(step => step.id))
+      const missing = stepIds.filter(stepId => !known.has(stepId))
+      if (missing.length > 0) throw new Error(`cannot remove unknown step(s): ${missing.join(', ')}`)
+
+      const removing = new Set(stepIds)
+      const dependents = definition.steps.filter(step => !removing.has(step.id)
+        && step.when !== undefined
+        && removing.has(step.when.sourceStepId))
+      if (dependents.length > 0) {
+        throw new Error(
+          `cannot remove ${stepIds.join(', ')} while surviving conditional step(s) still depend on them: `
+          + `${dependents.map(step => `${step.id}<-${step.when!.sourceStepId}`).join(', ')}. `
+          + 'Re-teach/remove those related steps explicitly first so the correction cannot silently corrupt the flow.',
+        )
+      }
+
+      definition.steps = definition.steps.filter(step => !removing.has(step.id))
+      assertConditionOrder(definition)
+      markEdited(definition)
+      await store.save(definition)
+      return `Removed obsolete step(s) ${stepIds.join(', ')} in place. Surviving step ids were preserved; ${definition.steps.length} step(s) remain. Full patrol_validate is required.`
+    },
+  })
+
+  const moveStep = defineTool({
+    name: 'patrol_move_step',
+    description: 'Move one existing DRAFT step to an exact position before or after another step. Use this immediately when a genuinely new correction step was taught at the tail but logically belongs in the middle of the flow. Conditional source ordering is validated before saving.',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+      stepId: { type: 'string', required: true },
+      beforeStepId: { type: 'string' },
+      afterStepId: { type: 'string' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args) {
+      await assertNoPendingRun(store, args.inspectionId)
+      const definition = await loadDraft(store, args.inspectionId)
+      const before = typeof args.beforeStepId === 'string' && args.beforeStepId.trim() !== '' ? args.beforeStepId.trim() : undefined
+      const after = typeof args.afterStepId === 'string' && args.afterStepId.trim() !== '' ? args.afterStepId.trim() : undefined
+      if ((before === undefined) === (after === undefined)) {
+        throw new Error('patrol_move_step requires exactly one of beforeStepId or afterStepId')
+      }
+      const stepId = String(args.stepId).trim()
+      const anchorId = before ?? after!
+      if (stepId === anchorId) throw new Error('stepId and anchor step id must be different')
+
+      const movingIndex = definition.steps.findIndex(step => step.id === stepId)
+      if (movingIndex < 0) throw new Error(`step ${stepId} not found`)
+      if (!definition.steps.some(step => step.id === anchorId)) throw new Error(`anchor step ${anchorId} not found`)
+
+      const [moving] = definition.steps.splice(movingIndex, 1)
+      if (moving === undefined) throw new Error(`step ${stepId} not found`)
+      const anchorIndex = definition.steps.findIndex(step => step.id === anchorId)
+      const insertIndex = before !== undefined ? anchorIndex : anchorIndex + 1
+      definition.steps.splice(insertIndex, 0, moving)
+      assertConditionOrder(definition)
+      markEdited(definition)
+      await store.save(definition)
+      return `Moved ${stepId} ${before !== undefined ? `before ${before}` : `after ${after}`}. The correction is now located inside the intended flow instead of being left at the tail. Full patrol_validate is required.`
+    },
+  })
+
   const validate = defineTool({
     name: 'patrol_validate',
     description: 'Run a complete DRAFT runbook end-to-end without making it READY. If a human checkpoint is reached, use patrol_resume_validation after the user completes it.',
@@ -375,6 +451,8 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
     reteachText,
     reteachCredential,
     reteachCheckpoint,
+    removeSteps,
+    moveStep,
     validate,
     resumeValidation,
     confirmEdit,
@@ -410,6 +488,21 @@ function replaceStep(definition: InspectionDefinition, stepId: string, replaceme
   const index = definition.steps.findIndex(item => item.id === stepId)
   if (index < 0) throw new Error(`step ${stepId} not found`)
   definition.steps[index] = replacement
+}
+
+function assertConditionOrder(definition: InspectionDefinition): void {
+  const positions = new Map(definition.steps.map((step, index) => [step.id, index]))
+  for (let index = 0; index < definition.steps.length; index += 1) {
+    const step = definition.steps[index]
+    if (step?.when === undefined) continue
+    const sourceIndex = positions.get(step.when.sourceStepId)
+    if (sourceIndex === undefined) {
+      throw new Error(`step ${step.id} depends on missing source step ${step.when.sourceStepId}`)
+    }
+    if (sourceIndex >= index) {
+      throw new Error(`step ${step.id} depends on ${step.when.sourceStepId}, which must remain earlier in the flow`)
+    }
+  }
 }
 
 function markEdited(definition: InspectionDefinition): void {

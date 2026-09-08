@@ -33,11 +33,20 @@ export class PatrolLifecycleStore extends PatrolStore {
       throw new Error(`inspection ${inspectionId} is ${definition.status}; interactive teaching requires a draft`)
     }
 
+    const activeWorkspace = workspaceRoot?.trim() ? workspaceRoot : undefined
+    if (activeWorkspace !== undefined && definition.metadata.workspaceRoot !== activeWorkspace) {
+      // A DRAFT is unfinished interactive teaching. Reusing it from a new
+      // Harness workspace must make the flow visible in that workspace's Flow
+      // Management/Patrol Records dashboard instead of leaving ownership stuck
+      // on the cwd of an older conversation.
+      definition.metadata.workspaceRoot = activeWorkspace
+      definition.metadata.updatedAt = new Date().toISOString()
+      await super.save(definition)
+    }
+
     const existing = this.activeTeachingRuns.get(inspectionId)
     if (existing !== undefined) {
-      if (existing.workspaceRoot === undefined && workspaceRoot !== undefined && workspaceRoot.trim() !== '') {
-        existing.workspaceRoot = workspaceRoot
-      }
+      if (activeWorkspace !== undefined) existing.workspaceRoot = activeWorkspace
       return await this.writePendingTeachingReport(definition, existing)
     }
 
@@ -46,7 +55,7 @@ export class PatrolLifecycleStore extends PatrolStore {
       runId: teachingRunId(startedAt),
       startedAt,
       stepData: new Map(),
-      ...(workspaceRoot === undefined || workspaceRoot.trim() === '' ? {} : { workspaceRoot }),
+      ...(activeWorkspace === undefined ? {} : { workspaceRoot: activeWorkspace }),
     }
     this.activeTeachingRuns.set(inspectionId, active)
     return await this.writePendingTeachingReport(definition, active)
@@ -165,7 +174,10 @@ export class PatrolLifecycleStore extends PatrolStore {
       inspectionId: definition.id,
       inspectionName: definition.name,
       startedAt: active.startedAt,
-      finishedAt: now,
+      // WAITING means the run has not finished. Older builds stamped every
+      // pending write with a non-empty finishedAt; the dashboard quite
+      // reasonably interpreted that combination as a failed completed run.
+      finishedAt: '',
       status: 'waiting',
       expectedResult: definition.expectedResult,
       results,
@@ -284,6 +296,14 @@ function teachingRunId(value: string): string {
   return `teaching-${compact || Date.now()}`
 }
 
+function pendingUpdatedAt(report: RunReport): string {
+  let latest = report.startedAt
+  for (const result of report.results) {
+    if (result.finishedAt > latest) latest = result.finishedAt
+  }
+  return latest
+}
+
 function renderPendingTeachingReport(report: RunReport): string {
   const lines = [
     `# DSH Patrol 巡检报告：${report.inspectionName}`,
@@ -292,7 +312,7 @@ function renderPendingTeachingReport(report: RunReport): string {
     `- Inspection ID：\`${report.inspectionId}\``,
     '- 状态：**WAITING**',
     `- 开始：${report.startedAt}`,
-    `- 最近更新：${report.finishedAt}`,
+    `- 最近更新：${pendingUpdatedAt(report)}`,
     `- 预期结果：${report.expectedResult}`,
     '- 来源：交互巡检（进行中/未完成）',
     '',

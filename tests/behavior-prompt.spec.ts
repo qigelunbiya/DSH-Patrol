@@ -7,9 +7,10 @@ describe('current Patrol behavior prompt', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/用户用中文就必须用简体中文/s)
   })
 
-  it('forbids converting ordinary image-code failure into human handoff', () => {
+  it('uses automatic local OCR first for ordinary image-code and keeps human handoff disabled', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/image-code 完全禁止人工接管/s)
-    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/不要调用 patrol_detect_auth_challenge/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_solve_current_image_code/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/本地 OCR/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/browser_capture_image_code_visual/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_refresh_image_code 换图/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_prepare_verification_handoff 只允许真正需要人的验证/s)
@@ -25,10 +26,15 @@ describe('current Patrol behavior prompt', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/用户可见.*不得复述.*明文密码/s)
   })
 
-  it('keeps existing-flow inspection from appending teaching steps', () => {
+  it('requires completed-flow corrections to target, replace/remove, reposition, and validate affected steps', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/看某一步|某一步/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_run_flow/s)
-    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/不得继续追加.*步骤/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_show/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_reteach_/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_remove_steps/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_move_step/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/尾部/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_validate/s)
   })
 
   it('requires semantic grouping before writing weekly-report templates', () => {

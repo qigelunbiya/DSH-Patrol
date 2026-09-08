@@ -5,7 +5,7 @@ import { isPatrolTestMode } from './test-mode.js'
 import { assertSafePersistentText } from './security.js'
 import { PatrolRunner } from './runner.js'
 import { PatrolStore } from './store.js'
-import type { InspectionStep, ToolStep } from './types.js'
+import type { InspectionStep, JsonObject, ToolStep } from './types.js'
 
 const TEXT_OUTPUT = {
   schema: { type: 'string' as const },
@@ -22,7 +22,7 @@ export const PATROL_TRANSIENT_INPUT_PROMPT = `敏感输入规则：
 - patrol_validate、patrol_run、Harness 重启后的后续执行都可以自动解密该引用并填写密码。不要把明文密码写进 Runbook、报告、notes 或回复。
 - 只有用户明确要求使用 Harness credential reference 时才使用 patrol_type_credential / patrol_credential_help；它不是交互式巡检的前置条件。
 - 普通图片字符验证码 image-code 是一次性页面状态，不是密码、OTP 或长期 credential。不要把当前验证码保存进 Patrol secret vault，也不要把它作为固定 browser_type 值写进 Runbook。
-- TEST MODE 下，模型对 CURRENT 页面/验证码紧凑裁图完成视觉识别后，优先调用 patrol_type_current_image_code；该工具要求给出 0~1 的当前识别置信度，低于 0.90 时不会输入，高于或等于 0.90 时只填写当前页面且不记录一次性验证码值。验证码刷新或提交后旧值立即失效。
+- TEST MODE 下优先调用 patrol_solve_current_image_code：它先让本机 ddddocr/Windows OCR 对 CURRENT 验证码做自动识别和填写，成功时只记录一个可重放的动态 solver 步骤，不记录验证码值。只有工具明确返回 OCR fallback 时，才使用 CURRENT 紧凑裁图 + 模型视觉，再以 patrol_type_current_image_code 的 0.90 置信度门槛调试当前页面。
 - NORMAL MODE 下继续由 patrol_detect_auth_challenge 的本地自动 solver 负责 image-code；密码、TOTP/OTP、token 等真正敏感值仍必须走专用敏感输入流程。`
 
 export function registerPatrolTransientInputTools(
@@ -95,9 +95,66 @@ export function registerPatrolTransientInputTools(
     },
   })
 
+  const solveCurrentImageCode = defineTool({
+    name: 'patrol_solve_current_image_code',
+    description: 'TEST MODE only: run the local ddddocr/Windows-OCR solver against the CURRENT conventional image-text CAPTCHA and fill it when confidence is sufficient. On success a dynamic browser_detect_auth_challenge step is recorded for replay; the one-time CAPTCHA value is never exposed or persisted. On uncertainty the current page is left available for the visual fallback.',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+      stepName: { type: 'string' },
+      tabId: { type: 'integer' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec: ToolRunContext) {
+      if (!isPatrolTestMode()) {
+        throw new Error('patrol_solve_current_image_code is available only in DSH Patrol TEST MODE; normal mode uses patrol_detect_auth_challenge')
+      }
+      const definition = await store.load(args.inspectionId)
+      if (definition.status !== 'draft') throw new Error(`inspection ${definition.id} is ${definition.status}; call patrol_begin_edit before teaching image-code handling`)
+      const stepName = typeof args.stepName === 'string' && args.stepName.trim() !== ''
+        ? args.stepName.trim()
+        : '自动识别并填写当前图片验证码'
+      assertSafePersistentText(stepName, 'stepName')
+
+      const runtimeArgs: JsonObject = args.tabId === undefined ? {} : { tabId: args.tabId }
+      const dispatched = await runner.dispatch('browser_detect_auth_challenge', runtimeArgs, exec)
+      if (!dispatched.ok) {
+        return `Local image-code solver failed without recording a step. ${dispatched.error ?? dispatched.text}`
+      }
+
+      const value = objectRecord(dispatched.value)
+      const observedSubtype = objectString(value, 'observedSubtype')
+      const autoFilled = objectBoolean(value, 'autoFilled') === true
+      const testModeFallback = objectBoolean(value, 'testModeFallback') === true
+      if (observedSubtype !== 'image-code') {
+        return `Local verification detector did not observe a conventional image-code, so no image-code step was recorded. ${dispatched.text}`
+      }
+      if (!autoFilled) {
+        return testModeFallback
+          ? 'Local ddddocr/Windows OCR could not confidently fill the CURRENT image-code after its bounded fresh-image attempts. Nothing was recorded. Use browser_capture_image_code_visual on the current CAPTCHA, then patrol_type_current_image_code only with confidence >= 0.90.'
+          : `Local image-code solver did not auto-fill the current challenge and nothing was recorded. ${dispatched.text}`
+      }
+
+      const step: ToolStep = {
+        id: nextStepId(definition.steps),
+        kind: 'tool',
+        name: stepName,
+        tool: 'browser_detect_auth_challenge',
+        // Do not persist tab ids or the recognized characters. Replay should
+        // solve whatever fresh image-code is present in the active Patrol tab.
+        arguments: {},
+        recordedAt: new Date().toISOString(),
+      }
+      definition.steps.push(step)
+      definition.schemaVersion = '0.2'
+      definition.metadata.updatedAt = new Date().toISOString()
+      await store.save(definition)
+      return `Local OCR auto-filled the CURRENT image-code and recorded ${step.id} as a dynamic solver step. The recognized one-time characters were not exposed, stored in the Runbook, or written to reports.`
+    },
+  })
+
   const typeCurrentImageCode = defineTool({
     name: 'patrol_type_current_image_code',
-    description: 'TEST MODE only: type the CURRENT conventional image-text CAPTCHA without persisting its one-time value. Requires an explicit confidence from 0 to 1 and refuses to type below 0.90 so a weak visual guess is not submitted to lockout-prone sites.',
+    description: 'TEST MODE visual fallback only: type the CURRENT conventional image-text CAPTCHA without persisting its one-time value. Requires an explicit confidence from 0 to 1 and refuses to type below 0.90 so a weak visual guess is not submitted to lockout-prone sites.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       selector: { type: 'string', required: true },
@@ -225,7 +282,7 @@ export function registerPatrolTransientInputTools(
     },
   })
 
-  const disposers = [typeTransient, typeCurrentImageCode, reteachTransient].map(tool => ctx.tools.register(tool))
+  const disposers = [typeTransient, solveCurrentImageCode, typeCurrentImageCode, reteachTransient].map(tool => ctx.tools.register(tool))
   return () => { for (const dispose of disposers) dispose() }
 }
 
@@ -236,4 +293,20 @@ function nextStepId(steps: readonly InspectionStep[]): string {
     if (match !== null) max = Math.max(max, Number.parseInt(match[1] ?? '0', 10))
   }
   return `step-${String(max + 1).padStart(3, '0')}`
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
+}
+
+function objectString(value: Record<string, unknown> | undefined, key: string): string | undefined {
+  const child = value?.[key]
+  return typeof child === 'string' ? child : undefined
+}
+
+function objectBoolean(value: Record<string, unknown> | undefined, key: string): boolean | undefined {
+  const child = value?.[key]
+  return typeof child === 'boolean' ? child : undefined
 }

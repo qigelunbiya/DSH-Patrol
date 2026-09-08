@@ -19,7 +19,7 @@ from typing import Any
 import cv2
 import ddddocr
 import numpy as np
-from PIL import Image, ImageEnhance, ImageFilter
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 
 def decode_image(value: str) -> bytes:
@@ -111,25 +111,53 @@ def classify_with_confidence(recognizer: Any, data: bytes, variant: str) -> dict
     }
 
 
+def encoded_png(array: np.ndarray) -> bytes | None:
+    try:
+        ok, encoded = cv2.imencode(".png", array)
+        return encoded.tobytes() if ok else None
+    except Exception:
+        return None
+
+
 def solve_image_code(payload: dict[str, Any]) -> dict[str, Any]:
     image_bytes = decode_image(payload.get("image", ""))
     recognizer = ddddocr.DdddOcr(ocr=True, det=False, show_ad=False)
     candidates: dict[str, dict[str, Any]] = {}
 
-    def classify(data: bytes, variant: str) -> None:
+    def classify(data: bytes | None, variant: str) -> None:
+        if not data:
+            return
         try:
             candidate = classify_with_confidence(recognizer, data, variant)
         except Exception:
             return
         if not candidate or not plausible_image_code(candidate["text"]):
             return
-        existing = candidates.get(candidate["text"])
-        if existing is None or float(candidate["confidence"]) > float(existing["confidence"]):
-            candidates[candidate["text"]] = candidate
+        text = str(candidate["text"])
+        confidence = float(candidate.get("confidence", 0.0))
+        existing = candidates.get(text)
+        if existing is None:
+            candidates[text] = {
+                "text": text,
+                "confidence": confidence,
+                "variant": variant,
+                "variants": [variant],
+                "confidenceSamples": [confidence],
+            }
+            return
+        variants = existing.setdefault("variants", [])
+        if variant not in variants:
+            variants.append(variant)
+        samples = existing.setdefault("confidenceSamples", [])
+        samples.append(confidence)
+        if confidence > float(existing.get("confidence", 0.0)):
+            existing["confidence"] = confidence
+            existing["variant"] = variant
 
-    # First use the raw crop; ddddocr is usually strongest on the untouched
-    # distorted captcha. Then try a few deterministic enlarged/high-contrast
-    # variants for very small legacy images such as 4-6 colored characters.
+    # Raw input is still important because ddddocr often handles distorted
+    # glyphs best without preprocessing. Additional deterministic variants form
+    # a small ensemble: agreement across independent contrast/threshold/channel
+    # views adds bounded confidence, while disagreement remains conservative.
     classify(image_bytes, "raw")
     try:
         with Image.open(io.BytesIO(image_bytes)).convert("RGB") as image:
@@ -137,16 +165,49 @@ def solve_image_code(payload: dict[str, Any]) -> dict[str, Any]:
             enlarged = image.resize((max(1, image.width * scale), max(1, image.height * scale)), Image.Resampling.LANCZOS)
             classify(png_bytes(enlarged), "enlarged")
             classify(png_bytes(ImageEnhance.Contrast(enlarged).enhance(1.8)), "high-contrast")
+            classify(png_bytes(ImageOps.autocontrast(enlarged)), "autocontrast")
+
             gray = enlarged.convert("L").filter(ImageFilter.SHARPEN)
             classify(png_bytes(gray), "gray-sharpen")
+            gray_array = np.asarray(gray, dtype=np.uint8)
+            _, otsu = cv2.threshold(gray_array, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            classify(encoded_png(otsu), "otsu")
+            classify(encoded_png(cv2.bitwise_not(otsu)), "otsu-inverted")
+
+            rgb = np.asarray(enlarged, dtype=np.uint8)
+            for channel_index, channel_name in enumerate(("red", "green", "blue")):
+                channel = rgb[:, :, channel_index]
+                classify(encoded_png(channel), f"channel-{channel_name}")
+                _, channel_otsu = cv2.threshold(channel, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                classify(encoded_png(channel_otsu), f"channel-{channel_name}-otsu")
     except Exception:
         pass
 
     plausible = list(candidates.values())
     if not plausible:
         raise ValueError("ddddocr did not recognize a plausible image code")
+
+    for item in plausible:
+        samples = [float(value) for value in item.pop("confidenceSamples", []) if np.isfinite(float(value))]
+        variants = list(dict.fromkeys(str(value) for value in item.get("variants", [])))
+        raw_confidence = max(samples) if samples else float(item.get("confidence", 0.0))
+        mean_confidence = float(np.mean(samples)) if samples else raw_confidence
+        support = len(variants)
+        # Multiple preprocessing variants are correlated, so the consensus
+        # bonus is deliberately capped at 0.08. It helps a stable 0.73-0.79
+        # recognition clear the JS confidence gate without turning a weak lone
+        # guess into an automatic login submission.
+        consensus_bonus = min(0.08, max(0, support - 1) * 0.015)
+        effective_confidence = max(0.0, min(0.995, raw_confidence + consensus_bonus))
+        item["rawConfidence"] = raw_confidence
+        item["meanConfidence"] = mean_confidence
+        item["support"] = support
+        item["variants"] = variants
+        item["confidence"] = effective_confidence
+
     plausible.sort(key=lambda item: (
         -float(item.get("confidence", 0.0)),
+        -int(item.get("support", 0)),
         abs(len(str(item.get("text", ""))) - 5),
         -sum(ch.isalnum() for ch in str(item.get("text", ""))),
         len(str(item.get("text", ""))),
@@ -157,7 +218,11 @@ def solve_image_code(payload: dict[str, Any]) -> dict[str, Any]:
         "operation": "image-code",
         "text": best["text"],
         "confidence": float(best.get("confidence", 0.0)),
+        "rawConfidence": float(best.get("rawConfidence", best.get("confidence", 0.0))),
+        "meanConfidence": float(best.get("meanConfidence", best.get("confidence", 0.0))),
+        "support": int(best.get("support", 1)),
         "variant": best.get("variant", "unknown"),
+        "variants": best.get("variants", []),
         "candidates": plausible[:4],
     }
 
