@@ -6,15 +6,21 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('../', import.meta.url))
 const normalizeNewlines = (value: string) => value.replace(/\r\n/g, '\n')
 
-describe('Patrol preset workspace image tools', () => {
-  it('keeps the preset persona in Chinese with same-language reply guidance', () => {
+describe('Patrol preset compatibility', () => {
+  it('does not couple Patrol mounting to the versioned Harness persona config schema', () => {
     const preset = normalizeNewlines(readFileSync(join(root, 'presets', 'patrol', 'agent.cordis.yml'), 'utf8'))
     const installer = normalizeNewlines(readFileSync(join(root, 'scripts', 'install-local.ps1'), 'utf8'))
+    const prompt = normalizeNewlines(readFileSync(join(root, 'src', 'prompt.ts'), 'utf8'))
+    const testMode = normalizeNewlines(readFileSync(join(root, 'src', 'test-mode.ts'), 'utf8'))
 
-    expect(preset).toContain('你是 DSH Patrol 专用巡检 Agent')
-    expect(preset).toContain('跟随用户最近一条自然语言消息')
-    expect(installer).toContain('\\u4f60\\u662f DSH Patrol')
-    expect(installer).toContain('\\u8ddf\\u968f\\u7528\\u6237\\u6700\\u8fd1\\u4e00\\u6761')
+    // Harness changed @deepseek-ai/dsh-persona from required `config.text` to
+    // required `config.prefix` in 2026-09. Patrol owns its identity/workflow
+    // prompt itself, so composing that external row only creates a needless
+    // compatibility failure that makes the preset visible but unmountable.
+    expect(preset).not.toContain("name: '@deepseek-ai/dsh-persona'")
+    expect(installer).not.toContain("name: '@deepseek-ai/dsh-persona'")
+    expect(prompt).toContain('你正在运行 DSH Patrol 模式')
+    expect(testMode).toContain('DSH Patrol TEST MODE')
   })
 
   it('mounts Harness native filesystem/image tools in both source and installed preset templates', () => {
