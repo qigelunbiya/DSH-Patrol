@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import { recognizeImageCodeWithDdddocr } from './image-code-ddddocr.js'
 
 const reqBool = { type: 'boolean', required: true }
 const str = { type: 'string' }
@@ -32,7 +33,7 @@ export function registerImageCodeVisualTool(ctx, bridge, config = {}) {
   const timeoutMs = config.commandTimeoutMs ?? 60000
   const definition = defineTool({
     name: 'browser_capture_image_code_visual',
-    description: 'Capture the CURRENT conventional image-code CAPTCHA as a tight image crop and attach that crop to the model through Harness read_image when available. This does not OCR or guess the answer. In Patrol TEST MODE, prefer this visual crop when ddddocr/Windows OCR is uncertain or failed, then type only the characters visible in this current crop.',
+    description: 'Capture the CURRENT conventional image-code CAPTCHA as a tight image crop and attach that crop to the model. It also reports the local ddddocr preprocessing-ensemble hint for the exact same crop as secondary evidence; it never types or submits the hint automatically.',
     parameters: {
       tabId: optInt,
       inputSelector: optStr,
@@ -50,6 +51,10 @@ export function registerImageCodeVisualTool(ctx, bridge, config = {}) {
           imageSelector: str,
           imageStatus: { type: 'string', required: true, enum: ['attached', 'tool-unavailable', 'read-failed'] },
           imageError: str,
+          localOcrText: str,
+          localOcrConfidence: { type: 'number' },
+          localOcrSupport: { type: 'integer' },
+          localOcrAlternatives: str,
           image: IMAGE_SCHEMA,
         },
       },
@@ -58,12 +63,22 @@ export function registerImageCodeVisualTool(ctx, bridge, config = {}) {
           `CURRENT image-code crop: ${value.path}`,
           `captureMode=${value.captureMode || 'unknown'}; inputSelector=${value.inputSelector || '(auto)'}; imageSelector=${value.imageSelector || '(auto)'}`,
         ]
+        if (value.localOcrText) {
+          lines.push(
+            `Local OCR ensemble for THIS crop: ${value.localOcrText}; confidence=${Number(value.localOcrConfidence || 0).toFixed(3)}; support=${value.localOcrSupport || 1}.`,
+          )
+          if (value.localOcrAlternatives) lines.push(`Other local OCR candidates: ${value.localOcrAlternatives}`)
+          lines.push('Use these only as secondary evidence against the attached crop. Never silently turn 4/7/0/1/2/5/8 into A/T/O/I/Z/S/B unless the CURRENT pixels and any known CAPTCHA charset both support it.')
+        } else {
+          lines.push('Local OCR produced no usable consensus for this crop. Do not compensate by inventing a low-confidence string.')
+        }
         if (value.imageStatus === 'attached' && value.image !== undefined) {
           lines.push('The attached image is a tight crop of the CURRENT CAPTCHA. Read this image visually; do not reuse any historical CAPTCHA text.')
         } else {
           lines.push(`The crop was saved but could not be attached as an image (${value.imageStatus}). Use read_image on the returned path.`)
           if (value.imageError) lines.push(`Image attachment note: ${value.imageError}`)
         }
+        lines.push('If local OCR and visual reading disagree or confidence is below the Patrol visual threshold, refresh the CAPTCHA instead of submitting a guess. One failed visual submission is evidence to refresh, not permission to try several nearby strings.')
         const blocks = [{ type: 'text', text: lines.join('\n') }]
         if (value.image !== undefined) blocks.push({ type: 'image', attachment: value.image })
         return blocks
@@ -111,7 +126,10 @@ export function registerImageCodeVisualTool(ctx, bridge, config = {}) {
         : undefined
       const path = bridge.saveScreenshot(captured.dataUrl, targetDirectory)
 
-      const attached = await tryReadImage(ctx, exec, path)
+      const [attached, localOcr] = await Promise.all([
+        tryReadImage(ctx, exec, path),
+        tryLocalOcr(captured.dataUrl, exec?.signal, timeoutMs),
+      ])
       return {
         ok: true,
         path,
@@ -120,6 +138,7 @@ export function registerImageCodeVisualTool(ctx, bridge, config = {}) {
         imageSelector: typeof captured.imageSelector === 'string' ? captured.imageSelector : '',
         imageStatus: attached.status,
         ...(captureError || attached.error ? { imageError: [captureError, attached.error].filter(Boolean).join('; ') } : {}),
+        ...localOcr,
         ...(attached.image === undefined ? {} : { image: attached.image }),
       }
     },
@@ -140,6 +159,44 @@ export function assertImageCodeCaptureCapability(bridge) {
   }
   if (!capabilities.includes('captureImageCode')) {
     throw new Error(`Patrol browser extension ${extension.version || '?'} is missing capability captureImageCode. This is a runtime/extension version mismatch; restart Harness before CAPTCHA visual capture.`)
+  }
+}
+
+async function tryLocalOcr(dataUrl, signal, timeoutMs) {
+  try {
+    const result = await recognizeImageCodeWithDdddocr(dataUrl, {
+      signal,
+      timeoutMs: Math.min(Number(timeoutMs) || 30000, 30000),
+    })
+    if (result?.ok !== true || typeof result.text !== 'string') return {}
+    const text = String(result.text).replace(/[^A-Za-z0-9]/g, '').slice(0, 12)
+    if (!text) return {}
+    const confidence = Number.isFinite(Number(result.confidence))
+      ? Math.max(0, Math.min(1, Number(result.confidence)))
+      : 0
+    const support = Number.isFinite(Number(result.support)) ? Math.max(1, Math.trunc(Number(result.support))) : 1
+    const alternatives = Array.isArray(result.candidates)
+      ? result.candidates
+        .filter(item => item && typeof item === 'object' && typeof item.text === 'string')
+        .filter(item => String(item.text).replace(/[^A-Za-z0-9]/g, '') !== text)
+        .slice(0, 3)
+        .map(item => {
+          const candidate = String(item.text).replace(/[^A-Za-z0-9]/g, '').slice(0, 12)
+          const score = Number.isFinite(Number(item.confidence)) ? Math.max(0, Math.min(1, Number(item.confidence))) : 0
+          const count = Number.isFinite(Number(item.support)) ? Math.max(1, Math.trunc(Number(item.support))) : 1
+          return `${candidate} (${score.toFixed(2)}, support=${count})`
+        })
+        .filter(Boolean)
+        .join('; ')
+      : ''
+    return {
+      localOcrText: text,
+      localOcrConfidence: confidence,
+      localOcrSupport: support,
+      ...(alternatives ? { localOcrAlternatives: alternatives } : {}),
+    }
+  } catch {
+    return {}
   }
 }
 
