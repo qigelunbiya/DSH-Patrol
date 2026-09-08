@@ -186,6 +186,22 @@ async function captureImageCode(args) {
     dataUrl = await cropVisibleTabDataUrl(shot.dataUrl, target.rect, target.viewport)
   }
 
+  // Local ddddocr already runs its own preprocessing/upscale ensemble. Only the
+  // model-vision fallback asks for visualScale, so we can make tiny 120x35 text
+  // materially easier to inspect without multiplying every OCR subprocess.
+  const visualScale = Number.isFinite(Number(args.visualScale))
+    ? Math.max(1, Math.min(4, Math.trunc(Number(args.visualScale))))
+    : 1
+  if (visualScale > 1) {
+    try {
+      dataUrl = await scaleImageDataUrl(dataUrl, visualScale)
+      captureMode = `${captureMode}-visual-${visualScale}x`
+    } catch {
+      // Scaling is a presentation enhancement only; the original tight crop is
+      // still much safer than falling back to a whole-page screenshot.
+    }
+  }
+
   return {
     ok: true,
     dataUrl,
@@ -274,6 +290,27 @@ async function cropVisibleTabDataUrl(dataUrl, rect, viewport, padding = 2) {
     context.drawImage(bitmap, sx, sy, sw, sh, 0, 0, sw, sh)
     const cropped = await canvas.convertToBlob({ type: 'image/png' })
     return await blobToDataUrl(cropped)
+  } finally {
+    if (typeof bitmap.close === 'function') bitmap.close()
+  }
+}
+
+async function scaleImageDataUrl(dataUrl, scale) {
+  if (scale <= 1) return dataUrl
+  if (typeof OffscreenCanvas !== 'function' || typeof createImageBitmap !== 'function') return dataUrl
+  const source = dataUrlToBlob(dataUrl)
+  const bitmap = await createImageBitmap(source)
+  try {
+    const width = Math.max(1, Math.min(1600, Math.round(bitmap.width * scale)))
+    const height = Math.max(1, Math.min(800, Math.round(bitmap.height * scale)))
+    if (width === bitmap.width && height === bitmap.height) return dataUrl
+    const canvas = new OffscreenCanvas(width, height)
+    const context = canvas.getContext('2d')
+    if (!context) return dataUrl
+    context.imageSmoothingEnabled = false
+    context.drawImage(bitmap, 0, 0, bitmap.width, bitmap.height, 0, 0, width, height)
+    const scaled = await canvas.convertToBlob({ type: 'image/png' })
+    return await blobToDataUrl(scaled)
   } finally {
     if (typeof bitmap.close === 'function') bitmap.close()
   }
