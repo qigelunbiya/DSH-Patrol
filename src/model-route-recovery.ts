@@ -3,7 +3,7 @@ import type {
   LlmCallConfig,
   ReasoningEffortId,
 } from '@deepseek-ai/dsh-llm'
-import { registerPatrolContextPressureGuard } from './context-pressure-guard.js'
+import { registerPatrolContextPressureGuard } from './context-pressure-hardening.js'
 
 interface ModelSelection {
   provider: string
@@ -64,7 +64,7 @@ function sameRoute(
  * the OpenAI-compatible `cliproxy` provider. Accept both durable spellings so a
  * stale conversation can still move to a new default route after a real auth
  * failure. This recovery is NOT the CUDA-OOM fix; context pressure is handled by
- * context-pressure-guard.ts before the request reaches the gateway.
+ * context-pressure-hardening.ts before the request reaches the gateway.
  */
 export function isLegacyUnavailablePatrolRoute(config: Pick<LlmCallConfig, 'provider' | 'model'>): boolean {
   return LEGACY_UNAVAILABLE_PROVIDERS.has(config.provider)
