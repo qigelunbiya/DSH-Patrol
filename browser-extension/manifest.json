@@ -4,7 +4,7 @@
   "version": "0.3.0",
   "description": "Hardened browser bridge for the DSH Patrol Agent Preset.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnFtLea5LWeVkuoUcnUjzNvlV3dZQfvRp0mAi0E9KwMFbjlrVVnnHjVmsDu2KN1OZXVTJpklNcafldjeOcbR9nv87iVVfON69Q0fMrd7h6AkdCimgyoBhT2+JIkMELWOag0c/u7hxFtlW8+Wzruf1IXRSWIhclc6VLdJzgtIS0gHIxm1O0AZVCq5I38s6MmhwH89MXyPsBqwhdpHIy98NH8xGshEr+sudPEw5j+jPe+fR1Z5z90Zo84Ilw7u4OK5WniOymeXittwIHg9aZASHgnJRKFeXQ06vLELkGztdo+EhD/D3Q3DH8FbKzbiKSLLzXBDugqFO/W/7TKj0KbYDbQIDAQAB",
-  "permissions": ["tabs", "activeTab", "storage", "webNavigation"],
+  "permissions": ["tabs", "activeTab", "storage", "webNavigation", "scripting"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background-entry.js" },
   "action": {
@@ -18,14 +18,6 @@
       "js": ["content.js", "visual-content.js", "captcha-demo-content.js"],
       "run_at": "document_idle",
       "all_frames": false
-    },
-    {
-      "matches": ["<all_urls>"],
-      "js": ["frame-content.js"],
-      "run_at": "document_idle",
-      "all_frames": true,
-      "match_about_blank": true,
-      "match_origin_as_fallback": true
     }
   ],
   "content_security_policy": {
