@@ -122,7 +122,7 @@ describe('fast Patrol dashboard catalog', () => {
     })
   })
 
-  it('does not keep a finished all-passed lightweight run stuck in waiting', async () => {
+  it('does not promote an unfinished teaching record to passed just because all recorded steps passed', async () => {
     const value = await fixture()
     const runId = '2026-09-02T09-30-00-000Z-donefeed'
     const runRoot = join(value.storageRoot, 'runs', value.inspectionId, runId)
@@ -136,7 +136,7 @@ describe('fast Patrol dashboard catalog', () => {
       startedAt: '2026-09-02T09:30:00.000Z',
       finishedAt: '2026-09-02T09:30:32.000Z',
       expectedResult: 'dashboard',
-      summary: '巡检已完成。',
+      summary: '巡检进行中：本轮已记录 14 个成功步骤。',
       stepCount: 4,
       passedSteps: 4,
       failedSteps: 0,
@@ -148,7 +148,7 @@ describe('fast Patrol dashboard catalog', () => {
 
     expect(catalog.runs[0]).toMatchObject({
       runId,
-      status: 'passed',
+      status: 'failed',
       source: 'summary',
       stepCount: 4,
       passedSteps: 4,

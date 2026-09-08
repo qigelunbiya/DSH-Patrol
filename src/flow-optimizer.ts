@@ -138,8 +138,27 @@ function shouldKeepStep(
   }
 
   if (isTypingTool(step.tool) && isSupersededTypingStep(all, index, step)) return false
+  if (isDuplicateRetryStep(all, index, step)) return false
 
   return true
+}
+
+function isDuplicateRetryStep(all: readonly InspectionStep[], index: number, step: ToolStep): boolean {
+  if (!['browser_click', 'browser_press', 'browser_wait'].includes(step.tool)) return false
+  if (referencedOrAssertive(step)) return false
+  for (let cursor = index + 1; cursor < all.length; cursor += 1) {
+    const next = all[cursor]!
+    if (next.kind === 'checkpoint' || next.tool === 'browser_navigate' || isTypingTool(next.tool) || next.tool === 'browser_detect_auth_challenge') {
+      return false
+    }
+    if (next.kind !== 'tool' || next.tool !== step.tool || referencedOrAssertive(next)) continue
+    if (step.name === next.name && JSON.stringify(step.arguments) === JSON.stringify(next.arguments)) return true
+  }
+  return false
+}
+
+function referencedOrAssertive(step: InspectionStep): boolean {
+  return step.kind === 'tool' && (step.when !== undefined || step.expectation !== undefined || step.artifact !== undefined)
 }
 
 function findSafeResetFloor(

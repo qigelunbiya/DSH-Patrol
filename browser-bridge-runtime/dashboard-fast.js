@@ -274,6 +274,7 @@ function enrichSummary(value, definition, source) {
     inspectionName: value.inspectionName || definition?.name || value.inspectionId,
     status: normalizeRunStatus(value.status, {
       finishedAt: value.finishedAt,
+      summary: value.summary,
       stepCount,
       passedSteps,
       failedSteps,
@@ -299,6 +300,9 @@ function safeCount(value) {
 
 function normalizeRunStatus(status, facts) {
   if (status !== 'waiting') return ['passed', 'failed'].includes(status) ? status : 'waiting'
+  if (typeof facts.summary === 'string' && /巡检进行中|in[-\s]?progress/i.test(facts.summary)) {
+    return facts.finishedAt ? 'failed' : 'waiting'
+  }
   if (!facts.finishedAt) return 'waiting'
   if (facts.failedSteps > 0) return 'failed'
   if (facts.waitingSteps > 0) return 'waiting'
@@ -311,11 +315,19 @@ function summarizeRun(report, definition, source = 'json') {
   const artifactCount = results.reduce((count, result) => count + (Array.isArray(result.artifacts) ? result.artifacts.length : 0), 0) + 2
   const passedSteps = results.filter(result => result.status === 'passed').length
   const failedSteps = results.filter(result => result.status === 'failed').length
+  const waitingSteps = results.filter(result => result.status === 'waiting').length
   return {
     runId: report.runId,
     inspectionId: report.inspectionId,
     inspectionName: report.inspectionName || definition?.name || report.inspectionId,
-    status: report.status || 'waiting',
+    status: normalizeRunStatus(report.status, {
+      finishedAt: report.finishedAt,
+      summary: report.summary,
+      stepCount: results.length,
+      passedSteps,
+      failedSteps,
+      waitingSteps,
+    }),
     startedAt: report.startedAt || '',
     finishedAt: report.finishedAt || '',
     summary: report.summary || summarizeResults(results),

@@ -245,7 +245,9 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
 
       if (imageCodeObserved) {
         let imageAutomationError = ''
-        if (process.platform === 'win32') {
+        if (testMode) {
+          imageAutomationError = 'TEST MODE uses screenshot/model visual recognition for image-code instead of automatic local OCR fill'
+        } else if (process.platform === 'win32') {
           try {
             imageAutomationRan = await tryFillImageCode(bridge, args.tabId, options)
           } catch (error) {

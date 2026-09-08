@@ -13,7 +13,8 @@ const TEXT_OUTPUT = {
 }
 
 const IMAGE_CODE_SELECTOR_HINT = /(captcha|image[-_ ]?code|img[-_ ]?code|图形验证码|图片验证码|字符验证码|验证码图片|验证码|校验码|图形码)/i
-const IMAGE_CODE_MIN_CONFIDENCE = 0.80
+const IMAGE_CODE_MIN_CONFIDENCE = 0.90
+const MULTIPLE_IMAGE_CODE_CANDIDATES = /(?:\bor\b|或者|或|候选|candidate|[,，/、;；|]|\r?\n)/i
 
 export const PATROL_TRANSIENT_INPUT_PROMPT = `敏感输入规则：
 - 用户在当前对话里已经明确提供密码或其他敏感字段值时，直接使用 patrol_type_transient，不要因为没有 Harness credential reference 而停止，也不要要求用户额外运行 credential helper。
@@ -134,7 +135,11 @@ export function registerPatrolTransientInputTools(
         return `CURRENT CAPTCHA was NOT typed because confidence=${confidence.toFixed(3)} is below ${IMAGE_CODE_MIN_CONFIDENCE.toFixed(2)}. Refresh/re-observe the CAPTCHA and recognize the fresh image before any login submission.`
       }
 
-      const code = String(args.text || '').replace(/\s+/g, '').trim()
+      const rawCode = String(args.text || '').trim()
+      if (MULTIPLE_IMAGE_CODE_CANDIDATES.test(rawCode)) {
+        throw new Error('current image-code must be one single candidate; refresh the CAPTCHA when recognition produces multiple possible answers')
+      }
+      const code = rawCode.replace(/\s+/g, '')
       if (!/^[A-Za-z0-9]{2,16}$/.test(code)) {
         throw new Error('current image-code must contain 2-16 ASCII letters/digits after whitespace removal')
       }

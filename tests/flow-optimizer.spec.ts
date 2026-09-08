@@ -114,6 +114,30 @@ describe('flow compaction', () => {
     expect(value.steps.map(step => step.name)).toEqual(['Navigate', 'Correct username', 'Submit', 'Final read', 'Final screenshot'])
   })
 
+  it('collapses repeated identical clicks from failed captcha retry loops', () => {
+    const value = definition([
+      tool('step-001', 'Navigate', 'browser_navigate', { arguments: { url: 'https://example.test' } } as Partial<InspectionStep>),
+      tool('step-002', 'Fill username', 'browser_type', { arguments: { selector: '#user', text: 'fangzheming' } } as Partial<InspectionStep>),
+      tool('step-003', 'Fill password', 'browser_type_transient_ref', { arguments: { selector: '#password', transientRef: 'PATROL_SECRET_ABC' } } as Partial<InspectionStep>),
+      tool('step-004', 'Click login', 'browser_click', { arguments: { selector: '#login' } } as Partial<InspectionStep>),
+      tool('step-005', 'Click login', 'browser_click', { arguments: { selector: '#login' } } as Partial<InspectionStep>),
+      tool('step-006', 'Click login', 'browser_click', { arguments: { selector: '#login' } } as Partial<InspectionStep>),
+      tool('step-007', 'Final read', 'browser_read_page', { artifact: 'page-text' } as Partial<InspectionStep>),
+      tool('step-008', 'Final screenshot', 'browser_screenshot', { artifact: 'screenshot' } as Partial<InspectionStep>),
+    ])
+
+    compactTeachingFlow(value)
+
+    expect(value.steps.map(step => step.name)).toEqual([
+      'Navigate',
+      'Fill username',
+      'Fill password',
+      'Click login',
+      'Final read',
+      'Final screenshot',
+    ])
+  })
+
   it('uses the model-selected successful route instead of keeping successful wrong-branch clicks', () => {
     const value = definition([
       tool('step-001', 'Navigate', 'browser_navigate', { arguments: { url: 'https://example.test' } } as Partial<InspectionStep>),

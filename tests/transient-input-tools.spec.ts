@@ -109,13 +109,32 @@ describe('Patrol encrypted sensitive input', () => {
       inspectionId: 'demo',
       selector: '#captcha',
       text: 'AD4T',
-      confidence: 0.72,
+      confidence: 0.86,
       source: 'model-visual',
     }, { token: Symbol('exec') })
 
     expect(dispatch).not.toHaveBeenCalled()
     expect(result).toContain('NOT typed')
-    expect(result).toContain('0.80')
+    expect(result).toContain('0.90')
+  })
+
+  it('refuses model image-code answers that contain multiple candidates', async () => {
+    process.env.DSH_PATROL_CAPTCHA_MODE = 'test'
+    const definitions: any[] = []
+    const ctx = { tools: { register(definition: any) { definitions.push(definition); return () => {} } } } as unknown as Context
+    const dispatch = vi.fn(async () => ({ ok: true, text: 'typed' }))
+    registerPatrolTransientInputTools(ctx, {} as PatrolStore, { dispatch } as unknown as PatrolRunner)
+    const tool = definitions.find(item => item.name === 'patrol_type_current_image_code')
+
+    await expect(tool.execute({
+      inspectionId: 'demo',
+      selector: '#captcha',
+      text: 'IXBF or 1KBF',
+      confidence: 0.96,
+      source: 'model-visual',
+    }, { token: Symbol('exec') })).rejects.toThrow(/single candidate/i)
+
+    expect(dispatch).not.toHaveBeenCalled()
   })
 
   it('types a high-confidence current image-code without persisting or exposing its value', async () => {
