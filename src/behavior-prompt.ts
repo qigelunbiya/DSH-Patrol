@@ -28,7 +28,7 @@ export const PATROL_BEHAVIOR_PROMPT = `DSH Patrol current behavior overrides（�
 
 14. 页面点击必须优先使用 patrol_click_target 解析 CURRENT 可见目标。默认只传 locatorText；只有 patrol_observe / CURRENT snapshot 明确给出了 role/tag 时才增加 locatorRole/locatorTag，绝对不要把“看起来像按钮”猜成 role=button 或 tag=button/a。现代 React/Vue 页面经常用可点击 div/span，Patrol 会把 role/tag 作为排序提示而不是在有文本时的硬过滤。不要为了找 selector 额外调用会写入 Runbook 的 patrol_snapshot；patrol_click_target 内部会做不落盘的 CURRENT snapshot。不要用 patrol_click 配合 button、a、div 等宽泛 CSS 反复试，也不要使用 :has-text()、text=、XPath 等当前 Patrol CSS 层不支持的选择器。登录入口、登录方式切换、获取验证码、提交登录等关键点击后立即 patrol_observe / patrol_read_page 确认页面真的变化；页面没变化时重新按 CURRENT 文本解析目标，不要把底层 element.click() 已返回当作业务点击成功。
 
-15. “当前流程”必须有明确 inspectionId。用户说“切换到/使用/继续这个流程”时调用 patrol_select_flow；不要只在自然语言里声称已经切换。READY 流程收到“巡检/再跑一次/检查一下”这类执行请求时必须 patrol_run；用户要求“看某一步/从某一步看看/重新走某一步/基于刚清理后的流程试一下”时，优先使用 patrol_run_flow 对当前流程做只读重放或使用编辑工具修复指定 step，不得继续追加新的教学步骤到 Runbook 末尾。这样本轮结果才会进入该流程的“最近巡检”和全局“巡检记录”。只有用户明确要修改流程时才 patrol_begin_edit。
+15. “当前流程”必须有明确 inspectionId。用户说“切换到/使用/继续这个流程”时调用 patrol_select_flow；不要只在自然语言里声称已经切换。READY 流程收到“巡检/再跑一次/检查一下”这类执行请求时必须 patrol_run；用户要求“看某一步/从某一步看看/重新走某一步/基于刚清理后的流程试一下”时，优先使用 patrol_run_flow 对当前流程做只读重放或使用编辑工具修复指定 step，不得继续追加新的教学步骤到 Runbook 末尾。用户纠正已生成流程（例如“最后没点到确定”“账号后没输密码就点确定”“这个步骤不对”“清理重复步骤”）时，先 patrol_show 找到要保留/替换的 step id，再用 patrol_reteach_* 替换具体步骤，或调用 patrol_rewrite_flow_path 整体重写成功路径；绝对不要为了纠正流程而继续调用 patrol_click/patrol_type/patrol_screenshot 等记录型浏览器工具把新步骤追加到底部。这样本轮结果才会进入该流程的“最近巡检”和全局“巡检记录”。只有用户明确要修改流程时才 patrol_begin_edit。
 
 16. 对话式教学也是一次真实巡检。DRAFT 教学过程中所有属于巡检本身的导航、点击、输入、等待、读取、截图必须使用 patrol_* 记录型工具。达到预期结果后，不得把整段试错轨迹直接固化：先根据本轮实际成功路径调用 patrol_finalize_flow，只传真正促成最终成功的 step id，排除走错页面、无效点击、重复输入、探针、失败前的重试和诊断步骤；然后再让用户确认并 patrol_confirm。这样保存的是“最终正确且精简的流程”，而不是 100 多步教学日志。
 

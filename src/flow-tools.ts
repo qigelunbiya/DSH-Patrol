@@ -88,6 +88,43 @@ export function registerPatrolFlowTools(ctx: Context, store: PatrolStore): () =>
     },
   })
 
-  const disposers = [selectFlow, finalizeFlow].map(tool => ctx.tools.register(tool))
+  const rewriteFlowPath = defineTool({
+    name: 'patrol_rewrite_flow_path',
+    description: 'Rewrite an existing DRAFT flow to the ordered reusable path when the user corrects or cleans the generated flow. Use this instead of appending browser actions after feedback like "missed the confirm button", "that step is wrong", or "clean these retries". Pass the ordered step ids that should remain in the final template; exploratory tail retries and superseded wrong attempts are removed.',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+      keptStepIds: {
+        type: 'array',
+        required: true,
+        items: { type: 'string' },
+        description: 'Ordered step ids from the current DRAFT that should remain in the corrected reusable flow.',
+      },
+      reason: {
+        type: 'string',
+        required: true,
+        description: 'Short human explanation of what was corrected.',
+      },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args) {
+      assertInspectionId(args.inspectionId)
+      const definition = await store.load(args.inspectionId)
+      if (definition.status !== 'draft') throw new Error(`inspection ${definition.id} is ${definition.status}; only a DRAFT flow can be rewritten`)
+      if (!Array.isArray(args.keptStepIds) || args.keptStepIds.length === 0) {
+        throw new Error('keptStepIds must contain the corrected reusable path')
+      }
+      const result = selectSuccessfulTeachingPath(definition, args.keptStepIds)
+      definition.metadata.updatedAt = new Date().toISOString()
+      await store.save(definition)
+      return [
+        `Rewrote corrected path for ${definition.id}: ${result.originalSteps} steps -> ${result.finalSteps} reusable steps.`,
+        `Removed ${result.removedSteps} appended retry/probe step(s); restored ${result.autoKeptDependencies} required dependency/artifact step(s).`,
+        `Correction: ${String(args.reason).trim()}`,
+        'Continue edits with patrol_reteach_* against existing step ids; do not append browser actions unless the user explicitly asks to add a new step.',
+      ].filter((line): line is string => line !== undefined).join('\n')
+    },
+  })
+
+  const disposers = [selectFlow, finalizeFlow, rewriteFlowPath].map(tool => ctx.tools.register(tool))
   return () => { for (const dispose of disposers) dispose() }
 }

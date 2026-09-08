@@ -4,6 +4,7 @@ import {
   isCudaOutOfMemoryFailure,
   isPatrolQwenConstrainedRoute,
   PATROL_QWEN_SOFT_REQUEST_LIMIT,
+  qwenLocalMemoryPressureDiagnostic,
   registerPatrolContextPressureGuard,
   shouldForcePatrolCompaction,
 } from '../src/context-pressure-guard.js'
@@ -86,6 +87,13 @@ describe('Patrol constrained-Qwen context pressure guard', () => {
     })).toBe(false)
   })
 
+  it('classifies qwen auth_unavailable as a likely post-OOM cooldown symptom', () => {
+    expect(qwenLocalMemoryPressureDiagnostic({
+      code: 'auth_unavailable',
+      message: '503: auth_unavailable: no auth available',
+    })).toContain('GPU memory pressure')
+  })
+
   it('compacts before dispatch when measured request pressure crosses the soft limit', async () => {
     const ctx = new Context()
     const agent = fakeAgent()
@@ -108,6 +116,35 @@ describe('Patrol constrained-Qwen context pressure guard', () => {
     expect(compactIfNeeded).toHaveBeenCalledOnce()
     expect(compactIfNeeded).toHaveBeenCalledWith(agent, 'context-overflow', expect.any(AbortSignal))
     expect(downstream).toHaveBeenCalledOnce()
+    await ctx.fiber.dispose()
+  })
+
+  it('uses model-free tool-result pruning before invoking qwen summarization compaction', async () => {
+    const ctx = new Context()
+    const agent = fakeAgent()
+    const compactIfNeeded = vi.fn(async () => {
+      throw new Error('should not call LLM compaction when pruning is enough')
+    })
+    const measure = vi.fn()
+      .mockReturnValueOnce({ totalTokens: PATROL_QWEN_SOFT_REQUEST_LIMIT + 8_000 })
+      .mockReturnValueOnce({ totalTokens: PATROL_QWEN_SOFT_REQUEST_LIMIT - 1_000 })
+    const pruneSession = vi.fn(() => {
+      agent.session.surface.replaceGeneration += 1
+      return { pruned: [{ callId: 'large-observe' }], charsRemoved: 20_000 }
+    })
+    ctx.provide('tokenMeter', { measure })
+    ctx.provide('toolResultPruner', { pruneSession })
+    ctx.provide('compaction', { compactIfNeeded })
+    registerPatrolContextPressureGuard(ctx)
+
+    await ctx.waterfall(
+      'agent/pre-step',
+      preStepPayload(agent) as never,
+      async () => ({ kind: 'enter' as const, messages: [] }),
+    )
+
+    expect(pruneSession).toHaveBeenCalledOnce()
+    expect(compactIfNeeded).not.toHaveBeenCalled()
     await ctx.fiber.dispose()
   })
 
@@ -198,6 +235,24 @@ describe('Patrol constrained-Qwen context pressure guard', () => {
 
     expect(compactIfNeeded).toHaveBeenCalledOnce()
     expect(downstream).not.toHaveBeenCalled()
+    await ctx.fiber.dispose()
+  })
+
+  it('adds a model-memory diagnostic to unrecovered qwen auth_unavailable failures', async () => {
+    const ctx = new Context()
+    const agent = fakeAgent()
+    ctx.provide('compaction', { compactIfNeeded: vi.fn(async () => null) })
+    registerPatrolContextPressureGuard(ctx)
+
+    const payload = requestErrorPayload(agent, '503: auth_unavailable: no auth available')
+    await ctx.waterfall(
+      'agent/request-error',
+      payload as never,
+      async () => undefined,
+    )
+
+    expect(payload.failure.message).toContain('[DSH Patrol diagnostic]')
+    expect(payload.failure.message).toContain('GPU memory pressure')
     await ctx.fiber.dispose()
   })
 

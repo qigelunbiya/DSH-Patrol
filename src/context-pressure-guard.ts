@@ -27,6 +27,10 @@ interface CompactionLike {
   ): Promise<unknown | null>
 }
 
+interface ToolResultPrunerLike {
+  pruneSession(session: unknown): { pruned?: unknown[]; charsRemoved?: number }
+}
+
 interface SessionLike {
   requestHeader(): { config?: Pick<LlmCallConfig, 'provider' | 'model'> } | undefined
   surface?: { replaceGeneration?: number }
@@ -120,6 +124,30 @@ export function isQwenLocalAuthUnavailableFailure(failure: FailureLike): boolean
     || message.includes('no auth available')
 }
 
+export function qwenLocalMemoryPressureDiagnostic(failure: FailureLike): string | undefined {
+  if (isCudaOutOfMemoryFailure(failure)) {
+    return 'Probable qwen-local CUDA memory exhaustion while processing this Patrol conversation.'
+  }
+  if (isQwenLocalAuthUnavailableFailure(failure)) {
+    return [
+      'Probable qwen-local GPU memory pressure or cooldown after an oversized Patrol conversation request.',
+      'The gateway reports this as auth_unavailable/503 even though the practical cause can be the local inference worker becoming unavailable after OOM.',
+    ].join(' ')
+  }
+  return undefined
+}
+
+function annotateFailureWithDiagnostic(failure: FailureLike): void {
+  const diagnostic = qwenLocalMemoryPressureDiagnostic(failure)
+  if (diagnostic === undefined) return
+  if (failure.message?.includes('[DSH Patrol diagnostic]') === true) return
+  failure.message = [
+    failure.message ?? failure.code ?? 'model request failed',
+    `[DSH Patrol diagnostic] ${diagnostic}`,
+    'Mitigation attempted: compact/prune Patrol tool-result history before retrying so the next request is smaller.',
+  ].join('\n')
+}
+
 function replaceGeneration(session: SessionLike): number | undefined {
   const generation = session.surface?.replaceGeneration
   return typeof generation === 'number' && Number.isFinite(generation) ? generation : undefined
@@ -136,6 +164,14 @@ function readTokenMeter(ctx: Context): TokenMeterLike | undefined {
 function readCompaction(ctx: Context): CompactionLike | undefined {
   try {
     return ctx.get('compaction') as CompactionLike | undefined
+  } catch {
+    return undefined
+  }
+}
+
+function readToolResultPruner(ctx: Context): ToolResultPrunerLike | undefined {
+  try {
+    return ctx.get('toolResultPruner') as ToolResultPrunerLike | undefined
   } catch {
     return undefined
   }
@@ -185,8 +221,7 @@ export function registerPatrolContextPressureGuard(
       rememberStep(payload.turn, payload.step, agent, route)
 
       const tokenMeter = readTokenMeter(ctx)
-      const compaction = readCompaction(ctx)
-      if (tokenMeter === undefined || compaction === undefined) return next()
+      if (tokenMeter === undefined) return next()
 
       let measurement: TokenMeasurementLike
       try {
@@ -198,6 +233,31 @@ export function registerPatrolContextPressureGuard(
       }
 
       if (!shouldForcePatrolCompaction(route, measurement.totalTokens, softLimit)) return next()
+
+      const pruner = readToolResultPruner(ctx)
+      if (pruner !== undefined) {
+        const pruneBefore = replaceGeneration(agent.session)
+        const result = pruner.pruneSession(agent.session)
+        const pruneAfter = replaceGeneration(agent.session)
+        measurement = tokenMeter.measure(agent.session)
+        const pruned = Array.isArray(result.pruned) ? result.pruned.length : 0
+        if (pruned > 0 || result.charsRemoved !== undefined || (pruneBefore !== undefined && pruneAfter !== undefined && pruneAfter > pruneBefore)) {
+          ctx.logger.warn(
+            `[dsh-patrol/context-pressure] pruned Patrol tool results before model dispatch; `
+            + `request pressure is now ~${measurement.totalTokens} tokens`,
+          )
+        }
+        if (!shouldForcePatrolCompaction(route, measurement.totalTokens, softLimit)) return next()
+      }
+
+      const compaction = readCompaction(ctx)
+      if (compaction === undefined) {
+        ctx.logger.warn(
+          `[dsh-patrol/context-pressure] ${route.provider}/${route.model} request is ~${measurement.totalTokens} tokens `
+          + `(Patrol soft limit ${softLimit}), but no compaction service is available; model-side CUDA OOM is likely`,
+        )
+        return next()
+      }
 
       const before = replaceGeneration(agent.session)
       ctx.logger.warn(
@@ -235,11 +295,27 @@ export function registerPatrolContextPressureGuard(
         || payload.signal.aborted) {
         return next()
       }
+      annotateFailureWithDiagnostic(payload.failure)
 
       const key = `${payload.turn}:${payload.step}`
       const agentKey = agent as unknown as object
       if (attemptedOomRecovery.get(agentKey) === key) return next()
       attemptedOomRecovery.set(agentKey, key)
+
+      const tokenMeter = readTokenMeter(ctx)
+      const pruner = readToolResultPruner(ctx)
+      if (pruner !== undefined) {
+        const pruneBefore = replaceGeneration(agent.session)
+        const result = pruner.pruneSession(agent.session)
+        const pruneAfter = replaceGeneration(agent.session)
+        const advanced = (Array.isArray(result.pruned) && result.pruned.length > 0)
+          || (pruneBefore !== undefined && pruneAfter !== undefined && pruneAfter > pruneBefore)
+        if (advanced && !payload.signal.aborted) {
+          const measured = tokenMeter === undefined ? '' : `; request pressure is now ~${tokenMeter.measure(agent.session).totalTokens} tokens`
+          ctx.logger.warn(`[dsh-patrol/context-pressure] model-free pruning advanced the durable surface after qwen failure${measured}; retrying this model step once`)
+          return { kind: 'retry' as const }
+        }
+      }
 
       const compaction = readCompaction(ctx)
       if (compaction === undefined) return next()
