@@ -250,7 +250,7 @@ export function registerPatrolContextPressureGuard(
         + `step ${payload.step}; attempting one immediate compaction before Harness retries`,
       )
       try {
-        const result = await compaction.compactIfNeeded(payload.agent, 'context-overflow', payload.signal)
+        const result = await compaction.compactIfNeeded(agent, 'context-overflow', payload.signal)
         const after = replaceGeneration(agent.session)
         const advanced = result !== null
           || (before !== undefined && after !== undefined && after > before)

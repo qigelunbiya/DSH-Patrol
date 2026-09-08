@@ -224,6 +224,7 @@ describe('Patrol constrained-Qwen context pressure guard', () => {
     )).resolves.toEqual({ kind: 'retry' })
 
     expect(compactIfNeeded).toHaveBeenCalledOnce()
+    expect(compactIfNeeded.mock.calls[0]?.[0]).toBe(agent)
     await ctx.fiber.dispose()
   })
 })

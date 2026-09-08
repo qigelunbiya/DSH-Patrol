@@ -20,6 +20,13 @@ describe('current Patrol behavior prompt', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/PATROL_SECRET_/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/不要调用 patrol_credential_help/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/Harness 重启后仍可自动解密重放/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/用户可见.*不得复述.*明文密码/s)
+  })
+
+  it('keeps existing-flow inspection from appending teaching steps', () => {
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/看某一步|某一步/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_run_flow/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/不得继续追加.*步骤/s)
   })
 
   it('requires semantic grouping before writing weekly-report templates', () => {

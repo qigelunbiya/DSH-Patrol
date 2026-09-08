@@ -264,19 +264,29 @@ function validSummary(value, inspectionId, runId) {
 }
 
 function enrichSummary(value, definition, source) {
+  const stepCount = safeCount(value.stepCount)
+  const passedSteps = safeCount(value.passedSteps)
+  const failedSteps = safeCount(value.failedSteps)
+  const waitingSteps = safeCount(value.waitingSteps)
   return {
     runId: value.runId,
     inspectionId: value.inspectionId,
     inspectionName: value.inspectionName || definition?.name || value.inspectionId,
-    status: value.status || 'waiting',
+    status: normalizeRunStatus(value.status, {
+      finishedAt: value.finishedAt,
+      stepCount,
+      passedSteps,
+      failedSteps,
+      waitingSteps,
+    }),
     startedAt: value.startedAt || '',
     finishedAt: value.finishedAt || '',
     summary: value.summary || '巡检已完成，打开详情查看步骤结果。',
     targetUrl: definition?.target?.url || '',
     expectedResult: value.expectedResult || definition?.expectedResult || '',
-    stepCount: safeCount(value.stepCount),
-    passedSteps: safeCount(value.passedSteps),
-    failedSteps: safeCount(value.failedSteps),
+    stepCount,
+    passedSteps,
+    failedSteps,
     artifactCount: safeCount(value.artifactCount),
     partial: Boolean(value.partial),
     source,
@@ -285,6 +295,15 @@ function enrichSummary(value, definition, source) {
 
 function safeCount(value) {
   return Number.isInteger(value) && value >= 0 ? value : 0
+}
+
+function normalizeRunStatus(status, facts) {
+  if (status !== 'waiting') return ['passed', 'failed'].includes(status) ? status : 'waiting'
+  if (!facts.finishedAt) return 'waiting'
+  if (facts.failedSteps > 0) return 'failed'
+  if (facts.waitingSteps > 0) return 'waiting'
+  if (facts.stepCount > 0 && facts.passedSteps + facts.failedSteps >= facts.stepCount) return 'passed'
+  return 'waiting'
 }
 
 function summarizeRun(report, definition, source = 'json') {

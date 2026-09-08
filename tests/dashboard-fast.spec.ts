@@ -122,6 +122,39 @@ describe('fast Patrol dashboard catalog', () => {
     })
   })
 
+  it('does not keep a finished all-passed lightweight run stuck in waiting', async () => {
+    const value = await fixture()
+    const runId = '2026-09-02T09-30-00-000Z-donefeed'
+    const runRoot = join(value.storageRoot, 'runs', value.inspectionId, runId)
+    await mkdir(runRoot, { recursive: true })
+    await writeFile(join(runRoot, 'summary.json'), JSON.stringify({
+      schemaVersion: 1,
+      runId,
+      inspectionId: value.inspectionId,
+      inspectionName: 'Fast flow',
+      status: 'waiting',
+      startedAt: '2026-09-02T09:30:00.000Z',
+      finishedAt: '2026-09-02T09:30:32.000Z',
+      expectedResult: 'dashboard',
+      summary: '巡检已完成。',
+      stepCount: 4,
+      passedSteps: 4,
+      failedSteps: 0,
+      waitingSteps: 0,
+      artifactCount: 2,
+    }))
+
+    const catalog = await buildPatrolDashboardCatalog(value.storageRoot, value.workspace)
+
+    expect(catalog.runs[0]).toMatchObject({
+      runId,
+      status: 'passed',
+      source: 'summary',
+      stepCount: 4,
+      passedSteps: 4,
+    })
+  })
+
   it('parses the bounded markdown report format used by historical runs', async () => {
     const value = await fixture()
     const runId = '2026-09-02T08-00-00-000Z-cafebabe'
