@@ -24,14 +24,16 @@ export interface PostClickVerificationResult {
 const DEFAULT_RETRY_DELAYS_MS = [0, 140, 320, 700] as const
 
 /**
- * A click can destroy the content-script context that executed it. Login,
- * SSO, location.replace(), full-page navigation, and iframe replacement are
- * common examples. Treat a transient read failure after a successful click as
- * a navigation race, not as evidence that the click never happened.
+ * A click can destroy the content-script context that executed it, or it can
+ * return before an SPA/legacy portal has finished replacing its iframe/menu.
+ * Login, SSO, location.replace(), delayed Angular handlers and iframe rebuilds
+ * are common examples.
  *
- * We retry only transport/read failures. A successful page read whose business
- * expectation is not met is a real negative result and is returned immediately;
- * this prevents retry loops from turning a wrong click into a false success.
+ * Retry both transient transport errors AND a bounded sequence of successful
+ * reads that still show the old state. The final mismatch remains a hard
+ * failure; this only gives the clicked application a short deterministic window
+ * to publish the expected business state, so the causal click is not lost from
+ * the Runbook merely because the first immediate read raced the UI transition.
  */
 export async function verifyPostClickExpectation(
   dispatch: PostClickDispatch,
@@ -42,6 +44,7 @@ export async function verifyPostClickExpectation(
 ): Promise<PostClickVerificationResult> {
   const delays = retryDelaysMs.length > 0 ? retryDelaysMs : [0]
   let lastError = 'post-click page could not be read'
+  let lastText = ''
 
   for (let index = 0; index < delays.length; index += 1) {
     const delayMs = Math.max(0, Number(delays[index] ?? 0))
@@ -55,24 +58,22 @@ export async function verifyPostClickExpectation(
     }
 
     const text = outputText(observed.value, observed.text)
+    lastText = text
     const expectationError = evaluateTextExpectation(text, expectation)
     if (expectationError === undefined) {
       return { ok: true, text, attempts: index + 1 }
     }
 
-    return {
-      ok: false,
-      text,
-      attempts: index + 1,
-      error: expectationError,
-    }
+    lastError = expectationError
   }
 
   return {
     ok: false,
-    text: '',
+    text: lastText,
     attempts: delays.length,
-    error: `post-click page remained unavailable after ${delays.length} bounded attempts: ${lastError}`,
+    error: lastText
+      ? `${lastError} after ${delays.length} bounded post-click reads`
+      : `post-click page remained unavailable after ${delays.length} bounded attempts: ${lastError}`,
   }
 }
 
