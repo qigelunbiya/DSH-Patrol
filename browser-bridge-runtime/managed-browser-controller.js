@@ -2,16 +2,16 @@ import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import {
   createManagedBrowserController as createBaseManagedBrowserController,
-  defaultLaunchBrowser,
   defaultProfilePath,
 } from './managed-browser.js'
+import { defaultPatrolLaunchBrowser } from './background-browser-launch.js'
 import { installPrivateCertificateErrorHandler } from './private-cert.js'
 
 export { defaultProfilePath }
 
 export function createManagedBrowserController(options = {}) {
   const logger = options.logger ?? console
-  const launchBrowser = options.launchBrowser ?? defaultLaunchBrowser
+  const launchBrowser = options.launchBrowser ?? defaultPatrolLaunchBrowser
 
   return createBaseManagedBrowserController({
     ...options,
