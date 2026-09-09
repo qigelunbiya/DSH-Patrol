@@ -1,6 +1,11 @@
 import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
-import { PATROL_INTEGRITY_PROMPT, patrolTeachingIntegrityGuard, registerPatrolIntegrity } from '../src/patrol-integrity.js'
+import {
+  createPatrolTeachingIntegrityGuard,
+  PATROL_INTEGRITY_PROMPT,
+  patrolTeachingIntegrityGuard,
+  registerPatrolIntegrity,
+} from '../src/patrol-integrity.js'
 
 describe('Patrol reusable-flow integrity', () => {
   it('blocks a semantic click before execution when expectedText is missing', () => {
@@ -29,11 +34,43 @@ describe('Patrol reusable-flow integrity', () => {
     })).toMatch(/expectedText/)
   })
 
-  it('keeps non-click actions available', () => {
+  it('keeps non-click actions available in the stateless click guard', () => {
     expect(patrolTeachingIntegrityGuard({
       name: 'patrol_browser_step',
       arguments: { action: 'navigate', arguments: { url: 'https://example.test' } },
     })).toBeUndefined()
+  })
+
+  it('blocks guessed internal URLs after a draft declares its target, including generic browser-step navigation', () => {
+    const guard = createPatrolTeachingIntegrityGuard()
+    expect(guard({
+      name: 'patrol_create_draft',
+      arguments: { inspectionId: 'demo', targetUrl: 'http://172.21.9.122/com-portal' },
+    })).toBeUndefined()
+    expect(guard({
+      name: 'patrol_navigate',
+      arguments: { inspectionId: 'demo', url: 'http://172.21.9.122/com-portal' },
+    })).toBeUndefined()
+    expect(guard({
+      name: 'patrol_navigate',
+      arguments: { inspectionId: 'demo', url: 'http://172.21.9.122/com-portal/todo' },
+    })).toMatch(/navigation was NOT executed/i)
+    expect(guard({
+      name: 'patrol_browser_step',
+      arguments: {
+        inspectionId: 'demo',
+        action: 'navigate',
+        arguments: { url: 'http://172.21.9.122/com-portal/home' },
+      },
+    })).toMatch(/Do not guess an internal URL/i)
+  })
+
+  it('allows an explicit target update before teaching a genuinely changed URL', () => {
+    const guard = createPatrolTeachingIntegrityGuard()
+    guard({ name: 'patrol_create_draft', arguments: { inspectionId: 'demo', targetUrl: 'https://example.test/a' } })
+    expect(guard({ name: 'patrol_navigate', arguments: { inspectionId: 'demo', url: 'https://example.test/b' } })).toBeDefined()
+    expect(guard({ name: 'patrol_update_inspection', arguments: { inspectionId: 'demo', targetUrl: 'https://example.test/b' } })).toBeUndefined()
+    expect(guard({ name: 'patrol_navigate', arguments: { inspectionId: 'demo', url: 'https://example.test/b?session=1' } })).toBeUndefined()
   })
 
   it('states the non-negotiable checklist, prefilled-input, and no guessed-URL rules', () => {
