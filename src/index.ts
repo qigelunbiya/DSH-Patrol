@@ -26,6 +26,7 @@ import { PATROL_TARGETED_RECOVERY_PROMPT, registerPatrolRecoveryTools } from './
 import { PatrolRunner } from './runner.js'
 import { PatrolScheduler, registerPatrolScheduleTools } from './scheduler.js'
 import { PATROL_SESSION_PROMPT } from './session-prompt.js'
+import { registerPatrolSelectTools } from './select-tools.js'
 import { PATROL_TEST_MODE_OVERRIDE_PROMPT, resolvePatrolRuntimePolicy } from './test-mode.js'
 import { registerPatrolTools } from './tools.js'
 import { PATROL_TOTP_PROMPT, registerPatrolTotpTools } from './totp-tools.js'
@@ -39,6 +40,7 @@ export * from './scheduler.js'
 export * from './edit-tools.js'
 export * from './action-tools.js'
 export * from './click-target-tools.js'
+export * from './select-tools.js'
 export * from './behavior-prompt.js'
 export * from './creation-tools.js'
 export * from './credential-tools.js'
@@ -148,6 +150,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   ctx.effect(
     () => registerPatrolClickTargetTool(ctx, store, runner, { maxSteps: resolved.maxSteps }),
     'dsh-patrol: semantic current-page click target resolver',
+  )
+  ctx.effect(
+    () => registerPatrolSelectTools(ctx, store, runner, { maxSteps: resolved.maxSteps }),
+    'dsh-patrol: deterministic native select recording',
   )
   ctx.effect(
     () => registerPatrolObservationTools(ctx, runner, observationGate),
@@ -313,5 +319,5 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   }
 
   const guardMode = runtimePolicy.testMode ? 'test-diagnostics-recorded-mutations' : 'normal-strict'
-  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; guard-mode=${guardMode}; build=${TEST_MODE_BUILD_MARKER}; scheduler=enabled; credential helper=optional; transient sensitive replay=enabled; encrypted TOTP profile replay=enabled; semantic click resolver=enabled; secret-safe creation=enabled; flat action tools=enabled; OpenXML Excel v5 tools=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled`)
+  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; guard-mode=${guardMode}; build=${TEST_MODE_BUILD_MARKER}; scheduler=enabled; credential helper=optional; transient sensitive replay=enabled; encrypted TOTP profile replay=enabled; semantic click resolver=enabled; native select=enabled; secret-safe creation=enabled; flat action tools=enabled; OpenXML Excel v5 tools=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled`)
 }
