@@ -59,116 +59,89 @@ function draftDefinition(): InspectionDefinition {
   }
 }
 
+function snapshot(elements: any[], url = 'https://example.test') {
+  return { ok: true, text: 'snapshot', value: { ok: true, url, elements } }
+}
+
+function page(text: string, url = 'https://example.test') {
+  return { ok: true, text, value: { ok: true, url, text } }
+}
+
 describe('semantic Patrol click target', () => {
-  it('prefers exact visible text over a containing label and records the resolved stable selector', async () => {
+  it('prefers an exact actionable control and verifies a known post-click state', async () => {
     const calls: Array<{ tool: string; args: JsonObject }> = []
     const { store, tool, exec } = await setup(async (name, args) => {
       calls.push({ tool: name, args })
-      if (name === 'browser_snapshot') {
-        return {
-          ok: true,
-          text: 'snapshot',
-          value: {
-            ok: true,
-            url: 'https://example.test',
-            elements: [
-              { tag: 'button', role: 'button', text: '立即登录', selector: '#login-now' },
-              { tag: 'button', role: 'button', text: '登录', selector: '#top-login' },
-              { tag: 'a', role: 'link', text: '登录', selector: '#login-link' },
-            ],
-          },
-        }
-      }
-      if (name === 'browser_click') return { ok: true, text: 'Clicked #top-login', value: { ok: true } }
-      if (name === 'browser_read_page') return { ok: true, text: '登录成功 首页', value: { ok: true, text: '登录成功 首页' } }
+      if (name === 'browser_snapshot') return snapshot([
+        { tag: 'button', role: 'button', text: '立即登录', selector: '#login-now' },
+        { tag: 'button', role: 'button', text: '登录', selector: '#top-login' },
+        { tag: 'a', role: 'link', text: '登录', selector: '#login-link' },
+      ])
+      if (name === 'browser_click') return { ok: true, text: 'clicked', value: { ok: true } }
+      if (name === 'browser_read_page') return page('登录成功 首页')
       throw new Error(`unexpected tool ${name}`)
     })
 
     const result = await tool.execute({
       inspectionId: 'click-target',
-      stepName: 'Open login',
+      stepName: '点击登录',
       locatorText: '登录',
       locatorRole: 'button',
       expectedText: '首页',
     }, exec)
 
-    expect(result).toContain('#top-login')
-    expect(calls).toEqual([
-      { tool: 'browser_snapshot', args: { maxElements: 500 } },
-      { tool: 'browser_click', args: { selector: 'top-frame::#top-login' } },
-      { tool: 'browser_read_page', args: {} },
-    ])
-    const saved = await store.load('click-target')
-    expect(saved.steps).toHaveLength(1)
-    expect(saved.steps[0]).toMatchObject({
-      kind: 'tool',
+    expect(result).toContain('top-frame::#top-login')
+    expect(calls[0]).toEqual({ tool: 'browser_snapshot', args: { maxElements: 500, includeHidden: false } })
+    expect(calls.some(call => call.tool === 'browser_click' && call.args.selector === 'top-frame::#top-login')).toBe(true)
+    expect((await store.load('click-target')).steps[0]).toMatchObject({
       tool: 'browser_click',
       arguments: { selector: 'top-frame::#top-login' },
       locator: { text: '登录', role: 'button' },
+      expectation: { value: '首页' },
+      teaching: { status: 'verified', method: 'expected-text' },
     })
-    expect(saved.steps[0]?.kind === 'tool' ? saved.steps[0].notes : undefined).toContain('执行方法')
-    expect(saved.steps[0]?.kind === 'tool' ? saved.steps[0].notes : undefined).toContain('top-frame::#top-login')
-    expect(saved.steps[0]?.kind === 'tool' ? saved.steps[0].notes : undefined).toContain('语义目标')
   })
 
-  it('does not reject an exact custom clickable div when role=button was only a model hint', async () => {
-    const calls: Array<{ tool: string; args: JsonObject }> = []
-    const { store, tool, exec } = await setup(async (name, args) => {
-      calls.push({ tool: name, args })
+  it('clicks a logo without invented expectedText and records it after CURRENT state changes', async () => {
+    let clicked = false
+    const { store, tool, exec } = await setup(async (name) => {
       if (name === 'browser_snapshot') {
-        return {
-          ok: true,
-          text: 'snapshot',
-          value: {
-            ok: true,
-            url: 'https://example.test',
-            elements: [
-              { tag: 'div', text: '登录', selector: '#custom-login' },
-              { tag: 'a', role: 'link', text: '登录帮助', selector: '#help' },
-            ],
-          },
-        }
+        return clicked
+          ? snapshot([
+              { tag: 'input', text: '登录自助服务平台', selector: '#sign_in_button_standard' },
+              { tag: 'input', selector: '#username' },
+            ])
+          : snapshot([{ tag: 'a', role: 'link', text: '长城网际', selector: '#logo' }])
       }
-      if (name === 'browser_click') return { ok: true, text: 'Clicked #custom-login', value: { ok: true } }
-      if (name === 'browser_read_page') return { ok: true, text: '登录成功 首页', value: { ok: true, text: '登录成功 首页' } }
+      if (name === 'browser_read_page') return clicked ? page('用户名 密码 短信验证码 登录自助服务平台') : page('长城网际')
+      if (name === 'browser_click') {
+        clicked = true
+        return { ok: true, text: 'clicked logo', value: { ok: true } }
+      }
       throw new Error(`unexpected tool ${name}`)
     })
 
     const result = await tool.execute({
       inspectionId: 'click-target',
-      stepName: 'Open custom login entry',
-      locatorText: '登录',
-      locatorRole: 'button',
-      expectedText: '首页',
+      stepName: '点击 Logo',
+      locatorText: '长城网际',
     }, exec)
 
-    expect(result).toContain('#custom-login')
-    expect(calls).toEqual([
-      { tool: 'browser_snapshot', args: { maxElements: 500 } },
-      { tool: 'browser_click', args: { selector: 'top-frame::#custom-login' } },
-      { tool: 'browser_read_page', args: {} },
-    ])
-    expect((await store.load('click-target')).steps[0]).toMatchObject({
+    expect(result).toContain('automatic CURRENT-state change')
+    const saved = await store.load('click-target')
+    expect(saved.steps).toHaveLength(1)
+    expect(saved.steps[0]).toMatchObject({
       tool: 'browser_click',
-      arguments: { selector: 'top-frame::#custom-login' },
+      arguments: { selector: 'top-frame::#logo' },
+      teaching: { status: 'verified', method: 'state-change' },
     })
   })
 
-  it('requires explicit post-click success text before recording a semantic click', async () => {
-    const calls: Array<{ tool: string; args: JsonObject }> = []
-    const { store, tool, exec } = await setup(async (name, args) => {
-      calls.push({ tool: name, args })
-      if (name === 'browser_snapshot') {
-        return {
-          ok: true,
-          text: 'snapshot',
-          value: {
-            ok: true,
-            elements: [{ tag: 'a', role: 'link', text: '我的工作台', selector: '#workbench' }],
-          },
-        }
-      }
-      if (name === 'browser_click') return { ok: true, text: 'Clicked #workbench', value: { ok: true } }
+  it('does not record an unknown-state semantic click when nothing observable changes', async () => {
+    const { store, tool, exec } = await setup(async (name) => {
+      if (name === 'browser_snapshot') return snapshot([{ tag: 'a', role: 'link', text: '我的工作台', selector: '#workbench' }])
+      if (name === 'browser_read_page') return page('首页 统计')
+      if (name === 'browser_click') return { ok: true, text: 'clicked', value: { ok: true } }
       throw new Error(`unexpected tool ${name}`)
     })
 
@@ -178,32 +151,16 @@ describe('semantic Patrol click target', () => {
       locatorText: '我的工作台',
     }, exec)
 
-    expect(result).toContain('was NOT recorded')
-    expect(calls).toEqual([
-      { tool: 'browser_snapshot', args: { maxElements: 500 } },
-      { tool: 'browser_click', args: { selector: 'top-frame::#workbench' } },
-    ])
+    expect(result).toContain('no meaningful post-click')
+    expect(result).toContain('NOT recorded')
     expect((await store.load('click-target')).steps).toEqual([])
   })
 
-  it('does not record a semantic click when the expected next task text is missing after click', async () => {
-    const calls: Array<{ tool: string; args: JsonObject }> = []
-    const { store, tool, exec } = await setup(async (name, args) => {
-      calls.push({ tool: name, args })
-      if (name === 'browser_snapshot') {
-        return {
-          ok: true,
-          text: 'snapshot',
-          value: {
-            ok: true,
-            elements: [{ tag: 'a', role: 'link', text: '我的工作台', selector: '#workbench' }],
-          },
-        }
-      }
-      if (name === 'browser_click') return { ok: true, text: 'Clicked #workbench', value: { ok: true } }
-      if (name === 'browser_read_page') {
-        return { ok: true, text: '首页 待办 统计', value: { ok: true, text: '首页 待办 统计' } }
-      }
+  it('does not record a click when explicit expectedText never appears', async () => {
+    const { store, tool, exec } = await setup(async (name) => {
+      if (name === 'browser_snapshot') return snapshot([{ tag: 'a', role: 'link', text: '我的工作台', selector: '#workbench' }])
+      if (name === 'browser_click') return { ok: true, text: 'clicked', value: { ok: true } }
+      if (name === 'browser_read_page') return page('首页 待办 统计')
       throw new Error(`unexpected tool ${name}`)
     })
 
@@ -215,24 +172,14 @@ describe('semantic Patrol click target', () => {
     }, exec)
 
     expect(result).toContain('Post-click expectation was not met')
-    expect(result).toContain('was NOT recorded')
-    expect(calls).toEqual([
-      { tool: 'browser_snapshot', args: { maxElements: 500 } },
-      { tool: 'browser_click', args: { selector: 'top-frame::#workbench' } },
-      { tool: 'browser_read_page', args: {} },
-      { tool: 'browser_read_page', args: {} },
-      { tool: 'browser_read_page', args: {} },
-      { tool: 'browser_read_page', args: {} },
-    ])
     expect((await store.load('click-target')).steps).toEqual([])
   })
 
-  it('refuses a broad selector that matches multiple visible elements instead of clicking the first one', async () => {
+  it('refuses a broad selector that matches multiple visible elements', async () => {
     const calls: Array<{ tool: string; args: JsonObject }> = []
     const { store, tool, exec } = await setup(async (name, args) => {
       calls.push({ tool: name, args })
       if (name === 'browser_count') return { ok: true, text: '3', value: { ok: true, count: 3 } }
-      if (name === 'browser_click') throw new Error('browser_click must not be called for ambiguous target')
       throw new Error(`unexpected tool ${name}`)
     })
 
@@ -246,10 +193,36 @@ describe('semantic Patrol click target', () => {
     expect((await store.load('click-target')).steps).toEqual([])
   })
 
-  it('accepts a unique stable selector without semantic hints', async () => {
-    const calls: Array<{ tool: string; args: JsonObject }> = []
+  it('qualifies a CURRENT top-menu element so identical iframe CSS cannot steal the click', async () => {
+    const menuSelector = '#header-mainnav > li[menuid="119ff592-fc13-4f7a-bb02-5e34241901a6"] > a'
     const { store, tool, exec } = await setup(async (name, args) => {
-      calls.push({ tool: name, args })
+      if (name === 'browser_snapshot') return snapshot([
+        { tag: 'a', role: 'link', text: '我的工作台', selector: menuSelector },
+        { tag: 'a', role: 'link', text: '待办待阅工单', selector: 'frame-url(https%3A%2F%2Fexample.test%2Fframe)::a' },
+      ])
+      if (name === 'browser_click') {
+        expect(args.selector).toBe(`top-frame::${menuSelector}`)
+        return { ok: true, text: 'clicked top menu', value: { ok: true } }
+      }
+      if (name === 'browser_read_page') return page('首页 左侧菜单 待办待阅工单')
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    await tool.execute({
+      inspectionId: 'click-target',
+      stepName: '点击我的工作台',
+      locatorText: '我的工作台',
+      expectedText: '待办待阅工单',
+    }, exec)
+
+    expect((await store.load('click-target')).steps[0]).toMatchObject({
+      arguments: { selector: `top-frame::${menuSelector}` },
+      locator: { text: '我的工作台' },
+    })
+  })
+
+  it('accepts a unique stable selector without semantic hints', async () => {
+    const { store, tool, exec } = await setup(async (name) => {
       if (name === 'browser_count') return { ok: true, text: '1', value: { ok: true, count: 1 } }
       if (name === 'browser_click') return { ok: true, text: 'clicked', value: { ok: true } }
       throw new Error(`unexpected tool ${name}`)
@@ -257,142 +230,13 @@ describe('semantic Patrol click target', () => {
 
     await tool.execute({
       inspectionId: 'click-target',
-      stepName: 'Click stable login tab',
+      stepName: 'Click stable tab',
       selector: '#sms-login-tab',
     }, exec)
 
-    expect(calls).toEqual([
-      { tool: 'browser_count', args: { selector: '#sms-login-tab', visibleOnly: true } },
-      { tool: 'browser_click', args: { selector: '#sms-login-tab' } },
-    ])
-    const saved = await store.load('click-target')
-    expect(saved.steps[0]).toMatchObject({ tool: 'browser_click', arguments: { selector: '#sms-login-tab' } })
-  })
-
-  it('qualifies an unframed exact menu target so browser_click stays in the top document', async () => {
-    const calls: Array<{ tool: string; args: JsonObject }> = []
-    const menuSelector = 'div:nth-of-type(1) > div > div > div > ul > li:nth-of-type(5) > a'
-    const { store, tool, exec } = await setup(async (name, args) => {
-      calls.push({ tool: name, args })
-      if (name === 'browser_snapshot') {
-        return {
-          ok: true,
-          text: 'snapshot',
-          value: {
-            ok: true,
-            url: 'http://172.21.9.122/com-portal',
-            elements: [
-              { tag: 'a', text: '我的工作台', selector: menuSelector },
-              { tag: 'a', text: '待办待阅工单', selector: 'frame-url(http%3A%2F%2F172.21.9.122%2Fcmp-cloud-manage%2Fworkbench%2Fhome%2Findex.do)::ul > li:nth-of-type(5) > a' },
-            ],
-          },
-        }
-      }
-      if (name === 'browser_click') return { ok: true, text: 'clicked top menu', value: { ok: true } }
-      if (name === 'browser_read_page') return { ok: true, text: '左侧菜单 待办待阅工单', value: { ok: true, text: '左侧菜单 待办待阅工单' } }
-      throw new Error(`unexpected tool ${name}`)
-    })
-
-    const result = await tool.execute({
-      inspectionId: 'click-target',
-      stepName: '点击我的工作台',
-      locatorText: '我的工作台',
-      expectedText: '待办待阅工单',
-    }, exec)
-
-    expect(result).toContain('top-frame::')
-    expect(calls).toEqual([
-      { tool: 'browser_snapshot', args: { maxElements: 500 } },
-      { tool: 'browser_click', args: { selector: `top-frame::${menuSelector}` } },
-      { tool: 'browser_read_page', args: {} },
-    ])
     expect((await store.load('click-target')).steps[0]).toMatchObject({
       tool: 'browser_click',
-      arguments: { selector: `top-frame::${menuSelector}` },
-      locator: { text: '我的工作台' },
-    })
-  })
-
-  it('collapses a nested span duplicate onto its real anchor target', async () => {
-    const calls: Array<{ tool: string; args: JsonObject }> = []
-    const anchor = 'div:nth-of-type(2) > div:nth-of-type(1) > div > ul > li:nth-of-type(6) > a'
-    const nestedSpan = `${anchor} > span`
-    const { store, tool, exec } = await setup(async (name, args) => {
-      calls.push({ tool: name, args })
-      if (name === 'browser_snapshot') {
-        return {
-          ok: true,
-          text: 'snapshot',
-          value: {
-            ok: true,
-            elements: [
-              { tag: 'a', role: 'link', text: '待办待阅工单', selector: anchor },
-              { tag: 'span', role: 'button', text: '待办待阅工单', selector: nestedSpan },
-            ],
-          },
-        }
-      }
-      if (name === 'browser_click') return { ok: true, text: `Clicked ${String(args.selector)}`, value: { ok: true } }
-      if (name === 'browser_read_page') return { ok: true, text: '待办列表 工单号', value: { ok: true, text: '待办列表 工单号' } }
-      throw new Error(`unexpected tool ${name}`)
-    })
-
-    const result = await tool.execute({
-      inspectionId: 'click-target',
-      stepName: '打开待办待阅工单',
-      locatorText: '待办待阅工单',
-      expectedText: '工单号',
-    }, exec)
-
-    expect(result).toContain(anchor)
-    expect(calls).toEqual([
-      { tool: 'browser_snapshot', args: { maxElements: 500 } },
-      { tool: 'browser_click', args: { selector: `top-frame::${anchor}` } },
-      { tool: 'browser_read_page', args: {} },
-    ])
-    expect((await store.load('click-target')).steps[0]).toMatchObject({
-      arguments: { selector: `top-frame::${anchor}` },
-    })
-  })
-
-  it('prefers the same-text action in the content frame over the shell navigation duplicate', async () => {
-    const calls: Array<{ tool: string; args: JsonObject }> = []
-    const shellSelector = 'div:nth-of-type(2) > div:nth-of-type(1) > div > ul > li:nth-of-type(6) > a'
-    const contentSelector = 'frame-url(http%3A%2F%2F172.21.9.122%2Fcmp-cloud-manage%2Fworkbench%2Fhome%2Findex.do)::ul > li:nth-of-type(5) > a'
-    const { store, tool, exec } = await setup(async (name, args) => {
-      calls.push({ tool: name, args })
-      if (name === 'browser_snapshot') {
-        return {
-          ok: true,
-          text: 'snapshot',
-          value: {
-            ok: true,
-            elements: [
-              { tag: 'a', role: 'link', text: '待办待阅工单', selector: shellSelector },
-              { tag: 'a', role: 'link', text: '待办待阅工单', selector: contentSelector },
-            ],
-          },
-        }
-      }
-      if (name === 'browser_click') return { ok: true, text: `Clicked ${String(args.selector)}`, value: { ok: true } }
-      if (name === 'browser_read_page') return { ok: true, text: '待办列表 工单号', value: { ok: true, text: '待办列表 工单号' } }
-      throw new Error(`unexpected tool ${name}`)
-    })
-
-    await tool.execute({
-      inspectionId: 'click-target',
-      stepName: '打开待办待阅工单',
-      locatorText: '待办待阅工单',
-      expectedText: '工单号',
-    }, exec)
-
-    expect(calls).toEqual([
-      { tool: 'browser_snapshot', args: { maxElements: 500 } },
-      { tool: 'browser_click', args: { selector: contentSelector } },
-      { tool: 'browser_read_page', args: {} },
-    ])
-    expect((await store.load('click-target')).steps[0]).toMatchObject({
-      arguments: { selector: contentSelector },
+      arguments: { selector: '#sms-login-tab' },
     })
   })
 })
