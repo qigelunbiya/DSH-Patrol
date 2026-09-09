@@ -41,11 +41,17 @@ const BOOTSTRAP_URLS = new Set([
 ])
 
 const CAPTCHA_HINT = /(captcha|verify|verification|image[-_ ]?code|验证码|校验码|图形码)/i
-const SNAPSHOT_EVIDENCE_MAX_ELEMENTS = 40
-const SNAPSHOT_EVIDENCE_MAX_CHARS = 5000
-const OBSERVATION_ERROR_MAX_CHARS = 1000
+// Observations are sent to the model repeatedly during long patrols. Keep the
+// default state packet deliberately small; the full screenshot remains on disk
+// and can be attached explicitly with includeImage=true only when vision is
+// actually needed.
+const SNAPSHOT_CAPTURE_MAX_ELEMENTS = 80
+const SNAPSHOT_EVIDENCE_MAX_ELEMENTS = 24
+const SNAPSHOT_EVIDENCE_MAX_CHARS = 3000
+const OCR_EVIDENCE_MAX_CHARS = 2000
+const OBSERVATION_ERROR_MAX_CHARS = 800
 
-type ObservationImageStatus = 'attached' | 'tool-unavailable' | 'read-failed'
+type ObservationImageStatus = 'attached' | 'not-requested' | 'tool-unavailable' | 'read-failed'
 
 interface BootstrapObservation {
   kind: PatrolBootstrapObservationKind
@@ -66,10 +72,11 @@ export function registerPatrolObservationTools(
 ): () => void {
   const observe = defineTool({
     name: 'patrol_observe',
-    description: 'Read-only first action for each browser turn. Always capture the CURRENT tab first. When the current Harness route can accept images, attach that exact screenshot as an image; otherwise automatically degrade to fresh screenshot OCR plus a safe DOM snapshot without blocking Patrol progress. On an unobservable initial blank/new tab, return a bootstrap state that authorizes only one initial patrol_navigate. Does not record a Runbook step.',
+    description: 'Read-only CURRENT-page observation. Captures a screenshot for freshness/OCR, but returns a compact OCR+DOM evidence packet by default so long Patrol conversations do not accumulate image context. Set includeImage=true only when the current task genuinely needs visual pixels. Does not record a Runbook step.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       tabId: { type: 'integer' },
+      includeImage: { type: 'boolean', description: 'Attach the CURRENT screenshot image to model context. Default false; use only when OCR/DOM evidence is insufficient.' },
     },
     output: {
       schema: {
@@ -79,7 +86,7 @@ export function registerPatrolObservationTools(
           ok: { type: 'boolean', required: true },
           observationKind: { type: 'string', required: true, enum: ['visual', 'bootstrap-unobservable-tab', 'bootstrap-no-tab'] },
           evidenceMode: { type: 'string', enum: ['image', 'screenshot-ocr-snapshot'] },
-          imageStatus: { type: 'string', enum: ['attached', 'tool-unavailable', 'read-failed'] },
+          imageStatus: { type: 'string', enum: ['attached', 'not-requested', 'tool-unavailable', 'read-failed'] },
           imageError: { type: 'string' },
           path: { type: 'string' },
           url: { type: 'string' },
@@ -100,37 +107,28 @@ export function registerPatrolObservationTools(
               noTab
                 ? 'Current-browser bootstrap observation: no tabs exist yet.'
                 : `Current-browser bootstrap observation: the active tab is an unobservable Chromium blank/new-tab page${value.url ? ` (${value.url})` : ''}.`,
-              'There is no meaningful page image to inspect yet, so Chromium cannot provide screenshot pixels for this bootstrap state.',
               noTab
-                ? 'Exactly one patrol_navigate with a concrete URL and newTab=true is authorized. Immediately call patrol_observe after navigation.'
-                : 'Exactly one patrol_navigate with a concrete user-requested URL is authorized. Immediately call patrol_observe after navigation.',
-              'Do not use this bootstrap authorization for reload/back/forward, clicks, typing, run, validate, or resume.',
+                ? 'Exactly one patrol_navigate with a concrete URL and newTab=true is authorized. Observe immediately after navigation.'
+                : 'Exactly one patrol_navigate with the concrete user-requested URL is authorized. Observe immediately after navigation.',
             ].join('\n'),
           }]
         }
 
         const hasImage = value.evidenceMode === 'image' && value.image !== undefined
         const lines = [
-          `Current-page observation: ${value.title || '(untitled)'}${value.url ? ` - ${value.url}` : ''}`,
-          `Fresh screenshot: ${value.path}`,
-          `Evidence mode: ${hasImage ? 'attached screenshot image + current OCR/DOM evidence' : 'fresh screenshot OCR + current DOM snapshot fallback'}`,
-          `Secondary Windows OCR status: ${value.ocrStatus || 'unknown'}`,
+          `CURRENT page: ${value.title || '(untitled)'}${value.url ? ` - ${value.url}` : ''}`,
+          `Fresh screenshot saved: ${value.path}`,
+          `Evidence: ${hasImage ? 'explicit image + compact OCR/DOM' : 'compact OCR/DOM (image not attached by default)'}`,
         ]
 
-        if (hasImage) {
-          lines.push('The attached screenshot image is the authoritative CURRENT browser state. Ignore stale CAPTCHA strings and stale page assumptions from earlier turns.')
-        } else {
-          lines.push('The browser screenshot itself succeeded, but this Harness route could not attach its pixels as an image. This is NOT a Patrol blocker: the current-state observation is complete and browser actions may continue in this Harness turn using the fresh OCR/DOM evidence below.')
-          lines.push('Do NOT retry patrol_observe, patrol_screenshot, patrol_snapshot, or patrol_read_page merely to obtain an image attachment. For a conventional image-code CAPTCHA in test mode, use browser_capture_image_code_visual to capture the CURRENT tight crop; if confidence is low, use patrol_refresh_image_code and capture again. Never reuse a CAPTCHA string from history or from text already typed into the CAPTCHA input.')
-          if (value.imageError) lines.push(`Image attachment note: ${value.imageError}`)
-        }
-
         if (value.ocrTextWithheld === true) {
-          lines.push('Whole-page OCR text is intentionally withheld because the current DOM contains a CAPTCHA/image-code input. This prevents a previously typed CAPTCHA value from contaminating the next decision; use the CURRENT tight CAPTCHA crop instead.')
+          lines.push('Whole-page OCR withheld because a CAPTCHA/image-code input is present; use the CURRENT tight CAPTCHA crop instead of historical text.')
         } else if (value.ocrText) {
-          lines.push(`Fresh screenshot OCR (secondary evidence):\n${value.ocrText}`)
+          lines.push(`OCR:\n${value.ocrText}`)
         }
-        if (value.snapshotText) lines.push(`Fresh DOM snapshot (current page; input values omitted):\n${value.snapshotText}`)
+        if (value.snapshotText) lines.push(`DOM:\n${value.snapshotText}`)
+        if (value.imageError) lines.push(`Image note: ${value.imageError}`)
+        if (!hasImage) lines.push('Do not repeat observe merely to get image pixels. Re-run once with includeImage=true only when visual evidence is necessary.')
 
         const blocks: any[] = [{ type: 'text', text: lines.join('\n') }]
         if (value.image !== undefined) blocks.push({ type: 'image', attachment: value.image })
@@ -141,11 +139,12 @@ export function registerPatrolObservationTools(
       card: 'generic',
       title: 'Observe current browser state',
       kind: 'other',
-      rawInput: { inspectionId: args.inspectionId, tabId: args.tabId },
+      rawInput: { inspectionId: args.inspectionId, tabId: args.tabId, includeImage: args.includeImage === true },
     }),
     async execute(args, exec: ToolRunContext) {
-      // Screenshot capture is the required observation primitive. Image attachment
-      // is only a best-effort enhancement and must never make Patrol unusable.
+      // Screenshot capture establishes freshness and supplies bounded OCR. Image
+      // attachment is opt-in because repeated image blocks are disproportionately
+      // expensive for long local-model sessions.
       const shot = await runner.dispatch('browser_screenshot', compactObject({
         tabId: args.tabId,
         format: 'png',
@@ -177,7 +176,7 @@ export function registerPatrolObservationTools(
       let captchaInputPresent = false
       const snapshot = await runner.dispatch('browser_snapshot', compactObject({
         tabId: args.tabId,
-        maxElements: 120,
+        maxElements: SNAPSHOT_CAPTURE_MAX_ELEMENTS,
         includeHidden: false,
       }), exec)
       if (snapshot.ok) {
@@ -191,12 +190,12 @@ export function registerPatrolObservationTools(
         title = tab?.title ?? ''
       }
 
-      const imageAttempt = await tryReadScreenshotAsImage(ctx, exec, path)
+      const imageAttempt: ImageAttachmentAttempt = args.includeImage === true
+        ? await tryReadScreenshotAsImage(ctx, exec, path)
+        : { status: 'not-requested' }
       const rawOcrText = objectRawString(shot.value, 'ocrText') ?? ''
-      const ocrText = captchaInputPresent ? '' : rawOcrText
+      const ocrText = captchaInputPresent ? '' : shortEvidence(rawOcrText, OCR_EVIDENCE_MAX_CHARS)
 
-      // A successful screenshot is enough to establish current-state freshness.
-      // read_image/model image capability only changes evidence quality.
       gate.markObserved(args.inspectionId, exec.rootCallId)
       return {
         ok: true,
@@ -280,13 +279,13 @@ export function summarizeSnapshotEvidence(value: unknown): string {
       type ? `type=${type}` : '',
       name ? `name=${name}` : '',
     ].filter(Boolean).join(' ')
-    const label = text ? ` ${JSON.stringify(shortEvidence(text, 160))}` : ''
+    const label = text ? ` ${JSON.stringify(shortEvidence(text, 120))}` : ''
     const target = selector ? ` -> ${selector}` : ''
     return `${index + 1}. <${tag}>${attributes ? ` ${attributes}` : ''}${label}${target}`
   })
 
   if (elements.length > SNAPSHOT_EVIDENCE_MAX_ELEMENTS || objectBoolean(value, 'truncated') === true) {
-    lines.push('(snapshot truncated)')
+    lines.push('(snapshot truncated; request a targeted snapshot only if the needed target is absent)')
   }
   const text = lines.join('\n')
   return text.length <= SNAPSHOT_EVIDENCE_MAX_CHARS
@@ -329,7 +328,7 @@ async function tryReadScreenshotAsImage(ctx: Context, exec: ToolRunContext, path
   if (ctx.tools.get('read_image', exec.agent) === undefined) {
     return {
       status: 'tool-unavailable',
-      error: 'Harness read_image is not registered for this Patrol agent route; continuing with the screenshot OCR/DOM fallback.',
+      error: 'Harness read_image is not registered for this Patrol agent route; continuing with compact OCR/DOM evidence.',
     }
   }
 
@@ -346,28 +345,22 @@ async function tryReadScreenshotAsImage(ctx: Context, exec: ToolRunContext, path
     if (result.isError) {
       return {
         status: 'read-failed',
-        error: `${safeObservationError(result.error?.message ?? 'read_image failed')}; continuing with the screenshot OCR/DOM fallback.`,
+        error: `${safeObservationError(result.error?.message ?? 'read_image failed')}; continuing with compact OCR/DOM evidence.`,
       }
     }
     const value = result.value
     if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-      return {
-        status: 'read-failed',
-        error: 'read_image returned no structured image attachment; continuing with the screenshot OCR/DOM fallback.',
-      }
+      return { status: 'read-failed', error: 'read_image returned no structured image attachment.' }
     }
     const image = (value as Record<string, unknown>).image
     if (image === null || typeof image !== 'object' || Array.isArray(image)) {
-      return {
-        status: 'read-failed',
-        error: 'read_image returned no image attachment; continuing with the screenshot OCR/DOM fallback.',
-      }
+      return { status: 'read-failed', error: 'read_image returned no image attachment.' }
     }
     return { status: 'attached', image }
   } catch (error: unknown) {
     return {
       status: 'read-failed',
-      error: `${safeObservationError(error)}; continuing with the screenshot OCR/DOM fallback.`,
+      error: `${safeObservationError(error)}; continuing with compact OCR/DOM evidence.`,
     }
   }
 }
