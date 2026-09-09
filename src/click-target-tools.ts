@@ -1,5 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
+import { verifyPostClickExpectation } from './post-click-verification.js'
 import { assertSafePersistentText } from './security.js'
 import { stepExecutionNotes } from './step-notes.js'
 import type { PatrolRunner } from './runner.js'
@@ -40,9 +41,10 @@ export interface PatrolClickTargetOptions {
 }
 
 /**
- * New teaching-time click path. The low-level browser_click tool is kept for
- * Runbook compatibility, but model-facing teaching should resolve a concrete
- * visible target before browser_click is allowed to mutate the page.
+ * Teaching-time semantic click path. The low-level browser_click tool remains
+ * the deterministic Runbook primitive, but model-facing teaching resolves one
+ * concrete visible target first, proves the resulting business state, then
+ * records the selector plus semantic locator for replay/healing.
  */
 export function registerPatrolClickTargetTool(
   ctx: Context,
@@ -52,7 +54,7 @@ export function registerPatrolClickTargetTool(
 ): () => void {
   const tool = defineTool({
     name: 'patrol_click_target',
-    description: 'Reliably click a CURRENT visible page target. Start with locatorText. locatorRole/locatorTag are optional ranking hints and must not be guessed as hard DOM requirements. selector is optional. Broad CSS such as button or a is never allowed to silently click the first match: Patrol resolves one concrete visible stable selector first, refuses ambiguity, then clicks and records the resolved selector plus semantic locator for replay.',
+    description: 'Reliably click a CURRENT visible page target. Start with locatorText. locatorRole/locatorTag are optional ranking hints and must not be guessed as hard DOM requirements. selector is optional. Broad CSS such as button or a is never allowed to silently click the first match: Patrol resolves one concrete visible stable selector first, refuses ambiguity, then clicks and records the resolved selector plus semantic locator for replay. Native actionable elements (a/button/input and explicit link/button roles) are preferred over layout ancestors that merely contain the same text.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
@@ -111,41 +113,42 @@ export function registerPatrolClickTargetTool(
           clicked.text,
         ].filter(Boolean).join('\n')
       }
+
+      let verificationAttempts: number | undefined
       if (expectation.expectation !== undefined) {
-        const observed = await runner.dispatch('browser_read_page', compactObject({ tabId: args.tabId }), exec)
-        if (!observed.ok) {
+        const verified = await verifyPostClickExpectation(
+          (toolName, toolArgs, toolExec) => runner.dispatch(toolName, toolArgs, toolExec),
+          exec,
+          expectation.expectation,
+          args.tabId,
+        )
+        verificationAttempts = verified.attempts
+        if (!verified.ok) {
           return [
             'Semantic click executed but was NOT recorded.',
             `Resolved target: ${describeTarget(resolved)}`,
-            `Post-click expectation could not be verified: ${observed.error ?? observed.text ?? 'browser_read_page failed'}`,
-            clicked.text,
-          ].filter(Boolean).join('\n')
-        }
-        const pageText = outputText(observed.value, observed.text)
-        if (!expectationMatches(pageText, expectation.expectation)) {
-          return [
-            'Semantic click executed but was NOT recorded.',
-            `Resolved target: ${describeTarget(resolved)}`,
-            `Post-click expectation was not met: expected ${expectation.expectation.mode} ${JSON.stringify(expectation.expectation.value)}.`,
+            `Post-click expectation was not verified: ${verified.error ?? 'unknown verification error'}`,
             clicked.text,
           ].filter(Boolean).join('\n')
         }
       }
 
+      const condition = optionalCondition(args.conditionSourceStepId, args.conditionExpectedText, args.conditionMode)
+      const stepArguments = compactObject({ selector: resolved.selector, tabId: args.tabId })
       const step: ToolStep = {
         id: nextStepId(definition.steps),
         kind: 'tool',
         name: args.stepName,
         tool: 'browser_click',
-        arguments: compactObject({ selector: resolved.selector, tabId: args.tabId }),
+        arguments: stepArguments,
         ...expectation,
-        ...optionalCondition(args.conditionSourceStepId, args.conditionExpectedText, args.conditionMode),
+        ...condition,
         ...(locator === undefined ? {} : { locator }),
         notes: stepExecutionNotes({
           tool: 'browser_click',
-          args: compactObject({ selector: resolved.selector, tabId: args.tabId }),
+          args: stepArguments,
           ...expectation,
-          ...optionalCondition(args.conditionSourceStepId, args.conditionExpectedText, args.conditionMode),
+          ...condition,
           ...(locator === undefined ? {} : { locator }),
           providedNotes: args.notes,
         }),
@@ -156,8 +159,9 @@ export function registerPatrolClickTargetTool(
       return [
         `Executed and recorded ${step.id} (browser_click) after CURRENT target resolution.`,
         `Resolved target: ${describeTarget(resolved)}`,
+        verificationAttempts === undefined ? undefined : `Post-click business state verified in ${verificationAttempts} read attempt(s).`,
         clicked.text,
-        'For an important state-changing click, observe/read the CURRENT page next instead of repeating the same broad click when the expected UI does not change.',
+        'The low-level browser_click is intentionally dispatched inside this Patrol composite so the action stays auditable and reusable.',
       ].filter(Boolean).join('\n')
     },
   })
@@ -248,7 +252,7 @@ function scoreSemanticCandidates(elements: SnapshotElement[], locator: SemanticL
       if (wantedTag !== undefined && tag !== wantedTag) continue
     }
 
-    let score = 0
+    let score = semanticActionabilityScore(role, tag)
     let exactText = false
     if (wantedText !== undefined) {
       if (text === wantedText) {
@@ -269,6 +273,21 @@ function scoreSemanticCandidates(elements: SnapshotElement[], locator: SemanticL
 
   ranked.sort((a, b) => b.score - a.score)
   return ranked
+}
+
+/**
+ * A layout ancestor and the actual clickable descendant often expose identical
+ * text. Prefer actual action controls instead of the outer <li>/<div>. This is
+ * important for delegated/framework handlers (Angular/Vue/Bingo-style menus,
+ * React composites, etc.): click events bubble from a child to an ancestor, not
+ * from an ancestor down into the <a>/<button> that owns the handler.
+ */
+function semanticActionabilityScore(role: string | undefined, tag: string | undefined): number {
+  let score = 0
+  if (role !== undefined && ['button', 'link', 'tab', 'menuitem'].includes(role)) score += 22
+  if (tag !== undefined && ['a', 'button', 'input', 'select', 'textarea', 'summary'].includes(tag)) score += 28
+  if (tag !== undefined && ['li', 'div', 'span', 'p'].includes(tag) && role === undefined) score -= 4
+  return score
 }
 
 function uniqueNestedAncestor(
@@ -464,21 +483,6 @@ function optionalCondition(sourceStepId: string | undefined, expectedText: strin
       caseSensitive: false,
     },
   }
-}
-
-function outputText(value: JsonValue | undefined, fallback: string | undefined): string {
-  if (value !== null && value !== undefined && typeof value === 'object' && !Array.isArray(value)) {
-    const text = (value as JsonObject).text
-    if (typeof text === 'string') return text
-  }
-  return fallback ?? ''
-}
-
-function expectationMatches(text: string, expectation: TextExpectation): boolean {
-  const haystack = expectation.caseSensitive ? text : text.toLocaleLowerCase()
-  const needle = expectation.caseSensitive ? expectation.value : expectation.value.toLocaleLowerCase()
-  const contains = haystack.includes(needle)
-  return expectation.mode === 'not-contains' ? !contains : contains
 }
 
 function qualifyTopDocumentSelector(selector: string | undefined): string | undefined {
