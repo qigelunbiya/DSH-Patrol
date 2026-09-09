@@ -177,11 +177,24 @@ async function resolveCurrentTarget(
     if (nestedAncestor !== undefined) {
       return targetFromSnapshot(nestedAncestor.element, nestedAncestor.exactText ? 'semantic-exact' : 'semantic-contains')
     }
+    const contentFrame = uniqueContentFrameCandidate(best)
+    if (contentFrame !== undefined) {
+      return targetFromSnapshot(contentFrame.element, contentFrame.exactText ? 'semantic-exact' : 'semantic-contains')
+    }
     const examples = best.slice(0, 5).map(item => describeSnapshot(item.element)).join('; ')
     throw new Error(`ambiguous semantic click target ${describeLocator(locator)} matched ${best.length} equally good visible elements: ${examples}. Add a role/tag only if CURRENT observation confirms it, or provide a stable selector.`)
   }
 
   return targetFromSnapshot(best[0]!.element, best[0]!.exactText ? 'semantic-exact' : 'semantic-contains')
+}
+
+function uniqueContentFrameCandidate(
+  candidates: readonly { element: SnapshotElement; score: number; exactText: boolean }[],
+): { element: SnapshotElement; score: number; exactText: boolean } | undefined {
+  const framed = candidates.filter(item => cleanString(item.element.selector)?.startsWith('frame-url(') === true)
+  if (framed.length !== 1) return undefined
+  const topOrUnframed = candidates.some(item => cleanString(item.element.selector)?.startsWith('frame-url(') !== true)
+  return topOrUnframed ? framed[0] : undefined
 }
 
 function scoreSemanticCandidates(elements: SnapshotElement[], locator: SemanticLocator, selectorHint?: string) {

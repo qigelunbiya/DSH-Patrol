@@ -138,6 +138,35 @@ describe('flow compaction', () => {
     ])
   })
 
+  it('collapses repeated redirect navigations and waits before the successful route', () => {
+    const value = definition([
+      tool('step-001', '访问入口', 'browser_navigate', {
+        arguments: { url: 'http://172.21.9.122/com-sso/v2?returnUrl=%2Fcom-portal%2Fhome' },
+      } as Partial<InspectionStep>),
+      tool('step-002', '等待登录页加载', 'browser_wait', { arguments: { timeoutMs: 15000 } } as Partial<InspectionStep>),
+      tool('step-003', '再次等待页面刷新', 'browser_wait', { arguments: { timeoutMs: 10000 } } as Partial<InspectionStep>),
+      tool('step-004', '重复访问入口', 'browser_navigate', {
+        arguments: { url: 'http://172.21.9.122/com-sso/v2?returnUrl=%2Fcom-portal%2F' },
+      } as Partial<InspectionStep>),
+      tool('step-005', '重复等待首页加载', 'browser_wait', { arguments: { timeoutMs: 10000 } } as Partial<InspectionStep>),
+      tool('step-006', '最终访问入口', 'browser_navigate', {
+        arguments: { url: 'http://172.21.9.122/com-sso/v2?returnUrl=%2Fcom-portal%2Fhome' },
+      } as Partial<InspectionStep>),
+      tool('step-007', '点击 logo', 'browser_click', { arguments: { selector: '#logo' } } as Partial<InspectionStep>),
+      tool('step-008', '读取最终页面', 'browser_read_page', { artifact: 'page-text' } as Partial<InspectionStep>),
+      tool('step-009', '保存最终截图', 'browser_screenshot', { artifact: 'screenshot' } as Partial<InspectionStep>),
+    ])
+
+    compactTeachingFlow(value)
+
+    expect(value.steps.map(step => step.name)).toEqual([
+      '最终访问入口',
+      '点击 logo',
+      '读取最终页面',
+      '保存最终截图',
+    ])
+  })
+
   it('uses the model-selected successful route instead of keeping successful wrong-branch clicks', () => {
     const value = definition([
       tool('step-001', 'Navigate', 'browser_navigate', { arguments: { url: 'https://example.test' } } as Partial<InspectionStep>),
@@ -165,5 +194,33 @@ describe('flow compaction', () => {
       'Final screenshot',
     ])
     expect(value.steps[3]).toMatchObject({ when: { sourceStepId: 'step-003' } })
+  })
+
+  it('still compacts the selected path when finalization receives the whole teaching trace', () => {
+    const value = definition([
+      tool('step-001', '访问入口', 'browser_navigate', {
+        arguments: { url: 'http://172.21.9.122/com-sso/v2?returnUrl=%2Fcom-portal%2Fhome' },
+      } as Partial<InspectionStep>),
+      tool('step-002', '等待登录页加载', 'browser_wait', { arguments: { timeoutMs: 15000 } } as Partial<InspectionStep>),
+      tool('step-003', '重复访问入口', 'browser_navigate', {
+        arguments: { url: 'http://172.21.9.122/com-sso/v2?returnUrl=%2Fcom-portal%2F' },
+      } as Partial<InspectionStep>),
+      tool('step-004', '重复等待首页加载', 'browser_wait', { arguments: { timeoutMs: 10000 } } as Partial<InspectionStep>),
+      tool('step-005', '最终访问入口', 'browser_navigate', {
+        arguments: { url: 'http://172.21.9.122/com-sso/v2?returnUrl=%2Fcom-portal%2Fhome' },
+      } as Partial<InspectionStep>),
+      tool('step-006', '点击 logo', 'browser_click', { arguments: { selector: '#logo' } } as Partial<InspectionStep>),
+      tool('step-007', '读取最终页面', 'browser_read_page', { artifact: 'page-text' } as Partial<InspectionStep>),
+      tool('step-008', '保存最终截图', 'browser_screenshot', { artifact: 'screenshot' } as Partial<InspectionStep>),
+    ])
+
+    selectSuccessfulTeachingPath(value, value.steps.map(step => step.id))
+
+    expect(value.steps.map(step => step.name)).toEqual([
+      '最终访问入口',
+      '点击 logo',
+      '读取最终页面',
+      '保存最终截图',
+    ])
   })
 })

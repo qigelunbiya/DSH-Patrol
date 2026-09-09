@@ -185,7 +185,7 @@ export function registerPatrolModelRouteRecovery(ctx: Context): () => void {
       const failedRoute = lastResolvedRoute
       if (failedRoute === undefined
         || !samePosition(failedRoute, payload)
-        || failedRoute.provider !== payload.provider) {
+        || !sameFailureRoute(failedRoute, payload.provider)) {
         return next()
       }
 
@@ -222,4 +222,10 @@ export function registerPatrolModelRouteRecovery(ctx: Context): () => void {
     disposeRequest()
     disposeRequestError()
   }
+}
+
+function sameFailureRoute(route: ResolvedRequestRoute, provider: string): boolean {
+  if (route.provider === provider) return true
+  return isLegacyUnavailablePatrolRoute({ provider, model: route.model })
+    && isLegacyUnavailablePatrolRoute(route)
 }

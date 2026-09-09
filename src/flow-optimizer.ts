@@ -57,11 +57,12 @@ export function selectSuccessfulTeachingPath(
   }
 
   rewriteSteps(definition, original.filter(step => keep.has(step.id)))
+  const compacted = compactTeachingFlow(definition)
   return {
     originalSteps: original.length,
-    finalSteps: definition.steps.length,
-    removedSteps: original.length - definition.steps.length,
-    autoKeptDependencies: Math.max(0, keep.size - requestedCount),
+    finalSteps: compacted.finalSteps,
+    removedSteps: original.length - compacted.finalSteps,
+    autoKeptDependencies: Math.max(0, compacted.finalSteps - requestedCount),
   }
 }
 
@@ -85,7 +86,7 @@ export function compactTeachingFlow(definition: InspectionDefinition): FlowCompa
   const lastScreenshot = findLastToolIndex(original, 'browser_screenshot')
   const needsPageOutput = definition.artifacts.includes('page-text') || definition.artifacts.includes('page-summary')
   const needsScreenshot = definition.artifacts.includes('screenshot')
-  const resetFloor = findSafeResetFloor(original, definition.target.url, referenced)
+  const resetFloor = findSafeResetFloor(original, referenced)
 
   const kept = original.filter((step, index) => shouldKeepStep(
     original,
@@ -137,10 +138,20 @@ function shouldKeepStep(
     return needsScreenshot && index === lastScreenshot
   }
 
+  if (step.tool === 'browser_wait' && hasLaterUnassertedWaitBeforeBoundary(all, index)) return false
   if (isTypingTool(step.tool) && isSupersededTypingStep(all, index, step)) return false
   if (isDuplicateRetryStep(all, index, step)) return false
 
   return true
+}
+
+function hasLaterUnassertedWaitBeforeBoundary(all: readonly InspectionStep[], index: number): boolean {
+  for (let cursor = index + 1; cursor < all.length; cursor += 1) {
+    const next = all[cursor]!
+    if (isInteractionBoundary(next)) return false
+    if (next.kind === 'tool' && next.tool === 'browser_wait' && !referencedOrAssertive(next)) return true
+  }
+  return false
 }
 
 function isDuplicateRetryStep(all: readonly InspectionStep[], index: number, step: ToolStep): boolean {
@@ -163,32 +174,43 @@ function referencedOrAssertive(step: InspectionStep): boolean {
 
 function findSafeResetFloor(
   steps: readonly InspectionStep[],
-  targetUrl: string,
   referenced: ReadonlySet<string>,
 ): number {
-  const target = normalizeUrl(targetUrl)
-  if (!target) return 0
-  const navigations: number[] = []
+  const navigations: Array<{ index: number; key: string }> = []
   for (let index = 0; index < steps.length; index += 1) {
     const step = steps[index]
     if (step?.kind !== 'tool' || step.tool !== 'browser_navigate') continue
-    const url = typeof step.arguments.url === 'string' ? normalizeUrl(step.arguments.url) : ''
-    if (url === target) navigations.push(index)
+    const key = typeof step.arguments.url === 'string' ? navigationIdentity(step.arguments.url) : ''
+    if (key) navigations.push({ index, key })
   }
   if (navigations.length < 2) return 0
 
   for (let cursor = navigations.length - 1; cursor > 0; cursor -= 1) {
     const previous = navigations[cursor - 1]!
     const current = navigations[cursor]!
-    const abandoned = steps.slice(previous + 1, current)
+    if (previous.key !== current.key) continue
+    const abandoned = steps.slice(previous.index + 1, current.index)
     const hasStrongSemanticStep = abandoned.some(step =>
       step.kind === 'checkpoint'
       || referenced.has(step.id)
       || (step.kind === 'tool' && step.expectation !== undefined),
     )
-    if (!hasStrongSemanticStep) return current
+    if (!hasStrongSemanticStep) return current.index
   }
   return 0
+}
+
+function navigationIdentity(value: string): string {
+  try {
+    const url = new URL(value)
+    if (url.pathname.startsWith('/com-sso/')) {
+      url.search = ''
+    }
+    url.hash = ''
+    return url.toString().replace(/\/$/, '')
+  } catch {
+    return normalizeUrl(value)
+  }
 }
 
 function isSupersededTypingStep(all: readonly InspectionStep[], index: number, step: ToolStep): boolean {

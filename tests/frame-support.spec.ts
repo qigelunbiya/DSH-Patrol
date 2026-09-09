@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import vm from 'node:vm'
 import { describe, expect, it } from 'vitest'
 
-function loadFrameSupport() {
+function loadFrameSupport(topElements: any[] = []) {
   const source = readFileSync(join(process.cwd(), 'browser-extension', 'frame-support.js'), 'utf8')
   const calls: Array<{ frameId: number; cmd: string; args: any }> = []
   const context = vm.createContext({
@@ -15,7 +15,13 @@ function loadFrameSupport() {
     decodeURIComponent,
     sendDomCommand: async (cmd: string, args: any) => {
       if (cmd === 'snapshot') {
-        return { ok: true, url: 'https://portal.local/', title: 'Portal', elements: [], truncated: false }
+        return {
+          ok: true,
+          url: 'https://portal.local/',
+          title: 'Portal',
+          elements: topElements.slice(0, Number.isInteger(args?.maxElements) ? args.maxElements : topElements.length),
+          truncated: topElements.length > (Number.isInteger(args?.maxElements) ? args.maxElements : topElements.length),
+        }
       }
       if (cmd === 'readPage') {
         return { ok: true, url: 'https://portal.local/', title: 'Portal', text: 'legacy top', truncated: false }
@@ -62,7 +68,17 @@ function loadFrameSupport() {
             return { ok: true, count: 0 }
           }
           if (message.cmd === 'click') return { ok: true, selector: message.args.selector, tag: 'a', text: '防火墙dnat及策略开放的相关数据采集内容优化' }
-          if (message.cmd === 'snapshot') return { ok: true, url: '', title: '', elements: [], truncated: false }
+          if (message.cmd === 'snapshot') {
+            return {
+              ok: true,
+              url: frameId === 7 ? 'https://portal.local/workflow?tab=pending' : '',
+              title: '',
+              elements: frameId === 7 && topElements.length > 0
+                ? [{ tag: 'a', text: '待办待阅工单', selector: '#pending-link' }]
+                : [],
+              truncated: false,
+            }
+          }
           throw new Error(`unexpected frame command ${message.cmd}`)
         },
       },
@@ -99,6 +115,19 @@ describe('frame-aware browser bridge', () => {
     const click = calls.find(item => item.cmd === 'click')
     expect(click?.frameId).toBe(0)
     expect(click?.args.selector).toBe(selector)
+  })
+
+  it('reserves snapshot capacity for iframe targets when the top document is large', async () => {
+    const topElements = Array.from({ length: 500 }, (_, index) => ({
+      tag: 'div',
+      text: `shell-${index}`,
+      selector: `#shell-${index}`,
+    }))
+    const { context } = loadFrameSupport(topElements)
+    const value = await vm.runInContext(`sendDomCommand('snapshot', { tabId: 1, maxElements: 500 })`, context)
+    expect(value.elements.some((item: any) => String(item.selector).startsWith('frame-url('))).toBe(true)
+    expect(value.elements.length).toBeGreaterThan(475)
+    expect(value.elements.length).toBeLessThanOrEqual(500)
   })
 })
 

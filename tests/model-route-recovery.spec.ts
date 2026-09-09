@@ -146,6 +146,34 @@ describe('Patrol model route recovery', () => {
     await ctx.fiber.dispose()
   })
 
+  it('recovers when the gateway reports the legacy backend provider alias', async () => {
+    const ctx = new Context()
+    ctx.provide('agentDefaultModel', {
+      currentSelection: () => FALLBACK_ROUTE,
+    })
+    registerPatrolModelRouteRecovery(ctx)
+
+    await ctx.waterfall(
+      'agent/request',
+      requestPayload(),
+      () => Promise.resolve({ provider: 'cliproxy', model: LEGACY_ROUTE.model }),
+    )
+
+    await expect(ctx.waterfall(
+      'agent/request-error',
+      requestErrorPayload('qwen-local'),
+      () => Promise.resolve(undefined),
+    )).resolves.toEqual({ kind: 'retry' })
+
+    await expect(ctx.waterfall(
+      'agent/request',
+      requestPayload(),
+      () => Promise.resolve({ provider: 'cliproxy', model: LEGACY_ROUTE.model }),
+    )).resolves.toEqual(FALLBACK_ROUTE)
+
+    await ctx.fiber.dispose()
+  })
+
   it('delegates later failures in the same step to Harness bounded retry policy', async () => {
     const ctx = new Context()
     ctx.provide('agentDefaultModel', {

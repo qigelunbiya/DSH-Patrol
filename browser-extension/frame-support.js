@@ -31,11 +31,16 @@ async function frameSnapshot(tabId, args) {
   let url = ''
   let truncated = false
   let topCaptured = false
+  const childFrameCount = frames.filter(frame => frame.frameId !== 0).length
+  // Keep room for content-frame actions. A shell with hundreds of decorative
+  // nodes must not crowd every iframe target out of the semantic snapshot.
+  const frameReserve = Math.min(Math.max(0, max - 1), childFrameCount * 25)
+  const topMax = max - frameReserve
 
   // Preserve the richer legacy top-frame snapshot (including visual media)
   // whenever it is available.
   try {
-    const top = await legacySendDomCommand('snapshot', { ...args, tabId })
+    const top = await legacySendDomCommand('snapshot', { ...args, maxElements: topMax, tabId })
     if (top && typeof top === 'object' && top.ok !== false) {
       topCaptured = true
       title = typeof top.title === 'string' ? top.title : title
