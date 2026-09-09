@@ -39,13 +39,26 @@ describe('bootstrap current-page observation', () => {
 })
 
 describe('current-page observation evidence fallback', () => {
-  it('treats a successful screenshot as a valid observation when read_image is unavailable', async () => {
+  it('uses compact OCR/DOM evidence by default and does not attach an image', async () => {
+    const harness = setupObservationHarness({ readImage: 'success', captcha: false })
+    const value = await harness.tool.execute({ inspectionId: 'demo' }, harness.exec)
+
+    expect(value.observationKind).toBe('visual')
+    expect(value.evidenceMode).toBe('screenshot-ocr-snapshot')
+    expect(value.imageStatus).toBe('not-requested')
+    expect(value.image).toBeUndefined()
+    expect(harness.readImageCalls).toBe(0)
+    expect(value.ocrText).toContain('LOGIN')
+    expect(harness.observed).toHaveLength(1)
+  })
+
+  it('withholds whole-page OCR when the compact CURRENT DOM contains a CAPTCHA input', async () => {
     const harness = setupObservationHarness({ readImage: 'missing', captcha: true })
     const value = await harness.tool.execute({ inspectionId: 'demo' }, harness.exec)
 
     expect(value.observationKind).toBe('visual')
     expect(value.evidenceMode).toBe('screenshot-ocr-snapshot')
-    expect(value.imageStatus).toBe('tool-unavailable')
+    expect(value.imageStatus).toBe('not-requested')
     expect(value.ocrTextWithheld).toBe(true)
     expect(value.ocrText).toBeUndefined()
     expect(value.snapshotText).toContain('#captcha')
@@ -53,27 +66,26 @@ describe('current-page observation evidence fallback', () => {
     expect(harness.observed).toEqual([{ inspectionId: 'demo', rootCallId: 'observe-call' }])
   })
 
-  it('continues with fresh OCR/DOM evidence when the current model route rejects image input', async () => {
-    const harness = setupObservationHarness({ readImage: 'failed', captcha: false })
-    const value = await harness.tool.execute({ inspectionId: 'demo' }, harness.exec)
+  it('attaches the screenshot only when includeImage=true and the route accepts images', async () => {
+    const harness = setupObservationHarness({ readImage: 'success', captcha: false })
+    const value = await harness.tool.execute({ inspectionId: 'demo', includeImage: true }, harness.exec)
 
-    expect(value.observationKind).toBe('visual')
+    expect(value.evidenceMode).toBe('image')
+    expect(value.imageStatus).toBe('attached')
+    expect(value.image).toMatchObject({ attachmentId: 'img-1', mediaType: 'image/png' })
+    expect(harness.readImageCalls).toBe(1)
+    expect(harness.observed).toHaveLength(1)
+  })
+
+  it('falls back to compact evidence when explicit image attachment is unavailable', async () => {
+    const harness = setupObservationHarness({ readImage: 'failed', captcha: false })
+    const value = await harness.tool.execute({ inspectionId: 'demo', includeImage: true }, harness.exec)
+
     expect(value.evidenceMode).toBe('screenshot-ocr-snapshot')
     expect(value.imageStatus).toBe('read-failed')
     expect(value.imageError).toMatch(/does not declare image input/i)
     expect(value.ocrTextWithheld).toBe(false)
     expect(value.ocrText).toContain('LOGIN')
-    expect(harness.observed).toHaveLength(1)
-  })
-
-  it('keeps the attached-image path when read_image is available and the route accepts images', async () => {
-    const harness = setupObservationHarness({ readImage: 'success', captcha: false })
-    const value = await harness.tool.execute({ inspectionId: 'demo' }, harness.exec)
-
-    expect(value.evidenceMode).toBe('image')
-    expect(value.imageStatus).toBe('attached')
-    expect(value.image).toMatchObject({ attachmentId: 'img-1', mediaType: 'image/png' })
-    expect(harness.observed).toHaveLength(1)
   })
 
   it('detects CAPTCHA inputs and never copies their current value into snapshot evidence', () => {
@@ -89,6 +101,19 @@ describe('current-page observation evidence fallback', () => {
     expect(evidence).toContain('#captcha-image')
     expect(evidence).not.toContain('GLTK')
   })
+
+  it('bounds a large snapshot before it reaches model context', () => {
+    const snapshot = {
+      elements: Array.from({ length: 100 }, (_, index) => ({
+        tag: 'a', selector: `#item-${index}`, text: `menu item ${index} ${'x'.repeat(180)}`,
+      })),
+      truncated: true,
+    }
+    const evidence = summarizeSnapshotEvidence(snapshot)
+    expect(evidence.length).toBeLessThanOrEqual(3050)
+    expect(evidence).toContain('snapshot truncated')
+    expect(evidence).not.toContain('#item-99')
+  })
 })
 
 function setupObservationHarness(options: {
@@ -97,6 +122,7 @@ function setupObservationHarness(options: {
 }) {
   const definitions: any[] = []
   const observed: Array<{ inspectionId: string; rootCallId: unknown }> = []
+  let readImageCalls = 0
 
   const ctx = {
     tools: {
@@ -109,6 +135,7 @@ function setupObservationHarness(options: {
         return { name: 'read_image' }
       },
       async execute() {
+        readImageCalls += 1
         if (options.readImage === 'success') {
           return {
             isError: false,
@@ -141,7 +168,7 @@ function setupObservationHarness(options: {
             ok: true,
             path: 'C:\\workspace\\current.png',
             ocrStatus: 'recognized',
-            ocrText: options.captcha ? 'LOGIN\nGLTK\n验证码' : 'LOGIN\nUsername\nPassword',
+            ocrText: options.captcha ? 'LOGIN\nGLTK\n验证码' : `LOGIN\nUsername\nPassword\n${'status '.repeat(500)}`,
           },
         }
       }
@@ -194,5 +221,10 @@ function setupObservationHarness(options: {
     },
   } as unknown as ToolRunContext
 
-  return { tool, exec, observed }
+  return {
+    tool,
+    exec,
+    observed,
+    get readImageCalls() { return readImageCalls },
+  }
 }
