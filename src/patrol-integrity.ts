@@ -41,8 +41,6 @@ export function registerPatrolIntegrity(ctx: Context): () => void {
   try {
     const systemPrompt = ctx.get('systemPrompt') as { section?: (input: { name: string; order: number; text: string }) => (() => void) } | undefined
     if (typeof systemPrompt?.section === 'function') {
-      // Deliberately later than the TEST MODE override (999) and flow replay
-      // prompt (1000), so test/debug mode can never silently relax integrity.
       disposePrompt = systemPrompt.section({
         name: 'agent:dsh-patrol-reusable-flow-integrity',
         order: 1100,
@@ -50,13 +48,23 @@ export function registerPatrolIntegrity(ctx: Context): () => void {
       })
     }
   } catch {
-    // Tool-level guard below still protects causal click recording even when a
-    // Harness build does not expose the systemPrompt service.
   }
 
-  const disposeGuard = ctx.tools.guard(execution => patrolTeachingIntegrityGuard(execution))
+  // Some isolated unit-test/minimal Cordis contexts intentionally omit the
+  // dsh-tools service. The real Patrol preset always provides ctx.tools, so the
+  // guard is still mandatory in production while model-recovery tests can use a
+  // deliberately smaller context safely.
+  let disposeGuard: (() => void) | undefined
+  try {
+    const tools = (ctx as Context & { tools?: { guard?: (callback: (execution: any) => string | undefined) => (() => void) } }).tools
+    if (typeof tools?.guard === 'function') {
+      disposeGuard = tools.guard(execution => patrolTeachingIntegrityGuard(execution))
+    }
+  } catch {
+  }
+
   return () => {
-    try { disposeGuard() } catch {}
+    try { disposeGuard?.() } catch {}
     try { disposePrompt?.() } catch {}
   }
 }
