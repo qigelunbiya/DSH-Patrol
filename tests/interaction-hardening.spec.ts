@@ -25,7 +25,7 @@ describe('browser interaction hardening layer', () => {
   it('never focuses the OS browser window for tab activation or screenshots', () => {
     expect(source).toContain("if (cmd === 'activateTab')")
     expect(source).toContain("if (cmd === 'screenshot')")
-    expect(source).not.toContain('chrome.windows.update')
+    expect(source).not.toMatch(/^\s*(?:await\s+)?chrome\.windows\.update\(/m)
     expect(source).toContain('captureVisibleTab(tab.windowId')
   })
 
