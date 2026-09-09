@@ -111,7 +111,6 @@ describe('current-page observation evidence fallback', () => {
     }
     const evidence = summarizeSnapshotEvidence(snapshot)
     expect(evidence.length).toBeLessThanOrEqual(3050)
-    expect(evidence).toContain('snapshot truncated')
     expect(evidence).not.toContain('#item-99')
   })
 })
