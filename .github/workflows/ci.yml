@@ -54,6 +54,9 @@ jobs:
           PKG="$(find .pack-check -name 'dsh-patrol-*.tgz' -print -quit)"
           test -n "$PKG"
           tar -tzf "$PKG" > .pack-check/contents.txt
+          grep -qx 'package/lib/index.js' .pack-check/contents.txt
+          grep -qx 'package/lib/index.d.ts' .pack-check/contents.txt
+          grep -qx 'package/lib/preset-installer.js' .pack-check/contents.txt
           grep -qx 'package/browser-bridge-runtime/index.js' .pack-check/contents.txt
           grep -qx 'package/browser-bridge-runtime/managed-browser.js' .pack-check/contents.txt
           grep -qx 'package/browser-bridge-runtime/tools-plugin.js' .pack-check/contents.txt
@@ -74,6 +77,10 @@ jobs:
           grep -qx 'package/scripts/uninstall-local.ps1' .pack-check/contents.txt
           grep -qx 'package/scripts/set-patrol-credential.ps1' .pack-check/contents.txt
           grep -qx 'package/docs/captcha-demo.md' .pack-check/contents.txt
+          grep -qx 'package/docs/publishing.md' .pack-check/contents.txt
+          grep -qx 'package/README.md' .pack-check/contents.txt
+          grep -qx 'package/LICENSE' .pack-check/contents.txt
+          grep -qx 'package/package.json' .pack-check/contents.txt
 
   windows-smoke:
     runs-on: windows-latest
@@ -114,7 +121,7 @@ jobs:
         shell: pwsh
         run: |
           $failed = $false
-          foreach ($path in @('scripts/install-local.ps1', 'scripts/install-captcha-demo.ps1', 'scripts/uninstall-local.ps1', 'scripts/set-patrol-credential.ps1')) {
+          foreach ($path in @('scripts/install-local.ps1', 'scripts/install-captcha-demo.ps1', 'scripts/uninstall-local.ps1', 'scripts/set-patrol-credential.ps1', 'scripts/dev.ps1')) {
             $tokens = $null
             $errors = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path), [ref]$tokens, [ref]$errors)

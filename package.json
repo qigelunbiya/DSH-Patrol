@@ -1,12 +1,35 @@
 {
   "name": "dsh-patrol",
   "version": "0.2.0-alpha.1",
-  "description": "Dedicated browser inspection Agent Preset and deterministic Runbook runner for DeepSeek Harness",
+  "description": "Browser patrol and website inspection plugin for DeepSeek Harness: teach once, replay deterministic runbooks with managed Chromium, credentials, screenshots, checkpoints, and selector recovery.",
   "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@11.7.0",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qigelunbiya/DSH-Patrol.git"
+  },
+  "homepage": "https://github.com/qigelunbiya/DSH-Patrol#readme",
+  "bugs": {
+    "url": "https://github.com/qigelunbiya/DSH-Patrol/issues"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "dsh",
+    "browser-automation",
+    "website-monitoring",
+    "web-automation",
+    "ai-agent",
+    "runbook",
+    "puppeteer",
+    "typescript"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": {
       "types": "./lib/index.d.ts",
@@ -51,6 +74,13 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "catalog": {
+      "category": "workflow",
+      "summary": {
+        "en": "Teach browser inspections once, then replay deterministic patrol runbooks with managed Chromium, screenshots, credential references, checkpoints, and conservative selector recovery.",
+        "zh": "用自然语言教一次网页巡检，随后由确定性 Runbook 稳定重放；内置受管 Chromium、截图、凭据引用、断点恢复和保守的选择器自愈。"
+      }
     }
   },
   "scripts": {
