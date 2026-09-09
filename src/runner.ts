@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { CallId } from '@deepseek-ai/dsh-llm'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { findUniqueHealingSelector, isPageReadStep, isScreenshotStep, isSafeBrowserTool } from './browser.js'
+import { verifyPostClickExpectation } from './post-click-verification.js'
 import { renderRunReport } from './report.js'
 import { credentialReferenceName, redactLikelySecrets, untrustedPageData } from './security.js'
 import type {
@@ -47,7 +48,7 @@ export class PatrolRunner {
   browserGuard(name: string, parent: ToolRunContext['token'] | undefined): string | undefined {
     if (!name.startsWith('browser_')) return undefined
     if (parent !== undefined && (this.authorizedParents.get(parent) ?? 0) > 0) return undefined
-    return 'DSH Patrol blocks browser tools unless the call is a nested dispatch owned by an active patrol_* composite tool.'
+    return 'Direct browser_* calls are internal DSH Patrol primitives. Use the matching patrol_* recording tool (for clicks, patrol_click_target); it will dispatch browser_click inside an authorized composite so the action is recorded, verified, and replayable.'
   }
 
   async dispatch(tool: string, args: JsonObject, exec: ToolRunContext, exactSecrets: readonly string[] = []): Promise<DispatchResult> {
@@ -299,7 +300,20 @@ export class PatrolRunner {
       }
     }
 
-    const expectationError = step.expectation === undefined ? undefined : evaluateExpectation(dispatched.text, step.expectation)
+    let expectationError: string | undefined
+    if (step.expectation !== undefined && step.tool === 'browser_click') {
+      const tabId = typeof runtimeArguments.tabId === 'number' ? runtimeArguments.tabId : undefined
+      const verified = await verifyPostClickExpectation(
+        (toolName, toolArgs, toolExec) => this.dispatch(toolName, toolArgs, toolExec),
+        exec,
+        step.expectation,
+        tabId,
+      )
+      expectationError = verified.ok ? undefined : verified.error
+    } else if (step.expectation !== undefined) {
+      expectationError = evaluateExpectation(dispatched.text, step.expectation)
+    }
+
     if (expectationError !== undefined) {
       return {
         stepId: step.id,
