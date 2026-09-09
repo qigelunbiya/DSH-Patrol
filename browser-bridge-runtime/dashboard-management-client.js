@@ -65,6 +65,7 @@
         tools.className = 'flow-manage-actions'
         tools.innerHTML = [
           `<button class="mini-btn" data-manage-action="rename" data-manage-id="${escapeAttr(id)}">改名</button>`,
+          `<button class="mini-btn" data-manage-action="json" data-manage-id="${escapeAttr(id)}">查看 JSON</button>`,
           `<button class="mini-btn" title="清理探针、被后续重置废弃的轮次和重复输入修正" data-manage-action="optimize" data-manage-id="${escapeAttr(id)}">清理试错</button>`,
           `<button class="mini-btn danger" data-manage-action="delete" data-manage-id="${escapeAttr(id)}">删除</button>`,
           `<button class="mini-btn run" data-manage-action="run" data-manage-id="${escapeAttr(id)}">▶ 运行</button>`,
@@ -77,20 +78,46 @@
   function patchDetail() {
     const hero = root.querySelector('.hero')
     const actions = root.querySelector('.top .actions')
-    if (!hero || !actions || actions.querySelector('[data-detail-flow-tools]')) return
+    if (!hero || !actions) return
     const id = hero.querySelector('.tiny.muted')?.textContent?.trim() || ''
-    if (!id || !cardsById.has(id)) return
+    const item = cardsById.get(id)
+    if (!id || !item) return
 
-    const wrap = document.createElement('span')
-    wrap.setAttribute('data-detail-flow-tools', '')
-    wrap.className = 'detail-flow-actions'
-    wrap.innerHTML = [
-      `<button class="btn run-btn" data-manage-action="run" data-manage-id="${escapeAttr(id)}">▶ 运行流程</button>`,
-      `<button class="btn" data-manage-action="rename" data-manage-id="${escapeAttr(id)}">编辑名称</button>`,
-      `<button class="btn" title="清理探针、重置前的废弃轮次和被后续输入覆盖的修正步骤" data-manage-action="optimize" data-manage-id="${escapeAttr(id)}">清理试错步骤</button>`,
-      `<button class="btn danger-btn" data-manage-action="delete" data-manage-id="${escapeAttr(id)}">删除流程</button>`,
-    ].join('')
-    actions.prepend(wrap)
+    if (!actions.querySelector('[data-detail-flow-tools]')) {
+      const wrap = document.createElement('span')
+      wrap.setAttribute('data-detail-flow-tools', '')
+      wrap.className = 'detail-flow-actions'
+      wrap.innerHTML = [
+        `<button class="btn run-btn" data-manage-action="run" data-manage-id="${escapeAttr(id)}">▶ 运行流程</button>`,
+        `<button class="btn" data-manage-action="json" data-manage-id="${escapeAttr(id)}">查看流程 JSON</button>`,
+        `<button class="btn" data-manage-action="rename" data-manage-id="${escapeAttr(id)}">编辑名称</button>`,
+        `<button class="btn" title="清理探针、重置前的废弃轮次和被后续输入覆盖的修正步骤" data-manage-action="optimize" data-manage-id="${escapeAttr(id)}">清理试错步骤</button>`,
+        `<button class="btn danger-btn" data-manage-action="delete" data-manage-id="${escapeAttr(id)}">删除流程</button>`,
+      ].join('')
+      actions.prepend(wrap)
+    }
+
+    // The original flow diagram intentionally stayed compact, but that made an
+    // input step look like it had "no concrete operation". Add a safe exact
+    // arguments block to each node so selector/text/reference details are
+    // inspectable without requiring a screenshot. Stored secret steps contain
+    // references, not plaintext values.
+    const nodes = [...root.querySelectorAll('.steps .node')]
+    const steps = Array.isArray(item.definition?.steps) ? item.definition.steps : []
+    nodes.forEach((node, index) => {
+      if (!(node instanceof HTMLElement) || node.querySelector('[data-step-execution]')) return
+      const step = steps[index]
+      if (!step) return
+      const details = document.createElement('div')
+      details.setAttribute('data-step-execution', '')
+      details.className = 'step-execution'
+      if (step.kind === 'checkpoint') {
+        details.textContent = `检查点：${step.reason || 'other'}${step.prompt ? ` · ${step.prompt}` : ''}`
+      } else {
+        details.innerHTML = `<div class="step-execution-label">实际命令</div><pre>${escapeHtml(JSON.stringify({ tool: step.tool, arguments: step.arguments || {}, locator: step.locator || undefined, expectation: step.expectation || undefined, when: step.when || undefined }, null, 2))}</pre>`
+      }
+      node.appendChild(details)
+    })
   }
 
   function runFlow(id) {
@@ -104,8 +131,39 @@
     }, location.origin)
   }
 
-  async function renameFlow(id) {
+  function showFlowJson(id) {
+    const item = cardsById.get(id)
+    if (!item) return
+    document.getElementById('patrol-flow-json-modal')?.remove()
+    const modal = document.createElement('div')
+    modal.id = 'patrol-flow-json-modal'
+    modal.className = 'flow-json-modal-bg'
+    modal.innerHTML = `<div class="flow-json-modal" role="dialog" aria-modal="true" aria-label="流程 JSON">
+      <div class="flow-json-head"><div><b>流程 JSON</b><div class="tiny muted">${escapeHtml(item.definition?.name || id)} · ${escapeHtml(id)}</div></div><div class="flow-json-actions"><button class="btn" data-manage-action="copy-json">复制 JSON</button><button class="btn" data-manage-action="close-json">关闭</button></div></div>
+      <pre id="patrol-flow-json-code" class="flow-json-code">${escapeHtml(JSON.stringify(item.definition, null, 2))}</pre>
+    </div>`
+    document.body.appendChild(modal)
+  }
 
+  async function copyFlowJson() {
+    const code = document.getElementById('patrol-flow-json-code')
+    const text = code?.textContent || ''
+    if (!text) return
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      const area = document.createElement('textarea')
+      area.value = text
+      area.style.position = 'fixed'
+      area.style.opacity = '0'
+      document.body.appendChild(area)
+      area.select()
+      document.execCommand('copy')
+      area.remove()
+    }
+  }
+
+  async function renameFlow(id) {
     const item = cardsById.get(id)
     if (!item) return
     const current = item.definition?.name || id
@@ -125,10 +183,10 @@
     const message = [
       '这是“清理教学试错步骤”，不是删除流程。',
       '',
-      '会自动清理：snapshot/count 探针、无依赖的重复页面读取、重新导航到目标页之前已废弃的试错轮次、同一输入框被后续值覆盖的重复输入。',
-      '会保留：最终有效导航/点击、人工检查点、条件依赖、断言，以及最终截图/页面产物。',
+      '会自动清理：snapshot/count/read/wait 诊断探针、自动生成执行说明保护下的无效步骤、重新回到同一页面前已废弃的猜 URL/试错轮次、同一输入框被后续值覆盖的重复输入。',
+      '会保留：真实业务点击、用户要求的输入、人工检查点、条件依赖、成功断言，以及最终截图/页面产物。',
       '',
-      '新教学流程在对话结束时还会由 patrol_finalize_flow 根据“真正成功路径”做语义精简；这里主要用于清理已有旧流程。',
+      '新教学流程在对话结束时还会由 patrol_finalize_flow 根据“真正成功路径”做语义精简；这里用于清理已有旧流程和异常中断留下的教学垃圾。',
       '确认后会直接更新真实 Runbook 和工作区流程文件。',
       `当前流程共 ${count} 个步骤。是否继续清理？`,
     ].join('\n')
@@ -175,33 +233,58 @@
     })[char])
   }
 
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    })[char])
+  }
+
   function installStyle() {
     if (document.getElementById('patrol-flow-management-style')) return
     const style = document.createElement('style')
     style.id = 'patrol-flow-management-style'
     style.textContent = `
-      .flow-manage-actions{display:flex;gap:6px;margin:2px 0 10px;position:relative;z-index:2}
+      .flow-manage-actions{display:flex;gap:6px;margin:2px 0 10px;position:relative;z-index:2;flex-wrap:wrap}
       .mini-btn{border:1px solid #e5e9f0;background:#fff;border-radius:8px;padding:5px 9px;font-size:11px;color:#475467;cursor:pointer}
       .mini-btn:hover{border-color:#b9c6da;background:#f8fafc}
       .mini-btn.run{margin-left:auto}.mini-btn.run,.run-btn{color:#1d4ed8!important;border-color:#bfd0f6!important;background:#f7faff!important}
       .mini-btn.run:hover,.run-btn:hover{background:#eff6ff!important;border-color:#93b4ef!important}
       .mini-btn.danger,.danger-btn{color:#c43225!important;border-color:#f0c7c3!important}
       .mini-btn.danger:hover,.danger-btn:hover{background:#fef3f2!important}
-      .detail-flow-actions{display:inline-flex;gap:8px}
+      .detail-flow-actions{display:inline-flex;gap:8px;flex-wrap:wrap}
+      .step-execution{margin-top:10px;border-top:1px dashed #e5e9f0;padding-top:9px;font-size:11px;color:#667085}
+      .step-execution-label{font-weight:700;color:#475467;margin-bottom:5px}
+      .step-execution pre{margin:0;padding:8px 10px;background:#f8fafc;border-radius:8px;white-space:pre-wrap;word-break:break-word;font:11px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#344054}
+      .flow-json-modal-bg{position:fixed;inset:0;background:rgba(15,23,42,.56);display:grid;place-items:center;padding:24px;z-index:1000}
+      .flow-json-modal{width:min(1100px,96vw);max-height:92vh;display:flex;flex-direction:column;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 25px 80px rgba(15,23,42,.28)}
+      .flow-json-head{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:14px 16px;border-bottom:1px solid #e5e9f0}
+      .flow-json-actions{display:flex;gap:8px}.flow-json-code{margin:0;padding:16px;overflow:auto;background:#0f172a;color:#dbeafe;white-space:pre;font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
     `
     document.head.appendChild(style)
   }
 
   document.addEventListener('click', event => {
     const target = event.target instanceof Element ? event.target.closest('[data-manage-action]') : null
-    if (!target) return
+    if (!target) {
+      if (event.target instanceof Element && event.target.id === 'patrol-flow-json-modal') event.target.remove()
+      return
+    }
     event.preventDefault()
     event.stopPropagation()
     if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation()
     const action = target.getAttribute('data-manage-action') || ''
+    if (action === 'close-json') {
+      document.getElementById('patrol-flow-json-modal')?.remove()
+      return
+    }
+    if (action === 'copy-json') {
+      void copyFlowJson()
+      return
+    }
     const id = target.getAttribute('data-manage-id') || ''
     if (!id) return
     if (action === 'run') runFlow(id)
+    else if (action === 'json') showFlowJson(id)
     else if (action === 'rename') void renameFlow(id)
     else if (action === 'optimize') void optimizeFlow(id)
     else if (action === 'delete') void deleteFlow(id)
