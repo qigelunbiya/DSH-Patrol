@@ -26,6 +26,18 @@ function loadFrameSupport(topElements: any[] = []) {
       if (cmd === 'readPage') {
         return { ok: true, url: 'https://portal.local/', title: 'Portal', text: 'legacy top', truncated: false }
       }
+      if (cmd === 'count') {
+        calls.push({ frameId: 0, cmd, args })
+        return { ok: true, count: String(args?.selector || '').includes('li:nth-of-type(5)') ? 1 : 0 }
+      }
+      if (cmd === 'click') {
+        calls.push({ frameId: 0, cmd, args })
+        return { ok: true, selector: args.selector, tag: 'a', text: '我的工作台' }
+      }
+      if (cmd === 'wait') {
+        calls.push({ frameId: 0, cmd, args })
+        return { ok: true, found: true, selector: args.selector, timeoutMs: args.timeoutMs ?? 10000 }
+      }
       throw new Error(`legacy command not expected: ${cmd} ${JSON.stringify(args)}`)
     },
     resolveTabId: async (value: number) => value,
@@ -107,7 +119,7 @@ describe('frame-aware browser bridge', () => {
     expect(click?.args.selector).toBe('#target')
   })
 
-  it('uses top-frame qualified selectors to avoid same CSS matches in child frames', async () => {
+  it('uses the stable top bridge for top-frame qualified selectors and avoids child-frame duplicates', async () => {
     const { context, calls } = loadFrameSupport()
     const selector = 'div:nth-of-type(1) > div > div > div > ul > li:nth-of-type(5) > a'
     const value = await vm.runInContext(`sendDomCommand('click', { tabId: 1, selector: ${JSON.stringify(`top-frame::${selector}`)} })`, context)
@@ -115,6 +127,7 @@ describe('frame-aware browser bridge', () => {
     const click = calls.find(item => item.cmd === 'click')
     expect(click?.frameId).toBe(0)
     expect(click?.args.selector).toBe(selector)
+    expect(calls.filter(item => item.cmd === 'count' && item.frameId === 7)).toHaveLength(0)
   })
 
   it('reserves snapshot capacity for iframe targets when the top document is large', async () => {
