@@ -1,6 +1,6 @@
 import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
-import { compactFlowConservatively } from './safe-flow-cleanup.js'
+import { compactDashboardFlow } from './safe-flow-cleanup-hardening.js'
 
 const ID = /^[A-Za-z0-9._-]+$/
 const MAX_BODY_BYTES = 32 * 1024
@@ -51,7 +51,7 @@ export function registerPatrolDashboardManagementRoutes(ctx, basePath, config = 
         const workspace = requireWorkspace(body.workspace)
         const definition = await loadDefinition(storageRoot, inspectionId)
         assertWorkspace(definition, workspace)
-        const result = compactFlowConservatively(definition)
+        const result = compactDashboardFlow(definition)
         definition.metadata = { ...(definition.metadata || {}), updatedAt: new Date().toISOString() }
         const persisted = await persistDefinition(storageRoot, definition)
         return sendJson(res, 200, {
@@ -217,20 +217,15 @@ function renderRunbookMarkdown(definition) {
     '## Reusable steps',
     '',
   ]
-
-  if (!definition.steps.length) lines.push('(no steps recorded)')
-  for (const step of definition.steps) {
-    lines.push(`### ${step.id} — ${step.name}`, '')
-    if (step.kind === 'checkpoint') {
-      lines.push(`- Kind: checkpoint`, `- Reason: ${step.reason}`, `- Prompt: ${step.prompt}`)
-    } else {
-      lines.push(`- Kind: tool`, `- Tool: \`${step.tool}\``, `- Arguments: \`${JSON.stringify(step.arguments)}\``)
-      if (step.expectation !== undefined) lines.push(`- Expectation: ${step.expectation.mode} ${JSON.stringify(step.expectation.value)}`)
-      if (step.locator !== undefined) lines.push(`- Semantic locator: \`${JSON.stringify(step.locator)}\``)
-      if (step.artifact !== undefined) lines.push(`- Artifact: \`${step.artifact}\``)
-    }
-    if (step.when !== undefined) lines.push(`- Condition: ${step.when.sourceStepId} ${step.when.mode} ${JSON.stringify(step.when.value)}`)
-    if (step.notes !== undefined) lines.push(`- Notes: ${step.notes}`)
+  for (const step of definition.steps || []) {
+    lines.push(`### ${step.id} ${step.name || ''}`)
+    lines.push('')
+    lines.push(`- Kind: \`${step.kind || ''}\``)
+    if (step.tool) lines.push(`- Tool: \`${step.tool}\``)
+    if (step.arguments) lines.push(`- Arguments: \`${JSON.stringify(step.arguments)}\``)
+    if (step.expectation) lines.push(`- Expectation: \`${JSON.stringify(step.expectation)}\``)
+    if (step.when) lines.push(`- Condition: \`${JSON.stringify(step.when)}\``)
+    if (step.notes) lines.push(`- Notes: ${step.notes}`)
     lines.push('')
   }
   return `${lines.join('\n')}\n`
@@ -238,23 +233,38 @@ function renderRunbookMarkdown(definition) {
 
 async function atomicWrite(path, content) {
   await mkdir(dirname(path), { recursive: true })
-  const temp = `${path}.${process.pid}.${Date.now()}.tmp`
-  await writeFile(temp, content, 'utf8')
-  await rename(temp, path)
+  const temporary = `${path}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  await writeFile(temporary, content, 'utf8')
+  await rename(temporary, path)
+}
+
+function requestUrl(req) {
+  return new URL(req.url || '/', 'http://127.0.0.1')
 }
 
 async function readJsonBody(req) {
+  let size = 0
   const chunks = []
-  let bytes = 0
   for await (const chunk of req) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-    bytes += buffer.length
-    if (bytes > MAX_BODY_BYTES) throw new Error('request body too large')
-    chunks.push(buffer)
+    size += chunk.length
+    if (size > MAX_BODY_BYTES) throw new Error('request body is too large')
+    chunks.push(chunk)
   }
   const raw = Buffer.concat(chunks).toString('utf8')
   if (!raw.trim()) return {}
-  return JSON.parse(raw)
+  const parsed = JSON.parse(raw)
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('request body must be a JSON object')
+  return parsed
+}
+
+function sendJson(res, status, value) {
+  const body = JSON.stringify(value)
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+  })
+  res.end(body)
 }
 
 function methodNotAllowed(res, allow) {
@@ -266,15 +276,6 @@ function methodNotAllowed(res, allow) {
   res.end(JSON.stringify({ ok: false, error: 'method not allowed' }))
 }
 
-function sendJson(res, status, payload) {
-  res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-    'x-content-type-options': 'nosniff',
-  })
-  res.end(JSON.stringify(payload))
-}
-
 function safeError(error) {
-  return error && typeof error.message === 'string' ? error.message : String(error)
+  return (error instanceof Error ? error.message : String(error || 'Patrol dashboard request failed')).slice(0, 300)
 }
