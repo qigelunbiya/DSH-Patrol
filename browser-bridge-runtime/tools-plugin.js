@@ -13,6 +13,7 @@ import { registerCountTool } from './count-tool.js'
 import { registerImageCodeRefreshTool } from './image-code-refresh-tool.js'
 import { registerImageCodeVisualTool } from './image-code-visual-tool.js'
 import { registerLoginStateTool } from './login-state-tool.js'
+import { registerSelectTool } from './select-tool.js'
 import { registerTotpTool } from './totp-tool.js'
 import { registerTransientTool } from './transient-tool.js'
 import { registerTools } from './tools.js'
@@ -44,7 +45,7 @@ export async function apply(ctx, config = {}) {
   // exist before its content-script bridge finishes attaching.
   const retryableDomCommands = new Set([
     'snapshot', 'readPage', 'challengeSignals', 'imageCodeTarget', 'captureImageCode', 'count',
-    'click', 'type', 'press', 'scroll', 'wait',
+    'click', 'select', 'type', 'press', 'scroll', 'wait',
   ])
   const bridge = {
     get connected() { return service.bridge.connected },
@@ -80,6 +81,9 @@ export async function apply(ctx, config = {}) {
   ctx.effect(() => registerCountTool(ctx, bridge, {
     commandTimeoutMs: config.commandTimeoutMs ?? 60000,
   }), 'dsh-patrol/browser-tools: scoped count tool')
+  ctx.effect(() => registerSelectTool(ctx, bridge, {
+    commandTimeoutMs: config.commandTimeoutMs ?? 60000,
+  }), 'dsh-patrol/browser-tools: native select tool')
   ctx.effect(() => registerChallengeTool(ctx, bridge, {
     commandTimeoutMs: config.commandTimeoutMs ?? 60000,
   }), 'dsh-patrol/browser-tools: scoped auth challenge detector')
