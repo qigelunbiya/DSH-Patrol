@@ -4,6 +4,7 @@ import type {
   ReasoningEffortId,
 } from '@deepseek-ai/dsh-llm'
 import { registerPatrolContextPressureGuard } from './context-pressure-hardening.js'
+import { registerPatrolIntegrity } from './patrol-integrity.js'
 
 interface ModelSelection {
   provider: string
@@ -129,18 +130,17 @@ function readDefaultModelSelection(ctx: Context): ModelSelection | undefined {
  * immediate swap to the current default model for the same model step. Later
  * failures are delegated to Harness' bounded retry layer.
  *
- * A previous Patrol build also stripped the LLM transport session id here. The
- * real failing Session log disproved that hypothesis: Harness routes through
- * `cliproxy`, and the first upstream failure after cooldown is a CUDA OOM. The
- * gateway then reports qwen-local as auth-unavailable on later retries. Session
- * affinity rewriting has therefore been removed instead of masking the actual
- * memory-pressure failure.
+ * This is also the always-mounted Patrol reliability seam: context pressure and
+ * reusable-flow integrity are registered here because this function is loaded
+ * in both normal and TEST MODE. TEST MODE may relax observation/debugging rules,
+ * but it must never relax causal click recording or final Runbook integrity.
  */
 export function registerPatrolModelRouteRecovery(ctx: Context): () => void {
   let lastResolvedRoute: ResolvedRequestRoute | undefined
   let pendingRecovery: PendingRecovery | undefined
   let attemptedPositionKey: string | undefined
   const disposePressureGuard = registerPatrolContextPressureGuard(ctx)
+  const disposeIntegrity = registerPatrolIntegrity(ctx)
 
   const disposeRequest = ctx.on(
     'agent/request',
@@ -218,6 +218,7 @@ export function registerPatrolModelRouteRecovery(ctx: Context): () => void {
   )
 
   return () => {
+    disposeIntegrity()
     disposePressureGuard()
     disposeRequest()
     disposeRequestError()
