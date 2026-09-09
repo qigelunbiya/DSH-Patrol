@@ -12,13 +12,9 @@ export interface FlowSelectionResult extends FlowCompactionResult {
 
 /**
  * Select the semantically successful route from a full conversational teaching
- * trace. The Agent supplies the ids because it observed the whole conversation
- * and can distinguish a real successful route from a browser command that
- * merely returned success while exploring the wrong branch.
- *
- * Conditions and final requested artifacts are restored automatically so a
- * model cannot accidentally leave a selected conditional step without its
- * source observation, or omit the final report/screenshot output.
+ * trace. Only verified semantic clicks are eligible. A click verified by an
+ * automatic CURRENT-state change is as valid as one with an explicit expected
+ * text; the teaching-only evidence is stripped from the reusable Runbook.
  */
 export function selectSuccessfulTeachingPath(
   definition: InspectionDefinition,
@@ -38,8 +34,12 @@ export function selectSuccessfulTeachingPath(
   const requestedCount = keep.size
   for (const id of keep) {
     const step = byId.get(id)
-    if (step?.kind === 'tool' && step.tool === 'browser_click' && step.locator?.text !== undefined && step.expectation === undefined) {
-      throw new Error(`successful path step ${id} (${step.name}) lacks post-click success expectation; rerun that semantic click with expectedText proving the next patrol task state before finalizing`)
+    if (step?.kind !== 'tool' || step.tool !== 'browser_click') continue
+    if (step.teaching?.status === 'unverified') {
+      throw new Error(`successful path step ${id} (${step.name}) is explicitly unverified and cannot enter a reusable flow`)
+    }
+    if (step.locator?.text !== undefined && step.expectation === undefined && step.teaching?.status !== 'verified') {
+      throw new Error(`successful path step ${id} (${step.name}) has no post-click verification evidence; reteach that semantic click and verify the CURRENT state before finalizing`)
     }
   }
 
@@ -63,8 +63,15 @@ export function selectSuccessfulTeachingPath(
     if (index >= 0) keep.add(original[index]!.id)
   }
 
-  rewriteSteps(definition, original.filter(step => keep.has(step.id)))
+  const selected = original.filter(step => keep.has(step.id))
+  assertCausalBusinessPath(selected)
+  rewriteSteps(definition, selected, true)
   const compacted = compactTeachingFlow(definition)
+  definition.metadata.flowHealth = {
+    complete: true,
+    warnings: [],
+    checkedAt: new Date().toISOString(),
+  }
   return {
     originalSteps: original.length,
     finalSteps: compacted.finalSteps,
@@ -74,13 +81,10 @@ export function selectSuccessfulTeachingPath(
 }
 
 /**
- * Deterministic fallback cleanup used by the dashboard and by legacy teaching
- * flows that were not semantically finalized by the Agent.
- *
- * This deliberately stays conservative around real clicks/navigation. It now
- * additionally removes abandoned same-target reset rounds and superseded input
- * corrections, two common sources of 100+ step teaching traces, while still
- * protecting condition sources, assertions, checkpoints and final outputs.
+ * Deterministic fallback cleanup used by the dashboard and legacy teaching
+ * flows. Cleanup is deliberately not a declaration of success: it removes
+ * diagnostics/unverified actions, then records structural health warnings when
+ * the surviving trace cannot plausibly advance after input.
  */
 export function compactTeachingFlow(definition: InspectionDefinition): FlowCompactionResult {
   const original = definition.steps.slice()
@@ -107,7 +111,8 @@ export function compactTeachingFlow(definition: InspectionDefinition): FlowCompa
     resetFloor,
   ))
 
-  rewriteSteps(definition, kept)
+  rewriteSteps(definition, kept, false)
+  updateStructuralFlowHealth(definition)
   return {
     removedSteps: original.length - definition.steps.length,
     originalSteps: original.length,
@@ -128,6 +133,7 @@ function shouldKeepStep(
 ): boolean {
   if (index < resetFloor) return false
   if (step.kind === 'checkpoint') return true
+  if (step.teaching?.status === 'unverified') return false
   if (referenced.has(step.id)) return true
   if (step.expectation !== undefined) return true
 
@@ -150,6 +156,38 @@ function shouldKeepStep(
   if (isDuplicateRetryStep(all, index, step)) return false
 
   return true
+}
+
+function assertCausalBusinessPath(steps: readonly InspectionStep[]): void {
+  const lastInput = findLastMatchingIndex(steps, step => step.kind === 'tool' && isTypingTool(step.tool))
+  if (lastInput < 0) return
+  const advancesAfterInput = steps.slice(lastInput + 1).some(step =>
+    step.kind === 'tool' && ['browser_click', 'browser_press', 'browser_select', 'browser_navigate'].includes(step.tool),
+  )
+  if (!advancesAfterInput) {
+    throw new Error('successful path is incomplete: recorded input is not followed by any verified action that advances/submits the business flow')
+  }
+}
+
+function updateStructuralFlowHealth(definition: InspectionDefinition): void {
+  const warnings: string[] = []
+  const steps = definition.steps
+  const lastInput = findLastMatchingIndex(steps, step => step.kind === 'tool' && isTypingTool(step.tool))
+  if (lastInput >= 0) {
+    const advancesAfterInput = steps.slice(lastInput + 1).some(step =>
+      step.kind === 'tool' && ['browser_click', 'browser_press', 'browser_select', 'browser_navigate'].includes(step.tool),
+    )
+    if (!advancesAfterInput) {
+      warnings.push('输入步骤之后没有任何已记录的提交/点击/选择/导航动作；该流程很可能缺少登录提交或后续业务点击。')
+    }
+  }
+  const unverifiedClicks = steps.filter(step => step.kind === 'tool' && step.tool === 'browser_click' && step.teaching?.status === 'unverified')
+  if (unverifiedClicks.length > 0) warnings.push(`仍有 ${unverifiedClicks.length} 个未验证点击，不可视为可复用成功路径。`)
+  definition.metadata.flowHealth = {
+    complete: warnings.length === 0,
+    warnings,
+    checkedAt: new Date().toISOString(),
+  }
 }
 
 function hasLaterUnassertedWaitBeforeBoundary(all: readonly InspectionStep[], index: number): boolean {
@@ -200,7 +238,7 @@ function findSafeResetFloor(
     const hasStrongSemanticStep = abandoned.some(step =>
       step.kind === 'checkpoint'
       || referenced.has(step.id)
-      || (step.kind === 'tool' && step.expectation !== undefined),
+      || (step.kind === 'tool' && (step.expectation !== undefined || step.teaching?.status === 'verified')),
     )
     if (!hasStrongSemanticStep) return current.index
   }
@@ -210,9 +248,7 @@ function findSafeResetFloor(
 function navigationIdentity(value: string): string {
   try {
     const url = new URL(value)
-    if (url.pathname.startsWith('/com-sso/')) {
-      url.search = ''
-    }
+    if (url.pathname.startsWith('/com-sso/')) url.search = ''
     url.hash = ''
     return url.toString().replace(/\/$/, '')
   } catch {
@@ -247,7 +283,7 @@ function isTypingTool(tool: string): boolean {
     || tool === 'browser_type_totp_profile'
 }
 
-function rewriteSteps(definition: InspectionDefinition, kept: readonly InspectionStep[]): void {
+function rewriteSteps(definition: InspectionDefinition, kept: readonly InspectionStep[], stripTeaching: boolean): void {
   const idMap = new Map<string, string>()
   kept.forEach((step, index) => idMap.set(step.id, `step-${String(index + 1).padStart(3, '0')}`))
 
@@ -259,11 +295,20 @@ function rewriteSteps(definition: InspectionDefinition, kept: readonly Inspectio
           ...step.when,
           sourceStepId: idMap.get(step.when.sourceStepId) ?? step.when.sourceStepId,
         }
+    if (step.kind === 'checkpoint') {
+      return {
+        ...step,
+        id: nextId,
+        ...(when === undefined ? {} : { when }),
+      }
+    }
+    const { teaching: _teaching, ...toolStep } = step
     return {
-      ...step,
+      ...toolStep,
+      ...(stripTeaching ? {} : step.teaching === undefined ? {} : { teaching: step.teaching }),
       id: nextId,
       ...(when === undefined ? {} : { when }),
-    } as InspectionStep
+    }
   })
 }
 
@@ -279,7 +324,12 @@ function normalizeUrl(value: string): string {
 }
 
 function stepHasMeaningfulNotes(step: ToolStep): boolean {
-  return typeof step.notes === 'string' && step.notes.trim().length > 0
+  if (typeof step.notes !== 'string' || !step.notes.trim()) return false
+  return step.notes
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .some(line => !/^(执行方法|execution method)[:：]/i.test(line))
 }
 
 function findLastToolIndex(steps: readonly InspectionStep[], tool: string): number {
@@ -287,5 +337,10 @@ function findLastToolIndex(steps: readonly InspectionStep[], tool: string): numb
     const step = steps[index]
     if (step?.kind === 'tool' && step.tool === tool) return index
   }
+  return -1
+}
+
+function findLastMatchingIndex(steps: readonly InspectionStep[], predicate: (step: InspectionStep) => boolean): number {
+  for (let index = steps.length - 1; index >= 0; index -= 1) if (predicate(steps[index]!)) return index
   return -1
 }
