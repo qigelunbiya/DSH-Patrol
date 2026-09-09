@@ -127,7 +127,7 @@ export function registerPatrolClickTargetTool(
           return [
             'Semantic click executed but was NOT recorded.',
             `Resolved target: ${describeTarget(resolved)}`,
-            `Post-click expectation was not verified: ${verified.error ?? 'unknown verification error'}`,
+            `Post-click expectation was not met: ${verified.error ?? 'unknown verification error'}`,
             clicked.text,
           ].filter(Boolean).join('\n')
         }
@@ -256,7 +256,10 @@ function scoreSemanticCandidates(elements: SnapshotElement[], locator: SemanticL
     let exactText = false
     if (wantedText !== undefined) {
       if (text === wantedText) {
-        score += 100
+        // Exact visible text is the primary semantic signal. Actionability only
+        // breaks ties between equally exact nodes (for example <li> vs its <a>).
+        // A containing action like “登录帮助” must never outrank exact “登录”.
+        score += 200
         exactText = true
       } else if (text !== undefined && (text.includes(wantedText) || wantedText.includes(text))) {
         score += 55
@@ -306,17 +309,6 @@ function isDescendantSelector(candidate: string, ancestor: string): boolean {
   return candidate.startsWith(`${ancestor} > `)
 }
 
-/**
- * Prefer the smallest/deepest semantic leaf when both a real action and one or
- * more layout ancestors merely CONTAIN the requested text. React/Ant pages
- * often make a whole table/root div look clickable to heuristic snapshots
- * because its descendant text contains an action word such as RDP or 登录.
- * Clicking the leaf is safe because DOM click bubbles to a parent handler, while
- * choosing the page-sized ancestor is both ambiguous and usually wrong.
- *
- * Exact-text ties remain ties: two rows that both literally say "RDP" still
- * require a row-specific selector rather than silently choosing one.
- */
 function semanticContainmentSpecificity(text: string, wantedText: string, selector: string): number {
   const extraText = Math.max(0, text.length - wantedText.length)
   const compactTextBonus = Math.max(0, 30 - Math.min(extraText, 30))
