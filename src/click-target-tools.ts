@@ -21,6 +21,8 @@ const TEXT_OUTPUT = {
   render: (_args: unknown, value: string) => [{ type: 'text' as const, text: value }],
 }
 
+const AUTO_VERIFY_DELAYS_MS = [0, 140, 320, 700] as const
+
 interface ClickTarget {
   selector: string
   text?: string
@@ -36,15 +38,32 @@ interface SnapshotElement {
   tag?: unknown
 }
 
+interface PageState {
+  url: string
+  text: string
+  elementSignatures: Set<string>
+}
+
+interface StateChangeVerification {
+  ok: boolean
+  attempts: number
+  evidence?: string
+}
+
 export interface PatrolClickTargetOptions {
   maxSteps: number
 }
 
 /**
- * Teaching-time semantic click path. The low-level browser_click tool remains
- * the deterministic Runbook primitive, but model-facing teaching resolves one
- * concrete visible target first, proves the resulting business state, then
- * records the selector plus semantic locator for replay/healing.
+ * Teaching-time semantic click path.
+ *
+ * The model supplies what it can actually observe: normally locatorText and,
+ * when the next business state is already known, expectedText. expectedText is
+ * intentionally optional. If it is absent Patrol takes a compact pre-click
+ * state, performs the unique visible click, then verifies that the CURRENT page
+ * changed in a meaningful way. This avoids the previous failure mode where a
+ * model had to invent a post-click label before it was allowed to click a logo,
+ * menu entry, or framework control.
  */
 export function registerPatrolClickTargetTool(
   ctx: Context,
@@ -54,16 +73,16 @@ export function registerPatrolClickTargetTool(
 ): () => void {
   const tool = defineTool({
     name: 'patrol_click_target',
-    description: 'Reliably click a CURRENT visible page target. Start with locatorText. locatorRole/locatorTag are optional ranking hints and must not be guessed as hard DOM requirements. selector is optional. Broad CSS such as button or a is never allowed to silently click the first match: Patrol resolves one concrete visible stable selector first, refuses ambiguity, then clicks and records the resolved selector plus semantic locator for replay. Native actionable elements (a/button/input and explicit link/button roles) are preferred over layout ancestors that merely contain the same text.',
+    description: 'Reliably click one CURRENT visible page target. Prefer locatorText. expectedText is optional: provide it only when the next business state is concretely known; otherwise Patrol verifies a meaningful DOM/page state change automatically. locatorRole/locatorTag are optional ranking hints and must not be guessed. Broad CSS never silently clicks the first match. Native actionable elements are preferred over layout ancestors with the same text.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
-      selector: { type: 'string', description: 'Optional CSS hint. Stable selectors from patrol_snapshot are ideal. Broad selectors are accepted only when exactly one visible element matches or semantic fields uniquely identify the target.' },
-      locatorText: { type: 'string', description: 'Visible/accessible target text, for example 登录、短信登录、获取验证码、立即登录.' },
-      locatorRole: { type: 'string', description: 'Optional ranking hint such as button, link, tab. Supply only when CURRENT observation actually exposes the role.' },
-      locatorTag: { type: 'string', description: 'Optional ranking hint such as button, a, div. Supply only when CURRENT observation actually exposes the tag.' },
+      selector: { type: 'string', description: 'Optional CSS hint. Stable selectors from CURRENT Patrol snapshot evidence are ideal.' },
+      locatorText: { type: 'string', description: 'Visible/accessible target text, for example 登录、我的工作台、待办待阅工单.' },
+      locatorRole: { type: 'string', description: 'Optional CURRENT-observed role such as button/link/tab. Do not guess it.' },
+      locatorTag: { type: 'string', description: 'Optional CURRENT-observed tag such as button/a/div. Do not guess it.' },
       tabId: { type: 'integer' },
-      expectedText: { type: 'string' },
+      expectedText: { type: 'string', description: 'Optional concrete text that must appear/disappear after the click. Omit rather than invent when the post-click label is not yet known.' },
       expectationMode: { type: 'string', enum: ['contains', 'not-contains'] },
       caseSensitive: { type: 'boolean' },
       conditionSourceStepId: { type: 'string' },
@@ -85,9 +104,13 @@ export function registerPatrolClickTargetTool(
         throw new Error('patrol_click_target requires selector or at least one semantic locator field')
       }
       const expectation = optionalExpectation(args.expectedText, args.expectationMode, args.caseSensitive)
-
       const definition = await loadEditable(store, args.inspectionId, options.maxSteps)
+
       let resolved = await resolveCurrentTarget(runner, exec, selector, locator, args.tabId)
+      const beforeState = expectation.expectation === undefined && locator !== undefined
+        ? await capturePageState(runner, exec, args.tabId)
+        : undefined
+
       let clicked = await runner.dispatch('browser_click', compactObject({ selector: resolved.selector, tabId: args.tabId }), exec)
 
       // Dynamic React/Vue/portal UIs can replace the node between snapshot and
@@ -105,16 +128,13 @@ export function registerPatrolClickTargetTool(
           clicked.error ?? clicked.text ?? 'Unknown browser click error',
         ].join('\n')
       }
-      if (locator !== undefined && expectation.expectation === undefined) {
-        return [
-          'Semantic click executed but was NOT recorded.',
-          `Resolved target: ${describeTarget(resolved)}`,
-          'Recording a reusable semantic click requires expectedText that proves the next patrol task state was reached.',
-          clicked.text,
-        ].filter(Boolean).join('\n')
-      }
 
       let verificationAttempts: number | undefined
+      let verificationMethod: ToolStep['teaching'] extends infer T
+        ? T extends { method: infer M } ? M : never
+        : never
+      let verificationEvidence: string | undefined
+
       if (expectation.expectation !== undefined) {
         const verified = await verifyPostClickExpectation(
           (toolName, toolArgs, toolExec) => runner.dispatch(toolName, toolArgs, toolExec),
@@ -125,12 +145,28 @@ export function registerPatrolClickTargetTool(
         verificationAttempts = verified.attempts
         if (!verified.ok) {
           return [
-            'Semantic click executed but was NOT recorded.',
+            'Semantic click executed but was NOT recorded because the requested business expectation was not reached.',
             `Resolved target: ${describeTarget(resolved)}`,
             `Post-click expectation was not met: ${verified.error ?? 'unknown verification error'}`,
             clicked.text,
+            'Observe the CURRENT page and retry only with new evidence; do not guess a URL or repeat the same click blindly.',
           ].filter(Boolean).join('\n')
         }
+        verificationMethod = 'expected-text'
+        verificationEvidence = `${expectation.expectation.mode} ${JSON.stringify(expectation.expectation.value)}`
+      } else if (locator !== undefined) {
+        const verified = await verifyAutomaticStateChange(runner, exec, beforeState, args.tabId)
+        verificationAttempts = verified.attempts
+        if (!verified.ok) {
+          return [
+            'Semantic click executed but was NOT recorded because no meaningful post-click page/DOM state change could be verified.',
+            `Resolved target: ${describeTarget(resolved)}`,
+            clicked.text,
+            'Use patrol_observe once to inspect the CURRENT state. If the user-required result is visible, retry with a concrete expectedText; otherwise treat this click as failed instead of bypassing it with navigation.',
+          ].filter(Boolean).join('\n')
+        }
+        verificationMethod = 'state-change'
+        verificationEvidence = verified.evidence
       }
 
       const condition = optionalCondition(args.conditionSourceStepId, args.conditionExpectedText, args.conditionMode)
@@ -144,6 +180,13 @@ export function registerPatrolClickTargetTool(
         ...expectation,
         ...condition,
         ...(locator === undefined ? {} : { locator }),
+        ...(verificationMethod === undefined ? {} : {
+          teaching: {
+            status: 'verified',
+            method: verificationMethod,
+            ...(verificationEvidence === undefined ? {} : { evidence: verificationEvidence }),
+          },
+        }),
         notes: stepExecutionNotes({
           tool: 'browser_click',
           args: stepArguments,
@@ -159,14 +202,77 @@ export function registerPatrolClickTargetTool(
       return [
         `Executed and recorded ${step.id} (browser_click) after CURRENT target resolution.`,
         `Resolved target: ${describeTarget(resolved)}`,
-        verificationAttempts === undefined ? undefined : `Post-click business state verified in ${verificationAttempts} read attempt(s).`,
+        verificationAttempts === undefined
+          ? undefined
+          : `Post-click business state verified in ${verificationAttempts} attempt(s) by ${verificationMethod === 'state-change' ? 'automatic CURRENT-state change' : 'expected text'}.`,
+        verificationEvidence === undefined ? undefined : `Verification evidence: ${verificationEvidence}`,
         clicked.text,
-        'The low-level browser_click is intentionally dispatched inside this Patrol composite so the action stays auditable and reusable.',
+        'The low-level browser_click was dispatched inside Patrol so the action remains auditable and reusable.',
       ].filter(Boolean).join('\n')
     },
   })
 
   return ctx.tools.register(tool)
+}
+
+async function capturePageState(
+  runner: PatrolRunner,
+  exec: ToolRunContext,
+  tabId: number | undefined,
+): Promise<PageState | undefined> {
+  const [page, snapshot] = await Promise.all([
+    runner.dispatch('browser_read_page', compactObject({ maxChars: 12000, tabId }), exec),
+    runner.dispatch('browser_snapshot', compactObject({ maxElements: 160, includeHidden: false, tabId }), exec),
+  ])
+  if (!page.ok && !snapshot.ok) return undefined
+  const url = objectString(page.value, 'url') ?? objectString(snapshot.value, 'url') ?? ''
+  const text = objectString(page.value, 'text') ?? page.text ?? ''
+  return {
+    url,
+    text: normalizePageText(text),
+    elementSignatures: snapshotElementSignatures(snapshot.value),
+  }
+}
+
+async function verifyAutomaticStateChange(
+  runner: PatrolRunner,
+  exec: ToolRunContext,
+  before: PageState | undefined,
+  tabId: number | undefined,
+): Promise<StateChangeVerification> {
+  if (before === undefined) {
+    return { ok: false, attempts: 0 }
+  }
+  let last: PageState | undefined
+  for (let index = 0; index < AUTO_VERIFY_DELAYS_MS.length; index += 1) {
+    const delayMs = AUTO_VERIFY_DELAYS_MS[index]!
+    if (delayMs > 0) await sleep(delayMs)
+    last = await capturePageState(runner, exec, tabId)
+    if (last === undefined) continue
+    const evidence = stateChangeEvidence(before, last)
+    if (evidence !== undefined) return { ok: true, attempts: index + 1, evidence }
+  }
+  return { ok: false, attempts: AUTO_VERIFY_DELAYS_MS.length }
+}
+
+function stateChangeEvidence(before: PageState, after: PageState): string | undefined {
+  if (before.url && after.url && before.url !== after.url) {
+    return `URL changed from ${safeStateUrl(before.url)} to ${safeStateUrl(after.url)}`
+  }
+
+  const added = [...after.elementSignatures].filter(signature => !before.elementSignatures.has(signature))
+  if (added.length > 0) {
+    const evidence = added.find(signature => signature.includes('|text=')) ?? added[0]
+    return evidence === undefined ? 'interactive DOM changed' : `new interactive DOM: ${shortStateEvidence(evidence)}`
+  }
+
+  if (before.text !== after.text) {
+    const lengthDelta = Math.abs(before.text.length - after.text.length)
+    if (lengthDelta >= 12 || !before.text || !after.text) {
+      return `visible page text changed (${before.text.length} -> ${after.text.length} chars)`
+    }
+  }
+  return undefined
 }
 
 async function resolveCurrentTarget(
@@ -189,7 +295,7 @@ async function resolveCurrentTarget(
     return { selector, match: 'selector-unique' }
   }
 
-  const snapshot = await runner.dispatch('browser_snapshot', compactObject({ maxElements: 500, tabId }), exec)
+  const snapshot = await runner.dispatch('browser_snapshot', compactObject({ maxElements: 500, includeHidden: false, tabId }), exec)
   if (!snapshot.ok) throw new Error(snapshot.error ?? 'Could not snapshot current interactive elements for click resolution')
   const elements = snapshotElements(snapshot.value)
   if (elements.length === 0) throw new Error('current page snapshot contains no visible interactive elements')
@@ -200,7 +306,7 @@ async function resolveCurrentTarget(
     return targetFromSnapshot(exactSelector[0]!, 'semantic-contains')
   }
   if (semantic.length === 0) {
-    throw new Error(`no visible interactive element matched ${describeLocator(locator)}${selector ? ` with selector hint ${JSON.stringify(selector)}` : ''}. Call patrol_observe, use CURRENT visible text, and retry locatorText without guessing role/tag; do not fall back to button/a or text= selectors.`)
+    throw new Error(`no visible interactive element matched ${describeLocator(locator)}${selector ? ` with selector hint ${JSON.stringify(selector)}` : ''}. Call patrol_observe once, use CURRENT visible text, and retry without guessing role/tag or internal URLs.`)
   }
 
   const bestScore = semantic[0]!.score
@@ -243,10 +349,6 @@ function scoreSemanticCandidates(elements: SnapshotElement[], locator: SemanticL
     const role = normalizeToken(element.role)
     const tag = normalizeToken(element.tag)
 
-    // Without text, role/tag are the locator and therefore remain strict.
-    // With visible text, they are only ranking hints. Real-world React/Vue
-    // pages frequently implement a button as a clickable div/span, and a model
-    // should not lose an exact text target merely because it guessed role=button.
     if (wantedText === undefined) {
       if (wantedRole !== undefined && role !== wantedRole) continue
       if (wantedTag !== undefined && tag !== wantedTag) continue
@@ -256,9 +358,6 @@ function scoreSemanticCandidates(elements: SnapshotElement[], locator: SemanticL
     let exactText = false
     if (wantedText !== undefined) {
       if (text === wantedText) {
-        // Exact visible text is the primary semantic signal. Actionability only
-        // breaks ties between equally exact nodes (for example <li> vs its <a>).
-        // A containing action like “登录帮助” must never outrank exact “登录”.
         score += 200
         exactText = true
       } else if (text !== undefined && (text.includes(wantedText) || wantedText.includes(text))) {
@@ -278,13 +377,7 @@ function scoreSemanticCandidates(elements: SnapshotElement[], locator: SemanticL
   return ranked
 }
 
-/**
- * A layout ancestor and the actual clickable descendant often expose identical
- * text. Prefer actual action controls instead of the outer <li>/<div>. This is
- * important for delegated/framework handlers (Angular/Vue/Bingo-style menus,
- * React composites, etc.): click events bubble from a child to an ancestor, not
- * from an ancestor down into the <a>/<button> that owns the handler.
- */
+/** Prefer the actual action control over a layout ancestor exposing same text. */
 function semanticActionabilityScore(role: string | undefined, tag: string | undefined): number {
   let score = 0
   if (role !== undefined && ['button', 'link', 'tab', 'menuitem'].includes(role)) score += 22
@@ -356,12 +449,20 @@ function snapshotElements(value: JsonValue | undefined): SnapshotElement[] {
   for (const child of children) {
     if (child === null || typeof child !== 'object' || Array.isArray(child)) continue
     const object = child as JsonObject
-    out.push({
-      selector: object.selector,
-      text: object.text,
-      role: object.role,
-      tag: object.tag,
-    })
+    out.push({ selector: object.selector, text: object.text, role: object.role, tag: object.tag })
+  }
+  return out
+}
+
+function snapshotElementSignatures(value: JsonValue | undefined): Set<string> {
+  const out = new Set<string>()
+  for (const element of snapshotElements(value)) {
+    const selector = cleanString(element.selector) ?? ''
+    const text = cleanString(element.text) ?? ''
+    const role = cleanString(element.role) ?? ''
+    const tag = cleanString(element.tag) ?? ''
+    if (!selector && !text) continue
+    out.add(`selector=${selector}|tag=${tag}|role=${role}|text=${normalizePageText(text)}`)
   }
   return out
 }
@@ -414,6 +515,10 @@ function normalizeToken(value: unknown): string | undefined {
   return text === undefined ? undefined : text.toLowerCase()
 }
 
+function normalizePageText(value: unknown): string {
+  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().toLocaleLowerCase() : ''
+}
+
 function cleanString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
 }
@@ -422,6 +527,12 @@ function objectNumber(value: JsonValue | undefined, key: string): number | undef
   if (value === null || value === undefined || typeof value !== 'object' || Array.isArray(value)) return undefined
   const child = (value as JsonObject)[key]
   return typeof child === 'number' && Number.isFinite(child) ? child : undefined
+}
+
+function objectString(value: JsonValue | undefined, key: string): string | undefined {
+  if (value === null || value === undefined || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const child = (value as JsonObject)[key]
+  return typeof child === 'string' ? child : undefined
 }
 
 function compactObject(value: Record<string, string | number | boolean | undefined>): JsonObject {
@@ -441,6 +552,7 @@ async function appendStep(store: PatrolStore, definition: InspectionDefinition, 
   definition.steps.push(step)
   definition.schemaVersion = '0.2'
   definition.metadata.updatedAt = new Date().toISOString()
+  delete definition.metadata.flowHealth
   await store.save(definition)
 }
 
@@ -481,4 +593,26 @@ function qualifyTopDocumentSelector(selector: string | undefined): string | unde
   if (selector === undefined) return undefined
   if (selector.startsWith('frame-url(') || selector.startsWith('top-frame::')) return selector
   return `top-frame::${selector}`
+}
+
+function safeStateUrl(value: string): string {
+  try {
+    const url = new URL(value)
+    url.username = ''
+    url.password = ''
+    url.search = ''
+    url.hash = ''
+    return url.toString()
+  } catch {
+    return value.split(/[?#]/, 1)[0] ?? value
+  }
+}
+
+function shortStateEvidence(value: string): string {
+  const text = value.replace(/\s+/g, ' ').trim()
+  return text.length <= 220 ? text : `${text.slice(0, 220)}…`
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
 }
