@@ -198,6 +198,20 @@ function createDefinitions(ctx: Context, store: PatrolStore, runner: PatrolRunne
       assertSafeForStorage(jsonArguments)
       const dispatched = await runner.dispatch(tool, jsonArguments, exec)
       if (!dispatched.ok) return `Teaching action failed and was NOT recorded. ${dispatched.error ?? 'Unknown browser error'}\n${dispatched.text}`
+      if (tool === 'browser_click' && args.expectedText === undefined) {
+        return 'Click executed but was NOT recorded. A click step requires expectedText proving that the next business task state was reached.'
+      }
+      if (tool === 'browser_click' && args.expectedText !== undefined) {
+        const observed = await runner.dispatch('browser_read_page', {}, exec)
+        if (!observed.ok) {
+          return `Click executed but was NOT recorded. Post-click expectation could not be verified: ${observed.error ?? observed.text ?? 'browser_read_page failed'}`
+        }
+        const expectation = optionalExpectation(args.expectedText, args.expectationMode, args.caseSensitive).expectation
+        const pageText = toolOutputText(observed.value) ?? observed.text ?? ''
+        if (expectation !== undefined && !expectationMatches(pageText, expectation)) {
+          return `Click executed but was NOT recorded. Post-click expectation was not met: expected ${expectation.mode} ${JSON.stringify(expectation.value)}.`
+        }
+      }
 
       const step: ToolStep = {
         id: nextStepId(definition.steps),
@@ -650,6 +664,19 @@ function optionalExpectation(expectedText: string | undefined, mode: string | un
       caseSensitive: caseSensitive ?? false,
     },
   }
+}
+
+function expectationMatches(text: string, expectation: TextExpectation): boolean {
+  const haystack = expectation.caseSensitive ? text : text.toLocaleLowerCase()
+  const needle = expectation.caseSensitive ? expectation.value : expectation.value.toLocaleLowerCase()
+  const contains = haystack.includes(needle)
+  return expectation.mode === 'not-contains' ? !contains : contains
+}
+
+function toolOutputText(value: JsonValue | undefined): string | undefined {
+  if (value === null || value === undefined || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const text = (value as JsonObject).text
+  return typeof text === 'string' ? text : undefined
 }
 
 function optionalCondition(sourceStepId: string | undefined, expectedText: string | undefined, mode: string | undefined): { when?: StepCondition } {

@@ -260,7 +260,7 @@ function click(args) {
   const element = requiredElement(args.selector)
   element.scrollIntoView({ block: 'center', inline: 'center' })
   if (typeof element.click !== 'function') throw new Error(`selector ${args.selector} is not clickable`)
-  element.click()
+  dispatchRealisticClick(element)
   return { ok: true, selector: args.selector, tag: element.tagName.toLowerCase(), text: compactText(element.innerText || element.textContent || '', 120) }
 }
 
@@ -350,7 +350,27 @@ function isVisible(element) {
   const style = getComputedStyle(element)
   if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false
   const rect = element.getBoundingClientRect()
-  return rect.width > 0 && rect.height > 0
+  if (rect.width <= 0 || rect.height <= 0) return false
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0
+  if (viewportWidth > 0 && viewportHeight > 0) {
+    if (rect.right <= 0 || rect.bottom <= 0 || rect.left >= viewportWidth || rect.top >= viewportHeight) return false
+  }
+  return true
+}
+
+function dispatchRealisticClick(element) {
+  const rect = element.getBoundingClientRect()
+  const x = Math.max(rect.left + 1, Math.min(rect.left + rect.width / 2, rect.right - 1))
+  const y = Math.max(rect.top + 1, Math.min(rect.top + rect.height / 2, rect.bottom - 1))
+  element.focus?.({ preventScroll: true })
+  for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup']) {
+    const event = type.startsWith('pointer') && typeof PointerEvent !== 'undefined'
+      ? new PointerEvent(type, { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse', isPrimary: true })
+      : new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0 })
+    element.dispatchEvent(event)
+  }
+  element.click()
 }
 
 function stableSelector(element) {

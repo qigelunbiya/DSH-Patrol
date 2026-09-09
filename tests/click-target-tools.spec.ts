@@ -80,6 +80,7 @@ describe('semantic Patrol click target', () => {
         }
       }
       if (name === 'browser_click') return { ok: true, text: 'Clicked #top-login', value: { ok: true } }
+      if (name === 'browser_read_page') return { ok: true, text: '登录成功 首页', value: { ok: true, text: '登录成功 首页' } }
       throw new Error(`unexpected tool ${name}`)
     })
 
@@ -88,12 +89,14 @@ describe('semantic Patrol click target', () => {
       stepName: 'Open login',
       locatorText: '登录',
       locatorRole: 'button',
+      expectedText: '首页',
     }, exec)
 
     expect(result).toContain('#top-login')
     expect(calls).toEqual([
       { tool: 'browser_snapshot', args: { maxElements: 500 } },
       { tool: 'browser_click', args: { selector: 'top-frame::#top-login' } },
+      { tool: 'browser_read_page', args: {} },
     ])
     const saved = await store.load('click-target')
     expect(saved.steps).toHaveLength(1)
@@ -127,6 +130,7 @@ describe('semantic Patrol click target', () => {
         }
       }
       if (name === 'browser_click') return { ok: true, text: 'Clicked #custom-login', value: { ok: true } }
+      if (name === 'browser_read_page') return { ok: true, text: '登录成功 首页', value: { ok: true, text: '登录成功 首页' } }
       throw new Error(`unexpected tool ${name}`)
     })
 
@@ -135,17 +139,89 @@ describe('semantic Patrol click target', () => {
       stepName: 'Open custom login entry',
       locatorText: '登录',
       locatorRole: 'button',
+      expectedText: '首页',
     }, exec)
 
     expect(result).toContain('#custom-login')
     expect(calls).toEqual([
       { tool: 'browser_snapshot', args: { maxElements: 500 } },
       { tool: 'browser_click', args: { selector: 'top-frame::#custom-login' } },
+      { tool: 'browser_read_page', args: {} },
     ])
     expect((await store.load('click-target')).steps[0]).toMatchObject({
       tool: 'browser_click',
       arguments: { selector: 'top-frame::#custom-login' },
     })
+  })
+
+  it('requires explicit post-click success text before recording a semantic click', async () => {
+    const calls: Array<{ tool: string; args: JsonObject }> = []
+    const { store, tool, exec } = await setup(async (name, args) => {
+      calls.push({ tool: name, args })
+      if (name === 'browser_snapshot') {
+        return {
+          ok: true,
+          text: 'snapshot',
+          value: {
+            ok: true,
+            elements: [{ tag: 'a', role: 'link', text: '我的工作台', selector: '#workbench' }],
+          },
+        }
+      }
+      if (name === 'browser_click') return { ok: true, text: 'Clicked #workbench', value: { ok: true } }
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    const result = await tool.execute({
+      inspectionId: 'click-target',
+      stepName: '点击我的工作台',
+      locatorText: '我的工作台',
+    }, exec)
+
+    expect(result).toContain('was NOT recorded')
+    expect(calls).toEqual([
+      { tool: 'browser_snapshot', args: { maxElements: 500 } },
+      { tool: 'browser_click', args: { selector: 'top-frame::#workbench' } },
+    ])
+    expect((await store.load('click-target')).steps).toEqual([])
+  })
+
+  it('does not record a semantic click when the expected next task text is missing after click', async () => {
+    const calls: Array<{ tool: string; args: JsonObject }> = []
+    const { store, tool, exec } = await setup(async (name, args) => {
+      calls.push({ tool: name, args })
+      if (name === 'browser_snapshot') {
+        return {
+          ok: true,
+          text: 'snapshot',
+          value: {
+            ok: true,
+            elements: [{ tag: 'a', role: 'link', text: '我的工作台', selector: '#workbench' }],
+          },
+        }
+      }
+      if (name === 'browser_click') return { ok: true, text: 'Clicked #workbench', value: { ok: true } }
+      if (name === 'browser_read_page') {
+        return { ok: true, text: '首页 待办 统计', value: { ok: true, text: '首页 待办 统计' } }
+      }
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    const result = await tool.execute({
+      inspectionId: 'click-target',
+      stepName: '点击我的工作台',
+      locatorText: '我的工作台',
+      expectedText: '待办待阅工单',
+    }, exec)
+
+    expect(result).toContain('Post-click expectation was not met')
+    expect(result).toContain('was NOT recorded')
+    expect(calls).toEqual([
+      { tool: 'browser_snapshot', args: { maxElements: 500 } },
+      { tool: 'browser_click', args: { selector: 'top-frame::#workbench' } },
+      { tool: 'browser_read_page', args: {} },
+    ])
+    expect((await store.load('click-target')).steps).toEqual([])
   })
 
   it('refuses a broad selector that matches multiple visible elements instead of clicking the first one', async () => {
@@ -210,6 +286,7 @@ describe('semantic Patrol click target', () => {
         }
       }
       if (name === 'browser_click') return { ok: true, text: 'clicked top menu', value: { ok: true } }
+      if (name === 'browser_read_page') return { ok: true, text: '左侧菜单 待办待阅工单', value: { ok: true, text: '左侧菜单 待办待阅工单' } }
       throw new Error(`unexpected tool ${name}`)
     })
 
@@ -217,12 +294,14 @@ describe('semantic Patrol click target', () => {
       inspectionId: 'click-target',
       stepName: '点击我的工作台',
       locatorText: '我的工作台',
+      expectedText: '待办待阅工单',
     }, exec)
 
     expect(result).toContain('top-frame::')
     expect(calls).toEqual([
       { tool: 'browser_snapshot', args: { maxElements: 500 } },
       { tool: 'browser_click', args: { selector: `top-frame::${menuSelector}` } },
+      { tool: 'browser_read_page', args: {} },
     ])
     expect((await store.load('click-target')).steps[0]).toMatchObject({
       tool: 'browser_click',
@@ -251,6 +330,7 @@ describe('semantic Patrol click target', () => {
         }
       }
       if (name === 'browser_click') return { ok: true, text: `Clicked ${String(args.selector)}`, value: { ok: true } }
+      if (name === 'browser_read_page') return { ok: true, text: '待办列表 工单号', value: { ok: true, text: '待办列表 工单号' } }
       throw new Error(`unexpected tool ${name}`)
     })
 
@@ -258,12 +338,14 @@ describe('semantic Patrol click target', () => {
       inspectionId: 'click-target',
       stepName: '打开待办待阅工单',
       locatorText: '待办待阅工单',
+      expectedText: '工单号',
     }, exec)
 
     expect(result).toContain(anchor)
     expect(calls).toEqual([
       { tool: 'browser_snapshot', args: { maxElements: 500 } },
       { tool: 'browser_click', args: { selector: `top-frame::${anchor}` } },
+      { tool: 'browser_read_page', args: {} },
     ])
     expect((await store.load('click-target')).steps[0]).toMatchObject({
       arguments: { selector: `top-frame::${anchor}` },
@@ -290,6 +372,7 @@ describe('semantic Patrol click target', () => {
         }
       }
       if (name === 'browser_click') return { ok: true, text: `Clicked ${String(args.selector)}`, value: { ok: true } }
+      if (name === 'browser_read_page') return { ok: true, text: '待办列表 工单号', value: { ok: true, text: '待办列表 工单号' } }
       throw new Error(`unexpected tool ${name}`)
     })
 
@@ -297,11 +380,13 @@ describe('semantic Patrol click target', () => {
       inspectionId: 'click-target',
       stepName: '打开待办待阅工单',
       locatorText: '待办待阅工单',
+      expectedText: '工单号',
     }, exec)
 
     expect(calls).toEqual([
       { tool: 'browser_snapshot', args: { maxElements: 500 } },
       { tool: 'browser_click', args: { selector: contentSelector } },
+      { tool: 'browser_read_page', args: {} },
     ])
     expect((await store.load('click-target')).steps[0]).toMatchObject({
       arguments: { selector: contentSelector },

@@ -96,8 +96,7 @@ function frameClick(args) {
   const element = frameRequiredElement(args.selector)
   if (!frameIsVisible(element)) throw new Error(`element is not visible: ${args.selector}`)
   element.scrollIntoView({ block: 'center', inline: 'center' })
-  if (typeof element.click === 'function') element.click()
-  else element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }))
+  frameDispatchRealisticClick(element)
   return {
     ok: true,
     selector: args.selector,
@@ -366,7 +365,28 @@ function frameIsRendered(element) {
 function frameIsVisible(element) {
   if (!frameIsRendered(element)) return false
   const rect = element.getBoundingClientRect()
-  return rect.width > 0 && rect.height > 0
+  if (rect.width <= 0 || rect.height <= 0) return false
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0
+  if (viewportWidth > 0 && viewportHeight > 0) {
+    if (rect.right <= 0 || rect.bottom <= 0 || rect.left >= viewportWidth || rect.top >= viewportHeight) return false
+  }
+  return true
+}
+
+function frameDispatchRealisticClick(element) {
+  const rect = element.getBoundingClientRect()
+  const x = Math.max(rect.left + 1, Math.min(rect.left + rect.width / 2, rect.right - 1))
+  const y = Math.max(rect.top + 1, Math.min(rect.top + rect.height / 2, rect.bottom - 1))
+  element.focus?.({ preventScroll: true })
+  for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup']) {
+    const event = type.startsWith('pointer') && typeof PointerEvent !== 'undefined'
+      ? new PointerEvent(type, { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse', isPrimary: true })
+      : new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0 })
+    element.dispatchEvent(event)
+  }
+  if (typeof element.click === 'function') element.click()
+  else element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0 }))
 }
 
 function frameCompactText(value, max) {

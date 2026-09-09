@@ -223,4 +223,19 @@ describe('flow compaction', () => {
       '保存最终截图',
     ])
   })
+
+  it('rejects semantic clicks that were never verified against the next business task state', () => {
+    const value = definition([
+      tool('step-001', '访问入口', 'browser_navigate', { arguments: { url: 'https://example.test' } } as Partial<InspectionStep>),
+      tool('step-002', '点击我的工作台', 'browser_click', {
+        arguments: { selector: '#workbench' },
+        locator: { text: '我的工作台' },
+      } as Partial<InspectionStep>),
+      tool('step-003', '读取首页', 'browser_read_page', { artifact: 'page-text' } as Partial<InspectionStep>),
+      tool('step-004', '保存截图', 'browser_screenshot', { artifact: 'screenshot' } as Partial<InspectionStep>),
+    ])
+
+    expect(() => selectSuccessfulTeachingPath(value, ['step-001', 'step-002', 'step-003', 'step-004']))
+      .toThrow(/lacks post-click success expectation/)
+  })
 })

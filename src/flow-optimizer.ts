@@ -36,6 +36,13 @@ export function selectSuccessfulTeachingPath(
   if (keep.size === 0) throw new Error('successful path must keep at least one step')
 
   const requestedCount = keep.size
+  for (const id of keep) {
+    const step = byId.get(id)
+    if (step?.kind === 'tool' && step.tool === 'browser_click' && step.locator?.text !== undefined && step.expectation === undefined) {
+      throw new Error(`successful path step ${id} (${step.name}) lacks post-click success expectation; rerun that semantic click with expectedText proving the next patrol task state before finalizing`)
+    }
+  }
+
   let changed = true
   while (changed) {
     changed = false

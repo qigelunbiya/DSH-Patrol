@@ -82,6 +82,7 @@ export function registerPatrolClickTargetTool(
       if (selector === undefined && locator === undefined) {
         throw new Error('patrol_click_target requires selector or at least one semantic locator field')
       }
+      const expectation = optionalExpectation(args.expectedText, args.expectationMode, args.caseSensitive)
 
       const definition = await loadEditable(store, args.inspectionId, options.maxSteps)
       let resolved = await resolveCurrentTarget(runner, exec, selector, locator, args.tabId)
@@ -102,6 +103,34 @@ export function registerPatrolClickTargetTool(
           clicked.error ?? clicked.text ?? 'Unknown browser click error',
         ].join('\n')
       }
+      if (locator !== undefined && expectation.expectation === undefined) {
+        return [
+          'Semantic click executed but was NOT recorded.',
+          `Resolved target: ${describeTarget(resolved)}`,
+          'Recording a reusable semantic click requires expectedText that proves the next patrol task state was reached.',
+          clicked.text,
+        ].filter(Boolean).join('\n')
+      }
+      if (expectation.expectation !== undefined) {
+        const observed = await runner.dispatch('browser_read_page', compactObject({ tabId: args.tabId }), exec)
+        if (!observed.ok) {
+          return [
+            'Semantic click executed but was NOT recorded.',
+            `Resolved target: ${describeTarget(resolved)}`,
+            `Post-click expectation could not be verified: ${observed.error ?? observed.text ?? 'browser_read_page failed'}`,
+            clicked.text,
+          ].filter(Boolean).join('\n')
+        }
+        const pageText = outputText(observed.value, observed.text)
+        if (!expectationMatches(pageText, expectation.expectation)) {
+          return [
+            'Semantic click executed but was NOT recorded.',
+            `Resolved target: ${describeTarget(resolved)}`,
+            `Post-click expectation was not met: expected ${expectation.expectation.mode} ${JSON.stringify(expectation.expectation.value)}.`,
+            clicked.text,
+          ].filter(Boolean).join('\n')
+        }
+      }
 
       const step: ToolStep = {
         id: nextStepId(definition.steps),
@@ -109,13 +138,13 @@ export function registerPatrolClickTargetTool(
         name: args.stepName,
         tool: 'browser_click',
         arguments: compactObject({ selector: resolved.selector, tabId: args.tabId }),
-        ...optionalExpectation(args.expectedText, args.expectationMode, args.caseSensitive),
+        ...expectation,
         ...optionalCondition(args.conditionSourceStepId, args.conditionExpectedText, args.conditionMode),
         ...(locator === undefined ? {} : { locator }),
         notes: stepExecutionNotes({
           tool: 'browser_click',
           args: compactObject({ selector: resolved.selector, tabId: args.tabId }),
-          ...optionalExpectation(args.expectedText, args.expectationMode, args.caseSensitive),
+          ...expectation,
           ...optionalCondition(args.conditionSourceStepId, args.conditionExpectedText, args.conditionMode),
           ...(locator === undefined ? {} : { locator }),
           providedNotes: args.notes,
@@ -435,6 +464,21 @@ function optionalCondition(sourceStepId: string | undefined, expectedText: strin
       caseSensitive: false,
     },
   }
+}
+
+function outputText(value: JsonValue | undefined, fallback: string | undefined): string {
+  if (value !== null && value !== undefined && typeof value === 'object' && !Array.isArray(value)) {
+    const text = (value as JsonObject).text
+    if (typeof text === 'string') return text
+  }
+  return fallback ?? ''
+}
+
+function expectationMatches(text: string, expectation: TextExpectation): boolean {
+  const haystack = expectation.caseSensitive ? text : text.toLocaleLowerCase()
+  const needle = expectation.caseSensitive ? expectation.value : expectation.value.toLocaleLowerCase()
+  const contains = haystack.includes(needle)
+  return expectation.mode === 'not-contains' ? !contains : contains
 }
 
 function qualifyTopDocumentSelector(selector: string | undefined): string | undefined {

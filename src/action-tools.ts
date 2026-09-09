@@ -463,6 +463,20 @@ async function recordAction(
   if (!dispatched.ok) {
     return `Teaching action failed and was NOT recorded. ${dispatched.error ?? 'Unknown browser error'}\n${dispatched.text}`
   }
+  if (input.tool === 'browser_click' && input.expectedText === undefined) {
+    return 'Click executed but was NOT recorded. A click step requires expectedText proving that the next business task state was reached.'
+  }
+  if (input.tool === 'browser_click' && input.expectedText !== undefined) {
+    const observed = await runner.dispatch('browser_read_page', {}, exec)
+    if (!observed.ok) {
+      return `Click executed but was NOT recorded. Post-click expectation could not be verified: ${observed.error ?? observed.text ?? 'browser_read_page failed'}`
+    }
+    const pageText = outputText(observed.value, observed.text)
+    const expectation = optionalExpectation(input.expectedText, input.expectationMode, input.caseSensitive).expectation
+    if (expectation !== undefined && !expectationMatches(pageText, expectation)) {
+      return `Click executed but was NOT recorded. Post-click expectation was not met: expected ${expectation.mode} ${JSON.stringify(expectation.value)}.`
+    }
+  }
 
   const step: ToolStep = {
     id: nextStepId(definition.steps),
@@ -547,6 +561,21 @@ function objectString(value: unknown, key: string): string | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
   const child = (value as Record<string, unknown>)[key]
   return typeof child === 'string' && child.length > 0 ? child : undefined
+}
+
+function outputText(value: unknown, fallback: string | undefined): string {
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    const text = (value as Record<string, unknown>).text
+    if (typeof text === 'string') return text
+  }
+  return fallback ?? ''
+}
+
+function expectationMatches(text: string, expectation: TextExpectation): boolean {
+  const haystack = expectation.caseSensitive ? text : text.toLocaleLowerCase()
+  const needle = expectation.caseSensitive ? expectation.value : expectation.value.toLocaleLowerCase()
+  const contains = haystack.includes(needle)
+  return expectation.mode === 'not-contains' ? !contains : contains
 }
 
 function markdownImagePath(path: string): string {

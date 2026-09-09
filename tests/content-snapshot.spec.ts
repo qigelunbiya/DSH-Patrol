@@ -83,4 +83,22 @@ describe('browser content snapshot', () => {
       text: '[RDP] [EMPTY]',
     }))
   })
+
+  it('excludes off-viewport duplicate navigation targets from the current snapshot', () => {
+    const desktop = new FakeElement('DIV', rect(240, 16, 96, 32))
+    desktop.textContent = '我的工作台'
+    desktop.innerText = '我的工作台'
+    desktop.style.cursor = 'pointer'
+
+    const collapsed = new FakeElement('DIV', rect(-10000, 16, 96, 32))
+    collapsed.textContent = '我的工作台'
+    collapsed.innerText = '我的工作台'
+    collapsed.style.cursor = 'pointer'
+
+    const context = setup([desktop, collapsed])
+    const value = JSON.parse(JSON.stringify(vm.runInContext('snapshot({ maxElements: 20 })', context)))
+
+    expect(value.elements).toHaveLength(1)
+    expect(value.elements[0]).toMatchObject({ text: '我的工作台' })
+  })
 })

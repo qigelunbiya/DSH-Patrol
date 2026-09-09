@@ -86,6 +86,9 @@ describe('semantic action specificity', () => {
       if (name === 'browser_click') {
         return { ok: true, text: `Clicked ${String(args.selector)}`, value: { ok: true } }
       }
+      if (name === 'browser_read_page') {
+        return { ok: true, text: 'RDP connection opened', value: { ok: true, text: 'RDP connection opened' } }
+      }
       throw new Error(`unexpected tool ${name}`)
     })
 
@@ -93,12 +96,14 @@ describe('semantic action specificity', () => {
       inspectionId: 'ant-rdp-click',
       stepName: 'Open RDP access',
       locatorText: 'RDP',
+      expectedText: 'connection opened',
     }, exec)
 
     expect(result).toContain(leafSelector)
     expect(calls).toEqual([
       { tool: 'browser_snapshot', args: { maxElements: 500 } },
       { tool: 'browser_click', args: { selector: `top-frame::${leafSelector}` } },
+      { tool: 'browser_read_page', args: {} },
     ])
     expect((await store.load('ant-rdp-click')).steps[0]).toMatchObject({
       tool: 'browser_click',

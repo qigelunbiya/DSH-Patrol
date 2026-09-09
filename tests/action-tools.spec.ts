@@ -138,6 +138,21 @@ describe('flat Patrol action tools', () => {
     }
   })
 
+  it('does not record a click until its post-click business state is verified', async () => {
+    const { store, calls, tool, exec } = await setup()
+
+    const result = await tool('patrol_click').execute({
+      inspectionId: 'flat-actions',
+      stepName: '打开工作台',
+      selector: '#workbench',
+    }, exec)
+
+    expect(result).toContain('expectedText')
+    expect(result).toContain('NOT recorded')
+    expect(calls).toEqual([{ tool: 'browser_click', args: { selector: '#workbench' } }])
+    expect((await store.load('flat-actions')).steps).toHaveLength(0)
+  })
+
   it('records an exact count assertion without generic JSON arguments', async () => {
     const { store, tool, exec } = await setup()
     await tool('patrol_count').execute({
