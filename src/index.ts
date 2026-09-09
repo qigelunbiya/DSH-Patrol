@@ -20,6 +20,7 @@ import { createManualVerificationGuard, PATROL_MANUAL_VERIFICATION_PROMPT } from
 import { registerPatrolModelRouteRecovery } from './model-route-recovery.js'
 import { createPatrolObservationGate, PATROL_OBSERVATION_PROMPT } from './observation-guard.js'
 import { registerPatrolObservationTools } from './observation-tools.js'
+import { registerPatrolIntegrity } from './patrol-integrity.js'
 import { PATROL_SYSTEM_PROMPT } from './prompt.js'
 import { createPatrolRecoveryGuard, PATROL_RECOVERY_PROMPT } from './recovery-guard.js'
 import { PATROL_TARGETED_RECOVERY_PROMPT, registerPatrolRecoveryTools } from './recovery-tools.js'
@@ -42,6 +43,7 @@ export * from './action-tools.js'
 export * from './click-target-tools.js'
 export * from './select-tools.js'
 export * from './behavior-prompt.js'
+export * from './patrol-integrity.js'
 export * from './creation-tools.js'
 export * from './credential-tools.js'
 export * from './excel-tools.js'
@@ -72,7 +74,7 @@ export const inject = ['tools']
 const DEFAULT_STORAGE_PATH = resolve(process.cwd(), '.dsh-patrol')
 const DEFAULT_MAX_STEPS = 200
 const DEFAULT_REPORT_MAX_CHARS = 30_000
-const TEST_MODE_BUILD_MARKER = 'test-bypass-v4-recorded-patrol'
+const TEST_MODE_BUILD_MARKER = 'test-bypass-v5-resilient-clicks'
 const TEST_MODE_DIRECT_BROWSER_READ_ONLY = new Set([
   'browser_status',
   'browser_list_tabs',
@@ -131,6 +133,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const observationGate = createPatrolObservationGate()
   const recoveryGuard = createPatrolRecoveryGuard()
   const verificationGuard = createManualVerificationGuard()
+
+  // This is intentionally independent of NORMAL/TEST mode. It prevents URL
+  // bypasses and injects the business-flow contract, but it no longer blocks a
+  // legitimate click merely because the post-click text is not known yet.
+  ctx.effect(() => registerPatrolIntegrity(ctx), 'dsh-patrol: always-on reusable-flow integrity')
 
   ctx.effect(
     () => registerPatrolTools(ctx, store, runner, {
