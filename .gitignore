@@ -11,3 +11,6 @@ coverage/
 .idea/
 .patrol-local/
 .captcha-demo-venv/
+__pycache__/
+*.pyc
+pnpm-lock.yaml
