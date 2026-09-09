@@ -98,8 +98,29 @@ async function frameReadPage(tabId, args) {
   const frames = await patrolFrames(tabId)
   const maxChars = Number.isInteger(args.maxChars) ? Math.max(100, Math.min(args.maxChars, 100000)) : 20000
   const results = []
+  let topCaptured = false
+
+  // Use the same top-document bridge that produced the unqualified selectors.
+  // This avoids a race where the dynamically registered all-frame bridge has
+  // not attached to a newly navigated top document yet, while still collecting
+  // all child-frame content below.
+  try {
+    const top = await legacySendDomCommand('readPage', {
+      ...args,
+      maxChars: Math.max(maxChars, 12000),
+      tabId,
+    })
+    if (top && typeof top === 'object' && top.ok !== false) {
+      const topFrame = frames.find(frame => frame.frameId === 0) ?? { frameId: 0, parentFrameId: -1, url: top.url || '' }
+      results.push({ frame: topFrame, value: top })
+      topCaptured = true
+    }
+  } catch {
+    // Fall back to the all-frame bridge below.
+  }
 
   for (const frame of frames) {
+    if (frame.frameId === 0 && topCaptured) continue
     try {
       const value = await sendFrameDomCommand(tabId, frame.frameId, 'readPage', {
         selector: args.selector,
@@ -148,7 +169,20 @@ async function frameReadPage(tabId, args) {
 async function frameCount(tabId, args) {
   if (typeof args.selector !== 'string' || !args.selector) throw new Error('count requires selector')
   const target = parseFrameSelector(args.selector)
-  const matches = await countAcrossFrames(tabId, target.selector, target.frameUrl, args.visibleOnly === true, target.topFrame === true)
+  if (target.topFrame === true) {
+    const value = await legacySendDomCommand('count', {
+      ...stripTransportArgs(args),
+      selector: target.selector,
+      tabId,
+    })
+    return {
+      ok: true,
+      selector: args.selector,
+      count: Number.isInteger(value?.count) ? value.count : 0,
+      visibleOnly: args.visibleOnly === true,
+    }
+  }
+  const matches = await countAcrossFrames(tabId, target.selector, target.frameUrl, args.visibleOnly === true, false)
   return {
     ok: true,
     selector: args.selector,
@@ -160,12 +194,21 @@ async function frameCount(tabId, args) {
 async function frameMutation(tabId, cmd, args) {
   const selectorValue = typeof args.selector === 'string' && args.selector ? args.selector : undefined
   if (!selectorValue) {
-    // Key presses and page scrolling without a selector belong to the top document.
-    return await sendFrameDomCommand(tabId, 0, cmd, stripTransportArgs(args))
+    // Key presses and page scrolling without a selector belong to the top
+    // document, so keep them on the long-lived top bridge as well.
+    return await legacySendDomCommand(cmd, { ...stripTransportArgs(args), tabId })
   }
 
   const target = parseFrameSelector(selectorValue)
-  const matches = await countAcrossFrames(tabId, target.selector, target.frameUrl, true, target.topFrame === true)
+  if (target.topFrame === true) {
+    return await legacySendDomCommand(cmd, {
+      ...stripTransportArgs(args),
+      selector: target.selector,
+      tabId,
+    })
+  }
+
+  const matches = await countAcrossFrames(tabId, target.selector, target.frameUrl, true, false)
   const total = matches.reduce((sum, item) => sum + item.count, 0)
   if (total === 0) throw new Error(`element not found in any accessible frame: ${target.selector}`)
   if (total > 1) {
@@ -182,10 +225,17 @@ async function frameMutation(tabId, cmd, args) {
 
 async function frameWait(tabId, args) {
   if (typeof args.selector !== 'string' || !args.selector) {
-    return await sendFrameDomCommand(tabId, 0, 'wait', stripTransportArgs(args))
+    return await legacySendDomCommand('wait', { ...stripTransportArgs(args), tabId })
   }
   const target = parseFrameSelector(args.selector)
-  const frames = await patrolFrames(tabId, target.frameUrl, target.topFrame === true)
+  if (target.topFrame === true) {
+    return await legacySendDomCommand('wait', {
+      ...stripTransportArgs(args),
+      selector: target.selector,
+      tabId,
+    })
+  }
+  const frames = await patrolFrames(tabId, target.frameUrl, false)
   const condition = args.condition === 'gone' ? 'gone' : 'visible'
   const attempts = await Promise.all(frames.map(async frame => {
     try {
