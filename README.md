@@ -7,6 +7,7 @@
 <p align="center">
   <a href="https://github.com/qigelunbiya/DSH-Patrol/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/qigelunbiya/DSH-Patrol/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Status" src="https://img.shields.io/badge/status-alpha-orange">
+  <img alt="Distribution" src="https://img.shields.io/badge/distribution-GitHub%20source-blue">
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-6.x-3178C6?logo=typescript&logoColor=white">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-green"></a>
 </p>
@@ -16,6 +17,8 @@
 **DSH Patrol is a browser patrol and website inspection plugin for DeepSeek Harness. Teach a workflow once, verify it, then replay it deterministically with a managed Chromium browser.**
 
 > 把「每次都让 AI 重新操作网页」变成「教一次，后续稳定巡检」。
+
+> **当前状态：Alpha / GitHub-first。** 现阶段推荐直接从 GitHub 克隆源码并使用仓库自带安装脚本。项目稳定后再考虑发布 npm 预构建包；目前 README 不把 npm 作为默认安装入口。
 
 ## 为什么用 DSH Patrol
 
@@ -30,43 +33,56 @@
 
 适合的场景包括：内部运维后台巡检、业务系统日常检查、网页状态核对、需要登录态的重复流程、截图留证、人工令牌介入的半自动巡检，以及“先由 Agent 教会、以后稳定重放”的浏览器工作流。
 
-## 1 分钟快速开始
+## 快速开始
 
-### 1. 安装
+### 当前推荐：GitHub 源码安装
 
-**推荐：npm 预构建包**。完成首次 npm 发布后，用户只需要一条命令，不需要允许 Git dependency 的 `prepare` 构建：
+现阶段最稳妥的方式是把 **DSH Patrol** 和 **DeepSeek Harness** 都放在本机，然后运行仓库提供的 PowerShell 安装脚本。
 
-```bash
-dsh plugin --profile web add dsh-patrol
-```
+前置条件：
 
-如果你是从 DeepSeek Harness 源码仓库运行：
+- 已安装 Git。
+- Node.js `>= 22`。
+- 已安装 pnpm。
+- 本机已有可运行的 DeepSeek Harness 源码环境。
+- Windows PowerShell / PowerShell 7 可执行仓库内的 `.ps1` 安装脚本。
 
-```powershell
-pnpm dsh plugin --profile web add dsh-patrol
-```
-
-> 当前仓库仍处于 alpha。若 npm registry 中暂时还没有 `dsh-patrol`，请先使用下方的源码开发安装；维护者的首次 npm 发布流程见 [`docs/publishing.md`](docs/publishing.md)。
-
-### 2. 启动 Harness
-
-全局 / npm 方式：
-
-```bash
-dsh web
-```
-
-Harness 源码方式：
+### 1. 克隆 DSH Patrol
 
 ```powershell
+git clone https://github.com/qigelunbiya/DSH-Patrol.git
+cd DSH-Patrol
+```
+
+### 2. 安装到你的 DeepSeek Harness
+
+假设 Harness 位于：
+
+```text
+D:\deepseek-harness
+```
+
+执行：
+
+```powershell
+.\scripts\install-local.ps1 `
+  -HarnessRoot "D:\deepseek-harness"
+```
+
+安装脚本会自动执行依赖安装、类型检查、测试、扩展检查、UTF-8 检查和构建，然后安装 Patrol preset、Host Browser Bridge、Web client integration 与生命周期清理协调器。
+
+### 3. 启动 Harness
+
+```powershell
+cd D:\deepseek-harness
 pnpm dsh web
 ```
 
-### 3. 新建会话，选择「巡检模式」
+### 4. 新建会话，选择「巡检模式」
 
 Patrol 会自动启动自己的受管浏览器，不需要手工打开 `chrome://extensions`、开启开发者模式、Load unpacked、填写 WebSocket 地址或点击 Connect。
 
-### 4. 直接描述巡检
+### 5. 直接描述巡检
 
 例如：
 
@@ -81,7 +97,9 @@ Patrol 会自动启动自己的受管浏览器，不需要手工打开 `chrome:/
 正常体验应当是：
 
 ```text
-安装 DSH Patrol
+克隆 DSH Patrol
+    ↓
+运行 install-local.ps1
     ↓
 启动 DeepSeek Harness
     ↓
@@ -97,6 +115,52 @@ Patrol 自动加载并连接扩展
 ```
 
 如果 Managed Browser 自动启动失败，Patrol 应直接报告自动探测 / 启动错误；**不应该把用户退回到手工安装浏览器扩展的流程。**
+
+## 更新 DSH Patrol
+
+如果之前已经 clone 过仓库，需要更新到最新 `main`：
+
+```powershell
+cd DSH-Patrol
+git checkout main
+git pull --ff-only origin main
+
+.\scripts\install-local.ps1 `
+  -HarnessRoot "D:\deepseek-harness"
+```
+
+然后重新启动 Harness：
+
+```powershell
+cd D:\deepseek-harness
+pnpm dsh web
+```
+
+## GitHub Bundle 直接安装（可选 / Alpha）
+
+仓库已经声明 `dsh.bundle`，因此也可以尝试让 Harness 直接从 GitHub dependency 安装：
+
+```powershell
+pnpm dsh plugin --profile web add github:qigelunbiya/DSH-Patrol
+```
+
+但当前 GitHub dependency 获取的是 TypeScript 源码，需要执行 `prepare` 构建；pnpm 10+ 的 build-script 信任策略可能要求额外允许 `dsh-patrol` 执行构建。
+
+因此在当前 Alpha 阶段，**面向普通用户仍推荐 `git clone + scripts/install-local.ps1`**，它会显式完成构建和本地集成，问题也更容易定位。
+
+## npm 发布计划
+
+当前项目**不要求 npm 才能安装或使用**。GitHub 源码安装已经可以把插件部署到其他电脑上的 DeepSeek Harness 环境。
+
+未来项目开发稳定后，可以再发布预构建 npm 包，把安装流程收口为：
+
+```powershell
+pnpm dsh plugin --profile web add dsh-patrol
+```
+
+在 npm 包真正发布并验证之前，**请不要把上面的裸包名命令当作当前默认安装方式**。
+
+仓库已经保留 npm 打包检查和发布准备，后续不需要重新设计整个分发结构。维护者相关说明见 [`docs/publishing.md`](docs/publishing.md)。
 
 ## 工作方式
 
@@ -126,15 +190,15 @@ Deterministic Runner
 
 ## 本地开发：一条命令同步、安装并启动
 
-如果你的目录结构类似：
+如果你是项目维护者，并且目录结构类似：
 
 ```text
-E:\fangzeming\deepseekHarness\
+C:\work\
 ├── DSH-Patrol\
 └── deepseek-harness\
 ```
 
-现在在 `DSH-Patrol` 目录里直接运行：
+在 `DSH-Patrol` 目录直接运行：
 
 ```powershell
 .\scripts\dev.ps1
@@ -151,31 +215,10 @@ E:\fangzeming\deepseekHarness\
 → 启动 pnpm dsh web
 ```
 
-也就是说，原来这一整套：
-
-```powershell
-cd E:\fangzeming\deepseekHarness\DSH-Patrol
-git checkout main
-git pull --ff-only origin main
-
-.\scripts\install-local.ps1 `
-  -HarnessRoot "E:\fangzeming\deepseekHarness\deepseek-harness"
-
-cd E:\fangzeming\deepseekHarness\deepseek-harness
-pnpm dsh web
-```
-
-可以收口成：
-
-```powershell
-cd E:\fangzeming\deepseekHarness\DSH-Patrol
-.\scripts\dev.ps1
-```
-
 如果 Harness 不在同级的 `deepseek-harness` 目录：
 
 ```powershell
-.\scripts\dev.ps1 -HarnessRoot "E:\path\to\deepseek-harness"
+.\scripts\dev.ps1 -HarnessRoot "D:\path\to\deepseek-harness"
 ```
 
 只安装、不启动 Harness：
@@ -190,37 +233,7 @@ cd E:\fangzeming\deepseekHarness\DSH-Patrol
 .\scripts\dev.ps1 -SkipPull
 ```
 
-`dev.ps1` 默认在拉取前检查 Git working tree；如果存在未提交修改会直接停止，避免为了“自动更新”覆盖你的开发代码。
-
-### 传统本地安装命令
-
-如果不想让脚本操作 Git，也可以继续直接运行：
-
-```powershell
-.\scripts\install-local.ps1 -HarnessRoot "E:\path\to\deepseek-harness"
-```
-
-`install-local.ps1` 会执行依赖安装、类型检查、测试、扩展检查、UTF-8 检查和构建，然后安装 Patrol preset、Host Bridge 配置以及生命周期清理协调器。
-
-## npm 与 GitHub 源安装
-
-仓库已经声明 `dsh.bundle`，npm 打包会携带预构建的 `lib/`、浏览器 runtime、扩展、preset 和 cleanup runtime。CI 也会对发布 tarball 做 smoke test。
-
-npm 发布完成后，推荐始终使用：
-
-```bash
-dsh plugin --profile web add dsh-patrol
-```
-
-从 GitHub 源码也可以安装：
-
-```bash
-dsh plugin --profile web add github:qigelunbiya/DSH-Patrol
-```
-
-但 Git 安装拿到的是 TypeScript 源码，需要执行 `prepare` 构建；pnpm 10+ 可能要求用户显式允许 `dsh-patrol` 的 dependency build。因此面向普通用户时，**npm 预构建包是推荐分发方式**。
-
-维护者发布说明见 [`docs/publishing.md`](docs/publishing.md)。
+`dev.ps1` 默认在拉取前检查 Git working tree；如果存在未提交修改会直接停止，避免为了“自动更新”覆盖开发代码。
 
 ## v0.2 当前能力
 
@@ -266,7 +279,7 @@ DeepSeek Harness
 
 ## Bundle 安装机制
 
-安装后 Bundle Host patch 会加载：
+Bundle / GitHub dependency 安装后，Host patch 会加载：
 
 ```text
 dsh-patrol/browser-bridge-host
@@ -370,36 +383,7 @@ patrol_abort_run confirmed=true
 
 ## 卸载
 
-### npm / Bundle 安装
-
-```bash
-dsh plugin --profile web remove dsh-patrol
-```
-
-Harness 会移除依赖并重算 bundle layer。由于 Harness 当前没有第三方插件 uninstall lifecycle hook，DSH Patrol 使用预先写入 `$DSH_HOME` 的 cleanup coordinator 补上这个生命周期：
-
-```text
-dsh plugin remove dsh-patrol
-        ↓
-包与 bundle layer 被移除
-        ↓
-下一次 dsh web 启动
-        ↓
-profile 中的 self-contained cleanup row 先运行
-        ↓
-确认该 profile 已不再引用 Patrol
-        ↓
-删除该 profile 自己的 cleanup row
-        ↓
-若没有其他 profile 仍使用 Patrol：
-  删除 managed preset / browser profile / state / trust / 临时 bridge 文件
-  保留 inspections / runs / resumes
-  删除 integration-cleanup.mjs 自身
-```
-
-多 profile 场景下，协调器会先扫描其他 profile 的 package dependency 与本地 Host Bridge marker，只有最后一个 Patrol 安装消失时才删除共享集成。
-
-### 本地源码安装
+### 当前推荐的本地源码安装
 
 ```powershell
 .\scripts\uninstall-local.ps1 -Profile web
@@ -412,6 +396,18 @@ profile 中的 self-contained cleanup row 先运行
 ```
 
 如果 `patrol` preset 的 `.managed-by-dsh-patrol` marker 已被用户主动删除，卸载会把这个 preset 视为用户已接管并保留，不会误删。
+
+### GitHub Bundle / 未来 npm 安装
+
+如果是通过 Harness plugin dependency 安装，可使用：
+
+```powershell
+pnpm dsh plugin --profile web remove dsh-patrol
+```
+
+Harness 会移除依赖并重算 bundle layer。由于 Harness 当前没有第三方插件 uninstall lifecycle hook，DSH Patrol 使用预先写入 `$DSH_HOME` 的 cleanup coordinator 补上这个生命周期。
+
+多 profile 场景下，协调器会先扫描其他 profile 的 package dependency 与本地 Host Bridge marker，只有最后一个 Patrol 安装消失时才删除共享集成。
 
 ## 安全边界
 
@@ -460,9 +456,10 @@ pnpm check:encoding
 pnpm build
 ```
 
-- npm 发布流程：[`docs/publishing.md`](docs/publishing.md)
-- CI：`.github/workflows/ci.yml`
-- npm Trusted Publishing workflow：`.github/workflows/publish.yml`
+- 当前分发策略：**GitHub source first**。
+- CI：`.github/workflows/ci.yml`。
+- npm 发布准备文档：[`docs/publishing.md`](docs/publishing.md)。
+- npm Trusted Publishing workflow 已保留：`.github/workflows/publish.yml`，待项目稳定并决定正式发布时再启用。
 
 ## License
 
