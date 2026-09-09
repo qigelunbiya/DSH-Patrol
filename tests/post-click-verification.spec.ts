@@ -43,7 +43,19 @@ describe('post-click page verification', () => {
     ])
   })
 
-  it('does not retry a readable page whose business expectation is actually missing', async () => {
+  it('retries a readable old state while an asynchronous portal click is still transitioning', async () => {
+    let reads = 0
+    const result = await verifyPostClickExpectation(async () => {
+      reads += 1
+      const text = reads < 3 ? '首页 统计分析' : '首页 左侧菜单 待办待阅工单'
+      return { ok: true, text, value: { ok: true, text } }
+    }, exec, containsWorkbench, undefined, [0, 0, 0])
+
+    expect(result).toMatchObject({ ok: true, attempts: 3 })
+    expect(reads).toBe(3)
+  })
+
+  it('fails after the bounded retry window when a readable page never reaches the business expectation', async () => {
     let reads = 0
     const result = await verifyPostClickExpectation(async () => {
       reads += 1
@@ -56,6 +68,6 @@ describe('post-click page verification', () => {
 
     expect(result.ok).toBe(false)
     expect(result.error).toContain('expected post-click page to contain')
-    expect(reads).toBe(1)
+    expect(reads).toBe(3)
   })
 })
