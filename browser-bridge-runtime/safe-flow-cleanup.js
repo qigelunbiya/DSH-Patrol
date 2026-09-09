@@ -1,10 +1,10 @@
 /**
  * Conservative cleanup used by the Dashboard "清理试错" action.
  *
- * The key rule is that machine-generated `执行方法：...` notes are documentation,
- * not proof that a teaching step belongs in the final workflow. Older cleanup
- * treated those generated notes as user-authored semantic intent, which made
- * almost every modern Patrol step undeletable.
+ * Cleanup removes teaching noise; it is NOT a success declaration. After
+ * cleanup we write metadata.flowHealth so a trace that lost critical causal
+ * actions (for example credentials with no submit click) is visibly marked
+ * incomplete instead of looking like a valid reusable flow.
  */
 export function compactFlowConservatively(definition) {
   const original = Array.isArray(definition?.steps) ? definition.steps.slice() : []
@@ -23,49 +23,25 @@ export function compactFlowConservatively(definition) {
   const kept = original.filter((step, index) => {
     if (!step) return false
     if (abandonedNavigationSteps.has(index)) return false
+    if (step.kind === 'tool' && step.teaching?.status === 'unverified') return false
     if (step.kind === 'checkpoint') return true
     if (referenced.has(step.id)) return true
     if (step.expectation !== undefined) return true
     if (step.when !== undefined) return true
     if (hasUserNotes(step)) return true
 
-    // Pure teaching probes are discovery data, not replay actions. Generated
-    // execution notes do not protect them from cleanup.
     if (step.tool === 'browser_snapshot' || step.tool === 'browser_count') return false
-    if (step.tool === 'browser_login_state' || step.tool === 'browser_detect_auth_challenge') {
-      return false
-    }
+    if (step.tool === 'browser_login_state' || step.tool === 'browser_detect_auth_challenge') return false
 
-    // read_page defaults to producing a page-text teaching artifact, so artifact
-    // alone cannot mean the user asked to keep every diagnostic read. Preserve
-    // only the final required page output unless a semantic condition/expectation
-    // above protected an earlier read.
-    if (step.tool === 'browser_read_page') {
-      return needsPageOutput && index === lastPageRead
-    }
+    if (step.tool === 'browser_read_page') return needsPageOutput && index === lastPageRead
+    if (step.tool === 'browser_screenshot') return needsScreenshot && index === lastScreenshot
 
-    // Screenshots are more commonly explicit user deliverables. Preserve the
-    // final requested screenshot; finalized new flows use patrol_finalize_flow
-    // to retain any earlier business screenshot that is genuinely required.
-    if (step.tool === 'browser_screenshot') {
-      return needsScreenshot && index === lastScreenshot
-    }
-
-    // A selector-less sleep is normally teaching/recovery noise. A selector wait
-    // can be a deterministic replay dependency and is therefore kept.
     if (step.tool === 'browser_wait') {
       const selector = typeof step.arguments?.selector === 'string' ? step.arguments.selector.trim() : ''
       if (!selector) return false
     }
 
-    // A corrected value typed into the same field before any real interaction
-    // supersedes the earlier value. Never cross a click/navigation boundary:
-    // retyping after a failed submit or page reload can be genuinely required.
     if (isTypingTool(step.tool) && isSupersededTypingStep(original, index, step)) return false
-
-    // Login/CAPTCHA teaching commonly records equivalent submit/detect/wait
-    // cycles. Keep only the last equivalent retry before the next durable
-    // workflow boundary.
     if (isRetryShapedStep(step) && hasLaterEquivalentRetryBeforeBoundary(original, index, step)) return false
 
     return true
@@ -84,25 +60,80 @@ export function compactFlowConservatively(definition) {
     }),
   }))
 
+  updateFlowHealth(definition)
+
   return {
     removedSteps: original.length - definition.steps.length,
     originalSteps: original.length,
     finalSteps: definition.steps.length,
+    flowHealth: definition.metadata?.flowHealth,
   }
 }
 
-/**
- * Detect a narrow, deterministic class of guessed-navigation detours:
- *
- *   ... valid work ... -> navigate(other) -> wait/read/probe -> navigate(target)
- *
- * When the workflow returns to its declared target, the immediately preceding
- * non-target navigation round is abandoned if it contained no protected
- * business action. For a DRAFT, the same rule also removes a trailing non-target
- * navigation round that has no success evidence. This specifically avoids the
- * old "click failed, guess a URL, return, guess another URL" pollution without
- * deleting legitimate click/input work earlier in the flow.
- */
+function updateFlowHealth(definition) {
+  const steps = Array.isArray(definition?.steps) ? definition.steps : []
+  const warnings = []
+  const lastInput = findLastMatchingIndex(steps, step => step?.kind === 'tool' && isTypingTool(step.tool))
+  if (lastInput >= 0) {
+    const advances = steps.slice(lastInput + 1).some(step =>
+      step?.kind === 'tool' && ['browser_click', 'browser_press', 'browser_select', 'browser_navigate'].includes(step.tool))
+    if (!advances) {
+      warnings.push('输入步骤之后没有任何已记录的提交/点击/选择/导航动作；流程缺少关键因果步骤，不能视为可复用成功流程。')
+    }
+  }
+
+  const unverified = steps.filter(step => step?.kind === 'tool' && step.tool === 'browser_click' && step.teaching?.status === 'unverified')
+  if (unverified.length > 0) warnings.push(`仍包含 ${unverified.length} 个未验证点击。`)
+
+  // If a task checklist is available, expose unmatched action categories as a
+  // diagnosis instead of silently claiming cleanup succeeded.
+  const checklist = Array.isArray(definition?.metadata?.taskChecklist) ? definition.metadata.taskChecklist : []
+  if (checklist.length > 0) {
+    const required = checklistActionCounts(checklist)
+    const actual = flowActionCounts(steps)
+    for (const key of Object.keys(required)) {
+      if ((actual[key] || 0) < required[key]) warnings.push(`任务清单要求 ${required[key]} 个${actionLabel(key)}，清理后仅有 ${actual[key] || 0} 个。`)
+    }
+  }
+
+  if (!definition.metadata || typeof definition.metadata !== 'object') definition.metadata = {}
+  definition.metadata.flowHealth = {
+    complete: warnings.length === 0,
+    warnings,
+    checkedAt: new Date().toISOString(),
+  }
+}
+
+function checklistActionCounts(checklist) {
+  const counts = { navigate: 0, click: 0, type: 0, read: 0, screenshot: 0 }
+  for (const raw of checklist) {
+    const text = String(raw || '')
+    if (/(访问|导航|navigate|visit|go to)/i.test(text)) counts.navigate += 1
+    if (/(点击|点开|打开.*(?:入口|菜单|工单|详情)|click|open .*?(?:menu|item|detail))/i.test(text)) counts.click += 1
+    if (/(输入|填写|填入|type|enter|fill)/i.test(text)) counts.type += 1
+    if (/(读取|整理|查看.*(?:信息|列表|内容)|read|summar|inspect.*(?:list|content|info))/i.test(text)) counts.read += 1
+    if (/(截图|screenshot|capture)/i.test(text)) counts.screenshot += 1
+  }
+  return counts
+}
+
+function flowActionCounts(steps) {
+  const counts = { navigate: 0, click: 0, type: 0, read: 0, screenshot: 0 }
+  for (const step of steps) {
+    if (step?.kind !== 'tool') continue
+    if (step.tool === 'browser_navigate') counts.navigate += 1
+    else if (step.tool === 'browser_click' || step.tool === 'browser_press' || step.tool === 'browser_select') counts.click += 1
+    else if (isTypingTool(step.tool)) counts.type += 1
+    else if (step.tool === 'browser_read_page') counts.read += 1
+    else if (step.tool === 'browser_screenshot') counts.screenshot += 1
+  }
+  return counts
+}
+
+function actionLabel(key) {
+  return ({ navigate: '导航步骤', click: '点击/打开步骤', type: '输入步骤', read: '读取/整理步骤', screenshot: '截图步骤' })[key] || key
+}
+
 function findAbandonedNavigationSteps(definition, steps) {
   const discarded = new Set()
   const target = navigationIdentity(definition?.target?.url || '')
@@ -117,8 +148,6 @@ function findAbandonedNavigationSteps(definition, steps) {
     if (identity) navs.push({ index, identity })
   }
 
-  // Every explicit return to the target can invalidate only the most recent
-  // navigation round before it; earlier login/input work is left untouched.
   for (let cursor = 1; cursor < navs.length; cursor += 1) {
     const current = navs[cursor]
     const previous = navs[cursor - 1]
@@ -128,9 +157,6 @@ function findAbandonedNavigationSteps(definition, steps) {
     for (let index = previous.index; index < current.index; index += 1) discarded.add(index)
   }
 
-  // An interrupted DRAFT often ends on the last guessed URL because the model
-  // never got back to the requested click. Remove that trailing round only when
-  // nothing after the navigation proves real business progress.
   if (String(definition?.status || '').toLowerCase() === 'draft' && navs.length > 0) {
     const last = navs[navs.length - 1]
     if (last.identity !== target) {
@@ -147,12 +173,10 @@ function roundHasBusinessEvidence(steps) {
   return steps.some(step => {
     if (!step) return false
     if (step.kind === 'checkpoint') return true
-    if (step.when !== undefined || step.expectation !== undefined || hasUserNotes(step)) return true
+    if (step.teaching?.status === 'unverified') return false
+    if (step.when !== undefined || step.expectation !== undefined || step.teaching?.status === 'verified' || hasUserNotes(step)) return true
     if (isTypingTool(step.tool)) return true
     if (step.tool === 'browser_click' || step.tool === 'browser_press') return true
-    // A screenshot is evidence only when accompanied by a semantic assertion or
-    // user note; diagnostic screenshots during URL guessing should not sanctify
-    // an otherwise abandoned round.
     return false
   })
 }
@@ -175,9 +199,7 @@ function isRetrySegmentBoundary(step) {
   if (step.kind !== 'tool') return true
   if (step.tool === 'browser_navigate') return true
   if (isTypingTool(step.tool)) return true
-
   if (isPureObservation(step.tool) || isRetryShapedStep(step)) return false
-
   return step.tool === 'browser_click'
     || step.tool === 'browser_press'
     || step.tool === 'browser_scroll'
@@ -188,6 +210,7 @@ function isProtectedSemanticStep(step) {
   return step?.kind === 'checkpoint'
     || step?.when !== undefined
     || step?.expectation !== undefined
+    || step?.teaching?.status === 'verified'
     || hasUserNotes(step)
 }
 
@@ -200,16 +223,12 @@ function isPureObservation(tool) {
 
 function isRetryShapedStep(step) {
   if (step?.kind !== 'tool') return false
-  if (step.when !== undefined || step.expectation !== undefined || step.artifact !== undefined || hasUserNotes(step)) return false
+  if (step.when !== undefined || step.expectation !== undefined || step.teaching?.status === 'verified' || step.artifact !== undefined || hasUserNotes(step)) return false
   if (step.tool === 'browser_detect_auth_challenge' || step.tool === 'browser_login_state' || step.tool === 'browser_wait') return true
   if (step.tool !== 'browser_click' && step.tool !== 'browser_press') return false
 
-  const text = [
-    step.name,
-    step.locator?.text,
-    step.arguments?.selector,
-    step.arguments?.key,
-  ].filter(value => typeof value === 'string').join(' ')
+  const text = [step.name, step.locator?.text, step.arguments?.selector, step.arguments?.key]
+    .filter(value => typeof value === 'string').join(' ')
   return /(登录|登陆|确定|确认|提交|验证|重试|login|log\s*in|sign\s*in|submit|confirm|verify|retry)/i.test(text)
 }
 
@@ -264,8 +283,6 @@ function navigationIdentity(value) {
   try {
     const url = new URL(text)
     url.hash = ''
-    // Query parameters frequently contain session/view state and are not a
-    // durable identity for "returned to the declared target".
     url.search = ''
     return url.toString().replace(/\/$/, '')
   } catch {
@@ -277,5 +294,10 @@ function findLastToolIndex(steps, tool) {
   for (let index = steps.length - 1; index >= 0; index -= 1) {
     if (steps[index]?.kind === 'tool' && steps[index]?.tool === tool) return index
   }
+  return -1
+}
+
+function findLastMatchingIndex(steps, predicate) {
+  for (let index = steps.length - 1; index >= 0; index -= 1) if (predicate(steps[index])) return index
   return -1
 }
