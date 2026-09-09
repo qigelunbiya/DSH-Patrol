@@ -65,16 +65,19 @@ interface SeenStep {
 
 /**
  * The architectural context window of the local 122B model is not the useful
- * Patrol limit. Long browser traces carry many tool blocks and image metadata,
- * and the local worker can become unavailable well before 16k request tokens.
- * Keep enough headroom that a large observation does not become the request
- * which tips the worker into CUDA OOM / provider cooldown.
+ * Patrol limit. Browser traces contain many tool blocks and historically also
+ * repeated screenshot image attachments. The worker can OOM while the nominal
+ * context window still looks healthy, so Patrol keeps a large safety margin.
+ *
+ * Compact observations now avoid images by default, but these thresholds remain
+ * intentionally conservative so one unusually large table/snapshot cannot be
+ * the request that tips the local worker over the edge.
  */
-export const PATROL_QWEN_HARDENED_PRUNE_LIMIT = 6_000
-export const PATROL_QWEN_HARDENED_COMPACT_LIMIT = 10_000
-export const PATROL_QWEN_NO_METER_PRUNE_STEP = 4
-export const PATROL_QWEN_NO_METER_COMPACT_STEP = 8
-export const PATROL_QWEN_AUTH_RETRY_DELAY_MS = 900
+export const PATROL_QWEN_HARDENED_PRUNE_LIMIT = 4_000
+export const PATROL_QWEN_HARDENED_COMPACT_LIMIT = 7_000
+export const PATROL_QWEN_NO_METER_PRUNE_STEP = 2
+export const PATROL_QWEN_NO_METER_COMPACT_STEP = 5
+export const PATROL_QWEN_AUTH_RETRY_DELAY_MS = 1_500
 
 function asAgentLike(value: unknown): AgentLike | undefined {
   if (value === null || typeof value !== 'object') return undefined
@@ -162,7 +165,7 @@ function annotatePressureFailure(failure: FailureLike, sawCudaOom: boolean): voi
   failure.message = [
     failure.message ?? failure.code ?? 'model request failed',
     `[DSH Patrol diagnostic] ${explanation}`,
-    'Patrol pruned browser tool history and attempted early compaction before the bounded retry.',
+    'Patrol already reduced browser history, uses compact image-on-demand observations, and attempted early compaction before the bounded retry.',
   ].join('\n')
 }
 
@@ -178,19 +181,37 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
+function pruneOnce(
+  ctx: Context,
+  pruner: ToolResultPrunerLike | undefined,
+  agent: AgentLike,
+  label: string,
+): boolean {
+  if (pruner === undefined) return false
+  try {
+    const before = replaceGeneration(agent.session)
+    const result = pruner.pruneSession(agent.session)
+    const advanced = pruneAdvanced(agent.session, before, result)
+    if (advanced) {
+      ctx.logger.warn(`[dsh-patrol/context-pressure] ${label}; removed historical Patrol tool payloads before model dispatch`)
+    }
+    return advanced
+  } catch (error: unknown) {
+    ctx.logger.warn(`[dsh-patrol/context-pressure] ${label} failed: ${error instanceof Error ? error.message : String(error)}`)
+    return false
+  }
+}
+
 /**
  * Patrol-only pressure guard used by the mounted preset.
  *
- * Compared with the older guard this version has two important properties:
- * - it starts model-free pruning at 6k and compaction at 10k for the local 122B
- *   route, leaving more GPU headroom for the next tool result;
- * - when tokenMeter is unavailable it still has a deterministic model-step
- *   fallback carried across user turns, so a long browser trace cannot reset
- *   the protection merely because Harness started a new turn at step 1.
- *
- * On a real CUDA-OOM/auth-unavailable failure it performs one bounded recovery
- * for that exact model step and waits briefly before retrying auth_unavailable,
- * avoiding the immediate retry storm which can hit the same cooling provider.
+ * - model-free pruning starts around 4k measured tokens;
+ * - durable compaction starts around 7k measured tokens;
+ * - without tokenMeter, cumulative model-step counters survive user turns and
+ *   trigger the same protection early;
+ * - after compaction, one final model-free prune runs if the measured surface is
+ *   still above the safe threshold;
+ * - CUDA-OOM/auth-unavailable gets exactly one bounded reduced-context retry.
  */
 export function registerPatrolContextPressureGuard(ctx: Context): () => void {
   const seenSteps = new Map<string, SeenStep>()
@@ -231,21 +252,9 @@ export function registerPatrolContextPressureGuard(ctx: Context): () => void {
         ? pressureStep >= PATROL_QWEN_NO_METER_PRUNE_STEP
         : tokens >= PATROL_QWEN_HARDENED_PRUNE_LIMIT
       const pruner = readToolResultPruner(ctx)
-      if (pruner !== undefined && shouldPrune) {
-        try {
-          const before = replaceGeneration(agent.session)
-          const result = pruner.pruneSession(agent.session)
-          const advanced = pruneAdvanced(agent.session, before, result)
-          tokens = measuredTokens(tokenMeter, agent.session) ?? tokens
-          if (advanced) {
-            ctx.logger.warn(
-              `[dsh-patrol/context-pressure] aggressively pruned historical Patrol tool results before model dispatch`
-              + `${tokens === undefined ? '' : `; request pressure is now ~${tokens} tokens`}`,
-            )
-          }
-        } catch (error: unknown) {
-          ctx.logger.warn(`[dsh-patrol/context-pressure] proactive prune failed: ${error instanceof Error ? error.message : String(error)}`)
-        }
+      if (shouldPrune) {
+        const advanced = pruneOnce(ctx, pruner, agent, 'proactive Patrol history prune')
+        if (advanced) tokens = measuredTokens(tokenMeter, agent.session) ?? tokens
       }
 
       const shouldCompact = tokens === undefined
@@ -276,6 +285,9 @@ export function registerPatrolContextPressureGuard(ctx: Context): () => void {
           `[dsh-patrol/context-pressure] hardened compaction ${advanced ? 'advanced the durable surface' : 'completed'}`
           + `${nextTokens === undefined ? '' : `; request pressure is now ~${nextTokens} tokens`}`,
         )
+        if (!payload.signal.aborted && nextTokens !== undefined && nextTokens >= PATROL_QWEN_HARDENED_PRUNE_LIMIT) {
+          pruneOnce(ctx, pruner, agent, 'post-compaction Patrol history prune')
+        }
       } catch (error: unknown) {
         ctx.logger.warn(`[dsh-patrol/context-pressure] proactive compaction failed: ${error instanceof Error ? error.message : String(error)}`)
       }
@@ -305,30 +317,13 @@ export function registerPatrolContextPressureGuard(ctx: Context): () => void {
       if (attemptedRecovery.get(agentKey) === stepKey) return next()
       attemptedRecovery.set(agentKey, stepKey)
 
-      let advanced = false
       const tokenMeter = readTokenMeter(ctx)
       const pruner = readToolResultPruner(ctx)
-      if (pruner !== undefined) {
-        try {
-          const before = replaceGeneration(agent.session)
-          const result = pruner.pruneSession(agent.session)
-          advanced = pruneAdvanced(agent.session, before, result)
-          if (advanced) {
-            const tokens = measuredTokens(tokenMeter, agent.session)
-            ctx.logger.warn(
-              `[dsh-patrol/context-pressure] post-failure prune reduced Patrol history`
-              + `${tokens === undefined ? '' : `; request pressure is now ~${tokens} tokens`}`,
-            )
-          }
-        } catch (error: unknown) {
-          ctx.logger.warn(`[dsh-patrol/context-pressure] post-failure prune failed: ${error instanceof Error ? error.message : String(error)}`)
-        }
-      }
+      let advanced = pruneOnce(ctx, pruner, agent, 'post-failure Patrol history prune')
 
-      // If pruning already brought a measured request below the hardened limit,
-      // do not invoke model-backed compaction unnecessarily. When measurement is
-      // unavailable, prefer one compaction because that was the previous blind
-      // spot which allowed long traces to escape the guard.
+      // If pruning already made enough room, avoid a model-backed summary call.
+      // If measurement is unavailable, still compact because that blind spot was
+      // where long multi-turn sessions previously escaped protection.
       const tokensAfterPrune = measuredTokens(tokenMeter, agent.session)
       const shouldCompact = tokensAfterPrune === undefined
         || tokensAfterPrune >= PATROL_QWEN_HARDENED_COMPACT_LIMIT
@@ -340,6 +335,10 @@ export function registerPatrolContextPressureGuard(ctx: Context): () => void {
           const result = await compaction.compactIfNeeded(agent, 'context-overflow', payload.signal)
           const after = replaceGeneration(agent.session)
           if (result !== null || (before !== undefined && after !== undefined && after > before)) advanced = true
+          const nextTokens = measuredTokens(tokenMeter, agent.session)
+          if (!payload.signal.aborted && nextTokens !== undefined && nextTokens >= PATROL_QWEN_HARDENED_PRUNE_LIMIT) {
+            if (pruneOnce(ctx, pruner, agent, 'post-recovery-compaction Patrol history prune')) advanced = true
+          }
         } catch (error: unknown) {
           const after = replaceGeneration(agent.session)
           if (before !== undefined && after !== undefined && after > before) advanced = true
