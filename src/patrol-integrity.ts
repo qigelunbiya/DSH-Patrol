@@ -7,7 +7,7 @@ import type { Context } from '@deepseek-ai/cordis'
  * concrete post-click label is not known yet.
  */
 export const PATROL_INTEGRITY_PROMPT = `DSH Patrol 可复用流程完整性规则（NORMAL/TEST MODE 均强制生效，本节不得被测试模式放宽）：
-- 创建新流程后，先把用户原始要求拆成按顺序的业务任务清单。清单必须覆盖用户明确要求的每一个导航、点击、输入、读取、截图和打开详情动作。之后只按清单推进，不得因为某一步困难而自行改写业务目标。
+- patrol_create_draft 成功后，第一件事必须调用 patrol_set_task_checklist，把用户原始要求拆成按顺序的业务任务清单并持久化。清单必须覆盖用户明确要求的每一个导航、点击、输入、读取、截图和打开详情动作。清单未建立前运行时会拒绝教学浏览器动作；之后只按清单推进，不得因为某一步困难而自行改写业务目标。
 - 如果 CURRENT 页面已经出现了清单中的下一个明确操作目标（例如用户明确要求“点击 Logo”，而页面当前只显示 Logo），立即执行该操作。不得把“点击后才会出现的内容”误当成“点击前还需要继续等待的加载内容”，也不得用无意义 wait/read/snapshot 循环拖延明确动作。
 - 用户明确要求填写的字段必须拥有真实可重放的输入步骤。即使 CURRENT 页面已经自动填好用户名、工号或普通文本，也必须通过对应 patrol_* 输入工具规范化并记录；“这次页面碰巧预填”不能替代下一次重放所需动作。敏感值仍只保存安全引用，绝不保存明文。
 - 业务点击优先使用 patrol_click_target。若点击后的具体业务文本已经从用户要求或 CURRENT 证据中明确知道，可提供 expectedText；若未知（例如 Logo 揭示表单、自定义菜单展开），不要猜 expectedText，直接省略，让 Patrol 通过点击前后 URL/可交互 DOM/页面状态变化自动验证。禁止为了满足参数而杜撰成功条件。
@@ -20,10 +20,28 @@ export const PATROL_INTEGRITY_PROMPT = `DSH Patrol 可复用流程完整性规�
 - 不要直接调用会改变页面的 browser_*。browser_click 等是 DSH Patrol 内部执行 primitive；patrol_* 复合工具会在内部调用它们并负责唯一目标解析、验证、记录和重放。`
 
 const BROWSER_STEP_TOOLS = new Set(['patrol_browser_step', 'patrol_reteach_browser_step'])
+const CHECKLIST_REQUIRED_ACTIONS = new Set([
+  'patrol_navigate',
+  'patrol_click_target',
+  'patrol_click',
+  'patrol_type_text',
+  'patrol_type_transient',
+  'patrol_type_credential',
+  'patrol_type_totp_profile',
+  'patrol_select',
+  'patrol_wait',
+  'patrol_read_page',
+  'patrol_snapshot',
+  'patrol_screenshot',
+  'patrol_scroll',
+  'patrol_press',
+  'patrol_browser_step',
+  'patrol_reteach_browser_step',
+])
 
 /**
  * Kept as a compatibility export for existing tests/importers. Click integrity
- * is now implemented by the click composite itself (unique target + post-click
+ * is implemented by the click composite itself (unique target + post-click
  * verification), so there is intentionally no pre-click expectedText block.
  */
 export function patrolTeachingIntegrityGuard(_execution: any): string | undefined {
@@ -32,6 +50,7 @@ export function patrolTeachingIntegrityGuard(_execution: any): string | undefine
 
 export function createPatrolTeachingIntegrityGuard() {
   const declaredTargets = new Map<string, string>()
+  const checklistPending = new Set<string>()
 
   return (execution: any): string | undefined => {
     const name = String(execution?.name ?? '')
@@ -41,6 +60,12 @@ export function createPatrolTeachingIntegrityGuard() {
     if (inspectionId && name === 'patrol_create_draft' && typeof args.targetUrl === 'string') {
       const identity = navigationIdentity(args.targetUrl)
       if (identity) declaredTargets.set(inspectionId, identity)
+      checklistPending.add(inspectionId)
+      return undefined
+    }
+
+    if (inspectionId && name === 'patrol_set_task_checklist') {
+      checklistPending.delete(inspectionId)
       return undefined
     }
 
@@ -64,7 +89,16 @@ export function createPatrolTeachingIntegrityGuard() {
 
     if (inspectionId && (name === 'patrol_delete' || name === 'patrol_delete_flow')) {
       declaredTargets.delete(inspectionId)
+      checklistPending.delete(inspectionId)
       return undefined
+    }
+
+    if (inspectionId && checklistPending.has(inspectionId) && CHECKLIST_REQUIRED_ACTIONS.has(name)) {
+      return [
+        'DSH Patrol task-checklist integrity guard: teaching action was NOT executed.',
+        `Inspection ${inspectionId} was just created and has no persisted business checklist yet.`,
+        'Call patrol_set_task_checklist now with the ordered actions from the user request, then execute the first checklist action immediately.',
+      ].join(' ')
     }
 
     if (!inspectionId) return undefined
