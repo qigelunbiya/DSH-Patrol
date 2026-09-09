@@ -93,14 +93,14 @@ describe('semantic Patrol click target', () => {
     expect(result).toContain('#top-login')
     expect(calls).toEqual([
       { tool: 'browser_snapshot', args: { maxElements: 500 } },
-      { tool: 'browser_click', args: { selector: '#top-login' } },
+      { tool: 'browser_click', args: { selector: 'top-frame::#top-login' } },
     ])
     const saved = await store.load('click-target')
     expect(saved.steps).toHaveLength(1)
     expect(saved.steps[0]).toMatchObject({
       kind: 'tool',
       tool: 'browser_click',
-      arguments: { selector: '#top-login' },
+      arguments: { selector: 'top-frame::#top-login' },
       locator: { text: '登录', role: 'button' },
     })
   })
@@ -137,11 +137,11 @@ describe('semantic Patrol click target', () => {
     expect(result).toContain('#custom-login')
     expect(calls).toEqual([
       { tool: 'browser_snapshot', args: { maxElements: 500 } },
-      { tool: 'browser_click', args: { selector: '#custom-login' } },
+      { tool: 'browser_click', args: { selector: 'top-frame::#custom-login' } },
     ])
     expect((await store.load('click-target')).steps[0]).toMatchObject({
       tool: 'browser_click',
-      arguments: { selector: '#custom-login' },
+      arguments: { selector: 'top-frame::#custom-login' },
     })
   })
 
@@ -185,5 +185,46 @@ describe('semantic Patrol click target', () => {
     ])
     const saved = await store.load('click-target')
     expect(saved.steps[0]).toMatchObject({ tool: 'browser_click', arguments: { selector: '#sms-login-tab' } })
+  })
+
+  it('qualifies an unframed exact menu target so browser_click stays in the top document', async () => {
+    const calls: Array<{ tool: string; args: JsonObject }> = []
+    const menuSelector = 'div:nth-of-type(1) > div > div > div > ul > li:nth-of-type(5) > a'
+    const { store, tool, exec } = await setup(async (name, args) => {
+      calls.push({ tool: name, args })
+      if (name === 'browser_snapshot') {
+        return {
+          ok: true,
+          text: 'snapshot',
+          value: {
+            ok: true,
+            url: 'http://172.21.9.122/com-portal',
+            elements: [
+              { tag: 'a', text: '我的工作台', selector: menuSelector },
+              { tag: 'a', text: '待办待阅工单', selector: 'frame-url(http%3A%2F%2F172.21.9.122%2Fcmp-cloud-manage%2Fworkbench%2Fhome%2Findex.do)::ul > li:nth-of-type(5) > a' },
+            ],
+          },
+        }
+      }
+      if (name === 'browser_click') return { ok: true, text: 'clicked top menu', value: { ok: true } }
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    const result = await tool.execute({
+      inspectionId: 'click-target',
+      stepName: '点击我的工作台',
+      locatorText: '我的工作台',
+    }, exec)
+
+    expect(result).toContain('top-frame::')
+    expect(calls).toEqual([
+      { tool: 'browser_snapshot', args: { maxElements: 500 } },
+      { tool: 'browser_click', args: { selector: `top-frame::${menuSelector}` } },
+    ])
+    expect((await store.load('click-target')).steps[0]).toMatchObject({
+      tool: 'browser_click',
+      arguments: { selector: `top-frame::${menuSelector}` },
+      locator: { text: '我的工作台' },
+    })
   })
 })

@@ -47,6 +47,9 @@ export function registerPatrolFlowTools(ctx: Context, store: PatrolStore): () =>
         await store.save(definition)
       }
       if (definition.status === 'draft') {
+        if (definition.steps.length > 0) {
+          return `Selected non-empty DRAFT flow ${definition.id} (${definition.name}) with ${definition.steps.length} existing step(s). Do not append browser actions merely to execute or inspect it: use patrol_run_flow for read-only replay, or patrol_begin_edit plus patrol_reteach_* / patrol_rewrite_flow_path only when the user explicitly asks to change the flow.`
+        }
         const lifecycle = store as InteractivePatrolStore
         if (typeof lifecycle.beginTeachingRun === 'function') {
           await lifecycle.beginTeachingRun(definition.id, workspaceRoot ?? definition.metadata.workspaceRoot)

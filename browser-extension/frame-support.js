@@ -6,6 +6,7 @@
 const FRAME_BRIDGE_RETRY_MS = [0, 120, 280, 650]
 const FRAME_DOM_COMMANDS = new Set(['snapshot', 'readPage', 'count', 'click', 'type', 'press', 'scroll', 'wait'])
 const FRAME_SELECTOR_PREFIX = /^frame-url\(([^)]*)\)::([\s\S]+)$/
+const TOP_FRAME_SELECTOR_PREFIX = /^top-frame::([\s\S]+)$/
 const legacySendDomCommand = sendDomCommand
 
 sendDomCommand = async function frameAwareSendDomCommand(cmd, args = {}) {
@@ -142,7 +143,7 @@ async function frameReadPage(tabId, args) {
 async function frameCount(tabId, args) {
   if (typeof args.selector !== 'string' || !args.selector) throw new Error('count requires selector')
   const target = parseFrameSelector(args.selector)
-  const matches = await countAcrossFrames(tabId, target.selector, target.frameUrl, args.visibleOnly === true)
+  const matches = await countAcrossFrames(tabId, target.selector, target.frameUrl, args.visibleOnly === true, target.topFrame === true)
   return {
     ok: true,
     selector: args.selector,
@@ -159,7 +160,7 @@ async function frameMutation(tabId, cmd, args) {
   }
 
   const target = parseFrameSelector(selectorValue)
-  const matches = await countAcrossFrames(tabId, target.selector, target.frameUrl, true)
+  const matches = await countAcrossFrames(tabId, target.selector, target.frameUrl, true, target.topFrame === true)
   const total = matches.reduce((sum, item) => sum + item.count, 0)
   if (total === 0) throw new Error(`element not found in any accessible frame: ${target.selector}`)
   if (total > 1) {
@@ -179,7 +180,7 @@ async function frameWait(tabId, args) {
     return await sendFrameDomCommand(tabId, 0, 'wait', stripTransportArgs(args))
   }
   const target = parseFrameSelector(args.selector)
-  const frames = await patrolFrames(tabId, target.frameUrl)
+  const frames = await patrolFrames(tabId, target.frameUrl, target.topFrame === true)
   const condition = args.condition === 'gone' ? 'gone' : 'visible'
   const attempts = await Promise.all(frames.map(async frame => {
     try {
@@ -204,8 +205,8 @@ async function frameWait(tabId, args) {
   }
 }
 
-async function countAcrossFrames(tabId, selector, frameUrl, visibleOnly) {
-  const frames = await patrolFrames(tabId, frameUrl)
+async function countAcrossFrames(tabId, selector, frameUrl, visibleOnly, topFrameOnly = false) {
+  const frames = await patrolFrames(tabId, frameUrl, topFrameOnly)
   const results = []
   for (const frame of frames) {
     try {
@@ -220,13 +221,13 @@ async function countAcrossFrames(tabId, selector, frameUrl, visibleOnly) {
   // A URL-qualified frame can legitimately change its query string/path during
   // a workflow. If the preferred frame no longer contains the selector, retry
   // discovery across all frames using the durable inner CSS selector.
-  if (frameUrl && results.every(item => item.count === 0)) {
+  if (frameUrl && !topFrameOnly && results.every(item => item.count === 0)) {
     return await countAcrossFrames(tabId, selector, '', visibleOnly)
   }
   return results
 }
 
-async function patrolFrames(tabId, preferredUrl = '') {
+async function patrolFrames(tabId, preferredUrl = '', topFrameOnly = false) {
   let frames = []
   try {
     frames = await chrome.webNavigation.getAllFrames({ tabId }) || []
@@ -244,6 +245,7 @@ async function patrolFrames(tabId, preferredUrl = '') {
       url: typeof frame.url === 'string' ? frame.url : '',
     }))
     .sort((left, right) => left.frameId - right.frameId)
+  if (topFrameOnly) return frames.filter(frame => frame.frameId === 0)
   if (!preferredUrl) return frames
   const preferred = frames.filter(frame => stableFrameUrl(frame.url) === preferredUrl)
   return preferred.length > 0 ? preferred : frames
@@ -283,11 +285,13 @@ function qualifyFrameSelector(frame, selector) {
 
 function parseFrameSelector(value) {
   const text = String(value || '')
+  const topMatch = TOP_FRAME_SELECTOR_PREFIX.exec(text)
+  if (topMatch) return { selector: topMatch[1], frameUrl: '', topFrame: true }
   const match = FRAME_SELECTOR_PREFIX.exec(text)
-  if (!match) return { selector: text, frameUrl: '' }
+  if (!match) return { selector: text, frameUrl: '', topFrame: false }
   let frameUrl = ''
   try { frameUrl = decodeURIComponent(match[1]) } catch { frameUrl = match[1] }
-  return { selector: match[2], frameUrl: stableFrameUrl(frameUrl) }
+  return { selector: match[2], frameUrl: stableFrameUrl(frameUrl), topFrame: false }
 }
 
 function stableFrameUrl(value) {

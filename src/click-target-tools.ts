@@ -252,7 +252,8 @@ function semanticLocatorMatches(element: SnapshotElement, locator: SemanticLocat
 }
 
 function targetFromSnapshot(element: SnapshotElement, match: ClickTarget['match']): ClickTarget {
-  const selector = cleanString(element.selector)
+  const rawSelector = cleanString(element.selector)
+  const selector = qualifyTopDocumentSelector(rawSelector)
   if (selector === undefined) throw new Error('resolved click target has no stable selector')
   const text = cleanString(element.text)
   const role = cleanString(element.role)
@@ -393,4 +394,10 @@ function optionalCondition(sourceStepId: string | undefined, expectedText: strin
       caseSensitive: false,
     },
   }
+}
+
+function qualifyTopDocumentSelector(selector: string | undefined): string | undefined {
+  if (selector === undefined) return undefined
+  if (selector.startsWith('frame-url(') || selector.startsWith('top-frame::')) return selector
+  return `top-frame::${selector}`
 }

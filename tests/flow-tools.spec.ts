@@ -61,6 +61,26 @@ describe('Patrol flow session tools', () => {
     expect(runIds).toHaveLength(1)
   })
 
+  it('selecting a non-empty DRAFT does not start append-mode teaching', async () => {
+    const { root, workspace, store, definitions } = await setup()
+    const draft = await store.load('conversation-flow')
+    draft.steps = [
+      { id: 'step-001', kind: 'tool', name: '打开页面', tool: 'browser_navigate', arguments: { url: 'https://example.test' }, recordedAt: '2026-09-04T00:00:01.000Z' },
+    ]
+    await store.save(draft)
+    const runRoot = join(root, 'runs', 'conversation-flow')
+    const beforeRunCount = await readdir(runRoot).then(items => items.length, () => 0)
+
+    const select = definitions.find(item => item.name === 'patrol_select_flow')
+    const text = await select.execute({ inspectionId: 'conversation-flow' }, {
+      agent: { session: { header: { cwd: workspace } } },
+    })
+
+    expect(text).toContain('patrol_run_flow')
+    const afterRunCount = await readdir(runRoot).then(items => items.length, () => 0)
+    expect(afterRunCount).toBe(beforeRunCount)
+  })
+
   it('finalizes only the model-selected successful path plus required output', async () => {
     const { store, definitions } = await setup()
     const draft = await store.load('conversation-flow')

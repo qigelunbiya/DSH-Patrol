@@ -98,11 +98,11 @@ describe('semantic action specificity', () => {
     expect(result).toContain(leafSelector)
     expect(calls).toEqual([
       { tool: 'browser_snapshot', args: { maxElements: 500 } },
-      { tool: 'browser_click', args: { selector: leafSelector } },
+      { tool: 'browser_click', args: { selector: `top-frame::${leafSelector}` } },
     ])
     expect((await store.load('ant-rdp-click')).steps[0]).toMatchObject({
       tool: 'browser_click',
-      arguments: { selector: leafSelector },
+      arguments: { selector: `top-frame::${leafSelector}` },
       locator: { text: 'RDP' },
     })
   })

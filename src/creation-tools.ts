@@ -34,8 +34,11 @@ export function registerPatrolCreationTools(ctx: Context, store: PatrolStore): (
       const workspaceRoot = exec?.agent?.session.header.cwd
       if (await store.exists(inspectionId)) {
         const existing = await store.load(inspectionId)
-        if (existing.status === 'draft') await beginInteractivePatrol(store, existing.id, workspaceRoot ?? existing.metadata.workspaceRoot)
-        return `Inspection ${existing.id} already exists with status=${existing.status} and ${existing.steps.length} step(s). Reuse it: call patrol_show, then continue the DRAFT or call patrol_begin_edit if it is READY. ${existing.status === 'draft' ? 'This interactive patrol has already been added to patrol history as an in-progress run.' : ''} Do not delete it just to recover from a tool-call error.`
+        if (existing.status === 'draft' && existing.steps.length === 0) {
+          await beginInteractivePatrol(store, existing.id, workspaceRoot ?? existing.metadata.workspaceRoot)
+          return `Inspection ${existing.id} already exists as an empty DRAFT. Continue teaching it with patrol_* action tools; this interactive patrol has already been added to patrol history as an in-progress run.`
+        }
+        return `Inspection ${existing.id} already exists with status=${existing.status} and ${existing.steps.length} step(s). Reuse it without appending: call patrol_run_flow to execute the existing flow, or call patrol_begin_edit only when the user explicitly wants to change a specific step. Do not continue recording browser actions at the end of this Runbook.`
       }
 
       assertSafePersistentText(args.name, 'inspection.name')

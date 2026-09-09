@@ -5,6 +5,7 @@ describe('current Patrol behavior prompt', () => {
   it('requires user-visible replies to follow the user language', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/跟随用户最近一条自然语言消息/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/用户用中文就必须用简体中文/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/流程名称、description、expectedResult、stepName/s)
   })
 
   it('uses automatic local OCR first for ordinary image-code and keeps human handoff disabled', () => {
@@ -24,6 +25,7 @@ describe('current Patrol behavior prompt', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/不要调用 patrol_credential_help/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/Harness 重启后仍可自动解密重放/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/用户可见.*不得复述.*明文密码/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/操作计划、编号步骤、进度说明/s)
   })
 
   it('requires completed-flow corrections to target, replace/remove, reposition, and validate affected steps', () => {

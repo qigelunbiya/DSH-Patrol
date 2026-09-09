@@ -5,6 +5,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
 import { registerPatrolCreationTools } from '../src/creation-tools.ts'
 import { PatrolStore } from '../src/store.ts'
+import type { InspectionDefinition } from '../src/types.ts'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -87,5 +88,51 @@ describe('secret-safe Patrol creation', () => {
     const result = await tool.execute({ ...args, name: 'Replacement' })
     expect(result).toMatch(/already exists/i)
     expect((await store.load('existing-id')).name).toBe('Existing')
+  })
+
+  it('does not start append-mode teaching when an existing draft already has reusable steps', async () => {
+    const { store, tool } = await setup()
+    let teachingStarted = false
+    ;(store as PatrolStore & { beginTeachingRun: () => Promise<void> }).beginTeachingRun = async () => {
+      teachingStarted = true
+    }
+    const now = new Date().toISOString()
+    const existing: InspectionDefinition = {
+      schemaVersion: '0.2',
+      id: 'existing-draft-flow',
+      name: '已有流程',
+      description: '已有可复用步骤',
+      status: 'draft',
+      target: { type: 'browser', url: 'https://example.com' },
+      expectedResult: '完成巡检',
+      artifacts: ['markdown-report'],
+      auth: { mode: 'none' },
+      schedule: null,
+      steps: [{
+        id: 'step-001',
+        kind: 'tool',
+        name: '打开页面',
+        tool: 'browser_navigate',
+        arguments: { url: 'https://example.com' },
+        recordedAt: now,
+      }],
+      metadata: { createdAt: now, updatedAt: now },
+    }
+    await store.create(existing)
+
+    const result = await tool.execute({
+      inspectionId: 'existing-draft-flow',
+      name: '新请求不应覆盖',
+      description: '基于旧流程巡检',
+      targetUrl: 'https://example.com',
+      expectedResult: '完成巡检',
+      authMode: 'none',
+      artifacts: ['markdown-report'],
+    })
+
+    expect(teachingStarted).toBe(false)
+    expect(result).toContain('patrol_run_flow')
+    expect(result).toContain('patrol_begin_edit')
+    expect((await store.load('existing-draft-flow')).steps).toHaveLength(1)
   })
 })

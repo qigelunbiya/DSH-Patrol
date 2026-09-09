@@ -57,7 +57,9 @@ function loadFrameSupport() {
             }
           }
           if (message.cmd === 'count') {
-            return { ok: true, count: frameId === 7 ? 1 : 0 }
+            if (message.args.selector === '#target') return { ok: true, count: frameId === 7 ? 1 : 0 }
+            if (String(message.args.selector).includes('li:nth-of-type(5)')) return { ok: true, count: frameId === 0 ? 1 : 1 }
+            return { ok: true, count: 0 }
           }
           if (message.cmd === 'click') return { ok: true, selector: message.args.selector, tag: 'a', text: '防火墙dnat及策略开放的相关数据采集内容优化' }
           if (message.cmd === 'snapshot') return { ok: true, url: '', title: '', elements: [], truncated: false }
@@ -87,6 +89,16 @@ describe('frame-aware browser bridge', () => {
     const click = calls.find(item => item.cmd === 'click')
     expect(click?.frameId).toBe(7)
     expect(click?.args.selector).toBe('#target')
+  })
+
+  it('uses top-frame qualified selectors to avoid same CSS matches in child frames', async () => {
+    const { context, calls } = loadFrameSupport()
+    const selector = 'div:nth-of-type(1) > div > div > div > ul > li:nth-of-type(5) > a'
+    const value = await vm.runInContext(`sendDomCommand('click', { tabId: 1, selector: ${JSON.stringify(`top-frame::${selector}`)} })`, context)
+    expect(value.ok).toBe(true)
+    const click = calls.find(item => item.cmd === 'click')
+    expect(click?.frameId).toBe(0)
+    expect(click?.args.selector).toBe(selector)
   })
 })
 
