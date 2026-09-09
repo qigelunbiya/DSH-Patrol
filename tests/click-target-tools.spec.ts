@@ -230,4 +230,43 @@ describe('semantic Patrol click target', () => {
       locator: { text: '我的工作台' },
     })
   })
+
+  it('collapses a nested span duplicate onto its real anchor target', async () => {
+    const calls: Array<{ tool: string; args: JsonObject }> = []
+    const anchor = 'div:nth-of-type(2) > div:nth-of-type(1) > div > ul > li:nth-of-type(6) > a'
+    const nestedSpan = `${anchor} > span`
+    const { store, tool, exec } = await setup(async (name, args) => {
+      calls.push({ tool: name, args })
+      if (name === 'browser_snapshot') {
+        return {
+          ok: true,
+          text: 'snapshot',
+          value: {
+            ok: true,
+            elements: [
+              { tag: 'a', role: 'link', text: '待办待阅工单', selector: anchor },
+              { tag: 'span', role: 'button', text: '待办待阅工单', selector: nestedSpan },
+            ],
+          },
+        }
+      }
+      if (name === 'browser_click') return { ok: true, text: `Clicked ${String(args.selector)}`, value: { ok: true } }
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    const result = await tool.execute({
+      inspectionId: 'click-target',
+      stepName: '打开待办待阅工单',
+      locatorText: '待办待阅工单',
+    }, exec)
+
+    expect(result).toContain(anchor)
+    expect(calls).toEqual([
+      { tool: 'browser_snapshot', args: { maxElements: 500 } },
+      { tool: 'browser_click', args: { selector: `top-frame::${anchor}` } },
+    ])
+    expect((await store.load('click-target')).steps[0]).toMatchObject({
+      arguments: { selector: `top-frame::${anchor}` },
+    })
+  })
 })

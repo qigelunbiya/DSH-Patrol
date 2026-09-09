@@ -173,6 +173,10 @@ async function resolveCurrentTarget(
   const bestScore = semantic[0]!.score
   const best = semantic.filter(item => item.score === bestScore)
   if (best.length !== 1) {
+    const nestedAncestor = uniqueNestedAncestor(best)
+    if (nestedAncestor !== undefined) {
+      return targetFromSnapshot(nestedAncestor.element, nestedAncestor.exactText ? 'semantic-exact' : 'semantic-contains')
+    }
     const examples = best.slice(0, 5).map(item => describeSnapshot(item.element)).join('; ')
     throw new Error(`ambiguous semantic click target ${describeLocator(locator)} matched ${best.length} equally good visible elements: ${examples}. Add a role/tag only if CURRENT observation confirms it, or provide a stable selector.`)
   }
@@ -223,6 +227,22 @@ function scoreSemanticCandidates(elements: SnapshotElement[], locator: SemanticL
 
   ranked.sort((a, b) => b.score - a.score)
   return ranked
+}
+
+function uniqueNestedAncestor(
+  candidates: readonly { element: SnapshotElement; score: number; exactText: boolean }[],
+): { element: SnapshotElement; score: number; exactText: boolean } | undefined {
+  const withSelectors = candidates
+    .map(candidate => ({ candidate, selector: cleanString(candidate.element.selector) }))
+    .filter((item): item is { candidate: (typeof candidates)[number]; selector: string } => item.selector !== undefined)
+  const ancestors = withSelectors.filter(item => withSelectors.every(other =>
+    other === item || isDescendantSelector(other.selector, item.selector),
+  ))
+  return ancestors.length === 1 ? ancestors[0]!.candidate : undefined
+}
+
+function isDescendantSelector(candidate: string, ancestor: string): boolean {
+  return candidate.startsWith(`${ancestor} > `)
 }
 
 /**

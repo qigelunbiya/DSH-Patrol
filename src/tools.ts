@@ -46,6 +46,10 @@ export interface PatrolToolsOptions {
   reportMaxChars: number
 }
 
+type InteractivePatrolStore = PatrolStore & {
+  beginTeachingRun?: (inspectionId: string, workspaceRoot?: string) => Promise<unknown>
+}
+
 export function registerPatrolTools(
   ctx: Context,
   store: PatrolStore,
@@ -123,7 +127,7 @@ function createDefinitions(ctx: Context, store: PatrolStore, runner: PatrolRunne
       notes: { type: 'string' },
     },
     output: TEXT_OUTPUT,
-    async execute(args) {
+    async execute(args, exec) {
       assertInspectionId(args.inspectionId)
       assertSafePersistentText(args.name, 'inspection.name')
       assertSafePersistentText(args.description, 'inspection.description')
@@ -145,10 +149,18 @@ function createDefinitions(ctx: Context, store: PatrolStore, runner: PatrolRunne
         },
         schedule: null,
         steps: [],
-        metadata: { createdAt: now, updatedAt: now },
+        metadata: {
+          createdAt: now,
+          updatedAt: now,
+          ...(exec?.agent?.session.header.cwd === undefined ? {} : { workspaceRoot: exec.agent.session.header.cwd }),
+        },
       }
       await store.create(definition)
-      return `Created draft ${definition.id}. Run patrol_doctor, then teach replayable actions with patrol_browser_step / patrol_type_text / patrol_type_credential.`
+      const lifecycle = store as InteractivePatrolStore
+      if (typeof lifecycle.beginTeachingRun === 'function') {
+        await lifecycle.beginTeachingRun(definition.id, definition.metadata.workspaceRoot)
+      }
+      return `Created draft ${definition.id}. An in-progress patrol record is active for this flow. Run patrol_doctor, then teach replayable actions with patrol_browser_step / patrol_type_text / patrol_type_credential.`
     },
   })
 

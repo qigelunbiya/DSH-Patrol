@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { registerPatrolCreationTools } from '../src/creation-tools.ts'
 import { PatrolStore } from '../src/store.ts'
 import type { InspectionDefinition } from '../src/types.ts'
+import { registerPatrolTools } from '../src/tools.ts'
+import { PatrolLifecycleStore } from '../src/lifecycle-store.ts'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -134,5 +136,44 @@ describe('secret-safe Patrol creation', () => {
     expect(result).toContain('patrol_run_flow')
     expect(result).toContain('patrol_begin_edit')
     expect((await store.load('existing-draft-flow')).steps).toHaveLength(1)
+  })
+
+  it('legacy patrol_create_draft starts a workspace-owned WAITING patrol record', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-create-legacy-'))
+    roots.push(root)
+    const workspace = join(root, 'workspace')
+    const store = new PatrolLifecycleStore(join(root, 'internal'))
+    await store.init()
+    const definitions: any[] = []
+    const ctx = {
+      tools: {
+        register(definition: any) {
+          definitions.push(definition)
+          return () => {}
+        },
+        get() { return {} },
+      },
+    } as unknown as Context
+    registerPatrolTools(ctx, store, {} as any, { maxSteps: 20, reportMaxChars: 10_000 })
+    const create = definitions.find(item => item.name === 'patrol_create_draft')
+    expect(create).toBeDefined()
+
+    await create.execute({
+      inspectionId: 'legacy-created-flow',
+      name: 'Legacy created flow',
+      description: 'test',
+      targetUrl: 'https://example.test',
+      expectedResult: 'done',
+      authMode: 'none',
+      artifacts: ['markdown-report'],
+    }, {
+      agent: { session: { header: { cwd: workspace } } },
+    })
+
+    const saved = await store.load('legacy-created-flow')
+    expect(saved.metadata.workspaceRoot).toBe(workspace)
+    const runIds = await readdir(join(store.root, 'runs', 'legacy-created-flow'))
+    expect(runIds).toHaveLength(1)
+    expect((await store.loadRun('legacy-created-flow', runIds[0]!)).status).toBe('waiting')
   })
 })
