@@ -40,6 +40,17 @@ export interface SemanticLocator {
   tag?: string
 }
 
+export interface TeachingVerification {
+  /**
+   * verified means the teaching action reached an observable post-action state.
+   * unverified means the browser mutation happened, but it must never be
+   * finalized into a reusable READY flow.
+   */
+  status: 'verified' | 'unverified'
+  method: 'expected-text' | 'state-change' | 'execution-only'
+  evidence?: string
+}
+
 export type StepArtifactKind = 'page-text' | 'screenshot'
 
 export interface ToolStep {
@@ -54,6 +65,8 @@ export interface ToolStep {
   artifact?: StepArtifactKind | undefined
   sensitive?: boolean
   notes?: string
+  /** Teaching-only verification metadata. Finalized flows strip this field. */
+  teaching?: TeachingVerification
   recordedAt: string
 }
 
@@ -69,6 +82,12 @@ export interface CheckpointStep {
 }
 
 export type InspectionStep = ToolStep | CheckpointStep
+
+export interface FlowHealth {
+  complete: boolean
+  warnings: string[]
+  checkedAt: string
+}
 
 export interface InspectionDefinition {
   schemaVersion: InspectionSchemaVersion
@@ -99,6 +118,10 @@ export interface InspectionDefinition {
     validatedAt?: string
     /** Last interactive Harness workspace used by this inspection. Scheduled runs use it for user-visible outputs. */
     workspaceRoot?: string
+    /** Ordered business contract captured before teaching begins. */
+    taskChecklist?: string[]
+    /** Dashboard cleanup/finalization health result for user-visible diagnosis. */
+    flowHealth?: FlowHealth
   }
 }
 
