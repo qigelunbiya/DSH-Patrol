@@ -45,13 +45,17 @@ describe('current Patrol behavior prompt', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/不得复述同一段计划/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/连续两次自然语言回复/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/立即停止继续生成同类文字/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/仍无法完成用户任务清单中的该项.*结束本轮教学/s)
   })
 
   it('requires task-list driven teaching and excludes unverified steps from the flow graph', () => {
-    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/先把用户巡检需求拆成有序任务清单/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/先把用户原始巡检要求拆成一份有序任务清单/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/expectedText/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/只有业务目标已被确认完成/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/未完成、未验证、页面未变化/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/自动填好了用户名.*不能.*省略该步骤/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/预填状态.*不能替代下一次重放所需的动作/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/不得因为点击困难就偷偷用 patrol_navigate 直达目标 URL/s)
   })
 
   it('requires semantic grouping before writing weekly-report templates', () => {
