@@ -34,16 +34,17 @@ export function registerPatrolSelectTools(
     async execute(args, exec) {
       assertSafePersistentText(args.stepName, 'stepName')
       if (args.notes !== undefined) assertSafePersistentText(args.notes, 'step notes')
-      const supplied = [typeof args.value === 'string', typeof args.label === 'string', Number.isInteger(args.index)].filter(Boolean).length
+      const index = typeof args.index === 'number' && Number.isInteger(args.index) ? args.index : undefined
+      const supplied = [typeof args.value === 'string', typeof args.label === 'string', index !== undefined].filter(Boolean).length
       if (supplied !== 1) throw new Error('patrol_select requires exactly one of value, label, or index')
-      if (Number.isInteger(args.index) && args.index < 0) throw new Error('patrol_select index must be >= 0')
+      if (index !== undefined && index < 0) throw new Error('patrol_select index must be >= 0')
 
       const definition = await loadEditable(store, args.inspectionId, options.maxSteps)
       const browserArgs: JsonObject = compactObject({
         selector: args.selector,
         value: args.value,
         label: args.label,
-        index: args.index,
+        index,
         tabId: args.tabId,
       })
       assertSafeForStorage(browserArgs)
