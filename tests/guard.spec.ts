@@ -24,10 +24,11 @@ describe('browser execution guard', () => {
       signal: new AbortController().signal,
     } as unknown as ToolRunContext
 
-    expect(runner.browserGuard('browser_status', undefined)).toMatch(/blocks browser tools/i)
-    expect(runner.browserGuard('browser_status', token)).toMatch(/blocks browser tools/i)
+    expect(runner.browserGuard('browser_status', undefined)).toMatch(/internal DSH Patrol primitives/i)
+    expect(runner.browserGuard('browser_status', undefined)).toMatch(/patrol_click_target/i)
+    expect(runner.browserGuard('browser_status', token)).toMatch(/internal DSH Patrol primitives/i)
     await expect(runner.dispatch('browser_status', {}, exec)).resolves.toMatchObject({ ok: true })
-    expect(runner.browserGuard('browser_status', token)).toMatch(/blocks browser tools/i)
+    expect(runner.browserGuard('browser_status', token)).toMatch(/internal DSH Patrol primitives/i)
     expect(runner.isToolAllowed('browser_eval')).toBe(false)
   })
 })
