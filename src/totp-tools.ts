@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, type ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { listTotpProfiles } from '../browser-bridge-runtime/totp-store.js'
 import { assertSafePersistentText } from './security.js'
+import { stepExecutionNotes } from './step-notes.js'
 import type { PatrolRunner } from './runner.js'
 import type { PatrolStore } from './store.js'
 import type { InspectionDefinition, InspectionStep, JsonObject, StepCondition, ToolStep } from './types.js'
@@ -88,7 +89,12 @@ export function registerPatrolTotpTools(
         arguments: runtimeArgs,
         sensitive: true,
         ...optionalCondition(args.conditionSourceStepId, args.conditionExpectedText, args.conditionMode),
-        ...(args.notes === undefined ? {} : { notes: args.notes }),
+        notes: stepExecutionNotes({
+          tool: 'browser_type_totp_profile',
+          args: runtimeArgs,
+          ...optionalCondition(args.conditionSourceStepId, args.conditionExpectedText, args.conditionMode),
+          providedNotes: args.notes ?? `使用本机 TOTP profile ${args.profileId} 生成当前动态口令并填写；不保存动态码数字。`,
+        }),
         recordedAt: new Date().toISOString(),
       }
       await appendStep(store, definition, step)

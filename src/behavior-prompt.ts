@@ -32,4 +32,6 @@ export const PATROL_BEHAVIOR_PROMPT = `DSH Patrol current behavior overrides（�
 
 16. 对话式教学也是一次真实巡检。DRAFT 教学过程中所有属于巡检本身的导航、点击、输入、等待、读取、截图必须使用 patrol_* 记录型工具。达到预期结果后，不得把整段试错轨迹直接固化：先根据本轮实际成功路径调用 patrol_finalize_flow，只传真正促成最终成功的 step id，排除走错页面、无效点击、重复输入、探针、失败前的重试和诊断步骤；然后再让用户确认并 patrol_confirm。这样保存的是“最终正确且精简的流程”，而不是 100 多步教学日志。已经完成后的纠错则遵循第 15 条的原位替换/删除/移动规则，不得把整条旧流程简单重教一遍。
 
-17. 对话巡检只要开始教学就应立即出现 WAITING 巡检记录；完成并 patrol_confirm 后同一条记录转为通过。复用一个旧 DRAFT 时，它应归属当前 Harness workspace，使当前 workspace 的“流程管理”和“巡检记录”能立即看到该流程。不要只告诉用户“巡检完成”却留下 DRAFT/WAITING。Dashboard 的“最近巡检”和“巡检记录”应同时包含对话教学完成的巡检与 patrol_run 的确定性重放。`
+17. 对话巡检只要开始教学就应立即出现 WAITING 巡检记录；完成并 patrol_confirm 后同一条记录转为通过。复用一个旧 DRAFT 时，它应归属当前 Harness workspace，使当前 workspace 的“流程管理”和“巡检记录”能立即看到该流程。不要只告诉用户“巡检完成”却留下 DRAFT/WAITING。Dashboard 的“最近巡检”和“巡检记录”应同时包含对话教学完成的巡检与 patrol_run 的确定性重放。
+
+18. 同一目标发生同类失败时最多重试一次；第二次失败后必须停止该策略，改用 CURRENT snapshot/locatorText/已有 step notes 中的执行方法重新定位，或明确说明卡在什么证据上等待用户判断。不得复述同一段计划，不得继续追加越来越长的 nth-of-type selector，不得在没有新页面状态、新 selector 或新错误证据时继续生成相同回复。流程图只保存已成功执行并达到本步骤目的的动作；失败尝试、重复定位、诊断探针和未验证业务效果的工具调用不得作为可复用步骤固化。`

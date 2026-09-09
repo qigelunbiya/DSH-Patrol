@@ -133,6 +133,8 @@ describe('flat Patrol action tools', () => {
     expect(definition.steps[0]?.kind).toBe('tool')
     if (definition.steps[0]?.kind === 'tool') {
       expect(definition.steps[0].arguments).toEqual({ url: 'http://10.192.1.121:8069/web/login', action: 'navigate' })
+      expect(definition.steps[0].notes).toContain('执行方法')
+      expect(definition.steps[0].notes).toContain('http://10.192.1.121:8069/web/login')
     }
   })
 
@@ -152,6 +154,9 @@ describe('flat Patrol action tools', () => {
       expect(step.tool).toBe('browser_count')
       expect(step.arguments).toEqual({ selector: '.row' })
       expect(step.expectation?.value).toBe(': 4 element(s)')
+      expect(step.notes).toContain('执行方法')
+      expect(step.notes).toContain('.row')
+      expect(step.notes).toContain('成功判定')
     }
   })
 

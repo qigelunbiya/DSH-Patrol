@@ -39,6 +39,12 @@ describe('current Patrol behavior prompt', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_validate/s)
   })
 
+  it('prevents repeated conversational loops after the same patrol failure', () => {
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/同一目标.*同类失败/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/最多重试一次/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/不得复述同一段计划/s)
+  })
+
   it('requires semantic grouping before writing weekly-report templates', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/禁止把源记录按顺序逐条塞进空行/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/多条源记录映射到同一个键时先合并\/编号\/换行后一次写入同一个目标单元格/s)

@@ -3,6 +3,7 @@ import { defineTool, type ToolDefinition, type ToolRunContext } from '@deepseek-
 import { assertSafeForStorage, assertSafePersistentText, untrustedPageData } from './security.js'
 import { isPatrolTestMode } from './test-mode.js'
 import { PatrolRunner } from './runner.js'
+import { stepExecutionNotes } from './step-notes.js'
 import { PatrolStore } from './store.js'
 import type {
   InspectionDefinition,
@@ -473,7 +474,14 @@ async function recordAction(
     ...optionalCondition(input.conditionSourceStepId, input.conditionExpectedText, input.conditionMode),
     ...optionalLocator(input.locatorText, input.locatorRole, input.locatorTag),
     ...(input.artifact === undefined ? {} : { artifact: input.artifact }),
-    ...(input.notes === undefined ? {} : { notes: input.notes }),
+    notes: stepExecutionNotes({
+      tool: input.tool,
+      args: input.browserArgs,
+      ...optionalExpectation(input.expectedText, input.expectationMode, input.caseSensitive),
+      ...optionalCondition(input.conditionSourceStepId, input.conditionExpectedText, input.conditionMode),
+      ...optionalLocator(input.locatorText, input.locatorRole, input.locatorTag),
+      providedNotes: input.notes,
+    }),
     recordedAt: new Date().toISOString(),
   }
   definition.steps.push(step)

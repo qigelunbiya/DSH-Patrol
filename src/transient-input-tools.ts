@@ -4,6 +4,7 @@ import { forgetTransientSecret, rememberTransientSecret } from '../browser-bridg
 import { isPatrolTestMode } from './test-mode.js'
 import { assertSafePersistentText } from './security.js'
 import { PatrolRunner } from './runner.js'
+import { stepExecutionNotes } from './step-notes.js'
 import { PatrolStore } from './store.js'
 import type { InspectionStep, JsonObject, ToolStep } from './types.js'
 
@@ -79,7 +80,11 @@ export function registerPatrolTransientInputTools(
         tool: 'browser_type_transient_ref',
         arguments: { selector: args.selector, transientRef, clear: args.clear ?? true },
         sensitive: true,
-        ...(args.notes === undefined ? {} : { notes: args.notes }),
+        notes: stepExecutionNotes({
+          tool: 'browser_type_transient_ref',
+          args: { selector: args.selector, transientRef, clear: args.clear ?? true },
+          providedNotes: args.notes,
+        }),
         recordedAt: new Date().toISOString(),
       }
       definition.steps.push(step)
@@ -142,6 +147,11 @@ export function registerPatrolTransientInputTools(
         // Do not persist tab ids or the recognized characters. Replay should
         // solve whatever fresh image-code is present in the active Patrol tab.
         arguments: {},
+        notes: stepExecutionNotes({
+          tool: 'browser_detect_auth_challenge',
+          args: {},
+          providedNotes: '执行方法：运行本机 OCR 动态识别当前图片验证码并填写；不保存一次性验证码字符。',
+        }),
         recordedAt: new Date().toISOString(),
       }
       definition.steps.push(step)
@@ -270,7 +280,11 @@ export function registerPatrolTransientInputTools(
         tool: 'browser_type_transient_ref',
         arguments: { selector: args.selector, transientRef, clear: args.clear ?? true },
         sensitive: true,
-        ...(args.notes !== undefined ? { notes: args.notes } : current.notes === undefined ? {} : { notes: current.notes }),
+        notes: stepExecutionNotes({
+          tool: 'browser_type_transient_ref',
+          args: { selector: args.selector, transientRef, clear: args.clear ?? true },
+          providedNotes: args.notes ?? current.notes,
+        }),
         recordedAt: new Date().toISOString(),
       }
       definition.steps[index] = replacement

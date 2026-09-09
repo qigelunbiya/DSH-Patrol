@@ -103,6 +103,9 @@ describe('semantic Patrol click target', () => {
       arguments: { selector: 'top-frame::#top-login' },
       locator: { text: '登录', role: 'button' },
     })
+    expect(saved.steps[0]?.kind === 'tool' ? saved.steps[0].notes : undefined).toContain('执行方法')
+    expect(saved.steps[0]?.kind === 'tool' ? saved.steps[0].notes : undefined).toContain('top-frame::#top-login')
+    expect(saved.steps[0]?.kind === 'tool' ? saved.steps[0].notes : undefined).toContain('语义目标')
   })
 
   it('does not reject an exact custom clickable div when role=button was only a model hint', async () => {

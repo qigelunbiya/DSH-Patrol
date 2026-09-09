@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { assertSafePersistentText } from './security.js'
+import { stepExecutionNotes } from './step-notes.js'
 import type { PatrolRunner } from './runner.js'
 import type { PatrolStore } from './store.js'
 import type {
@@ -111,7 +112,14 @@ export function registerPatrolClickTargetTool(
         ...optionalExpectation(args.expectedText, args.expectationMode, args.caseSensitive),
         ...optionalCondition(args.conditionSourceStepId, args.conditionExpectedText, args.conditionMode),
         ...(locator === undefined ? {} : { locator }),
-        ...(args.notes === undefined ? {} : { notes: args.notes }),
+        notes: stepExecutionNotes({
+          tool: 'browser_click',
+          args: compactObject({ selector: resolved.selector, tabId: args.tabId }),
+          ...optionalExpectation(args.expectedText, args.expectationMode, args.caseSensitive),
+          ...optionalCondition(args.conditionSourceStepId, args.conditionExpectedText, args.conditionMode),
+          ...(locator === undefined ? {} : { locator }),
+          providedNotes: args.notes,
+        }),
         recordedAt: new Date().toISOString(),
       }
       await appendStep(store, definition, step)
