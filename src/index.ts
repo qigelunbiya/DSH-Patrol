@@ -20,6 +20,7 @@ import { createManualVerificationGuard, PATROL_MANUAL_VERIFICATION_PROMPT } from
 import { registerPatrolModelRouteRecovery } from './model-route-recovery.js'
 import { createPatrolObservationGate, PATROL_OBSERVATION_PROMPT } from './observation-guard.js'
 import { registerPatrolObservationTools } from './observation-tools.js'
+import { createPatrolPlanningGuard, PATROL_PAGE_UNDERSTANDING_PROMPT, registerPatrolPageUnderstandingTools } from './page-understanding-tools.js'
 import { registerPatrolIntegrity } from './patrol-integrity.js'
 import { PATROL_SYSTEM_PROMPT } from './prompt.js'
 import { createPatrolRecoveryGuard, PATROL_RECOVERY_PROMPT } from './recovery-guard.js'
@@ -65,6 +66,7 @@ export * from './manual-verification-guard.js'
 export * from './model-route-recovery.js'
 export * from './observation-guard.js'
 export * from './observation-tools.js'
+export * from './page-understanding-tools.js'
 export * from './handoff-tools.js'
 export * from './flow-reference-tools.js'
 export * from './test-mode.js'
@@ -77,7 +79,7 @@ export const inject = ['tools', 'userQuestions']
 const DEFAULT_STORAGE_PATH = resolve(process.cwd(), '.dsh-patrol')
 const DEFAULT_MAX_STEPS = 200
 const DEFAULT_REPORT_MAX_CHARS = 30_000
-const TEST_MODE_BUILD_MARKER = 'test-bypass-v5-resilient-clicks'
+const TEST_MODE_BUILD_MARKER = 'test-bypass-v6-page-understanding'
 const TEST_MODE_DIRECT_BROWSER_READ_ONLY = new Set([
   'browser_status',
   'browser_list_tabs',
@@ -136,6 +138,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const observationGate = createPatrolObservationGate()
   const recoveryGuard = createPatrolRecoveryGuard()
   const verificationGuard = createManualVerificationGuard()
+  const planningGuard = createPatrolPlanningGuard()
 
   // This is intentionally independent of NORMAL/TEST mode. It prevents URL
   // bypasses and injects the business-flow contract, but it no longer blocks a
@@ -161,6 +164,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   ctx.effect(
     () => registerPatrolClickTargetTool(ctx, store, runner, { maxSteps: resolved.maxSteps }),
     'dsh-patrol: semantic current-page click target resolver',
+  )
+  ctx.effect(
+    () => registerPatrolPageUnderstandingTools(ctx, store, runner),
+    'dsh-patrol: current-page business-step understanding and planning',
   )
   ctx.effect(
     () => registerPatrolSelectTools(ctx, store, runner, { maxSteps: resolved.maxSteps }),
@@ -213,6 +220,14 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   })
   ctx.effect(() => ctx.tools.register(runtimeModeTool), 'dsh-patrol: runtime mode diagnostic')
 
+  // The page-planning guard deliberately stays active in TEST MODE. Test mode
+  // relaxes the older orchestration guards for CAPTCHA diagnostics, but it must
+  // not re-enable unbounded selector/reply loops around ordinary business clicks.
+  ctx.effect(
+    () => ctx.tools.guard(execution => planningGuard(execution)),
+    'dsh-patrol: always-on page-understanding click strategy breaker',
+  )
+
   if (runtimePolicy.installGuards) {
     ctx.effect(
       () => ctx.tools.guard(execution => observationGate.guard(execution)),
@@ -254,6 +269,16 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       order: 1000,
       text: PATROL_FLOW_REFERENCE_PROMPT,
     }), 'dsh-patrol: deterministic flow reference and existing-flow replay prompt')
+
+    // This prompt is always injected, including TEST MODE. It is intentionally
+    // ordered after the test-mode override and reusable-flow integrity prompt so
+    // page planning/loop discipline cannot silently disappear while CAPTCHA
+    // diagnostics are enabled.
+    ctx.effect(() => systemPrompt.section({
+      name: 'agent:dsh-patrol-page-understanding',
+      order: 1120,
+      text: PATROL_PAGE_UNDERSTANDING_PROMPT,
+    }), 'dsh-patrol: always-on current-page understanding and bounded plan execution prompt')
 
     if (runtimePolicy.injectStrictWorkflowPrompt) {
       ctx.effect(() => systemPrompt.section({
@@ -330,5 +355,5 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   }
 
   const guardMode = runtimePolicy.testMode ? 'test-diagnostics-recorded-mutations' : 'normal-strict'
-  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; guard-mode=${guardMode}; build=${TEST_MODE_BUILD_MARKER}; scheduler=enabled; credential helper=optional; transient sensitive replay=enabled; encrypted TOTP profile replay=enabled; semantic click resolver=enabled; native select=enabled; task-checklist=required; secret-safe creation=enabled; flat action tools=enabled; OpenXML Excel v5 tools=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled`)
+  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; guard-mode=${guardMode}; build=${TEST_MODE_BUILD_MARKER}; scheduler=enabled; credential helper=optional; transient sensitive replay=enabled; encrypted TOTP profile replay=enabled; semantic click resolver=enabled; page-understanding-planner=enabled; native select=enabled; task-checklist=required; secret-safe creation=enabled; flat action tools=enabled; OpenXML Excel v5 tools=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled`)
 }
