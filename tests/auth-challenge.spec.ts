@@ -167,16 +167,17 @@ describe('login-state classification', () => {
     expect(result.reason).toBe('visible-password-field')
   })
 
-  it('reports authenticated after the application redirects away from the login page', () => {
+  it('reports authenticated only when the application exposes positive authenticated evidence', () => {
     const result = classifyLoginState({
       url: 'http://10.192.1.121:8069/web#action=400&model=project.task&view_type=list',
       elements: [
         { selector: '.o_list_view button', text: '创建', tag: 'button' },
+        { selector: '#workbench', text: '我的工作台', tag: 'a', role: 'link' },
         { selector: '.o_searchview_input', name: 'search', type: 'text' },
       ],
     })
     expect(result.state).toBe('authenticated')
-    expect(result.reason).toBe('no-login-form-on-application-page')
+    expect(result.reason).toBe('positive-authenticated-control')
   })
 
   it('does not claim authenticated when still on a login URL without a visible form', () => {
