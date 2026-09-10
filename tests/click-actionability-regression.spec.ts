@@ -32,7 +32,7 @@ function draft(): InspectionDefinition {
 }
 
 describe('semantic click actionability', () => {
-  it('clicks the actionable anchor instead of an outer layout node with the same text', async () => {
+  it('records the actionable leaf returned by the atomic MAIN-world resolver', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-actionability-'))
     roots.push(root)
     const store = new PatrolStore(root)
@@ -53,20 +53,20 @@ describe('semantic click actionability', () => {
     const runner = {
       async dispatch(tool: string, args: JsonObject) {
         calls.push({ tool, args })
-        if (tool === 'browser_snapshot') {
+        if (tool === 'browser_semantic_click') {
           return {
             ok: true,
-            text: 'snapshot',
+            text: 'clicked actionable anchor atomically',
             value: {
               ok: true,
-              elements: [
-                { tag: 'li', text: '我的工作台', selector: '#nav-workbench' },
-                { tag: 'a', role: 'link', text: '我的工作台', selector: '#nav-workbench > a' },
-              ],
+              selector: 'top-frame::#nav-workbench > a',
+              text: '我的工作台',
+              role: 'link',
+              tag: 'a',
+              transport: 'atomic-main-world-semantic-click',
             },
           }
         }
-        if (tool === 'browser_click') return { ok: true, text: 'clicked actionable anchor', value: { ok: true } }
         if (tool === 'browser_read_page') return { ok: true, text: '侧栏 待办待阅工单', value: { ok: true, text: '侧栏 待办待阅工单' } }
         throw new Error(`unexpected tool ${tool}`)
       },
@@ -88,14 +88,17 @@ describe('semantic click actionability', () => {
     }, exec)
 
     expect(calls).toEqual([
-      { tool: 'browser_snapshot', args: { maxElements: 500, includeHidden: false } },
-      { tool: 'browser_click', args: { selector: 'top-frame::#nav-workbench > a' } },
+      {
+        tool: 'browser_semantic_click',
+        args: { locatorText: '我的工作台', task: '点击我的工作台' },
+      },
       { tool: 'browser_read_page', args: {} },
     ])
     expect((await store.load('actionability')).steps[0]).toMatchObject({
       tool: 'browser_click',
       arguments: { selector: 'top-frame::#nav-workbench > a' },
       locator: { text: '我的工作台' },
+      teaching: { status: 'verified', method: 'expected-text' },
     })
   })
 })
