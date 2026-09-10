@@ -33,4 +33,14 @@ describe('atomic semantic click extension layer', () => {
     expect(source).toMatch(/closest\?\.\('tr,li,form,nav/)
     expect(source).toContain('context.includes(token)')
   })
+
+  it('can discover a plain image or SVG logo even when it has no link/button wrapper', () => {
+    const source = readFileSync(join(root, 'browser-extension', 'semantic-click.js'), 'utf8')
+
+    expect(source).toContain("'img', 'svg'")
+    expect(source).toContain("'[id*=\"logo\" i]'")
+    expect(source).toContain("'[class*=\"logo\" i]'")
+    expect(source).toContain("element instanceof HTMLImageElement")
+    expect(source).toContain("querySelectorAll?.('img,svg')")
+  })
 })
