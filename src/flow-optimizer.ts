@@ -10,6 +10,8 @@ export interface FlowSelectionResult extends FlowCompactionResult {
   autoKeptDependencies: number
 }
 
+type ChecklistAction = 'navigate' | 'click' | 'type' | 'read' | 'screenshot'
+
 /**
  * Select the semantically successful route from a full conversational teaching
  * trace. Only verified semantic clicks are eligible. A click verified by an
@@ -54,19 +56,26 @@ export function selectSuccessfulTeachingPath(
     }
   }
 
-  if (definition.artifacts.includes('page-text') || definition.artifacts.includes('page-summary')) {
-    const index = findLastToolIndex(original, 'browser_read_page')
-    if (index >= 0) keep.add(original[index]!.id)
-  }
-  if (definition.artifacts.includes('screenshot')) {
-    const index = findLastToolIndex(original, 'browser_screenshot')
-    if (index >= 0) keep.add(original[index]!.id)
-  }
+  const requiredReads = requiredArtifactCount(
+    definition,
+    'read',
+    definition.artifacts.includes('page-text') || definition.artifacts.includes('page-summary') ? 1 : 0,
+  )
+  for (const index of findLastToolIndices(original, 'browser_read_page', requiredReads)) keep.add(original[index]!.id)
+
+  const requiredScreenshots = requiredArtifactCount(
+    definition,
+    'screenshot',
+    definition.artifacts.includes('screenshot') ? 1 : 0,
+  )
+  for (const index of findLastToolIndices(original, 'browser_screenshot', requiredScreenshots)) keep.add(original[index]!.id)
 
   const selected = original.filter(step => keep.has(step.id))
   assertCausalBusinessPath(selected)
+  assertChecklistCoverage(definition, selected)
   rewriteSteps(definition, selected, true)
   const compacted = compactTeachingFlow(definition)
+  assertChecklistCoverage(definition, definition.steps)
   definition.metadata.flowHealth = {
     complete: true,
     warnings: [],
@@ -93,10 +102,20 @@ export function compactTeachingFlow(definition: InspectionDefinition): FlowCompa
     if (step.when !== undefined) referenced.add(step.when.sourceStepId)
   }
 
-  const lastPageRead = findLastToolIndex(original, 'browser_read_page')
-  const lastScreenshot = findLastToolIndex(original, 'browser_screenshot')
-  const needsPageOutput = definition.artifacts.includes('page-text') || definition.artifacts.includes('page-summary')
-  const needsScreenshot = definition.artifacts.includes('screenshot')
+  const pageReadIndexes = new Set(findLastToolIndices(
+    original,
+    'browser_read_page',
+    requiredArtifactCount(
+      definition,
+      'read',
+      definition.artifacts.includes('page-text') || definition.artifacts.includes('page-summary') ? 1 : 0,
+    ),
+  ))
+  const screenshotIndexes = new Set(findLastToolIndices(
+    original,
+    'browser_screenshot',
+    requiredArtifactCount(definition, 'screenshot', definition.artifacts.includes('screenshot') ? 1 : 0),
+  ))
   const resetFloor = findSafeResetFloor(original, referenced)
 
   const kept = original.filter((step, index) => shouldKeepStep(
@@ -104,10 +123,8 @@ export function compactTeachingFlow(definition: InspectionDefinition): FlowCompa
     step,
     index,
     referenced,
-    lastPageRead,
-    lastScreenshot,
-    needsPageOutput,
-    needsScreenshot,
+    pageReadIndexes,
+    screenshotIndexes,
     resetFloor,
   ))
 
@@ -125,10 +142,8 @@ function shouldKeepStep(
   step: InspectionStep,
   index: number,
   referenced: ReadonlySet<string>,
-  lastPageRead: number,
-  lastScreenshot: number,
-  needsPageOutput: boolean,
-  needsScreenshot: boolean,
+  pageReadIndexes: ReadonlySet<number>,
+  screenshotIndexes: ReadonlySet<number>,
   resetFloor: number,
 ): boolean {
   if (index < resetFloor) return false
@@ -143,12 +158,12 @@ function shouldKeepStep(
 
   if (step.tool === 'browser_read_page') {
     if (stepHasMeaningfulNotes(step)) return true
-    return needsPageOutput && index === lastPageRead
+    return pageReadIndexes.has(index)
   }
 
   if (step.tool === 'browser_screenshot') {
     if (stepHasMeaningfulNotes(step)) return true
-    return needsScreenshot && index === lastScreenshot
+    return screenshotIndexes.has(index)
   }
 
   if (step.tool === 'browser_wait' && hasLaterUnassertedWaitBeforeBoundary(all, index)) return false
@@ -169,6 +184,13 @@ function assertCausalBusinessPath(steps: readonly InspectionStep[]): void {
   }
 }
 
+function assertChecklistCoverage(definition: InspectionDefinition, steps: readonly InspectionStep[]): void {
+  const warnings = checklistCoverageWarnings(definition, steps)
+  if (warnings.length > 0) {
+    throw new Error(`successful path does not cover the persisted task checklist: ${warnings.join('; ')}`)
+  }
+}
+
 function updateStructuralFlowHealth(definition: InspectionDefinition): void {
   const warnings: string[] = []
   const steps = definition.steps
@@ -183,11 +205,68 @@ function updateStructuralFlowHealth(definition: InspectionDefinition): void {
   }
   const unverifiedClicks = steps.filter(step => step.kind === 'tool' && step.tool === 'browser_click' && step.teaching?.status === 'unverified')
   if (unverifiedClicks.length > 0) warnings.push(`仍有 ${unverifiedClicks.length} 个未验证点击，不可视为可复用成功路径。`)
+  warnings.push(...checklistCoverageWarnings(definition, steps))
   definition.metadata.flowHealth = {
     complete: warnings.length === 0,
     warnings,
     checkedAt: new Date().toISOString(),
   }
+}
+
+function checklistCoverageWarnings(definition: InspectionDefinition, steps: readonly InspectionStep[]): string[] {
+  const checklist = definition.metadata.taskChecklist ?? []
+  if (checklist.length === 0) return []
+  const required = checklistActionCounts(checklist)
+  const actual = flowActionCounts(steps)
+  const warnings: string[] = []
+  for (const key of Object.keys(required) as ChecklistAction[]) {
+    if (actual[key] < required[key]) {
+      warnings.push(`任务清单要求 ${required[key]} 个${actionLabel(key)}，当前流程仅有 ${actual[key]} 个。`)
+    }
+  }
+  return warnings
+}
+
+function checklistActionCounts(checklist: readonly string[]): Record<ChecklistAction, number> {
+  const counts: Record<ChecklistAction, number> = { navigate: 0, click: 0, type: 0, read: 0, screenshot: 0 }
+  for (const raw of checklist) {
+    const text = String(raw || '')
+    if (/(访问|导航|navigate|visit|go to)/i.test(text)) counts.navigate += 1
+    if (/(点击|点开|打开.*(?:入口|菜单|工单|详情)|click|open .*?(?:menu|item|detail))/i.test(text)) counts.click += 1
+    if (/(输入|填写|填入|type|enter|fill)/i.test(text)) counts.type += 1
+    if (/(读取|整理|查看.*(?:信息|列表|内容)|read|summar|inspect.*(?:list|content|info))/i.test(text)) counts.read += 1
+    if (/(截图|screenshot|capture)/i.test(text)) counts.screenshot += 1
+  }
+  return counts
+}
+
+function flowActionCounts(steps: readonly InspectionStep[]): Record<ChecklistAction, number> {
+  const counts: Record<ChecklistAction, number> = { navigate: 0, click: 0, type: 0, read: 0, screenshot: 0 }
+  for (const step of steps) {
+    if (step.kind !== 'tool') continue
+    if (step.tool === 'browser_navigate') counts.navigate += 1
+    else if (step.tool === 'browser_click' || step.tool === 'browser_press' || step.tool === 'browser_select') counts.click += 1
+    else if (isTypingTool(step.tool)) counts.type += 1
+    else if (step.tool === 'browser_read_page') counts.read += 1
+    else if (step.tool === 'browser_screenshot') counts.screenshot += 1
+  }
+  return counts
+}
+
+function actionLabel(key: ChecklistAction): string {
+  return ({
+    navigate: '导航步骤',
+    click: '点击/打开步骤',
+    type: '输入步骤',
+    read: '读取/整理步骤',
+    screenshot: '截图步骤',
+  } as const)[key]
+}
+
+function requiredArtifactCount(definition: InspectionDefinition, action: 'read' | 'screenshot', fallback: number): number {
+  const checklist = definition.metadata.taskChecklist ?? []
+  const required = checklist.length === 0 ? 0 : checklistActionCounts(checklist)[action]
+  return Math.max(fallback, required)
 }
 
 function hasLaterUnassertedWaitBeforeBoundary(all: readonly InspectionStep[], index: number): boolean {
@@ -332,12 +411,14 @@ function stepHasMeaningfulNotes(step: ToolStep): boolean {
     .some(line => !/^(执行方法|execution method)[:：]/i.test(line))
 }
 
-function findLastToolIndex(steps: readonly InspectionStep[], tool: string): number {
-  for (let index = steps.length - 1; index >= 0; index -= 1) {
+function findLastToolIndices(steps: readonly InspectionStep[], tool: string, count: number): number[] {
+  if (count <= 0) return []
+  const out: number[] = []
+  for (let index = steps.length - 1; index >= 0 && out.length < count; index -= 1) {
     const step = steps[index]
-    if (step?.kind === 'tool' && step.tool === tool) return index
+    if (step?.kind === 'tool' && step.tool === tool) out.push(index)
   }
-  return -1
+  return out.reverse()
 }
 
 function findLastMatchingIndex(steps: readonly InspectionStep[], predicate: (step: InspectionStep) => boolean): number {
