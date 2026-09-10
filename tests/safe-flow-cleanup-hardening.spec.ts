@@ -43,6 +43,7 @@ describe('dashboard draft cleanup hardening', () => {
     expect(definition.steps.some(item => item.name === '输入密码')).toBe(true)
     expect(definition.steps.some(item => item.tool === 'browser_read_page')).toBe(true)
     expect(definition.steps.some(item => item.tool === 'browser_screenshot')).toBe(true)
+    expect(result.flowHealth).toEqual(definition.metadata.flowHealth)
   })
 
   it('preserves an explicitly user-noted revisit and selector-scoped scroll', () => {
@@ -58,5 +59,44 @@ describe('dashboard draft cleanup hardening', () => {
     }
     compactDashboardFlow(definition)
     expect(definition.steps.map(item => item.tool)).toEqual(['browser_navigate', 'browser_navigate', 'browser_scroll'])
+  })
+
+  it('marks the supplied portal-style cleaned JSON incomplete instead of presenting it as reusable', () => {
+    const definition = {
+      status: 'draft',
+      target: { url: 'http://172.21.9.122/com-portal' },
+      artifacts: ['markdown-report', 'screenshot', 'page-text'],
+      metadata: {
+        taskChecklist: [
+          '访问 com-portal',
+          '点击 Logo',
+          '输入账号',
+          '输入密码',
+          '填写短信验证码',
+          '点击登录',
+          '点击我的工作台',
+          '点击待办待阅工单',
+          '读取并整理待处理工单信息',
+          '截图工单列表',
+          '打开其中一张工单',
+          '截图工单详情',
+        ],
+      },
+      steps: [
+        step('step-001', 'browser_navigate', { name: '导航到 com-portal', arguments: { url: 'http://172.21.9.122/com-portal' } }),
+        step('step-002', 'browser_read_page', { name: '读取完整页面内容', artifact: 'page-text' }),
+        step('step-003', 'browser_type_transient_ref', { name: '输入密码', arguments: { selector: '#password', transientRef: 'PATROL_SECRET_password' } }),
+        step('step-004', 'browser_type_transient_ref', { name: '输入短信验证码', arguments: { selector: '#register-code', transientRef: 'PATROL_SECRET_sms' } }),
+        step('step-005', 'browser_screenshot', { name: '截图当前主页状态', artifact: 'screenshot' }),
+      ],
+    }
+
+    const result = compactDashboardFlow(definition)
+
+    expect(result.flowHealth?.complete).toBe(false)
+    expect(definition.metadata.flowHealth.complete).toBe(false)
+    expect(definition.metadata.flowHealth.warnings.join('\n')).toMatch(/输入步骤之后没有任何已记录的提交\/点击\/选择\/导航动作/)
+    expect(definition.metadata.flowHealth.warnings.join('\n')).toMatch(/任务清单要求 .*点击\/打开步骤/)
+    expect(definition.metadata.flowHealth.warnings.join('\n')).toMatch(/任务清单要求 .*输入步骤/)
   })
 })
