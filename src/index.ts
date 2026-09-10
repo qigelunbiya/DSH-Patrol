@@ -45,6 +45,7 @@ export * from './click-target-tools.js'
 export * from './select-tools.js'
 export * from './behavior-prompt.js'
 export * from './patrol-integrity.js'
+export * from './flow-mutation-consent.js'
 export * from './task-checklist-tools.js'
 export * from './creation-tools.js'
 export * from './credential-tools.js'
@@ -71,7 +72,7 @@ export { PatrolStore } from './store.js'
 export { PatrolRunner, conditionMatches, evaluateExpectation } from './runner.js'
 
 export const name = 'dsh-patrol'
-export const inject = ['tools']
+export const inject = ['tools', 'userQuestions']
 
 const DEFAULT_STORAGE_PATH = resolve(process.cwd(), '.dsh-patrol')
 const DEFAULT_MAX_STEPS = 200
