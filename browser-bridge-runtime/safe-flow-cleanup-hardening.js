@@ -42,10 +42,17 @@ export function compactDashboardFlow(definition) {
 
   if (kept.length === before.length) return first
   renumberSteps(definition, kept)
+
+  // The first conservative pass assessed the pre-hardening step set. Because
+  // this DRAFT-only pass can remove additional navigation/scroll actions, run
+  // the conservative assessor once more so metadata.flowHealth reflects the
+  // JSON that is actually persisted and returned to the Dashboard.
+  const reassessed = compactFlowConservatively(definition)
   return {
     originalSteps: first.originalSteps,
     removedSteps: first.originalSteps - definition.steps.length,
     finalSteps: definition.steps.length,
+    flowHealth: reassessed.flowHealth,
   }
 }
 
