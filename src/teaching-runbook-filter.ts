@@ -1,23 +1,11 @@
+import { PatrolStore } from './store.js'
 import type { InspectionDefinition, InspectionStep, ToolStep } from './types.js'
-import type { PatrolStore } from './store.js'
 
-const installedStores = new WeakSet<object>()
+const PATCH_MARK = Symbol.for('dsh-patrol.teaching-runbook-filter')
 
-const ALWAYS_TRANSIENT_TOOLS = new Set([
-  'browser_snapshot',
-  'browser_count',
-])
-
-const CONTEXT_TOOLS = new Set([
-  'browser_login_state',
-  'browser_detect_auth_challenge',
-])
-
-const SUPPORT_TOOLS = new Set([
-  'browser_wait',
-  'browser_scroll',
-])
-
+const ALWAYS_TRANSIENT_TOOLS = new Set(['browser_snapshot', 'browser_count'])
+const CONTEXT_TOOLS = new Set(['browser_login_state', 'browser_detect_auth_challenge'])
+const SUPPORT_TOOLS = new Set(['browser_wait', 'browser_scroll'])
 const GENERIC_WORDS = new Set([
   '访问', '导航', '打开', '点击', '点开', '进入', '查看', '读取', '整理', '获取', '检查', '确认',
   '输入', '填写', '填入', '截图', '页面', '内容', '信息', '当前', '目标', '等待', '加载', '完成',
@@ -25,24 +13,23 @@ const GENERIC_WORDS = new Set([
   'type', 'fill', 'capture', 'screenshot', 'page', 'content', 'current', 'target', 'wait', 'load',
 ])
 
-/**
- * Install once on the live Patrol store. The filter deliberately mutates only
- * DRAFT definitions with a persisted taskChecklist. It keeps the reusable
- * Runbook aligned with completed business checklist items while diagnostic
- * observation/recovery calls remain transient execution evidence.
- *
- * Existing READY runbooks and legacy drafts without taskChecklist are left
- * untouched for compatibility.
- */
-export function installTeachingRunbookFilter(store: PatrolStore): void {
-  if (installedStores.has(store)) return
-  installedStores.add(store)
+type BusinessAction = 'navigate' | 'click' | 'type' | 'read' | 'screenshot' | 'wait' | 'context' | 'other'
 
-  const originalSave = store.save.bind(store)
-  store.save = async (definition: InspectionDefinition): Promise<void> => {
+/**
+ * The stored inspection is the reusable business Runbook, not a transcript of
+ * every diagnostic browser call. Install the filter on PatrolStore.save so all
+ * DRAFT saves produced by PatrolLifecycleStore pass through the same policy.
+ * READY definitions and legacy drafts without taskChecklist stay untouched.
+ */
+function installBaseStoreFilter(): void {
+  const prototype = PatrolStore.prototype as PatrolStore & { [PATCH_MARK]?: boolean }
+  if (prototype[PATCH_MARK] === true) return
+  const originalSave = PatrolStore.prototype.save
+  PatrolStore.prototype.save = async function filteredSave(definition: InspectionDefinition): Promise<void> {
     filterDraftRunbookInPlace(definition)
-    await originalSave(definition)
+    await originalSave.call(this, definition)
   }
+  prototype[PATCH_MARK] = true
 }
 
 export function filterDraftRunbookInPlace(definition: InspectionDefinition): void {
@@ -51,19 +38,12 @@ export function filterDraftRunbookInPlace(definition: InspectionDefinition): voi
   if (checklist.length === 0 || definition.steps.length === 0) return
 
   const referenced = new Set<string>()
-  for (const step of definition.steps) {
-    if (step.when !== undefined) referenced.add(step.when.sourceStepId)
-  }
+  for (const step of definition.steps) if (step.when !== undefined) referenced.add(step.when.sourceStepId)
 
-  const kept: InspectionStep[] = []
-  for (const step of definition.steps) {
-    if (step.kind === 'checkpoint') {
-      kept.push(step)
-      continue
-    }
-    if (shouldKeepToolStep(step, checklist, referenced)) kept.push(step)
-  }
-
+  const kept = definition.steps.filter(step => {
+    if (step.kind === 'checkpoint') return true
+    return shouldKeepToolStep(step, checklist, referenced)
+  })
   const deduped = removeDuplicateResetNavigations(kept)
   if (deduped.length === definition.steps.length && deduped.every((step, index) => step === definition.steps[index])) return
 
@@ -73,26 +53,18 @@ export function filterDraftRunbookInPlace(definition: InspectionDefinition): voi
   delete definition.metadata.flowHealth
 }
 
-function shouldKeepToolStep(
-  step: ToolStep,
-  checklist: readonly string[],
-  referenced: ReadonlySet<string>,
-): boolean {
+function shouldKeepToolStep(step: ToolStep, checklist: readonly string[], referenced: ReadonlySet<string>): boolean {
   if (step.teaching?.status === 'unverified') return false
   if (referenced.has(step.id)) return true
   if (step.expectation !== undefined || step.when !== undefined) return true
 
   if (ALWAYS_TRANSIENT_TOOLS.has(step.tool)) return false
-  if (CONTEXT_TOOLS.has(step.tool)) return checklistExplicitlyMatches(step, checklist)
-  if (SUPPORT_TOOLS.has(step.tool)) return checklistExplicitlyMatches(step, checklist)
+  if (CONTEXT_TOOLS.has(step.tool) || SUPPORT_TOOLS.has(step.tool)) return checklistExplicitlyMatches(step, checklist)
+  if (step.tool === 'browser_read_page' || step.tool === 'browser_screenshot') return checklistExplicitlyMatches(step, checklist)
 
-  if (step.tool === 'browser_read_page' || step.tool === 'browser_screenshot') {
-    return checklistExplicitlyMatches(step, checklist)
-  }
-
-  // Navigation, verified clicks, text/credential input, select/press and other
-  // real mutations are already written only after their browser dispatch
-  // succeeds. They represent business progress rather than observation noise.
+  // Successful navigation/input/select/press mutations and verified semantic
+  // clicks are actual business progress, so retain them. Failed actions never
+  // reach store.save in the recording tools.
   return true
 }
 
@@ -103,14 +75,10 @@ function checklistExplicitlyMatches(step: ToolStep, checklist: readonly string[]
     if (stepAction !== actionKindForChecklist(item)) continue
     const itemTokens = businessTokens(item)
     if (stepTokens.size === 0 || itemTokens.size === 0) continue
-    let overlap = 0
-    for (const token of stepTokens) if (itemTokens.has(token)) overlap += 1
-    if (overlap > 0) return true
+    for (const token of stepTokens) if (itemTokens.has(token)) return true
   }
   return false
 }
-
-type BusinessAction = 'navigate' | 'click' | 'type' | 'read' | 'screenshot' | 'wait' | 'context' | 'other'
 
 function actionKindForTool(tool: string): BusinessAction {
   if (tool === 'browser_navigate') return 'navigate'
@@ -142,7 +110,6 @@ function businessTokens(value: string): Set<string> {
   for (const match of text.matchAll(/[a-z0-9][a-z0-9._:-]{1,}/g)) {
     if (!GENERIC_WORDS.has(match[0])) out.add(match[0])
   }
-
   const cjkRuns = text.match(/[\u3400-\u9fff]{2,}/g) ?? []
   for (const run of cjkRuns) {
     for (let size = 2; size <= Math.min(5, run.length); size += 1) {
@@ -152,7 +119,6 @@ function businessTokens(value: string): Set<string> {
       }
     }
   }
-
   return out
 }
 
@@ -174,9 +140,9 @@ function removeDuplicateResetNavigations(steps: readonly InspectionStep[]): Insp
       continue
     }
     const between = out.slice(previousIndex + 1)
-    const madeBusinessProgress = between.some(item => isDurableBusinessProgress(item))
-    if (!madeBusinessProgress) continue
-    out.push(step)
+    if (between.some(isDurableBusinessProgress)) out.push(step)
+    // Otherwise this is only a reset/retry of the same target after transient
+    // diagnostics. Keep the original completed navigation and drop the reset.
   }
   return out
 }
@@ -216,7 +182,8 @@ function renumberSteps(definition: InspectionDefinition): void {
     const id = `step-${String(index + 1).padStart(3, '0')}`
     if (step.when === undefined) return { ...step, id }
     const sourceStepId = idMap.get(step.when.sourceStepId)
-    if (sourceStepId === undefined) return { ...step, id }
-    return { ...step, id, when: { ...step.when, sourceStepId } }
+    return sourceStepId === undefined ? { ...step, id } : { ...step, id, when: { ...step.when, sourceStepId } }
   })
 }
+
+installBaseStoreFilter()
