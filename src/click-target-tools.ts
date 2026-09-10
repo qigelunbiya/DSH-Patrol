@@ -130,9 +130,7 @@ export function registerPatrolClickTargetTool(
       }
 
       let verificationAttempts: number | undefined
-      let verificationMethod: ToolStep['teaching'] extends infer T
-        ? T extends { method: infer M } ? M : never
-        : never
+      let verificationMethod: NonNullable<ToolStep['teaching']>['method'] | undefined = undefined
       let verificationEvidence: string | undefined
 
       if (expectation.expectation !== undefined) {
@@ -397,7 +395,6 @@ function uniqueNestedAncestor(
   ))
   return ancestors.length === 1 ? ancestors[0]!.candidate : undefined
 }
-
 function isDescendantSelector(candidate: string, ancestor: string): boolean {
   return candidate.startsWith(`${ancestor} > `)
 }
