@@ -48,18 +48,33 @@ async function extensionHarness() {
 }
 
 describe('public real-browser Patrol interaction smoke', () => {
-  it.runIf(runPublicSmoke)('clicks and selects through the actual extension on Sauce Labs the-internet', async () => {
+  it.runIf(runPublicSmoke)('uses atomic semantic click and replay-compatible selectors in the actual extension', async () => {
     const harness = await extensionHarness()
     try {
       await harness.page.goto(`${PUBLIC_TEST_ROOT}/add_remove_elements/`, { waitUntil: 'domcontentloaded', timeout: 20000 })
-      const firstSnapshot = await harness.command('snapshot', { maxElements: 100 })
-      const add = firstSnapshot.elements.find(element => element.text === 'Add Element')
-      expect(add?.selector).toMatch(/^top-frame::/)
 
-      const clickResult = await harness.command('click', { selector: add.selector })
-      expect(clickResult.ok).toBe(true)
-      const afterClick = await harness.command('snapshot', { maxElements: 100 })
-      expect(afterClick.elements.some(element => element.text === 'Delete')).toBe(true)
+      // The business target is resolved and clicked inside one extension command,
+      // exactly like patrol_click_target now does. No snapshot selector is fed
+      // back into the semantic click path.
+      const semantic = await harness.command('semanticClick', {
+        locatorText: 'Add Element',
+        locatorRole: 'button',
+        task: 'Click Add Element',
+      })
+      expect(semantic).toMatchObject({ ok: true, role: 'button', transport: 'atomic-main-world-semantic-click' })
+      expect(semantic.text).toContain('Add Element')
+      expect(semantic.selector).toMatch(/^top-frame::/)
+
+      const afterSemanticClick = await harness.command('snapshot', { maxElements: 100 })
+      const deleteTarget = afterSemanticClick.elements.find(element => element.text === 'Delete')
+      expect(deleteTarget?.selector).toMatch(/^top-frame::/)
+
+      // The selector returned/stored by the semantic path must still be usable
+      // by the ordinary replay click machinery.
+      const replayClick = await harness.command('click', { selector: deleteTarget.selector })
+      expect(replayClick.ok).toBe(true)
+      const afterReplayClick = await harness.command('snapshot', { maxElements: 100 })
+      expect(afterReplayClick.elements.some(element => element.text === 'Delete')).toBe(false)
 
       await harness.page.goto(`${PUBLIC_TEST_ROOT}/dropdown`, { waitUntil: 'domcontentloaded', timeout: 20000 })
       const dropdownSnapshot = await harness.command('snapshot', { maxElements: 100 })

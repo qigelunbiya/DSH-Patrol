@@ -14,6 +14,7 @@ import { registerImageCodeRefreshTool } from './image-code-refresh-tool.js'
 import { registerImageCodeVisualTool } from './image-code-visual-tool.js'
 import { registerLoginStateTool } from './login-state-tool.js'
 import { registerSelectTool } from './select-tool.js'
+import { registerSemanticClickTool } from './semantic-click-tool.js'
 import { registerTotpTool } from './totp-tool.js'
 import { registerTransientTool } from './transient-tool.js'
 import { registerTools } from './tools.js'
@@ -27,10 +28,6 @@ export async function apply(ctx, config = {}) {
     throw new Error('dsh-patrol/browser-tools: host patrolBrowserBridge service is unavailable; install the DSH Patrol host bundle before using the Patrol preset')
   }
 
-  // Selecting Patrol mode should be enough for the browser side to become
-  // usable. The host launches an isolated Chromium profile and installs the
-  // bundled extension through CDP. Startup failures are logged but do not make
-  // the preset snap back to Standard mode; patrol_doctor can still diagnose it.
   if (typeof service.ensureBrowser === 'function') {
     try {
       await service.ensureBrowser()
@@ -39,13 +36,9 @@ export async function apply(ctx, config = {}) {
     }
   }
 
-  // Re-check managed browser availability before every real browser request so
-  // closing the Patrol browser window does not permanently break the session.
-  // DOM commands get a short bounded retry because a newly navigated page can
-  // exist before its content-script bridge finishes attaching.
   const retryableDomCommands = new Set([
     'snapshot', 'readPage', 'challengeSignals', 'imageCodeTarget', 'captureImageCode', 'count',
-    'click', 'select', 'type', 'press', 'scroll', 'wait',
+    'click', 'semanticClick', 'select', 'type', 'press', 'scroll', 'wait',
   ])
   const bridge = {
     get connected() { return service.bridge.connected },
@@ -84,6 +77,9 @@ export async function apply(ctx, config = {}) {
   ctx.effect(() => registerSelectTool(ctx, bridge, {
     commandTimeoutMs: config.commandTimeoutMs ?? 60000,
   }), 'dsh-patrol/browser-tools: native select tool')
+  ctx.effect(() => registerSemanticClickTool(ctx, bridge, {
+    commandTimeoutMs: config.commandTimeoutMs ?? 60000,
+  }), 'dsh-patrol/browser-tools: atomic semantic click')
   ctx.effect(() => registerChallengeTool(ctx, bridge, {
     commandTimeoutMs: config.commandTimeoutMs ?? 60000,
   }), 'dsh-patrol/browser-tools: scoped auth challenge detector')
