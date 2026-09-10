@@ -512,7 +512,7 @@ async function recordAction(
         expectation,
         tabId,
       )
-      if (!verified.ok) {
+      if (!verified.ok || !expectationMatches(verified.text, expectation)) {
         return `Click executed but was NOT recorded. Post-click expectation was not met: ${verified.error ?? `expected ${expectation.mode} ${JSON.stringify(expectation.value)}`}.`
       }
       teaching = {
@@ -593,7 +593,7 @@ async function captureClickPageState(
   if (!page.ok && !snapshot.ok) return undefined
   return {
     url: objectString(page.value, 'url') ?? objectString(snapshot.value, 'url') ?? '',
-    text: normalizePageText(objectString(page.value, 'text') ?? page.text ?? ''),
+    text: normalizePageText(outputText(page.value, page.text)),
     elementSignatures: clickSnapshotSignatures(snapshot.value),
   }
 }
