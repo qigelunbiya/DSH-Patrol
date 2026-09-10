@@ -18,6 +18,7 @@ const REGISTERED_TOOL_SOURCES = [
   'src/credential-tools.ts',
   'src/action-tools.ts',
   'src/click-target-tools.ts',
+  'src/page-understanding-tools.ts',
   'src/select-tools.ts',
   'src/observation-tools.ts',
   'src/transient-input-tools.ts',
