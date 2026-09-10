@@ -99,4 +99,33 @@ describe('dashboard draft cleanup hardening', () => {
     expect(definition.metadata.flowHealth.warnings.join('\n')).toMatch(/任务清单要求 .*点击\/打开步骤/)
     expect(definition.metadata.flowHealth.warnings.join('\n')).toMatch(/任务清单要求 .*输入步骤/)
   })
+
+  it('keeps both business screenshots when the persisted checklist explicitly asks for two screenshots', () => {
+    const definition = {
+      status: 'draft',
+      target: { url: 'https://portal.test' },
+      artifacts: ['screenshot'],
+      metadata: {
+        taskChecklist: [
+          '访问系统',
+          '点击待办待阅工单',
+          '截图工单列表',
+          '打开其中一张工单',
+          '截图工单详情',
+        ],
+      },
+      steps: [
+        step('step-001', 'browser_navigate', { arguments: { url: 'https://portal.test' } }),
+        step('step-002', 'browser_click', { name: '点击待办待阅工单', expectation: { mode: 'contains', value: '工单列表', caseSensitive: false } }),
+        step('step-003', 'browser_screenshot', { name: '截图工单列表', artifact: 'screenshot' }),
+        step('step-004', 'browser_click', { name: '打开其中一张工单', expectation: { mode: 'contains', value: '工单详情', caseSensitive: false } }),
+        step('step-005', 'browser_screenshot', { name: '截图工单详情', artifact: 'screenshot' }),
+      ],
+    }
+
+    const result = compactDashboardFlow(definition)
+
+    expect(definition.steps.filter(item => item.tool === 'browser_screenshot')).toHaveLength(2)
+    expect(result.flowHealth?.warnings.join('\n')).not.toMatch(/截图步骤/)
+  })
 })
