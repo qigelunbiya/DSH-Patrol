@@ -88,7 +88,7 @@ describe('semantic click actionability', () => {
     }, exec)
 
     expect(calls).toEqual([
-      { tool: 'browser_snapshot', args: { maxElements: 500 } },
+      { tool: 'browser_snapshot', args: { maxElements: 500, includeHidden: false } },
       { tool: 'browser_click', args: { selector: 'top-frame::#nav-workbench > a' } },
       { tool: 'browser_read_page', args: {} },
     ])
