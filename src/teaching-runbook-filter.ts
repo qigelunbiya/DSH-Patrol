@@ -1,7 +1,7 @@
-import { PatrolStore } from './store.js'
+import type { PatrolStore } from './store.js'
 import type { InspectionDefinition, InspectionStep, ToolStep } from './types.js'
 
-const PATCH_MARK = Symbol.for('dsh-patrol.teaching-runbook-filter')
+const installedStores = new WeakSet<object>()
 
 const ALWAYS_TRANSIENT_TOOLS = new Set(['browser_snapshot', 'browser_count'])
 const CONTEXT_TOOLS = new Set(['browser_login_state', 'browser_detect_auth_challenge'])
@@ -16,20 +16,24 @@ const GENERIC_WORDS = new Set([
 type BusinessAction = 'navigate' | 'click' | 'type' | 'read' | 'screenshot' | 'wait' | 'context' | 'other'
 
 /**
- * The stored inspection is the reusable business Runbook, not a transcript of
- * every diagnostic browser call. Install the filter on PatrolStore.save so all
- * DRAFT saves produced by PatrolLifecycleStore pass through the same policy.
- * READY definitions and legacy drafts without taskChecklist stay untouched.
+ * Install the business-only DRAFT filter on one live Patrol store instance.
+ * This deliberately avoids import-time prototype patching: PatrolStore and the
+ * browser helpers depend on each other in normal runtime, so an ESM side-effect
+ * patch can observe an uninitialised class during module evaluation.
+ *
+ * Registration happens while the Patrol plugin is being applied, before a user
+ * can execute teaching tools. READY definitions and legacy drafts without a
+ * taskChecklist remain untouched for compatibility.
  */
-function installBaseStoreFilter(): void {
-  const prototype = PatrolStore.prototype as PatrolStore & { [PATCH_MARK]?: boolean }
-  if (prototype[PATCH_MARK] === true) return
-  const originalSave = PatrolStore.prototype.save
-  PatrolStore.prototype.save = async function filteredSave(definition: InspectionDefinition): Promise<void> {
+export function installTeachingRunbookFilter(store: PatrolStore): void {
+  if (installedStores.has(store)) return
+  installedStores.add(store)
+
+  const originalSave = store.save.bind(store)
+  store.save = async (definition: InspectionDefinition): Promise<void> => {
     filterDraftRunbookInPlace(definition)
-    await originalSave.call(this, definition)
+    await originalSave(definition)
   }
-  prototype[PATCH_MARK] = true
 }
 
 export function filterDraftRunbookInPlace(definition: InspectionDefinition): void {
@@ -185,5 +189,3 @@ function renumberSteps(definition: InspectionDefinition): void {
     return sourceStepId === undefined ? { ...step, id } : { ...step, id, when: { ...step.when, sourceStepId } }
   })
 }
-
-installBaseStoreFilter()
