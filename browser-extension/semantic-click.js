@@ -127,6 +127,7 @@ async function semanticClickPageCommand(mode, spec) {
   const actionText = element => {
     const parts = [element.getAttribute?.('aria-label'), element.getAttribute?.('title')]
     if (element instanceof HTMLInputElement && ['button', 'submit', 'reset'].includes(String(element.type || '').toLowerCase())) parts.push(element.value)
+    if (element instanceof HTMLImageElement) parts.push(element.getAttribute('alt'), element.getAttribute('src'))
     parts.push(element.innerText, element.textContent)
     for (const img of element.querySelectorAll?.('img') || []) parts.push(img.getAttribute('alt'), img.getAttribute('title'))
     return compact(parts.filter(Boolean).join(' '))
@@ -167,6 +168,7 @@ async function semanticClickPageCommand(mode, spec) {
     'a', 'button', 'input[type="button"]', 'input[type="submit"]', 'input[type="reset"]',
     '[role="button"]', '[role="link"]', '[role="menuitem"]', '[role="tab"]',
     '[onclick]', '[bg-click]', '[ng-click]', '[data-action]', '[tabindex]:not([tabindex="-1"])',
+    'img', 'svg', '[id*="logo" i]', '[class*="logo" i]',
   ].join(',')
   const candidates = [...new Set([...root.querySelectorAll(selector)])].filter(element => visible(element) && !disabled(element))
   const wantedText = normalize(spec.locatorText || '')
@@ -196,7 +198,13 @@ async function semanticClickPageCommand(mode, spec) {
     }
     if (['a', 'button'].includes(tag) || role === 'button' || role === 'link' || role === 'menuitem') score += 12
     if (wantsLogo) {
-      const logoEvidence = `${element.id || ''} ${element.className || ''} ${[...(element.querySelectorAll?.('img') || [])].map(img => `${img.id || ''} ${img.className || ''} ${img.getAttribute('src') || ''}`).join(' ')}`
+      const logoEvidence = [
+        element.id || '',
+        element.getAttribute?.('class') || '',
+        element.getAttribute?.('src') || '',
+        element.getAttribute?.('href') || '',
+        ...[...(element.querySelectorAll?.('img,svg') || [])].map(child => `${child.id || ''} ${child.getAttribute?.('class') || ''} ${child.getAttribute?.('src') || ''}`),
+      ].join(' ')
       if (/logo/i.test(logoEvidence)) score += 120
     }
     const context = compact(element.closest?.('tr,li,form,nav,[role="dialog"],.ant-modal-content,.el-dialog')?.innerText || '')
