@@ -3,6 +3,7 @@ import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { verifyPostClickExpectation } from './post-click-verification.js'
 import { assertSafePersistentText } from './security.js'
 import { stepExecutionNotes } from './step-notes.js'
+import { installTeachingRunbookFilter } from './teaching-runbook-filter.js'
 import type { PatrolRunner } from './runner.js'
 import type { PatrolStore } from './store.js'
 import type {
@@ -58,6 +59,10 @@ export function registerPatrolClickTargetTool(
   runner: PatrolRunner,
   options: PatrolClickTargetOptions,
 ): () => void {
+  // Install once while the Patrol plugin is being applied. This is early enough
+  // to cover every teaching action, but avoids import-time PatrolStore cycles.
+  installTeachingRunbookFilter(store)
+
   const tool = defineTool({
     name: 'patrol_click_target',
     description: 'Reliably click one CURRENT visible page target. Prefer locatorText and optional CURRENT-observed role/tag. Patrol resolves the target across top document/iframes and clicks it atomically in the page MAIN world, then records only after the required business state is verified. selector is only a hint when semantic fields are present; do not guess internal URLs or brittle nth-of-type selectors.',
