@@ -1,4 +1,3 @@
-import './teaching-runbook-filter.js'
 import type { JsonObject, SemanticLocator, ToolStep } from './types.js'
 import { isPatrolTestMode } from './test-mode.js'
 
