@@ -16,8 +16,10 @@ export function compactFlowConservatively(definition) {
   const artifacts = Array.isArray(definition?.artifacts) ? definition.artifacts : []
   const needsPageOutput = artifacts.includes('page-text') || artifacts.includes('page-summary')
   const needsScreenshot = artifacts.includes('screenshot')
-  const lastPageRead = findLastToolIndex(original, 'browser_read_page')
-  const lastScreenshot = findLastToolIndex(original, 'browser_screenshot')
+  const checklist = Array.isArray(definition?.metadata?.taskChecklist) ? definition.metadata.taskChecklist : []
+  const requiredActions = checklistActionCounts(checklist)
+  const pageReadIndexes = new Set(findLastToolIndices(original, 'browser_read_page', Math.max(needsPageOutput ? 1 : 0, requiredActions.read)))
+  const screenshotIndexes = new Set(findLastToolIndices(original, 'browser_screenshot', Math.max(needsScreenshot ? 1 : 0, requiredActions.screenshot)))
   const abandonedNavigationSteps = findAbandonedNavigationSteps(definition, original)
 
   const kept = original.filter((step, index) => {
@@ -33,8 +35,8 @@ export function compactFlowConservatively(definition) {
     if (step.tool === 'browser_snapshot' || step.tool === 'browser_count') return false
     if (step.tool === 'browser_login_state' || step.tool === 'browser_detect_auth_challenge') return false
 
-    if (step.tool === 'browser_read_page') return needsPageOutput && index === lastPageRead
-    if (step.tool === 'browser_screenshot') return needsScreenshot && index === lastScreenshot
+    if (step.tool === 'browser_read_page') return pageReadIndexes.has(index)
+    if (step.tool === 'browser_screenshot') return screenshotIndexes.has(index)
 
     if (step.tool === 'browser_wait') {
       const selector = typeof step.arguments?.selector === 'string' ? step.arguments.selector.trim() : ''
@@ -85,8 +87,6 @@ function updateFlowHealth(definition) {
   const unverified = steps.filter(step => step?.kind === 'tool' && step.tool === 'browser_click' && step.teaching?.status === 'unverified')
   if (unverified.length > 0) warnings.push(`仍包含 ${unverified.length} 个未验证点击。`)
 
-  // If a task checklist is available, expose unmatched action categories as a
-  // diagnosis instead of silently claiming cleanup succeeded.
   const checklist = Array.isArray(definition?.metadata?.taskChecklist) ? definition.metadata.taskChecklist : []
   if (checklist.length > 0) {
     const required = checklistActionCounts(checklist)
@@ -290,11 +290,13 @@ function navigationIdentity(value) {
   }
 }
 
-function findLastToolIndex(steps, tool) {
-  for (let index = steps.length - 1; index >= 0; index -= 1) {
-    if (steps[index]?.kind === 'tool' && steps[index]?.tool === tool) return index
+function findLastToolIndices(steps, tool, count) {
+  if (!Number.isFinite(count) || count <= 0) return []
+  const indexes = []
+  for (let index = steps.length - 1; index >= 0 && indexes.length < count; index -= 1) {
+    if (steps[index]?.kind === 'tool' && steps[index]?.tool === tool) indexes.push(index)
   }
-  return -1
+  return indexes.reverse()
 }
 
 function findLastMatchingIndex(steps, predicate) {
