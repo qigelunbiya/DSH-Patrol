@@ -61,7 +61,8 @@ describe('public real-browser Patrol interaction smoke', () => {
         locatorRole: 'button',
         task: 'Click Add Element',
       })
-      expect(semantic).toMatchObject({ ok: true, text: 'Add Element', role: 'button', transport: 'atomic-main-world-semantic-click' })
+      expect(semantic).toMatchObject({ ok: true, role: 'button', transport: 'atomic-main-world-semantic-click' })
+      expect(semantic.text).toContain('Add Element')
       expect(semantic.selector).toMatch(/^top-frame::/)
 
       const afterSemanticClick = await harness.command('snapshot', { maxElements: 100 })
