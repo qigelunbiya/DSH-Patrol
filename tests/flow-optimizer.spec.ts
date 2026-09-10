@@ -224,7 +224,7 @@ describe('flow compaction', () => {
     ])
   })
 
-  it('rejects semantic clicks that were never verified against the next business task state', () => {
+  it('rejects semantic clicks that have no post-click verification evidence', () => {
     const value = definition([
       tool('step-001', '访问入口', 'browser_navigate', { arguments: { url: 'https://example.test' } } as Partial<InspectionStep>),
       tool('step-002', '点击我的工作台', 'browser_click', {
@@ -236,6 +236,24 @@ describe('flow compaction', () => {
     ])
 
     expect(() => selectSuccessfulTeachingPath(value, ['step-001', 'step-002', 'step-003', 'step-004']))
-      .toThrow(/lacks post-click success expectation/)
+      .toThrow(/has no post-click verification evidence/)
+  })
+
+  it('accepts a semantic click verified by automatic CURRENT-state change and strips teaching metadata', () => {
+    const value = definition([
+      tool('step-001', '访问入口', 'browser_navigate', { arguments: { url: 'https://example.test' } } as Partial<InspectionStep>),
+      tool('step-002', '点击 Logo', 'browser_click', {
+        arguments: { selector: '#logo' },
+        locator: { text: '长城网际' },
+        teaching: { status: 'verified', method: 'state-change', evidence: 'new interactive DOM: 登录表单' },
+      } as Partial<InspectionStep>),
+      tool('step-003', '读取页面', 'browser_read_page', { artifact: 'page-text' } as Partial<InspectionStep>),
+      tool('step-004', '保存截图', 'browser_screenshot', { artifact: 'screenshot' } as Partial<InspectionStep>),
+    ])
+
+    expect(() => selectSuccessfulTeachingPath(value, value.steps.map(step => step.id))).not.toThrow()
+    const click = value.steps.find(step => step.kind === 'tool' && step.tool === 'browser_click')
+    expect(click).toBeDefined()
+    expect(click?.kind === 'tool' ? click.teaching : undefined).toBeUndefined()
   })
 })
