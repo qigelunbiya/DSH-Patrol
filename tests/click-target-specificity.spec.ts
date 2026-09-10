@@ -101,7 +101,7 @@ describe('semantic action specificity', () => {
 
     expect(result).toContain(leafSelector)
     expect(calls).toEqual([
-      { tool: 'browser_snapshot', args: { maxElements: 500 } },
+      { tool: 'browser_snapshot', args: { maxElements: 500, includeHidden: false } },
       { tool: 'browser_click', args: { selector: `top-frame::${leafSelector}` } },
       { tool: 'browser_read_page', args: {} },
     ])
