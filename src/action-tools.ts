@@ -1,5 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, type ToolDefinition, type ToolRunContext } from '@deepseek-ai/dsh-tools'
+import { verifyPostClickExpectation } from './post-click-verification.js'
 import { assertSafeForStorage, assertSafePersistentText, untrustedPageData } from './security.js'
 import { isPatrolTestMode } from './test-mode.js'
 import { PatrolRunner } from './runner.js'
@@ -20,6 +21,8 @@ const TEXT_OUTPUT = {
   schema: { type: 'string' as const },
   render: (_args: unknown, value: string) => [{ type: 'text' as const, text: value }],
 }
+
+const AUTO_CLICK_VERIFY_DELAYS_MS = [0, 140, 320, 700] as const
 
 export interface PatrolActionToolsOptions {
   maxSteps: number
@@ -53,6 +56,18 @@ interface TeachingResultRecorder {
     stepId: string,
     update: { output?: string; artifacts?: RunArtifact[]; pageText?: string },
   ) => Promise<RunArtifact[]>
+}
+
+interface ClickPageState {
+  url: string
+  text: string
+  elementSignatures: Set<string>
+}
+
+interface ClickStateVerification {
+  ok: boolean
+  attempts: number
+  evidence?: string
 }
 
 export function registerPatrolActionTools(
@@ -283,7 +298,7 @@ function createDefinitions(store: PatrolStore, runner: PatrolRunner, options: Pa
 
   const click = defineTool({
     name: 'patrol_click',
-    description: 'Click an observed CSS selector and record the step. Optional semantic locator fields enable conservative self-healing on replay.',
+    description: 'Click a unique observed CSS selector and record it only after Patrol verifies the resulting business state. expectedText is optional: when omitted, Patrol captures CURRENT page/interactive DOM state before the click and records the step only if a meaningful post-click state change is observed. Optional semantic locator fields enable conservative self-healing on replay.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
@@ -459,22 +474,53 @@ async function recordAction(
   assertSafeForStorage(input.browserArgs)
 
   const definition = await loadEditable(store, input.inspectionId, maxSteps)
+  const tabId = typeof input.browserArgs.tabId === 'number' ? input.browserArgs.tabId : undefined
+  const beforeClickState = input.tool === 'browser_click' && input.expectedText === undefined
+    ? await captureClickPageState(runner, exec, tabId)
+    : undefined
+
   const dispatched = await runner.dispatch(input.tool, input.browserArgs, exec)
   if (!dispatched.ok) {
     return `Teaching action failed and was NOT recorded. ${dispatched.error ?? 'Unknown browser error'}\n${dispatched.text}`
   }
+
+  let teaching: ToolStep['teaching'] | undefined
+  let verificationSummary = ''
   if (input.tool === 'browser_click' && input.expectedText === undefined) {
-    return 'Click executed but was NOT recorded. A click step requires expectedText proving that the next business task state was reached.'
-  }
-  if (input.tool === 'browser_click' && input.expectedText !== undefined) {
-    const observed = await runner.dispatch('browser_read_page', {}, exec)
-    if (!observed.ok) {
-      return `Click executed but was NOT recorded. Post-click expectation could not be verified: ${observed.error ?? observed.text ?? 'browser_read_page failed'}`
+    const verified = await verifyAutomaticClickStateChange(runner, exec, beforeClickState, tabId)
+    if (!verified.ok) {
+      return [
+        'Click executed but was NOT recorded because no meaningful post-click page/DOM state change could be verified.',
+        `Selector: ${String(input.browserArgs.selector ?? '')}`,
+        'Observe the CURRENT state once. If the required result is visible, retry with a concrete expectedText; otherwise treat the click as failed instead of allowing the successful action to disappear from the Runbook.',
+      ].join('\n')
     }
-    const pageText = outputText(observed.value, observed.text)
+    teaching = {
+      status: 'verified',
+      method: 'state-change',
+      ...(verified.evidence === undefined ? {} : { evidence: verified.evidence }),
+    }
+    verificationSummary = `Post-click business state verified in ${verified.attempts} attempt(s) by automatic CURRENT-state change${verified.evidence ? `: ${verified.evidence}` : ''}.`
+  }
+
+  if (input.tool === 'browser_click' && input.expectedText !== undefined) {
     const expectation = optionalExpectation(input.expectedText, input.expectationMode, input.caseSensitive).expectation
-    if (expectation !== undefined && !expectationMatches(pageText, expectation)) {
-      return `Click executed but was NOT recorded. Post-click expectation was not met: expected ${expectation.mode} ${JSON.stringify(expectation.value)}.`
+    if (expectation !== undefined) {
+      const verified = await verifyPostClickExpectation(
+        (toolName, toolArgs, toolExec) => runner.dispatch(toolName, toolArgs, toolExec),
+        exec,
+        expectation,
+        tabId,
+      )
+      if (!verified.ok) {
+        return `Click executed but was NOT recorded. Post-click expectation was not met: ${verified.error ?? `expected ${expectation.mode} ${JSON.stringify(expectation.value)}`}.`
+      }
+      teaching = {
+        status: 'verified',
+        method: 'expected-text',
+        evidence: `${expectation.mode} ${JSON.stringify(expectation.value)}`,
+      }
+      verificationSummary = `Post-click business state verified in ${verified.attempts} attempt(s) by expected text.`
     }
   }
 
@@ -488,6 +534,7 @@ async function recordAction(
     ...optionalCondition(input.conditionSourceStepId, input.conditionExpectedText, input.conditionMode),
     ...optionalLocator(input.locatorText, input.locatorRole, input.locatorTag),
     ...(input.artifact === undefined ? {} : { artifact: input.artifact }),
+    ...(teaching === undefined ? {} : { teaching }),
     notes: stepExecutionNotes({
       tool: input.tool,
       args: input.browserArgs,
@@ -501,9 +548,11 @@ async function recordAction(
   definition.steps.push(step)
   definition.schemaVersion = '0.2'
   definition.metadata.updatedAt = new Date().toISOString()
+  delete definition.metadata.flowHealth
   await store.save(definition)
 
   let displayText = dispatched.text
+  if (verificationSummary) displayText = `${displayText}\n${verificationSummary}`
   const teachingArtifacts: RunArtifact[] = []
   if (input.tool === 'browser_screenshot') {
     const providerPath = objectString(dispatched.value, 'path')
@@ -530,6 +579,100 @@ async function recordAction(
     ...(input.tool === 'browser_read_page' && input.artifact === 'page-text' ? { pageText: displayText } : {}),
   })
   return `Executed and recorded ${step.id} (${input.tool}).\n${output}`
+}
+
+async function captureClickPageState(
+  runner: PatrolRunner,
+  exec: ToolRunContext,
+  tabId: number | undefined,
+): Promise<ClickPageState | undefined> {
+  const [page, snapshot] = await Promise.all([
+    runner.dispatch('browser_read_page', compactObject({ maxChars: 12000, tabId }), exec),
+    runner.dispatch('browser_snapshot', compactObject({ maxElements: 160, includeHidden: false, tabId }), exec),
+  ])
+  if (!page.ok && !snapshot.ok) return undefined
+  return {
+    url: objectString(page.value, 'url') ?? objectString(snapshot.value, 'url') ?? '',
+    text: normalizePageText(objectString(page.value, 'text') ?? page.text ?? ''),
+    elementSignatures: clickSnapshotSignatures(snapshot.value),
+  }
+}
+
+async function verifyAutomaticClickStateChange(
+  runner: PatrolRunner,
+  exec: ToolRunContext,
+  before: ClickPageState | undefined,
+  tabId: number | undefined,
+): Promise<ClickStateVerification> {
+  if (before === undefined) return { ok: false, attempts: 0 }
+  for (let index = 0; index < AUTO_CLICK_VERIFY_DELAYS_MS.length; index += 1) {
+    const delayMs = AUTO_CLICK_VERIFY_DELAYS_MS[index]!
+    if (delayMs > 0) await sleep(delayMs)
+    const after = await captureClickPageState(runner, exec, tabId)
+    if (after === undefined) continue
+    const evidence = clickStateChangeEvidence(before, after)
+    if (evidence !== undefined) return { ok: true, attempts: index + 1, evidence }
+  }
+  return { ok: false, attempts: AUTO_CLICK_VERIFY_DELAYS_MS.length }
+}
+
+function clickStateChangeEvidence(before: ClickPageState, after: ClickPageState): string | undefined {
+  if (before.url && after.url && before.url !== after.url) {
+    return `URL changed from ${safeStateUrl(before.url)} to ${safeStateUrl(after.url)}`
+  }
+  const added = [...after.elementSignatures].filter(signature => !before.elementSignatures.has(signature))
+  if (added.length > 0) return `new interactive DOM: ${shortStateEvidence(added[0]!)}`
+  if (before.text !== after.text) {
+    const lengthDelta = Math.abs(before.text.length - after.text.length)
+    if (lengthDelta >= 12 || !before.text || !after.text) {
+      return `visible page text changed (${before.text.length} -> ${after.text.length} chars)`
+    }
+  }
+  return undefined
+}
+
+function clickSnapshotSignatures(value: unknown): Set<string> {
+  const out = new Set<string>()
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return out
+  const elements = (value as Record<string, unknown>).elements
+  if (!Array.isArray(elements)) return out
+  for (const raw of elements) {
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) continue
+    const element = raw as Record<string, unknown>
+    const selector = typeof element.selector === 'string' ? element.selector : ''
+    const text = typeof element.text === 'string' ? element.text : ''
+    const tag = typeof element.tag === 'string' ? element.tag : ''
+    const role = typeof element.role === 'string' ? element.role : ''
+    if (!selector && !text) continue
+    out.add(`selector=${selector}|tag=${tag}|role=${role}|text=${normalizePageText(text)}`)
+  }
+  return out
+}
+
+function normalizePageText(value: unknown): string {
+  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().toLocaleLowerCase() : ''
+}
+
+function safeStateUrl(value: string): string {
+  try {
+    const url = new URL(value)
+    url.username = ''
+    url.password = ''
+    url.search = ''
+    url.hash = ''
+    return url.toString()
+  } catch {
+    return value.split(/[?#]/, 1)[0] ?? value
+  }
+}
+
+function shortStateEvidence(value: string): string {
+  const text = value.replace(/\s+/g, ' ').trim()
+  return text.length <= 220 ? text : `${text.slice(0, 220)}…`
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
 }
 
 function common(args: CommonRecordArgs): CommonRecordArgs {
