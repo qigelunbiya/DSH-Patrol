@@ -95,7 +95,7 @@ describe('semantic action specificity', () => {
       expectedText: 'connection opened',
     }, exec)
 
-    expect(result).toContain(leafSelector)
+    expect(result).toContain('atomic-main-world-semantic-click')
     expect(calls[0]).toEqual({
       tool: 'browser_semantic_click',
       args: {
