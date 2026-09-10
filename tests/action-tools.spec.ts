@@ -40,7 +40,8 @@ async function setup(env: Record<string, string | undefined> = {}) {
       async dispatch(tool: string, args: JsonObject) {
         calls.push({ tool, args })
         if (tool === 'browser_count') return { ok: true, text: `Count .row: 4 element(s) (visible only).`, value: { ok: true, count: 4 } }
-        if (tool === 'browser_read_page') return { ok: true, text: 'Page: Tasks\n\nrow one\nrow two', value: { ok: true } }
+        if (tool === 'browser_read_page') return { ok: true, text: 'Page: Tasks\n\nrow one\nrow two', value: { ok: true, text: 'Page: Tasks\n\nrow one\nrow two', url: 'https://example.com' } }
+        if (tool === 'browser_snapshot') return { ok: true, text: 'snapshot', value: { ok: true, url: 'https://example.com', elements: [] } }
         return { ok: true, text: 'ok', value: { ok: true } }
       },
     } as unknown as PatrolRunner
@@ -138,7 +139,7 @@ describe('flat Patrol action tools', () => {
     }
   })
 
-  it('does not record a click until its post-click business state is verified', async () => {
+  it('does not record a raw click when no meaningful post-click business state can be verified', async () => {
     const { store, calls, tool, exec } = await setup()
 
     const result = await tool('patrol_click').execute({
@@ -147,9 +148,12 @@ describe('flat Patrol action tools', () => {
       selector: '#workbench',
     }, exec)
 
-    expect(result).toContain('expectedText')
+    expect(result).toContain('no meaningful post-click')
     expect(result).toContain('NOT recorded')
-    expect(calls).toEqual([{ tool: 'browser_click', args: { selector: '#workbench' } }])
+    expect(result).toContain('expectedText')
+    expect(calls.some(call => call.tool === 'browser_click' && call.args.selector === '#workbench')).toBe(true)
+    expect(calls.filter(call => call.tool === 'browser_read_page').length).toBeGreaterThanOrEqual(2)
+    expect(calls.filter(call => call.tool === 'browser_snapshot').length).toBeGreaterThanOrEqual(2)
     expect((await store.load('flat-actions')).steps).toHaveLength(0)
   })
 
