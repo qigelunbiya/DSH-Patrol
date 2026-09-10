@@ -50,12 +50,13 @@ describe('current Patrol behavior prompt', () => {
 
   it('requires task-list driven teaching and excludes unverified steps from the flow graph', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/先把用户原始巡检要求拆成一份有序任务清单/s)
-    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/expectedText/s)
-    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/只有业务目标已被确认完成/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/expectedText 不是点击前置门槛/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/只有实际变化得到验证才记录步骤/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/未完成、未验证、页面未变化/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/自动填好了用户名.*不能.*省略该步骤/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/预填状态.*不能替代下一次重放所需的动作/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/不得因为点击困难就偷偷用 patrol_navigate 直达目标 URL/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/CURRENT 页面已经出现下一项的明确目标.*立即执行/s)
   })
 
   it('requires semantic grouping before writing weekly-report templates', () => {
