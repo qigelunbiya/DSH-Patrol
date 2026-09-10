@@ -1,4 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
+import { createFlowMutationConsentController } from './flow-mutation-consent.js'
 
 /**
  * Integrity rules that remain active even when CAPTCHA/test diagnostics relax
@@ -12,6 +13,8 @@ export const PATROL_INTEGRITY_PROMPT = `DSH Patrol 可复用流程完整性规�
 - 用户明确要求填写的字段必须拥有真实可重放的输入步骤。即使 CURRENT 页面已经自动填好用户名、工号或普通文本，也必须通过对应 patrol_* 输入工具规范化并记录；“这次页面碰巧预填”不能替代下一次重放所需动作。敏感值仍只保存安全引用，绝不保存明文。
 - 业务点击优先使用 patrol_click_target。若点击后的具体业务文本已经从用户要求或 CURRENT 证据中明确知道，可提供 expectedText；若未知（例如 Logo 揭示表单、自定义菜单展开），不要猜 expectedText，直接省略，让 Patrol 通过点击前后 URL/可交互 DOM/页面状态变化自动验证。禁止为了满足参数而杜撰成功条件。
 - 新建 DRAFT 的顶层 targetUrl 在教学开始后锁定。用户要求“点击某入口”时，不得用猜测 URL 的 patrol_navigate 代替该点击，也不得先调用 patrol_update_inspection 把猜测 URL 改成新 target 再绕过导航保护。只有用户明确改变了任务目标时才允许重建/清空流程后使用新 target。
+- 已有非空流程与当前用户描述不完全一致时，默认策略必须是“保留旧流程并做最小化定位/修复”，绝不能因为 replay 失败、缺任务清单、步骤较多或新需求相似，就先 patrol_delete、patrol_remove_steps、patrol_delete_step 或 patrol_rewrite_flow_path 清空/重写旧流程。需要任何删除、清空、批量移除或重写步骤时，必须先停下来询问用户，且只给三个选项：① 确定（允许一次） ② 新建一份流程图 ③ 总是确定。只有用户明确选择后才能调用 patrol_flow_change_choice；没有用户选择就不得执行破坏性工具。
+- 用户选择“确定（允许一次）”后只授权一次破坏性工具调用；用户选择“新建一份流程图”后必须保留旧流程原样并使用新的 inspectionId；用户选择“总是确定”仅对当前 inspectionId、当前 Harness 进程有效，不得把这个偏好持久化到未来重启后的会话。
 - 一个清单步骤只有获得 CURRENT 可观察证据后才能标记完成。工具仅返回 ok、页面标题相似、URL 猜测或“看起来像工作台”都不是业务完成证据。若用户说明“出现侧栏才算点击工作台成功”，必须以侧栏/目标菜单的真实出现作为成功证据。
 - 同一必需业务步骤失败后，只允许基于新的 CURRENT 证据进行一次有意义的修复重试；第二次仍失败必须停止本轮教学，明确告诉用户卡在哪一步、真实错误/页面证据是什么、需要什么协助。禁止跳过失败步骤继续制造“完成”的流程。
 - DRAFT 教学轨迹可以包含诊断探针，但最终 Runbook 只能保留与任务清单一一对应且已验证成功的路线。失败点击、猜 URL、回退/重进、重复 wait/read/snapshot、诊断 probe、被后续修正覆盖的输入都属于教学轨迹，不属于最终可复用流程。
@@ -136,18 +139,26 @@ export function registerPatrolIntegrity(ctx: Context): () => void {
   } catch {
   }
 
+  const mutationConsent = createFlowMutationConsentController()
+  let disposeChoiceTool: (() => void) | undefined
+  try {
+    disposeChoiceTool = ctx.tools.register(mutationConsent.choiceTool)
+  } catch {
+  }
+
   let disposeGuard: (() => void) | undefined
   try {
     const tools = (ctx as Context & { tools?: { guard?: (callback: (execution: any) => string | undefined) => (() => void) } }).tools
     if (typeof tools?.guard === 'function') {
-      const guard = createPatrolTeachingIntegrityGuard()
-      disposeGuard = tools.guard(execution => guard(execution))
+      const integrityGuard = createPatrolTeachingIntegrityGuard()
+      disposeGuard = tools.guard(execution => mutationConsent.guard(execution) ?? integrityGuard(execution))
     }
   } catch {
   }
 
   return () => {
     try { disposeGuard?.() } catch {}
+    try { disposeChoiceTool?.() } catch {}
     try { disposePrompt?.() } catch {}
   }
 }
