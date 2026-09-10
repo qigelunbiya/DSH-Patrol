@@ -21,10 +21,11 @@ interface PlanningGuardState {
   touchedAt: number
   analyses: number
   analyzed: boolean
+  lastAnalysisTask: string
   clickAttempts: Map<string, number>
 }
 
-export interface SnapshotElement {
+interface SnapshotElement {
   selector: string
   text: string
   role: string
@@ -65,7 +66,7 @@ export function createPatrolPlanningGuard() {
     for (const [key, value] of states) if (now - value.touchedAt > STATE_TTL_MS) states.delete(key)
     let state = states.get(inspectionId)
     if (state === undefined) {
-      state = { touchedAt: now, analyses: 0, analyzed: false, clickAttempts: new Map() }
+      state = { touchedAt: now, analyses: 0, analyzed: false, lastAnalysisTask: '', clickAttempts: new Map() }
       states.set(inspectionId, state)
     }
     state.touchedAt = now
@@ -75,8 +76,14 @@ export function createPatrolPlanningGuard() {
       return undefined
     }
     if (name === 'patrol_analyze_step') {
+      const taskKey = normalize(cleanString(args.task) || 'analysis')
+      if (taskKey !== state.lastAnalysisTask) {
+        state.analyses = 0
+        state.analyzed = false
+        state.lastAnalysisTask = taskKey
+      }
       if (state.analyses >= 2) {
-        return 'DSH Patrol 页面规划器：当前页面阶段已经分析两次且没有新的业务进展。不要继续 analyze/observe/snapshot 循环；执行剩余方案或停止并报告阻塞。'
+        return 'DSH Patrol 页面规划器：同一业务动作的当前页面已经分析两次且没有新的业务进展。不要继续 analyze/observe/snapshot 循环；执行剩余方案或停止并报告阻塞。'
       }
       state.analyses += 1
       state.analyzed = true
