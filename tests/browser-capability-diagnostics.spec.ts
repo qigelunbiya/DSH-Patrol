@@ -39,7 +39,7 @@ describe('browser capability diagnostics', () => {
         extension: {
           name: 'dsh-patrol-browser-extension',
           version: '0.2.1',
-          capabilities: ['captureImageCode', 'visualSnapshot'],
+          capabilities: ['captureImageCode', 'visualSnapshot', 'semanticClick'],
         },
       }),
       request: async () => ({ ok: true }),
@@ -53,7 +53,33 @@ describe('browser capability diagnostics', () => {
 
     expect(rendered).toContain('v0.2.1')
     expect(rendered).toContain('captureImageCode=yes')
+    expect(rendered).toContain('semanticClick=yes')
     expect(rendered).toContain('visualSnapshot')
+  })
+
+  it('reports semanticClick as missing instead of treating a registered host tool as available', async () => {
+    const fixture = fakeToolContext()
+    const bridge = {
+      status: () => ({
+        connected: true,
+        pending: 0,
+        extension: {
+          name: 'dsh-patrol-browser-extension',
+          version: '0.3.0',
+          capabilities: ['captureImageCode', 'visualSnapshot'],
+        },
+      }),
+      request: async () => ({ ok: true }),
+      saveScreenshot: () => '/tmp/unused.png',
+    }
+
+    registerTools(fixture.ctx, bridge)
+    const status = fixture.definitions.find(definition => definition.name === 'browser_status')
+    const value = await status.execute({}, {})
+    const rendered = status.output.render({}, value).map(block => block.text || '').join('\n')
+
+    expect(rendered).toContain('semanticClick=MISSING')
+    expect(rendered).toMatch(/selector fallback/i)
   })
 
   it('labels a connected extension without advertised capabilities as stale', async () => {

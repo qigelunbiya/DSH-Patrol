@@ -5,7 +5,7 @@ import { assertSafeForStorage, assertSafePersistentText, untrustedPageData } fro
 import { isPatrolTestMode } from './test-mode.js'
 import { PatrolRunner } from './runner.js'
 import { stepExecutionNotes } from './step-notes.js'
-import { PatrolStore } from './store.js'
+import { assertPersistedTaskChecklist, PatrolStore } from './store.js'
 import type {
   InspectionDefinition,
   InspectionStep,
@@ -728,6 +728,7 @@ function markdownImagePath(path: string): string {
 async function loadEditable(store: PatrolStore, inspectionId: string, maxSteps: number): Promise<InspectionDefinition> {
   const definition = await store.load(inspectionId)
   if (definition.status !== 'draft') throw new Error(`inspection ${definition.id} is ${definition.status}, not draft; call patrol_begin_edit for an existing READY runbook`)
+  assertPersistedTaskChecklist(definition)
   if (definition.steps.length >= maxSteps) throw new Error(`runbook reached maxSteps=${maxSteps}`)
   return definition
 }

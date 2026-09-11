@@ -4,7 +4,7 @@ import { listTotpProfiles } from '../browser-bridge-runtime/totp-store.js'
 import { assertSafePersistentText } from './security.js'
 import { stepExecutionNotes } from './step-notes.js'
 import type { PatrolRunner } from './runner.js'
-import type { PatrolStore } from './store.js'
+import { assertPersistedTaskChecklist, type PatrolStore } from './store.js'
 import type { InspectionDefinition, InspectionStep, JsonObject, StepCondition, ToolStep } from './types.js'
 
 const PROFILE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
@@ -118,6 +118,7 @@ async function loadEditable(store: PatrolStore, inspectionId: string, maxSteps: 
   if (definition.status !== 'draft') {
     throw new Error(`inspection ${definition.id} is ${definition.status}, not draft; edit operations return it to draft before re-validation`)
   }
+  assertPersistedTaskChecklist(definition)
   if (definition.steps.length >= maxSteps) throw new Error(`runbook reached maxSteps=${maxSteps}`)
   return definition
 }

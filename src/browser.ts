@@ -183,9 +183,23 @@ export function isSelectorBoundToCurrentSnapshot(snapshotValue: unknown, selecto
   ))
   if (selectorMatches.length !== 1) return false
   const element = selectorMatches[0]!
-  if (normalized.text !== undefined && String(element.text ?? '').trim() !== normalized.text) return false
+  if (normalized.text !== undefined && !semanticTextMatches(String(element.text ?? ''), normalized.text)) return false
   if (normalized.role !== undefined && String(element.role ?? '').trim().toLowerCase() !== normalized.role) return false
   if (normalized.tag !== undefined && String(element.tag ?? '').trim().toLowerCase() !== normalized.tag) return false
+  return true
+}
+
+function semanticTextMatches(observed: string, requested: string): boolean {
+  const left = observed.replace(/\s+/g, '').toLocaleLowerCase()
+  const right = requested.replace(/\s+/g, '').toLocaleLowerCase()
+  if (!left || !right) return false
+  if (left === right) return true
+  if (right.length < 2 || !left.includes(right)) return false
+  // The observed accessible name may expand a concise business label, but it
+  // must not silently add a destructive or representational action. Thus 登录
+  // may bind 登录自助服务平台, while 确定 cannot bind 确定删除账户.
+  const added = left.replace(right, '')
+  if (/(?:删除|移除|注销|清空|提交|发送|发布|支付|购买|授权|delete|remove|clear|submit|send|publish|pay|purchase|authorize)/i.test(added)) return false
   return true
 }
 

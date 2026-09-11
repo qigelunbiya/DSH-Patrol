@@ -3,7 +3,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { assertSafeForStorage, assertSafePersistentText } from './security.js'
 import { stepExecutionNotes } from './step-notes.js'
 import type { PatrolRunner } from './runner.js'
-import type { PatrolStore } from './store.js'
+import { assertPersistedTaskChecklist, type PatrolStore } from './store.js'
 import type { InspectionDefinition, InspectionStep, JsonObject, ToolStep } from './types.js'
 
 const TEXT_OUTPUT = {
@@ -80,6 +80,7 @@ export function registerPatrolSelectTools(
 async function loadEditable(store: PatrolStore, inspectionId: string, maxSteps: number): Promise<InspectionDefinition> {
   const definition = await store.load(inspectionId)
   if (definition.status !== 'draft') throw new Error(`inspection ${definition.id} is ${definition.status}, not draft; call patrol_begin_edit first`)
+  assertPersistedTaskChecklist(definition)
   if (definition.steps.length >= maxSteps) throw new Error(`runbook reached maxSteps=${maxSteps}`)
   return definition
 }

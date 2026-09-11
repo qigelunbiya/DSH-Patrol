@@ -12,6 +12,31 @@ ambiguous, stale, or unobserved selectors still fail closed. This prevents the m
 from creating a second, duplicate business-click attempt just to recover a
 transient extension error.
 
+The extension handshake now advertises `semanticClick` explicitly. Browser
+diagnostics distinguish a registered host tool from a live extension that can
+actually execute the command. When an older persistent profile lacks that
+capability, Patrol fails fast and uses the same unique-selector composite
+instead of repeatedly sending an unsupported command. The semantic layer also
+loads immediately after the core bridge, so a failure in an unrelated optional
+frame/compatibility layer cannot silently remove click support.
+
+Selector fallback keeps exact selector and visible-count requirements, but its
+text binding accepts a meaningful label contained in the CURRENT accessible
+name (for example `登录` against `登录自助服务平台`). One-character fuzzy matches,
+ambiguous selectors, stale selectors, and role/tag mismatches still fail closed.
+
+The page-planning guard no longer counts pre-execution tool calls as completed
+click attempts. Transport failures that never performed a physical click do not
+consume the business retry budget. An executed click whose result could not be
+verified is tracked separately: Patrol requires fresh CURRENT analysis before
+one recovery retry and blocks a third physical click. Raw CSS clicks still
+require page analysis.
+
+Checklist enforcement now happens against persisted state at the teaching tool
+and store boundary, rather than speculative guard memory. A failed duplicate-ID
+create call therefore cannot poison an existing DRAFT, while a real new DRAFT
+still cannot execute or append browser steps until its checklist is persisted.
+
 The reusable Runbook still stores an ordinary `browser_click` step using the selector that was actually clicked. This preserves deterministic replay and selector healing while keeping the atomic semantic primitive internal to Patrol.
 
 ## Draft Runbook policy

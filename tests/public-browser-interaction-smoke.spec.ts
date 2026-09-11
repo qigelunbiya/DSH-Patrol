@@ -1,12 +1,39 @@
 // @ts-nocheck
+import { createServer } from 'node:http'
 import { fileURLToPath } from 'node:url'
 import puppeteer from 'puppeteer-core'
 import { describe, expect, it } from 'vitest'
 import { resolveBrowserExecutable } from '../browser-bridge-runtime/managed-browser.js'
 
 const EXTENSION_PATH = fileURLToPath(new URL('../browser-extension/', import.meta.url))
-const PUBLIC_TEST_ROOT = 'http://the-internet.herokuapp.com'
-const runPublicSmoke = process.env.GITHUB_ACTIONS === 'true' && process.platform === 'linux'
+const runPublicSmoke = (process.env.GITHUB_ACTIONS === 'true' && process.platform === 'linux')
+  || process.env.DSH_PATROL_PUBLIC_SMOKE === 'true'
+
+async function localTestSite() {
+  const server = createServer((request, response) => {
+    response.setHeader('content-type', 'text/html; charset=utf-8')
+    if (request.url === '/add_remove_elements/') {
+      response.end(`<!doctype html><button id="add" onclick="this.insertAdjacentHTML('afterend','<button class=added onclick=this.remove()>Delete</button>')">Add Element</button>`)
+      return
+    }
+    if (request.url === '/dropdown') {
+      response.end('<!doctype html><select id="dropdown"><option value="">Please select</option><option value="1">Option 1</option><option value="2">Option 2</option></select>')
+      return
+    }
+    response.statusCode = 404
+    response.end('not found')
+  })
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('local browser smoke server has no TCP address')
+  return {
+    root: `http://127.0.0.1:${address.port}`,
+    close: () => new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())),
+  }
+}
 
 async function extensionHarness() {
   const browser = await puppeteer.launch({
@@ -49,9 +76,10 @@ async function extensionHarness() {
 
 describe('public real-browser Patrol interaction smoke', () => {
   it.runIf(runPublicSmoke)('uses atomic semantic click and replay-compatible selectors in the actual extension', async () => {
+    const site = await localTestSite()
     const harness = await extensionHarness()
     try {
-      await harness.page.goto(`${PUBLIC_TEST_ROOT}/add_remove_elements/`, { waitUntil: 'domcontentloaded', timeout: 20000 })
+      await harness.page.goto(`${site.root}/add_remove_elements/`, { waitUntil: 'domcontentloaded', timeout: 20000 })
 
       // The business target is resolved and clicked inside one extension command,
       // exactly like patrol_click_target now does. No snapshot selector is fed
@@ -76,7 +104,7 @@ describe('public real-browser Patrol interaction smoke', () => {
       const afterReplayClick = await harness.command('snapshot', { maxElements: 100 })
       expect(afterReplayClick.elements.some(element => element.text === 'Delete')).toBe(false)
 
-      await harness.page.goto(`${PUBLIC_TEST_ROOT}/dropdown`, { waitUntil: 'domcontentloaded', timeout: 20000 })
+      await harness.page.goto(`${site.root}/dropdown`, { waitUntil: 'domcontentloaded', timeout: 20000 })
       const dropdownSnapshot = await harness.command('snapshot', { maxElements: 100 })
       const dropdown = dropdownSnapshot.elements.find(element => element.tag === 'select')
       expect(dropdown?.selector).toBe('top-frame::#dropdown')
@@ -86,6 +114,7 @@ describe('public real-browser Patrol interaction smoke', () => {
       expect(await harness.page.$eval('#dropdown', element => element.value)).toBe('2')
     } finally {
       await harness.browser.close()
+      await site.close()
     }
   }, 60000)
 })

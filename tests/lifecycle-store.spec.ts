@@ -42,6 +42,7 @@ describe('PatrolLifecycleStore', () => {
       metadata: {
         createdAt: '2026-09-02T01:00:00.000Z',
         updatedAt: '2026-09-02T01:00:02.000Z',
+        taskChecklist: ['完成交互教学'],
       },
     }
     await store.create(draft)
@@ -96,6 +97,7 @@ describe('PatrolLifecycleStore', () => {
         createdAt: '2026-09-02T01:00:00.000Z',
         updatedAt: '2026-09-02T01:00:00.000Z',
         workspaceRoot: workspace,
+        taskChecklist: ['保存截图产物'],
       },
     }
     await store.create(draft)
@@ -153,6 +155,7 @@ describe('PatrolLifecycleStore', () => {
       metadata: {
         createdAt: '2026-09-02T01:00:00.000Z',
         updatedAt: '2026-09-02T01:00:00.000Z',
+        taskChecklist: ['继续已有草稿'],
       },
     }
     await store.create(draft)
@@ -201,6 +204,7 @@ describe('PatrolLifecycleStore', () => {
       metadata: {
         createdAt: '2026-09-02T01:00:00.000Z',
         updatedAt: '2026-09-02T01:00:00.000Z',
+        taskChecklist: ['保存已就绪流程'],
       },
     }
     await store.create(ready)

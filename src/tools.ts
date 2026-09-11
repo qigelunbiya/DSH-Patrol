@@ -22,7 +22,7 @@ import {
   untrustedPageData,
 } from './security.js'
 import { PatrolRunner } from './runner.js'
-import { PatrolStore } from './store.js'
+import { assertPersistedTaskChecklist, PatrolStore } from './store.js'
 import { INSPECTION_ARTIFACTS, type AuthMode, type InspectionArtifact,
   type CheckpointStep,
   type InspectionDefinition,
@@ -192,6 +192,7 @@ function createDefinitions(ctx: Context, store: PatrolStore, runner: PatrolRunne
       if (args.conditionExpectedText !== undefined) assertSafePersistentText(args.conditionExpectedText, 'conditionExpectedText')
       if (args.locatorText !== undefined) assertSafePersistentText(args.locatorText, 'locatorText')
       const definition = await loadEditable(store, args.inspectionId, options.maxSteps)
+      assertPersistedTaskChecklist(definition)
       const action = args.action as BrowserAction
       const tool = browserToolForAction(action)
       const jsonArguments = asJsonObject(args.arguments as JsonValue)

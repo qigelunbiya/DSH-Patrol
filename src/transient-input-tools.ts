@@ -5,7 +5,7 @@ import { isPatrolTestMode } from './test-mode.js'
 import { assertSafePersistentText } from './security.js'
 import { PatrolRunner } from './runner.js'
 import { stepExecutionNotes } from './step-notes.js'
-import { PatrolStore } from './store.js'
+import { assertPersistedTaskChecklist, PatrolStore } from './store.js'
 import type { InspectionStep, JsonObject, ToolStep } from './types.js'
 
 const TEXT_OUTPUT = {
@@ -61,6 +61,7 @@ export function registerPatrolTransientInputTools(
       if (typeof args.text !== 'string' || args.text.length === 0) throw new Error('sensitive text must not be empty')
       const definition = await store.load(args.inspectionId)
       if (definition.status !== 'draft') throw new Error(`inspection ${definition.id} is ${definition.status}; call patrol_begin_edit before teaching sensitive input`)
+      assertPersistedTaskChecklist(definition)
 
       const transientRef = rememberTransientSecret(args.text)
       const dispatched = await runner.dispatch('browser_type', {
@@ -115,6 +116,7 @@ export function registerPatrolTransientInputTools(
       }
       const definition = await store.load(args.inspectionId)
       if (definition.status !== 'draft') throw new Error(`inspection ${definition.id} is ${definition.status}; call patrol_begin_edit before teaching image-code handling`)
+      assertPersistedTaskChecklist(definition)
       const stepName = typeof args.stepName === 'string' && args.stepName.trim() !== ''
         ? args.stepName.trim()
         : '自动识别并填写当前图片验证码'

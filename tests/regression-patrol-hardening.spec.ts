@@ -48,7 +48,7 @@ function draftDefinition(id = 'hardening-demo'): InspectionDefinition {
     auth: { mode: 'none' },
     schedule: null,
     steps: [],
-    metadata: { createdAt: now, updatedAt: now },
+    metadata: { createdAt: now, updatedAt: now, taskChecklist: ['执行测试动作'] },
   }
 }
 

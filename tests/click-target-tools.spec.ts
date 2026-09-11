@@ -5,6 +5,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { afterEach, describe, expect, it } from 'vitest'
 import { registerPatrolClickTargetTool } from '../src/click-target-tools.ts'
+import { createPatrolClickOutcomeTracker } from '../src/click-retry-state.ts'
 import { PatrolStore } from '../src/store.ts'
 import type { InspectionDefinition, JsonObject } from '../src/types.ts'
 
@@ -13,7 +14,10 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
-async function setup(dispatch: (tool: string, args: JsonObject) => Promise<any>) {
+async function setup(
+  dispatch: (tool: string, args: JsonObject) => Promise<any>,
+  clickOutcomes: ReturnType<typeof createPatrolClickOutcomeTracker> | undefined = undefined,
+) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-click-target-'))
   roots.push(root)
   const store = new PatrolStore(root)
@@ -30,7 +34,7 @@ async function setup(dispatch: (tool: string, args: JsonObject) => Promise<any>)
     },
   } as unknown as Context
 
-  registerPatrolClickTargetTool(ctx, store, { dispatch } as any, { maxSteps: 20 })
+  registerPatrolClickTargetTool(ctx, store, { dispatch } as any, { maxSteps: 20, clickOutcomes })
   const tool = definitions.find(item => item.name === 'patrol_click_target')
   if (!tool) throw new Error('patrol_click_target not registered')
   const exec = {
@@ -55,7 +59,7 @@ function draftDefinition(): InspectionDefinition {
     auth: { mode: 'none' },
     schedule: null,
     steps: [],
-    metadata: { createdAt: now, updatedAt: now },
+    metadata: { createdAt: now, updatedAt: now, taskChecklist: ['点击目标'] },
   }
 }
 
@@ -83,6 +87,19 @@ function atomic(selector: string, text = '') {
 }
 
 describe('semantic Patrol click target', () => {
+  it('refuses before browser dispatch when the DRAFT has no persisted checklist', async () => {
+    const calls: string[] = []
+    const { store, tool, exec } = await setup(async (name) => { calls.push(name); throw new Error(`unexpected ${name}`) })
+    const definition = await store.load('click-target')
+    delete definition.metadata.taskChecklist
+    await store.save(definition)
+
+    await expect(tool.execute({
+      inspectionId: 'click-target', stepName: '点击登录', locatorText: '登录',
+    }, exec)).rejects.toThrow(/persisted task checklist/i)
+    expect(calls).toEqual([])
+  })
+
   it('dispatches one atomic semantic click instead of snapshot-then-selector click', async () => {
     const calls: Array<{ tool: string; args: JsonObject }> = []
     const { store, tool, exec } = await setup(async (name, args) => {
@@ -186,6 +203,57 @@ describe('semantic Patrol click target', () => {
       locator: { text: '长城网际' },
       teaching: { status: 'verified', method: 'state-change' },
     })
+  })
+
+  it('accepts a unique CURRENT selector when the requested label is a meaningful substring', async () => {
+    let clicked = false
+    const { store, tool, exec } = await setup(async (name) => {
+      if (name === 'browser_read_page') return page(clicked ? '我的工作台' : '登录自助服务平台')
+      if (name === 'browser_semantic_click') return { ok: false, text: '', error: 'unsupported browser command: semanticClick' }
+      if (name === 'browser_snapshot') return clicked
+        ? snapshot([{ tag: 'a', text: '我的工作台', selector: 'top-frame::#workbench' }])
+        : snapshot([{ tag: 'input', role: 'button', text: '登录自助服务平台', selector: 'top-frame::#sign_in_button_standard' }])
+      if (name === 'browser_count') return { ok: true, text: '1', value: { ok: true, count: 1 } }
+      if (name === 'browser_click') {
+        clicked = true
+        return { ok: true, text: 'clicked', value: { ok: true } }
+      }
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    const result = await tool.execute({
+      inspectionId: 'click-target',
+      stepName: '点击登录',
+      selector: 'top-frame::#sign_in_button_standard',
+      locatorText: '登录',
+      locatorRole: 'button',
+    }, exec)
+
+    expect(result).toContain('selector-compatible fallback')
+    expect((await store.load('click-target')).steps).toHaveLength(1)
+  })
+
+  it('rejects reverse and dangerous semantic substrings even with a unique selector', async () => {
+    for (const [requested, observed] of [
+      ['登录自助服务平台', '登录'],
+      ['确定', '确定删除账户'],
+    ]) {
+      const calls: string[] = []
+      const { store, tool, exec } = await setup(async (name) => {
+        calls.push(name)
+        if (name === 'browser_read_page') return page(observed)
+        if (name === 'browser_semantic_click') return { ok: false, text: '', error: 'transport unavailable' }
+        if (name === 'browser_snapshot') return snapshot([{ tag: 'button', role: 'button', text: observed, selector: 'top-frame::#target' }])
+        throw new Error(`unexpected tool ${name}`)
+      })
+      const result = await tool.execute({
+        inspectionId: 'click-target', stepName: `点击${requested}`,
+        selector: 'top-frame::#target', locatorText: requested, locatorRole: 'button',
+      }, exec)
+      expect(result).toContain('not uniquely bound')
+      expect(calls).not.toContain('browser_click')
+      expect((await store.load('click-target')).steps).toEqual([])
+    }
   })
 
   it('keeps semantic fallback fail-closed when the selector hint is ambiguous', async () => {
@@ -332,6 +400,22 @@ describe('semantic Patrol click target', () => {
     expect(result).toContain('NOT recorded')
     expect(result).toContain('no meaningful post-click')
     expect((await store.load('click-target')).steps).toEqual([])
+  })
+
+  it('records only an executed-but-unverified physical click in retry state', async () => {
+    const outcomes = createPatrolClickOutcomeTracker()
+    const input = { inspectionId: 'click-target', stepName: '点击提交', locatorText: '提交' }
+    const { tool, exec } = await setup(async (name) => {
+      if (name === 'browser_read_page') return page('表单')
+      if (name === 'browser_snapshot') return snapshot([{ tag: 'button', role: 'button', text: '提交', selector: 'top-frame::#submit' }])
+      if (name === 'browser_semantic_click') return atomic('top-frame::#submit', '提交')
+      throw new Error(`unexpected tool ${name}`)
+    }, outcomes)
+
+    expect(outcomes.unverifiedPhysicalClicks(input)).toBe(0)
+    const result = await tool.execute(input, exec)
+    expect(result).toContain('NOT recorded')
+    expect(outcomes.unverifiedPhysicalClicks(input)).toBe(1)
   })
 
   it('does not record a semantic click when explicit expectedText never appears', async () => {

@@ -49,7 +49,7 @@ describe('Patrol encrypted sensitive input', () => {
       auth: { mode: 'manual-checkpoint' },
       schedule: null,
       steps: [],
-      metadata: { createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+      metadata: { createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), taskChecklist: ['填写密码'] },
     }
     const save = vi.fn(async () => {})
     const store = {

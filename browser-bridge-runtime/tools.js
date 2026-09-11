@@ -380,10 +380,14 @@ function renderBrowserStatus(value) {
   const imageCode = capabilities.includes('captureImageCode')
     ? 'captureImageCode=yes'
     : 'captureImageCode=MISSING'
-  const suffix = imageCode === 'captureImageCode=yes'
-    ? ''
-    : '; runtime/extension capability mismatch: restart Harness before CAPTCHA visual capture'
-  return `${base} ${imageCode}; capabilities=[${capabilities.join(', ')}]${suffix}.`
+  const semanticClick = capabilities.includes('semanticClick')
+    ? 'semanticClick=yes'
+    : 'semanticClick=MISSING'
+  const warnings = []
+  if (imageCode !== 'captureImageCode=yes') warnings.push('runtime/extension capability mismatch: restart Harness before CAPTCHA visual capture')
+  if (semanticClick !== 'semanticClick=yes') warnings.push('atomic semantic transport unavailable; patrol_click_target will use its verified unique-selector fallback')
+  const suffix = warnings.length > 0 ? `; ${warnings.join('; ')}` : ''
+  return `${base} ${imageCode}; ${semanticClick}; capabilities=[${capabilities.join(', ')}]${suffix}.`
 }
 
 function renderScreenshotResult(value) {

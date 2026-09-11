@@ -21,6 +21,7 @@ import { registerPatrolModelRouteRecovery } from './model-route-recovery.js'
 import { createPatrolObservationGate, PATROL_OBSERVATION_PROMPT } from './observation-guard.js'
 import { registerPatrolObservationTools } from './observation-tools.js'
 import { createPatrolPlanningGuard, PATROL_PAGE_UNDERSTANDING_PROMPT, registerPatrolPageUnderstandingTools } from './page-understanding-tools.js'
+import { createPatrolClickOutcomeTracker } from './click-retry-state.js'
 import { registerPatrolIntegrity } from './patrol-integrity.js'
 import { PATROL_SYSTEM_PROMPT } from './prompt.js'
 import { createPatrolRecoveryGuard, PATROL_RECOVERY_PROMPT } from './recovery-guard.js'
@@ -138,7 +139,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const observationGate = createPatrolObservationGate()
   const recoveryGuard = createPatrolRecoveryGuard()
   const verificationGuard = createManualVerificationGuard()
-  const planningGuard = createPatrolPlanningGuard()
+  const clickOutcomes = createPatrolClickOutcomeTracker()
+  const planningGuard = createPatrolPlanningGuard(clickOutcomes)
 
   // This is intentionally independent of NORMAL/TEST mode. It prevents URL
   // bypasses and injects the business-flow contract, but it no longer blocks a
@@ -162,7 +164,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     'dsh-patrol: flat browser action tools',
   )
   ctx.effect(
-    () => registerPatrolClickTargetTool(ctx, store, runner, { maxSteps: resolved.maxSteps }),
+    () => registerPatrolClickTargetTool(ctx, store, runner, { maxSteps: resolved.maxSteps, clickOutcomes }),
     'dsh-patrol: semantic current-page click target resolver',
   )
   ctx.effect(

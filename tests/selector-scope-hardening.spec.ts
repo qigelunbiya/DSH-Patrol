@@ -6,16 +6,16 @@ const entry = readFileSync(join(process.cwd(), 'browser-extension', 'background-
 const source = readFileSync(join(process.cwd(), 'browser-extension', 'selector-scope-hardening.js'), 'utf8')
 
 describe('selector scope hardening', () => {
-  it('loads after interaction hardening, before modal scoping, with atomic semantic click as the final layer', () => {
+  it('keeps selector and modal hardening ordered after the early atomic semantic layer', () => {
     const interactionIndex = entry.indexOf("importScripts('interaction-hardening.js')")
     const selectorIndex = entry.indexOf("importScripts('selector-scope-hardening.js')")
     const modalIndex = entry.indexOf("importScripts('modal-target-hardening.js')")
     const semanticIndex = entry.indexOf("importScripts('semantic-click.js')")
     expect(interactionIndex).toBeGreaterThanOrEqual(0)
+    expect(semanticIndex).toBeGreaterThanOrEqual(0)
+    expect(semanticIndex).toBeLessThan(interactionIndex)
     expect(selectorIndex).toBeGreaterThan(interactionIndex)
     expect(modalIndex).toBeGreaterThan(selectorIndex)
-    expect(semanticIndex).toBeGreaterThan(modalIndex)
-    expect(entry.trim().endsWith("importScripts('semantic-click.js')")).toBe(true)
   })
 
   it('tries an unqualified selector in the top document before scanning child frames', () => {

@@ -16,32 +16,13 @@ export const PATROL_INTEGRITY_PROMPT = `DSH Patrol 可复用流程完整性规�
 - 已有非空流程与当前用户描述不完全一致时，默认策略必须是“保留旧流程并做最小化定位/修复”，绝不能因为 replay 失败、缺任务清单、步骤较多或新需求相似，就先 patrol_delete、patrol_remove_steps、patrol_delete_step 或 patrol_rewrite_flow_path 清空/重写旧流程。需要任何删除、清空、批量移除或重写步骤时，必须调用 patrol_request_flow_change_choice 弹出原生三选一卡片，让用户选择：① 确定（允许一次） ② 新建一份流程图 ③ 总是确定。只有卡片返回选择后才能继续；若当前客户端不支持卡片，才退回相同三个选项的纯文本询问，并在用户明确回答后调用 patrol_flow_change_choice。
 - 用户选择“确定（允许一次）”后只授权一次破坏性工具调用；用户选择“新建一份流程图”后必须保留旧流程原样并使用新的 inspectionId；用户选择“总是确定”仅对当前 inspectionId、当前 Harness 进程有效，不得把这个偏好持久化到未来重启后的会话。
 - 一个清单步骤只有获得 CURRENT 可观察证据后才能标记完成。工具仅返回 ok、页面标题相似、URL 猜测或“看起来像工作台”都不是业务完成证据。若用户说明“出现侧栏才算点击工作台成功”，必须以侧栏/目标菜单的真实出现作为成功证据。
-- 同一必需业务步骤失败后，只允许基于新的 CURRENT 证据进行一次有意义的修复重试；第二次仍失败必须停止本轮教学，明确告诉用户卡在哪一步、真实错误/页面证据是什么、需要什么协助。禁止跳过失败步骤继续制造“完成”的流程。
+- 必需业务步骤遇到扩展能力缺失、页面加载、iframe 重建或 selector 失效且尚未发生物理点击时，先取得新的 CURRENT 证据并走受控恢复，不得把工具调用次数误算成业务失败。若物理点击已发生但结果未验证，必须先确认 CURRENT 状态，且最多允许一次恢复点击；两次仍未验证就停止，避免重复提交或其他副作用。禁止跳过失败步骤制造“完成”的流程。
 - DRAFT 教学轨迹可以包含诊断探针，但最终 Runbook 只能保留与任务清单一一对应且已验证成功的路线。失败点击、猜 URL、回退/重进、重复 wait/read/snapshot、诊断 probe、被后续修正覆盖的输入都属于教学轨迹，不属于最终可复用流程。
 - 完成用户目标后必须使用 patrol_finalize_flow 只选择真正成功的 step id，再确认流程；没有完成任务清单中的全部必需项时不得确认 READY。清理按钮只能清理轨迹，不能把一个缺少关键业务动作的残缺 Flow 变成可用 Flow。
 - 页面发生跳转/iframe 重建不允许让触发跳转的动作丢失。Patrol 应对页面变化做有界验证并保留已验证的因果点击。
 - 不要直接调用会改变页面的 browser_*。browser_click 等是 DSH Patrol 内部执行 primitive；patrol_* 复合工具会在内部调用它们并负责唯一目标解析、验证、记录和重放。`
 
 const BROWSER_STEP_TOOLS = new Set(['patrol_browser_step', 'patrol_reteach_browser_step'])
-const CHECKLIST_REQUIRED_ACTIONS = new Set([
-  'patrol_navigate',
-  'patrol_click_target',
-  'patrol_click',
-  'patrol_type_text',
-  'patrol_type_transient',
-  'patrol_type_credential',
-  'patrol_type_totp_profile',
-  'patrol_select',
-  'patrol_wait',
-  'patrol_read_page',
-  'patrol_snapshot',
-  'patrol_screenshot',
-  'patrol_scroll',
-  'patrol_press',
-  'patrol_browser_step',
-  'patrol_reteach_browser_step',
-])
-
 /**
  * Kept as a compatibility export for existing tests/importers. Click integrity
  * is implemented by the click composite itself (unique target + post-click
@@ -53,7 +34,6 @@ export function patrolTeachingIntegrityGuard(_execution: any): string | undefine
 
 export function createPatrolTeachingIntegrityGuard() {
   const declaredTargets = new Map<string, string>()
-  const checklistPending = new Set<string>()
 
   return (execution: any): string | undefined => {
     const name = String(execution?.name ?? '')
@@ -63,12 +43,10 @@ export function createPatrolTeachingIntegrityGuard() {
     if (inspectionId && name === 'patrol_create_draft' && typeof args.targetUrl === 'string') {
       const identity = navigationIdentity(args.targetUrl)
       if (identity) declaredTargets.set(inspectionId, identity)
-      checklistPending.add(inspectionId)
       return undefined
     }
 
     if (inspectionId && name === 'patrol_set_task_checklist') {
-      checklistPending.delete(inspectionId)
       return undefined
     }
 
@@ -92,16 +70,7 @@ export function createPatrolTeachingIntegrityGuard() {
 
     if (inspectionId && (name === 'patrol_delete' || name === 'patrol_delete_flow')) {
       declaredTargets.delete(inspectionId)
-      checklistPending.delete(inspectionId)
       return undefined
-    }
-
-    if (inspectionId && checklistPending.has(inspectionId) && CHECKLIST_REQUIRED_ACTIONS.has(name)) {
-      return [
-        'DSH Patrol task-checklist integrity guard: teaching action was NOT executed.',
-        `Inspection ${inspectionId} was just created and has no persisted business checklist yet.`,
-        'Call patrol_set_task_checklist now with the ordered actions from the user request, then execute the first checklist action immediately.',
-      ].join(' ')
     }
 
     if (!inspectionId) return undefined

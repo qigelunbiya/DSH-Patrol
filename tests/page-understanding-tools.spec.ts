@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { analyzePageEvidence, createPatrolPlanningGuard, PATROL_PAGE_UNDERSTANDING_PROMPT } from '../src/page-understanding-tools.js'
+import { createPatrolClickOutcomeTracker } from '../src/click-retry-state.js'
 
 describe('Patrol page understanding planner', () => {
   it('binds a row identity to the action selector instead of clicking an ambiguous RDP label', () => {
@@ -41,7 +42,7 @@ describe('Patrol page understanding planner', () => {
     expect(plans[0]?.kind).toBe('no-unique-target')
   })
 
-  it('forces analysis before a raw CSS click and before a second semantic retry', () => {
+  it('never pre-emptively blocks the self-verifying click composite', () => {
     const guard = createPatrolPlanningGuard()
     const semantic = () => guard({
       name: 'patrol_click_target',
@@ -49,13 +50,13 @@ describe('Patrol page understanding planner', () => {
     })
 
     expect(semantic()).toBeUndefined()
-    expect(semantic()).toMatch(/patrol_analyze_step/)
+    expect(semantic()).toBeUndefined()
     expect(guard({
       name: 'patrol_analyze_step',
       arguments: { inspectionId: 'demo', task: '点击我的工作台' },
     })).toBeUndefined()
     expect(semantic()).toBeUndefined()
-    expect(semantic()).toMatch(/已经尝试两个方案/)
+    expect(semantic()).toBeUndefined()
 
     const fresh = createPatrolPlanningGuard()
     expect(fresh({
@@ -64,18 +65,18 @@ describe('Patrol page understanding planner', () => {
     })).toMatch(/patrol_analyze_step/)
   })
 
-  it('keeps a failed semantic click on patrol_click_target instead of switching to raw patrol_click', () => {
+  it('keeps raw CSS behind CURRENT analysis without consuming semantic retries', () => {
     const guard = createPatrolPlanningGuard()
     const semantic = { name: 'patrol_click_target', arguments: { inspectionId: 'demo', stepName: '点击我的工作台', locatorText: '我的工作台' } }
     expect(guard(semantic)).toBeUndefined()
     expect(guard({ name: 'patrol_analyze_step', arguments: { inspectionId: 'demo', task: '点击我的工作台' } })).toBeUndefined()
 
     const raw = guard({ name: 'patrol_click', arguments: { inspectionId: 'demo', stepName: '点击我的工作台', selector: 'nav a' } })
-    expect(raw).toMatch(/patrol_click_target/)
-    expect(raw).toMatch(/不要切换|不要用 patrol_click/)
+    expect(raw).toBeUndefined()
 
-    // The blocked raw click must not consume the one remaining semantic retry.
+    // An analyzed selector click must never poison the self-verifying composite.
     expect(guard({ name: 'patrol_click_target', arguments: { inspectionId: 'demo', stepName: '点击我的工作台', selector: 'nav a', locatorText: '我的工作台' } })).toBeUndefined()
+    expect(guard({ name: 'patrol_click_target', arguments: { inspectionId: 'demo', stepName: '点击我的工作台', selector: '#workbench', locatorText: '我的工作台' } })).toBeUndefined()
   })
 
   it('resets a stalled click phase after meaningful non-click progress', () => {
@@ -83,6 +84,26 @@ describe('Patrol page understanding planner', () => {
     expect(guard({ name: 'patrol_click_target', arguments: { inspectionId: 'demo', stepName: '点击确定', locatorText: '确定' } })).toBeUndefined()
     expect(guard({ name: 'patrol_type_text', arguments: { inspectionId: 'demo', stepName: '输入下一字段', selector: '#name', text: 'x' } })).toBeUndefined()
     expect(guard({ name: 'patrol_click_target', arguments: { inspectionId: 'demo', stepName: '点击确定', locatorText: '确定' } })).toBeUndefined()
+  })
+
+  it('counts only unverified physical clicks and permits one analyzed recovery retry', () => {
+    const outcomes = createPatrolClickOutcomeTracker()
+    const guard = createPatrolPlanningGuard(outcomes)
+    const click = { name: 'patrol_click_target', arguments: {
+      inspectionId: 'demo', stepName: '点击提交', locatorText: '提交',
+    } }
+
+    expect(guard(click)).toBeUndefined()
+    outcomes.recordUnverifiedPhysicalClick(click.arguments)
+    expect(guard(click)).toMatch(/physical click|物理点击/i)
+    expect(guard({ name: 'patrol_analyze_step', arguments: { inspectionId: 'demo', task: '点击提交' } })).toBeUndefined()
+    expect(guard(click)).toBeUndefined()
+    outcomes.recordUnverifiedPhysicalClick(click.arguments)
+    expect(guard({ name: 'patrol_analyze_step', arguments: { inspectionId: 'demo', task: '点击提交' } })).toBeUndefined()
+    expect(guard(click)).toMatch(/two unverified|两次未验证/i)
+
+    outcomes.recordVerified(click.arguments)
+    expect(guard(click)).toBeUndefined()
   })
 
   it('keeps the existing image-code OCR path explicitly out of the planner', () => {

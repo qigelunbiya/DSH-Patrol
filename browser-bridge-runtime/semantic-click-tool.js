@@ -40,6 +40,10 @@ export function registerSemanticClickTool(ctx, bridge, config = {}) {
       if (![args.locatorText, args.selectorHint, args.task].some(value => typeof value === 'string' && value.trim())) {
         throw new Error('browser_semantic_click requires locatorText, selectorHint, or task')
       }
+      const capabilities = bridge.status?.()?.extension?.capabilities
+      if (Array.isArray(capabilities) && !capabilities.includes('semanticClick')) {
+        throw new Error('live Patrol extension semanticClick capability is missing; use the verified unique-selector fallback or restart the managed browser after updating')
+      }
       const result = await bridge.request('semanticClick', {
         locatorText: args.locatorText,
         locatorRole: args.locatorRole,

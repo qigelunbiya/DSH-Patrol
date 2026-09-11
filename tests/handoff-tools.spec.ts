@@ -105,7 +105,7 @@ function draftDefinition(): InspectionDefinition {
       arguments: {},
       recordedAt: now,
     }],
-    metadata: { createdAt: now, updatedAt: now },
+    metadata: { createdAt: now, updatedAt: now, taskChecklist: ['处理人工验证'] },
   }
 }
 

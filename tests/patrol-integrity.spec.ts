@@ -41,7 +41,7 @@ describe('Patrol reusable-flow integrity', () => {
     })).toBeUndefined()
   })
 
-  it('requires a persisted task checklist before teaching browser actions', () => {
+  it('does not poison a reused flow when a duplicate create call fails downstream', () => {
     const guard = createPatrolTeachingIntegrityGuard()
     expect(guard({
       name: 'patrol_create_draft',
@@ -50,15 +50,10 @@ describe('Patrol reusable-flow integrity', () => {
     expect(guard({
       name: 'patrol_navigate',
       arguments: { inspectionId: 'demo', url: 'http://172.21.9.122/com-portal' },
-    })).toMatch(/task-checklist integrity guard/i)
-    expect(guard({
-      name: 'patrol_set_task_checklist',
-      arguments: { inspectionId: 'demo', tasks: ['访问入口', '点击 Logo'] },
     })).toBeUndefined()
-    expect(guard({
-      name: 'patrol_navigate',
-      arguments: { inspectionId: 'demo', url: 'http://172.21.9.122/com-portal' },
-    })).toBeUndefined()
+    expect(guard({ name: 'patrol_click_target', arguments: {
+      inspectionId: 'demo', stepName: '点击 Logo', locatorText: '长城网际',
+    } })).toBeUndefined()
   })
 
   it('blocks guessed internal URLs after a draft declares its target, including generic browser-step navigation', () => {

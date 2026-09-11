@@ -10,6 +10,7 @@ const EXTENSION_CAPABILITIES = Object.freeze([
   'captchaDemo',
   'directImageSource',
   'pageBridgeRetry',
+  'semanticClick',
 ])
 let socket = null
 let state = 'disconnected'

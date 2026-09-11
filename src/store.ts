@@ -6,6 +6,11 @@ import type { InspectionDefinition, ResumeState, RunReport, SavedRunPaths } from
 
 const WORKSPACE_OUTPUT_ROOT = 'patrol-results'
 
+export function assertPersistedTaskChecklist(definition: InspectionDefinition): void {
+  if ((definition.metadata.taskChecklist?.length ?? 0) > 0) return
+  throw new Error(`inspection ${definition.id} has no persisted task checklist; call patrol_set_task_checklist before recording teaching actions`)
+}
+
 export class PatrolStore {
   constructor(readonly root: string) {}
 
@@ -90,10 +95,28 @@ export class PatrolStore {
 
   async save(definition: InspectionDefinition): Promise<void> {
     assertInspectionDefinition(definition)
+    await this.assertChecklistBeforeStepAppend(definition)
     await atomicWrite(this.inspectionPath(definition.id), `${JSON.stringify(definition, null, 2)}\n`)
     const workspaceRoot = definition.metadata.workspaceRoot
     if (workspaceRoot !== undefined && workspaceRoot.trim() !== '') {
       await this.saveWorkspaceRunbook(definition, workspaceRoot)
+    }
+  }
+
+  private async assertChecklistBeforeStepAppend(definition: InspectionDefinition): Promise<void> {
+    if ((definition.metadata.taskChecklist?.length ?? 0) > 0) return
+    let previousStepCount: number | undefined
+    try {
+      const previous = JSON.parse(await readFile(this.inspectionPath(definition.id), 'utf8')) as { steps?: unknown }
+      if (Array.isArray(previous.steps)) previousStepCount = previous.steps.length
+    } catch (error: unknown) {
+      if (!isNodeError(error) || error.code !== 'ENOENT') throw error
+    }
+    // Initial creation/import remains possible, including legacy DRAFTs that
+    // need checklist backfill. Any later teaching append must use the actual
+    // persisted contract, avoiding the false state created by a pre-call guard.
+    if (previousStepCount !== undefined && definition.steps.length > previousStepCount) {
+      assertPersistedTaskChecklist(definition)
     }
   }
 

@@ -30,7 +30,7 @@ async function setup(dispatchOk = true) {
     auth: { mode: 'secret-ref' },
     schedule: null,
     steps: [],
-    metadata: { createdAt: now, updatedAt: now },
+    metadata: { createdAt: now, updatedAt: now, taskChecklist: ['填写动态口令'] },
   }
   await store.create(inspection)
 

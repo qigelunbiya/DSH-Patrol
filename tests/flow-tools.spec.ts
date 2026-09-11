@@ -31,7 +31,7 @@ async function setup() {
     auth: { mode: 'none' },
     schedule: null,
     steps: [],
-    metadata: { createdAt: now, updatedAt: now, workspaceRoot: workspace },
+    metadata: { createdAt: now, updatedAt: now, workspaceRoot: workspace, taskChecklist: ['执行流程测试'] },
   }
   await store.create(definition)
 

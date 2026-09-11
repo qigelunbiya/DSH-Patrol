@@ -27,7 +27,7 @@ function draft(): InspectionDefinition {
     auth: { mode: 'none' },
     schedule: null,
     steps: [],
-    metadata: { createdAt: now, updatedAt: now },
+    metadata: { createdAt: now, updatedAt: now, taskChecklist: ['点击目标'] },
   }
 }
 

@@ -48,6 +48,19 @@ async function setup(steps = 0, checklist?: string[]) {
 }
 
 describe('Patrol task checklist backfill', () => {
+  it('rejects appending a teaching step until the persisted checklist exists', async () => {
+    const { store } = await setup(0)
+    const definition = await store.load('legacy-draft')
+    definition.steps.push({
+      id: 'step-001', kind: 'tool', name: '访问目标 URL', tool: 'browser_navigate',
+      arguments: { url: 'https://example.test', action: 'navigate' }, recordedAt: new Date().toISOString(),
+    })
+
+    await expect(store.save(definition)).rejects.toThrow(/persisted task checklist/i)
+    definition.metadata.taskChecklist = ['访问目标 URL']
+    await expect(store.save(definition)).resolves.toBeUndefined()
+  })
+
   it('backfills a legacy non-empty DRAFT without deleting existing steps', async () => {
     const { store, set } = await setup(2)
     const result = await set.execute({

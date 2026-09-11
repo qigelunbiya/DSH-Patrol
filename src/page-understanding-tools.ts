@@ -3,6 +3,7 @@ import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { assertSafePersistentText, redactLikelySecrets } from './security.js'
 import type { PatrolRunner } from './runner.js'
 import type { PatrolStore } from './store.js'
+import { createPatrolClickOutcomeTracker, type PatrolClickOutcomeTracker } from './click-retry-state.js'
 
 const TEXT_OUTPUT = {
   schema: { type: 'string' as const },
@@ -19,11 +20,7 @@ const PHASE_PROGRESS_TOOLS = new Set([
 
 interface PlanningGuardState {
   touchedAt: number
-  analyses: number
   analyzed: boolean
-  lastAnalysisTask: string
-  clickAttempts: Map<string, number>
-  clickModes: Map<string, 'semantic' | 'selector'>
 }
 
 interface SnapshotElement {
@@ -44,14 +41,14 @@ export const PATROL_PAGE_UNDERSTANDING_PROMPT = `DSH Patrol 页面理解与执�
 - taskChecklist 只描述业务动作；真正执行页面动作前，要根据 CURRENT DOM/iframe/modal/structured table 判断该业务动作对应的真实前端结构，不要把用户文字直接翻译成 nth-of-type 后盲点。
 - 唯一且明显的文本目标可直接 patrol_click_target。第一次定位失败、出现 ambiguous、同名控件有多个、目标位于表格行/弹窗/iframe 时，必须先 patrol_analyze_step，再按其 CURRENT 证据给出的 A/B 方案执行；不要先堆 snapshot/read_page/wait 试探。
 - patrol_analyze_step 永远不写 Runbook。它优先把“行身份 + 行内动作”绑定，例如“10.192.3.174 + RDP”，避免只按 [RDP] 命中多行。不要把分析器给出的 selector 再扩写成更长的 nth-of-type。
-- 同一业务点击最多两个受控方案：第一次优先 patrol_click_target 语义点击；若它因扩展瞬态错误失败，优先在同一次调用内完成 selector fallback，或重新取得 CURRENT 证据后继续使用 patrol_click_target。禁止把失败的语义点击换成 raw patrol_click 来绕过验证/记录；第二次仍失败就停止并报告，不得在 click_target/click/observe/snapshot 之间循环换皮重试。
+- 业务点击优先 patrol_click_target；它会在一次调用内完成语义定位、唯一 selector fallback、结果验证与成功记录。扩展能力缺失、页面刚跳转、iframe 重建等“未发生物理点击”的基础设施错误不消耗业务重试次数。若物理点击已发生但结果未验证，必须先刷新 CURRENT 证据并 analyze，最多再恢复一次；两次物理点击均未验证就停止，避免重复提交。不要在自然语言和 observe/snapshot 间空转。
 - 不要为每个内部工具调用向用户重复“我再观察一下/我再试一下/让我换个选择器”。只有需要用户输入/确认、遇到不可恢复阻塞、或任务最终完成时才发自然语言说明。
 - 教学轨迹不等于 Runbook。诊断 snapshot/read、失败点击、重复输入、临时等待都不是最终流程。任务完成后必须 patrol_finalize_flow，只保留真正完成 taskChecklist 的已验证业务路径，再确认流程。已有非空 DRAFT 缺 checklist 时使用非破坏性 backfill，不能因此清空/重建。
 - targetUrl/browser_navigate 必须是纯 http/https URL。若对话渲染成 Markdown 链接 [url](url)，还原 href 后再调用工具，禁止把 Markdown 链接字符串写进 Flow JSON。
 - 这套理解器绝对不能替换图片字符验证码链路。image-code 继续使用现有 patrol_solve_current_image_code / ddddocr + Windows OCR 及 CURRENT 裁图后备方案；不得重新识别、重复刷新或降低验证码置信度门槛。OTP/TOTP 继续走现有专用工具。`
 
 /** Always-on even in TEST MODE: bound model-facing retry strategies. */
-export function createPatrolPlanningGuard() {
+export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = createPatrolClickOutcomeTracker()) {
   const states = new Map<string, PlanningGuardState>()
   return (execution: any): string | undefined => {
     const name = String(execution?.name ?? '')
@@ -67,52 +64,44 @@ export function createPatrolPlanningGuard() {
     for (const [key, value] of states) if (now - value.touchedAt > STATE_TTL_MS) states.delete(key)
     let state = states.get(inspectionId)
     if (state === undefined) {
-      state = { touchedAt: now, analyses: 0, analyzed: false, lastAnalysisTask: '', clickAttempts: new Map(), clickModes: new Map() }
+      state = { touchedAt: now, analyzed: false }
       states.set(inspectionId, state)
     }
     state.touchedAt = now
 
     if (PHASE_PROGRESS_TOOLS.has(name)) {
+      outcomes.clearInspection(inspectionId)
       states.delete(inspectionId)
       return undefined
     }
     if (name === 'patrol_analyze_step') {
-      const taskKey = normalize(cleanString(args.task) || 'analysis')
-      if (taskKey !== state.lastAnalysisTask) {
-        state.analyses = 0
-        state.analyzed = false
-        state.lastAnalysisTask = taskKey
-      }
-      if (state.analyses >= 2) {
-        return 'DSH Patrol 页面规划器：同一业务动作的当前页面已经分析两次且没有新的业务进展。不要继续 analyze/observe/snapshot 循环；执行剩余方案或停止并报告阻塞。'
-      }
-      state.analyses += 1
       state.analyzed = true
       return undefined
     }
     if (!CLICK_TOOLS.has(name)) return undefined
 
-    const key = businessClickKey(args)
-    const attempts = state.clickAttempts.get(key) ?? 0
-    const previousMode = state.clickModes.get(key)
-    if (name === 'patrol_click' && previousMode === 'semantic' && attempts > 0) {
-      return 'DSH Patrol 页面规划器：该业务动作已先用 patrol_click_target 做过语义点击。不要切换到 patrol_click 或重复原始 CSS；请继续使用 patrol_click_target，并把新的 CURRENT selector 作为提示交给同一次受控点击，或停止并报告阻塞。'
+    // patrol_click_target is the safety boundary: it resolves one target,
+    // checks uniqueness, verifies the resulting state, and records only on
+    // success. A pre-execution guard cannot know whether an earlier tool call
+    // actually ran, so counting calls here poisoned legitimate retries.
+    if (name === 'patrol_click_target') {
+      const unverified = outcomes.unverifiedPhysicalClicks(args)
+      if (unverified >= 2) {
+        return 'DSH Patrol 页面规划器：同一业务动作已有两次未验证的物理点击。为避免重复提交或重复副作用，本次点击未执行；请读取 CURRENT 状态并报告明确阻塞。'
+      }
+      if (unverified === 1 && !state.analyzed) {
+        return 'DSH Patrol 页面规划器：上一次物理点击已经执行，但结果未能验证。为避免重复副作用，本次点击未执行；先读取 CURRENT 状态并调用 patrol_analyze_step，确认动作确实未生效后才允许一次恢复重试。'
+      }
+      if (unverified === 1) state.analyzed = false
+      return undefined
     }
-    if (attempts >= 2) {
-      return 'DSH Patrol 页面规划器：同一业务点击已经尝试两个方案。禁止继续 click_target/click、改名、换 nth-of-type 或包一层 observe 后重试；停止并报告最后的 CURRENT 证据和错误。'
+
+    if (!state.analyzed) {
+      return 'DSH Patrol 页面规划器：不要直接猜 CSS。先调用 patrol_analyze_step，提供 taskChecklist 中当前业务动作，再基于 CURRENT DOM/iframe/modal/structured table 方案执行；也可直接使用会自行校验的 patrol_click_target。'
     }
-    if ((name === 'patrol_click' || attempts >= 1) && !state.analyzed) {
-      return 'DSH Patrol 页面规划器：不要直接猜 CSS 或重复同一业务点击。先调用 patrol_analyze_step，提供 taskChecklist 中当前业务动作，再基于 CURRENT DOM/iframe/modal/structured table 方案执行。'
-    }
-    state.clickAttempts.set(key, attempts + 1)
-    state.clickModes.set(key, name === 'patrol_click_target' && hasSemanticLocator(args) ? 'semantic' : 'selector')
-    if (state.analyzed) state.analyzed = false
+    state.analyzed = false
     return undefined
   }
-}
-
-function hasSemanticLocator(args: Record<string, unknown>): boolean {
-  return ['locatorText', 'locatorRole', 'locatorTag'].some(key => cleanString(args[key]) !== '')
 }
 
 export function registerPatrolPageUnderstandingTools(ctx: Context, store: PatrolStore, runner: PatrolRunner): () => void {
@@ -255,13 +244,13 @@ function renderUnderstanding(task: string, url: string, title: string, modal: bo
     `业务动作：${task}`,
     `页面：${title || '(untitled)'}${url ? ` - ${safeUrl(url)}` : ''}`,
     `上下文：${modal ? '前景 modal/dialog（优先只操作弹窗内控件）' : '普通页面/iframe/structured table 联合分析'}`,
-    '执行方案（按顺序，最多尝试两个）：',
+    'CURRENT 证据支持的执行方案：',
   ]
   plans.forEach((plan, index) => {
     lines.push(`${String.fromCharCode(65 + index)}. ${plan.kind}${plan.selector ? ` selector=${JSON.stringify(plan.selector)}` : ''}${plan.locatorText ? ` locatorText=${JSON.stringify(plan.locatorText)}` : ''}`)
     lines.push(`   证据：${redactLikelySecrets(plan.evidence)}`)
   })
-  lines.push('纪律：先执行 A；失败后只有存在新的 CURRENT 证据才执行 B。两个方案都失败就停止，不再循环 observe/snapshot/read/click。')
+  lines.push('纪律：优先执行最具体方案；基础设施/加载错误先刷新 CURRENT 状态，只有目标不唯一或证据不再变化时才报告阻塞。')
   lines.push('验证码例外：图片字符验证码仍走现有专用 OCR solver，本理解器不识别、不刷新、不保存验证码。')
   return lines.join('\n')
 }
@@ -273,10 +262,6 @@ function malformedPatrolUrl(name: string, args: Record<string, unknown>): string
   const markdown = /^\[[^\]]*\]\((https?:\/\/[^)\s]+)\)$/i.exec(raw)
   if (!markdown) return undefined
   return `DSH Patrol URL 输入保护：检测到 Markdown 链接字符串，未执行。请仅使用纯 URL ${JSON.stringify(markdown[1])} 重试；不要把 [url](url) 写入 Flow JSON。`
-}
-
-function businessClickKey(args: Record<string, unknown>): string {
-  return (normalize(cleanString(args.stepName) || cleanString(args.locatorText) || 'click').replace(/\d{6,}/g, '#').slice(0, 180) || 'click')
 }
 
 function dedupePlans(plans: readonly PageUnderstandingPlan[]): PageUnderstandingPlan[] {

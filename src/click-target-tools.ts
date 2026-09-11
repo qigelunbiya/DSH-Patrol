@@ -6,7 +6,8 @@ import { assertSafePersistentText } from './security.js'
 import { stepExecutionNotes } from './step-notes.js'
 import { installTeachingRunbookFilter } from './teaching-runbook-filter.js'
 import type { PatrolRunner } from './runner.js'
-import type { PatrolStore } from './store.js'
+import { assertPersistedTaskChecklist, type PatrolStore } from './store.js'
+import type { PatrolClickOutcomeTracker } from './click-retry-state.js'
 import type {
   InspectionDefinition,
   InspectionStep,
@@ -38,6 +39,7 @@ interface StateChangeVerification {
 
 export interface PatrolClickTargetOptions {
   maxSteps: number
+  clickOutcomes?: PatrolClickOutcomeTracker
 }
 
 /**
@@ -106,6 +108,7 @@ export function registerPatrolClickTargetTool(
       let resolvedSelector = selector
       let clickedText = ''
       let resolutionSummary = ''
+      let physicalClickExecuted = false
 
       if (locator !== undefined) {
         const atomic = await runner.dispatch('browser_semantic_click', compactObject({
@@ -160,12 +163,15 @@ export function registerPatrolClickTargetTool(
               fallback.error ?? fallback.text ?? 'Selector-compatible fallback click failed.',
             ].join('\n')
           }
+          physicalClickExecuted = true
           resolvedSelector = selector
           clickedText = fallback.text
           resolutionSummary = `selector=${JSON.stringify(selector)}, transport=selector-compatible fallback`
         } else {
+          physicalClickExecuted = true
           resolvedSelector = objectString(atomic.value, 'selector')
           if (resolvedSelector === undefined) {
+            options.clickOutcomes?.recordUnverifiedPhysicalClick(args)
             return 'Atomic semantic click executed but returned no reusable selector, so it was NOT recorded.'
           }
           clickedText = objectString(atomic.value, 'text') ?? atomic.text ?? ''
@@ -190,6 +196,7 @@ export function registerPatrolClickTargetTool(
         if (!clicked.ok) {
           return `Reliable selector click failed and was NOT recorded. ${clicked.error ?? 'Unknown browser click error'}\n${clicked.text}`
         }
+        physicalClickExecuted = true
         clickedText = clicked.text
         resolutionSummary = `selector=${JSON.stringify(selector)}, transport=selector-compatible`
       }
@@ -207,6 +214,7 @@ export function registerPatrolClickTargetTool(
         )
         verificationAttempts = verified.attempts
         if (!verified.ok) {
+          if (physicalClickExecuted) options.clickOutcomes?.recordUnverifiedPhysicalClick(args)
           return [
             'Click executed but was NOT recorded because the requested business expectation was not reached.',
             `Resolved target: ${resolutionSummary}`,
@@ -220,6 +228,7 @@ export function registerPatrolClickTargetTool(
         const verified = await verifyAutomaticStateChange(runner, exec, beforeState, args.tabId)
         verificationAttempts = verified.attempts
         if (!verified.ok) {
+          if (physicalClickExecuted) options.clickOutcomes?.recordUnverifiedPhysicalClick(args)
           return [
             'Semantic click executed but was NOT recorded because no meaningful post-click page/DOM state change could be verified.',
             `Resolved target: ${resolutionSummary}`,
@@ -269,6 +278,7 @@ export function registerPatrolClickTargetTool(
       definition.metadata.updatedAt = new Date().toISOString()
       delete definition.metadata.flowHealth
       await store.save(definition)
+      options.clickOutcomes?.recordVerified(args)
 
       return [
         `Executed and recorded ${step.id} (browser_click) only after CURRENT business-state verification.`,
@@ -390,6 +400,7 @@ function compactObject(value: Record<string, string | number | boolean | undefin
 async function loadEditable(store: PatrolStore, inspectionId: string, maxSteps: number): Promise<InspectionDefinition> {
   const definition = await store.load(inspectionId)
   if (definition.status !== 'draft') throw new Error(`inspection ${definition.id} is ${definition.status}, not draft; call patrol_begin_edit before teaching a click`)
+  assertPersistedTaskChecklist(definition)
   if (definition.steps.length >= maxSteps) throw new Error(`runbook reached maxSteps=${maxSteps}`)
   return definition
 }

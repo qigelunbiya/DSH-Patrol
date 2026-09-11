@@ -5,12 +5,19 @@ import { describe, expect, it } from 'vitest'
 const root = process.cwd()
 
 describe('atomic semantic click extension layer', () => {
-  it('is loaded last by the extension background entry and parses as JavaScript', () => {
+  it('advertises the semanticClick protocol capability', () => {
+    const source = readFileSync(join(root, 'browser-extension', 'background.js'), 'utf8')
+    const advertised = /EXTENSION_CAPABILITIES[\s\S]*['\"]semanticClick['\"]/.test(source)
+    expect(advertised).toBe(true)
+  })
+
+  it('is loaded immediately after the core bridge and parses as JavaScript', () => {
     const entry = readFileSync(join(root, 'browser-extension', 'background-entry.js'), 'utf8')
     const source = readFileSync(join(root, 'browser-extension', 'semantic-click.js'), 'utf8')
 
     expect(entry).toContain("importScripts('semantic-click.js')")
-    expect(entry.lastIndexOf("importScripts('semantic-click.js')")).toBeGreaterThan(entry.lastIndexOf("importScripts('modal-target-hardening.js')"))
+    expect(entry.indexOf("importScripts('semantic-click.js')")).toBeGreaterThan(entry.indexOf("importScripts('background.js')"))
+    expect(entry.indexOf("importScripts('semantic-click.js')")).toBeLessThan(entry.indexOf("importScripts('frame-registration.js')"))
     expect(() => new Function(source)).not.toThrow()
   })
 
