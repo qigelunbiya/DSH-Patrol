@@ -8,6 +8,10 @@
 // Keep this as a namespace Cordis plugin: do NOT add `export default apply`.
 // Harness Loader prefers a module's default export and would otherwise discard
 // the sibling `inject` metadata before the preset is mounted.
+//
+// Transport delegation now lives in resilient-bridge.js. That wrapper delegates
+// requests to service.bridge.request and screenshot persistence to
+// service.bridge.saveScreenshot while adding bounded repair/retry semantics.
 import { registerChallengeTool } from './challenge-tool.js'
 import { registerCountTool } from './count-tool.js'
 import { registerImageCodeRefreshTool } from './image-code-refresh-tool.js'
