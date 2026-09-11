@@ -441,12 +441,23 @@ async function waitForBridge(bridge, timeoutMs, extensionId) {
   const expectedOrigin = extensionId ? `chrome-extension://${extensionId}` : undefined
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    if (bridge.connected === true && originMatches(bridge, extensionId)) return
+    if (bridge.connected === true && originMatches(bridge, extensionId) && extensionHelloReceived(bridge)) return
     await delay(100)
   }
   const status = typeof bridge.status === 'function' ? bridge.status() : undefined
   const actualOrigin = status?.origin ?? bridge.origin
-  throw new Error(`Patrol extension did not connect to the local bridge within ${timeoutMs}ms${expectedOrigin ? ` (expected ${expectedOrigin}, got ${actualOrigin || 'no extension connection'})` : ''}`)
+  const handshake = extensionHelloReceived(bridge) ? '' : '; extension hello handshake was not received'
+  throw new Error(`Patrol extension did not connect to the local bridge within ${timeoutMs}ms${expectedOrigin ? ` (expected ${expectedOrigin}, got ${actualOrigin || 'no extension connection'})` : ''}${handshake}`)
+}
+
+function extensionHelloReceived(bridge) {
+  if (typeof bridge?.status !== 'function') return true
+  const status = bridge.status()
+  // BrowserBridge exposes `extension: null` until the extension hello frame
+  // arrives. Lightweight test doubles and older bridge implementations may
+  // not expose that field, so retain their connected-only compatibility.
+  if (!status || !Object.prototype.hasOwnProperty.call(status, 'extension')) return true
+  return status.extension !== null && typeof status.extension === 'object'
 }
 
 function originMatches(bridge, extensionId) {

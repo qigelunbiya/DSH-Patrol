@@ -217,6 +217,62 @@ describe('managed Patrol browser', () => {
     expect(launches).toEqual([false, true])
   })
 
+  it('waits for the extension hello handshake before accepting a connected browser', async () => {
+    const { extensionPath, profilePath, statePath } = fixtureRoot('dsh-patrol-managed-handshake-')
+    writeFileSync(join(extensionPath, 'manifest.json'), JSON.stringify({
+      manifest_version: 3,
+      name: 'DSH Patrol Browser Bridge',
+      version: '0.3.1',
+    }))
+    let extensionInfo
+    const bridge = {
+      connected: false,
+      status: () => ({
+        connected: bridge.connected,
+        origin: 'chrome-extension://patrol-id',
+        extension: extensionInfo,
+      }),
+    }
+    const worker = {
+      async evaluate(_fn, url) {
+        bridge.connected = true
+        // Simulate the real transport ordering: the socket is connected first,
+        // then the extension hello arrives on the next turn.
+        setTimeout(() => {
+          extensionInfo = { version: '0.3.1', capabilities: ['captureImageCode', 'semanticClick'] }
+        }, 25)
+        return url
+      },
+    }
+    const browser = {
+      connected: true,
+      on() {},
+      process: () => ({ pid: 8100 }),
+      async extensions() { return new Map() },
+      async installExtension() { return 'patrol-id' },
+      async waitForTarget() {
+        return { worker: async () => worker, url: () => 'chrome-extension://patrol-id/background.js' }
+      },
+      async close() { this.connected = false },
+    }
+    const controller = createManagedBrowserController({
+      bridge,
+      extensionPath,
+      profilePath,
+      statePath,
+      browserExecutable: process.execPath,
+      bridgeUrlHint: () => 'ws://127.0.0.1:3080/patrol-browser-bridge',
+      launchBrowser: async () => browser,
+      logger: { info() {}, warn() {} },
+      connectTimeoutMs: 1000,
+      startTimeoutMs: 1000,
+    })
+
+    await expect(controller.ensureStarted()).resolves.toMatchObject({ connected: true })
+    expect(extensionInfo.capabilities).toContain('semanticClick')
+    await controller.dispose()
+  })
+
   it('falls back automatically when Chromium lacks the runtime extension API', async () => {
     const { extensionPath, profilePath, statePath } = fixtureRoot('dsh-patrol-managed-fallback-')
     const bridge = { connected: false }
