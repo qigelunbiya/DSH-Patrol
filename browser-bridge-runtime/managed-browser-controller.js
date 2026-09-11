@@ -51,23 +51,27 @@ export function createManagedBrowserController(options = {}) {
       let browser = createClosingAwareBrowser(await launchBrowser(actualLaunchOptions), logger)
 
       try {
-        if (sourceLoad) {
-          // The base controller still speaks in terms of runtime-installed
-          // extensions. Present the source-loaded worker as a small Extension
-          // facade so configureRuntimeExtension() can configure the real worker
-          // without calling Extensions.loadUnpacked and without a second launch.
+        if (sourceLoad && !legacyRequestedByBase) {
+          // We proactively source-loaded a compatible browser even though the
+          // base controller requested its normal runtime mode. Present that real
+          // worker as a small Extension facade so configureRuntimeExtension()
+          // can configure it without calling Extensions.loadUnpacked and without
+          // closing/relaunching the browser.
           browser = await createSourceLoadedExtensionFacade(
             browser,
             actualLaunchOptions.extensionPath,
             Math.min(actualLaunchOptions.startTimeoutMs ?? SOURCE_EXTENSION_WAIT_MS, SOURCE_EXTENSION_WAIT_MS),
             logger,
           )
-        } else {
+        } else if (!sourceLoad) {
           // Runtime-install mode is kept for browser builds that expose the
           // Extensions CDP domain. Refresh the persisted Patrol extension only
           // in this mode; source-load mode already executes the current checkout.
           await refreshBundledExtensionInstall(browser, actualLaunchOptions.extensionPath, logger)
         }
+        // If the base controller itself explicitly requested legacy mode, leave
+        // the browser untouched here; its configureLegacyExtension() path owns
+        // worker discovery and bridge configuration for that compatibility case.
       } catch (error) {
         try { await browser?.close?.() } catch {}
         throw error
