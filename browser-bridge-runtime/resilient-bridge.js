@@ -127,9 +127,20 @@ export function isTransportFailure(error) {
 }
 
 function transportReady(service) {
-  if (service?.bridge?.connected !== true) return false
   const state = managedState(service)
+
+  // A bridge socket can come up before managed-browser provisioning has
+  // finished. In particular, a persisted extension may reconnect to the first
+  // Chromium process while the controller is still deciding whether that
+  // process/extension is usable. The previous code treated that provisional
+  // socket as ready, executed the first patrol command, and then the controller
+  // closed/replaced the browser underneath the next command. Never dispatch any
+  // browser action while the managed controller still reports starting=true.
+  if (state.starting === true) return false
+
+  if (service?.bridge?.connected !== true) return false
   if (typeof state.connected === 'boolean' && state.connected !== true) return false
+  if (typeof state.running === 'boolean' && state.running !== true) return false
   const bridgeState = typeof service?.bridge?.status === 'function' ? service.bridge.status() : undefined
   if (bridgeState && Object.prototype.hasOwnProperty.call(bridgeState, 'extension')) {
     if (bridgeState.extension === null || typeof bridgeState.extension !== 'object') return false
