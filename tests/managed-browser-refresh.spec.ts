@@ -3,7 +3,11 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { refreshBundledExtensionInstall } from '../browser-bridge-runtime/managed-browser-controller.js'
+import {
+  createClosingAwareBrowser,
+  isBrowserClosingError,
+  refreshBundledExtensionInstall,
+} from '../browser-bridge-runtime/managed-browser-controller.js'
 
 const roots: string[] = []
 afterEach(() => {
@@ -65,5 +69,40 @@ describe('managed Patrol extension refresh', () => {
 
     expect(await refreshBundledExtensionInstall(browser, root, { info() {} })).toBe(false)
     expect(calls).toEqual([])
+  })
+
+  it('marks a Puppeteer browser handle stale after a Browser is closing protocol error', async () => {
+    const warnings: string[] = []
+    const closing = createClosingAwareBrowser({
+      connected: true,
+      async extensions() {
+        throw new Error('Protocol error (Extensions.getExtensions): Browser is closing.')
+      },
+    }, {
+      warn(message: string) { warnings.push(message) },
+    })
+
+    expect(closing.connected).toBe(true)
+    await expect(closing.extensions()).rejects.toThrow(/Browser is closing/i)
+    expect(closing.connected).toBe(false)
+    expect(warnings).toHaveLength(1)
+
+    // Once stale, reading connected stays false even when the underlying
+    // Puppeteer object has not emitted disconnected yet.
+    expect(closing.connected).toBe(false)
+  })
+
+  it('does not mark the browser stale for ordinary page/extension errors', async () => {
+    const ordinary = createClosingAwareBrowser({
+      connected: true,
+      async extensions() {
+        throw new Error('page bridge unavailable')
+      },
+    }, { warn() { throw new Error('ordinary errors must not mark browser closing') } })
+
+    await expect(ordinary.extensions()).rejects.toThrow(/page bridge unavailable/i)
+    expect(ordinary.connected).toBe(true)
+    expect(isBrowserClosingError(new Error('Protocol error (Extensions.loadUnpacked): Browser is closing.'))).toBe(true)
+    expect(isBrowserClosingError(new Error('Target closed'))).toBe(false)
   })
 })
