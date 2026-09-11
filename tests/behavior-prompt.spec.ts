@@ -48,6 +48,11 @@ describe('current Patrol behavior prompt', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/仍无法完成用户任务清单中的该项.*结束本轮教学/s)
   })
 
+  it('keeps semantic-click fallback inside one guarded composite action', () => {
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/selector hint.*selector-compatible click/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/不要立刻另起 patrol_click/s)
+  })
+
   it('requires task-list driven teaching and excludes unverified steps from the flow graph', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/先把用户原始巡检要求拆成一份有序任务清单/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/expectedText 不是点击前置门槛/s)

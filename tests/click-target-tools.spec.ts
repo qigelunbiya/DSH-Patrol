@@ -148,6 +148,92 @@ describe('semantic Patrol click target', () => {
     })
   })
 
+  it('falls back to a unique CURRENT selector when atomic semantic click is unavailable', async () => {
+    let clicked = false
+    const calls: string[] = []
+    const { store, tool, exec } = await setup(async (name) => {
+      calls.push(name)
+      if (name === 'browser_semantic_click') return { ok: false, text: '', error: 'semantic click transport unavailable' }
+      if (name === 'browser_snapshot') {
+        return clicked
+          ? snapshot([{ tag: 'input', text: '登录', selector: 'top-frame::#sign_in_button_standard' }])
+          : snapshot([{ tag: 'a', role: 'link', text: '长城网际', selector: 'top-frame::#logo' }])
+      }
+      if (name === 'browser_count') return { ok: true, text: '1', value: { ok: true, count: 1 } }
+      if (name === 'browser_click') {
+        clicked = true
+        return { ok: true, text: 'Clicked logo', value: { ok: true, selector: '#logo' } }
+      }
+      if (name === 'browser_read_page') return page(clicked ? '用户名 密码 短信验证码 登录' : '长城网际')
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    const result = await tool.execute({
+      inspectionId: 'click-target',
+      stepName: '点击 Logo',
+      selector: 'top-frame::#logo',
+      locatorText: '长城网际',
+    }, exec)
+
+    expect(result).toContain('selector-compatible fallback')
+    expect(calls).toContain('browser_semantic_click')
+    expect(calls).toContain('browser_snapshot')
+    expect(calls).toContain('browser_count')
+    expect(calls).toContain('browser_click')
+    expect((await store.load('click-target')).steps[0]).toMatchObject({
+      tool: 'browser_click',
+      arguments: { selector: 'top-frame::#logo' },
+      locator: { text: '长城网际' },
+      teaching: { status: 'verified', method: 'state-change' },
+    })
+  })
+
+  it('keeps semantic fallback fail-closed when the selector hint is ambiguous', async () => {
+    const calls: string[] = []
+    const { store, tool, exec } = await setup(async (name) => {
+      calls.push(name)
+      if (name === 'browser_semantic_click') return { ok: false, text: '', error: 'semantic click transport unavailable' }
+      if (name === 'browser_snapshot') return snapshot([{ tag: 'a', role: 'link', text: '长城网际', selector: 'top-frame::a' }])
+      if (name === 'browser_count') return { ok: true, text: '2', value: { ok: true, count: 2 } }
+      if (name === 'browser_read_page') return page('长城网际')
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    const result = await tool.execute({
+      inspectionId: 'click-target',
+      stepName: '点击 Logo',
+      selector: 'a',
+      locatorText: '长城网际',
+    }, exec)
+
+    expect(result).toContain('selector fallback was NOT recorded')
+    expect(calls).toEqual(['browser_read_page', 'browser_snapshot', 'browser_semantic_click', 'browser_snapshot'])
+    expect((await store.load('click-target')).steps).toEqual([])
+  })
+
+  it('rejects a unique but stale selector that is absent from the CURRENT snapshot', async () => {
+    const calls: string[] = []
+    const { store, tool, exec } = await setup(async (name) => {
+      calls.push(name)
+      if (name === 'browser_read_page') return page('长城网际')
+      if (name === 'browser_semantic_click') return { ok: false, text: '', error: 'semantic click transport unavailable' }
+      if (name === 'browser_snapshot') return snapshot([{ tag: 'a', role: 'link', text: '其他入口', selector: 'top-frame::#other' }])
+      if (name === 'browser_count') return { ok: true, text: '1', value: { ok: true, count: 1 } }
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    const result = await tool.execute({
+      inspectionId: 'click-target',
+      stepName: '点击 Logo',
+      selector: 'top-frame::#logo',
+      locatorText: '长城网际',
+    }, exec)
+
+    expect(result).toContain('not uniquely bound to the CURRENT snapshot')
+    expect(calls).not.toContain('browser_click')
+    expect((await store.load('click-target')).steps).toEqual([])
+  })
+
   it('passes task context and selector only as a hint to the atomic resolver', async () => {
     const calls: Array<{ tool: string; args: JsonObject }> = []
     const { tool, exec } = await setup(async (name, args) => {

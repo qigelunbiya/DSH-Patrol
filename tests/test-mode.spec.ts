@@ -64,5 +64,6 @@ describe('Patrol test-mode guard policy', () => {
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/完整 patrol_validate/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/recovery circuit breaker 在测试模式关闭/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/patrol_runtime_mode/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/selector hint.*同一次受控调用内重新计数.*不要另起 patrol_click/s)
   })
 })

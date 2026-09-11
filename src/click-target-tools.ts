@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { verifyPostClickExpectation } from './post-click-verification.js'
+import { findUniqueHealingSelector } from './browser.js'
 import { assertSafePersistentText } from './security.js'
 import { stepExecutionNotes } from './step-notes.js'
 import { installTeachingRunbookFilter } from './teaching-runbook-filter.js'
@@ -116,24 +117,67 @@ export function registerPatrolClickTargetTool(
           tabId: args.tabId,
         }), exec)
         if (!atomic.ok) {
-          return [
-            'Reliable semantic click failed and was NOT recorded.',
-            atomic.error ?? atomic.text ?? 'Unknown atomic semantic click error',
-            'The CURRENT target was not retried through the content-script selector bridge; observe/analyze once for new evidence instead of looping the same click.',
-          ].join('\n')
+          // The planner may already have supplied a selector from the same
+          // CURRENT snapshot (for example a lone logo anchor). If the atomic
+          // MAIN-world transport is unavailable, use that selector only after
+          // re-counting visible matches. This keeps the fallback safe and
+          // avoids forcing the model into a second business-click attempt.
+          if (selector === undefined) {
+            return [
+              'Reliable semantic click failed and was NOT recorded.',
+              atomic.error ?? atomic.text ?? 'Unknown atomic semantic click error',
+              'The CURRENT target had no selector hint for a safe fallback; observe/analyze once for new evidence instead of looping the same click.',
+            ].join('\n')
+          }
+          const currentSnapshot = await runner.dispatch('browser_snapshot', compactObject({
+            maxElements: 180,
+            includeHidden: false,
+            tabId: args.tabId,
+          }), exec)
+          const observedSelector = currentSnapshot.ok && locator !== undefined
+            ? findUniqueHealingSelector(currentSnapshot.value, locator)
+            : undefined
+          if (observedSelector !== selector) {
+            return [
+              'Reliable semantic click failed and selector fallback was NOT recorded.',
+              atomic.error ?? atomic.text ?? 'Unknown atomic semantic click error',
+              `The selector hint was not uniquely bound to the CURRENT snapshot for locator ${JSON.stringify(locator)}.`,
+            ].join('\n')
+          }
+          const counted = await runner.dispatch('browser_count', compactObject({ selector, visibleOnly: true, tabId: args.tabId }), exec)
+          const count = objectNumber(counted.value, 'count')
+          if (!counted.ok || count !== 1) {
+            return [
+              'Reliable semantic click failed and selector fallback was NOT recorded.',
+              atomic.error ?? atomic.text ?? 'Unknown atomic semantic click error',
+              counted.error ?? `CURRENT selector ${JSON.stringify(selector)} is not unique (${count ?? 'unknown'} visible matches).`,
+            ].join('\n')
+          }
+          const fallback = await runner.dispatch('browser_click', compactObject({ selector, tabId: args.tabId }), exec)
+          if (!fallback.ok) {
+            return [
+              'Reliable semantic click failed and selector fallback was NOT recorded.',
+              atomic.error ?? atomic.text ?? 'Unknown atomic semantic click error',
+              fallback.error ?? fallback.text ?? 'Selector-compatible fallback click failed.',
+            ].join('\n')
+          }
+          resolvedSelector = selector
+          clickedText = fallback.text
+          resolutionSummary = `selector=${JSON.stringify(selector)}, transport=selector-compatible fallback`
+        } else {
+          resolvedSelector = objectString(atomic.value, 'selector')
+          if (resolvedSelector === undefined) {
+            return 'Atomic semantic click executed but returned no reusable selector, so it was NOT recorded.'
+          }
+          clickedText = objectString(atomic.value, 'text') ?? atomic.text ?? ''
+          resolutionSummary = [
+            `selector=${JSON.stringify(resolvedSelector)}`,
+            objectString(atomic.value, 'text') ? `text=${JSON.stringify(objectString(atomic.value, 'text'))}` : undefined,
+            objectString(atomic.value, 'role') ? `role=${objectString(atomic.value, 'role')}` : undefined,
+            objectString(atomic.value, 'tag') ? `tag=${objectString(atomic.value, 'tag')}` : undefined,
+            objectString(atomic.value, 'transport') ? `transport=${objectString(atomic.value, 'transport')}` : 'transport=atomic-semantic',
+          ].filter(Boolean).join(', ')
         }
-        resolvedSelector = objectString(atomic.value, 'selector')
-        if (resolvedSelector === undefined) {
-          return 'Atomic semantic click executed but returned no reusable selector, so it was NOT recorded.'
-        }
-        clickedText = objectString(atomic.value, 'text') ?? atomic.text ?? ''
-        resolutionSummary = [
-          `selector=${JSON.stringify(resolvedSelector)}`,
-          objectString(atomic.value, 'text') ? `text=${JSON.stringify(objectString(atomic.value, 'text'))}` : undefined,
-          objectString(atomic.value, 'role') ? `role=${objectString(atomic.value, 'role')}` : undefined,
-          objectString(atomic.value, 'tag') ? `tag=${objectString(atomic.value, 'tag')}` : undefined,
-          objectString(atomic.value, 'transport') ? `transport=${objectString(atomic.value, 'transport')}` : 'transport=atomic-semantic',
-        ].filter(Boolean).join(', ')
       } else {
         const counted = await runner.dispatch('browser_count', compactObject({ selector, visibleOnly: true, tabId: args.tabId }), exec)
         if (!counted.ok) throw new Error(counted.error ?? 'Could not count click target')
