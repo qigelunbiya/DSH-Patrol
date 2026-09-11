@@ -55,21 +55,29 @@ async function frameSnapshot(tabId, args) {
     // The all-frame content script below is the fallback for the top document.
   }
 
-  for (const frame of frames) {
-    if (frame.frameId === 0 && topCaptured) continue
+  const frameResults = await mapWithConcurrency(frames, async frame => {
+    if (frame.frameId === 0 && topCaptured) return { frame, value: undefined }
+    try {
+      return {
+        frame,
+        value: await sendFrameDomCommand(tabId, frame.frameId, 'snapshot', {
+          selector: args.selector,
+          // Reserve the slots already consumed by the top document before
+          // dispatching child-frame probes. Every child receives the same
+          // bounded budget because probes run concurrently; aggregation below
+          // still clips the deterministic final snapshot to `max`.
+          maxElements: Math.max(1, max - elements.length),
+          includeHidden: args.includeHidden === true,
+        }),
+      }
+    } catch {
+      return { frame, value: undefined }
+    }
+  })
+  for (const { frame, value } of frameResults) {
     if (elements.length >= max) {
       truncated = true
       break
-    }
-    let value
-    try {
-      value = await sendFrameDomCommand(tabId, frame.frameId, 'snapshot', {
-        selector: args.selector,
-        maxElements: max - elements.length,
-        includeHidden: args.includeHidden === true,
-      })
-    } catch {
-      continue
     }
     if (!value || value.ok === false) continue
     if (frame.frameId === 0) {
@@ -119,18 +127,21 @@ async function frameReadPage(tabId, args) {
     // Fall back to the all-frame bridge below.
   }
 
-  for (const frame of frames) {
-    if (frame.frameId === 0 && topCaptured) continue
+  const frameResults = await mapWithConcurrency(frames, async frame => {
+    if (frame.frameId === 0 && topCaptured) return { frame, value: undefined }
     try {
       const value = await sendFrameDomCommand(tabId, frame.frameId, 'readPage', {
         selector: args.selector,
         maxChars: Math.max(maxChars, 12000),
       })
-      if (!value || value.ok === false) continue
-      results.push({ frame, value })
+      return { frame, value: value && value.ok !== false ? value : undefined }
     } catch {
       // Some browser-internal frames cannot host content scripts. Ignore them.
+      return { frame, value: undefined }
     }
+  })
+  for (const result of frameResults) {
+    if (result.value !== undefined) results.push(result)
   }
 
   if (results.length === 0) return await legacySendDomCommand('readPage', { ...args, tabId })
@@ -237,7 +248,7 @@ async function frameWait(tabId, args) {
   }
   const frames = await patrolFrames(tabId, target.frameUrl, false)
   const condition = args.condition === 'gone' ? 'gone' : 'visible'
-  const attempts = await Promise.all(frames.map(async frame => {
+  const attempts = await mapWithConcurrency(frames, async frame => {
     try {
       const value = await sendFrameDomCommand(tabId, frame.frameId, 'wait', {
         ...stripTransportArgs(args),
@@ -248,7 +259,7 @@ async function frameWait(tabId, args) {
     } catch {
       return { frame, value: { ok: true, found: condition === 'gone' } }
     }
-  }))
+  })
   const found = condition === 'gone'
     ? attempts.every(item => item.value?.found === true)
     : attempts.some(item => item.value?.found === true)
@@ -262,16 +273,15 @@ async function frameWait(tabId, args) {
 
 async function countAcrossFrames(tabId, selector, frameUrl, visibleOnly, topFrameOnly = false) {
   const frames = await patrolFrames(tabId, frameUrl, topFrameOnly)
-  const results = []
-  for (const frame of frames) {
+  const results = await mapWithConcurrency(frames, async frame => {
     try {
       const value = await sendFrameDomCommand(tabId, frame.frameId, 'count', { selector, visibleOnly })
       const count = Number.isInteger(value?.count) ? value.count : 0
-      results.push({ frame, count })
+      return { frame, count }
     } catch {
-      results.push({ frame, count: 0 })
+      return { frame, count: 0 }
     }
-  }
+  })
 
   // A URL-qualified frame can legitimately change its query string/path during
   // a workflow. If the preferred frame no longer contains the selector, retry
@@ -400,4 +410,24 @@ function stripTransportArgs(args) {
   delete out.tabId
   delete out.frameId
   return out
+}
+
+// Browser portals commonly keep navigation, shell chrome, grids, and dialogs
+// in separate frames. Probe them concurrently, but keep a small cap so one
+// large page cannot flood the extension service worker with requests. The
+// returned array always follows the input order, preserving deterministic
+// snapshot/read output and existing frame-priority semantics.
+async function mapWithConcurrency(items, worker, concurrency = 4) {
+  const output = new Array(items.length)
+  let cursor = 0
+  const run = async () => {
+    while (true) {
+      const index = cursor++
+      if (index >= items.length) return
+      output[index] = await worker(items[index], index)
+    }
+  }
+  const workers = Math.min(Math.max(1, concurrency), items.length)
+  await Promise.all(Array.from({ length: workers }, () => run()))
+  return output
 }

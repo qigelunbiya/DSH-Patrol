@@ -3,9 +3,17 @@ import { join } from 'node:path'
 import vm from 'node:vm'
 import { describe, expect, it } from 'vitest'
 
-function loadFrameSupport(topElements: any[] = []) {
+function loadFrameSupport(
+  topElements: any[] = [],
+  frameList = [
+    { frameId: 0, parentFrameId: -1, url: 'https://portal.local/' },
+    { frameId: 7, parentFrameId: 0, url: 'https://portal.local/workflow?tab=pending' },
+  ],
+) {
   const source = readFileSync(join(process.cwd(), 'browser-extension', 'frame-support.js'), 'utf8')
   const calls: Array<{ frameId: number; cmd: string; args: any }> = []
+  let inFlight = 0
+  let maxInFlight = 0
   const context = vm.createContext({
     URL,
     console,
@@ -46,17 +54,18 @@ function loadFrameSupport(topElements: any[] = []) {
     delay: async () => {},
     chrome: {
       webNavigation: {
-        getAllFrames: async () => [
-          { frameId: 0, parentFrameId: -1, url: 'https://portal.local/' },
-          { frameId: 7, parentFrameId: 0, url: 'https://portal.local/workflow?tab=pending' },
-        ],
+        getAllFrames: async () => frameList,
       },
       tabs: {
         sendMessage: async (_tabId: number, message: any, options: any) => {
           const frameId = options.frameId
           calls.push({ frameId, cmd: message.cmd, args: message.args })
+          inFlight += 1
+          maxInFlight = Math.max(maxInFlight, inFlight)
+          try {
           if (message.cmd === 'readPage') {
             if (frameId === 0) return { ok: true, url: 'https://portal.local/', title: 'Portal', text: 'portal shell', tables: [] }
+            await new Promise(resolve => setTimeout(resolve, 5))
             return {
               ok: true,
               url: 'https://portal.local/workflow?tab=pending',
@@ -79,6 +88,10 @@ function loadFrameSupport(topElements: any[] = []) {
             if (String(message.args.selector).includes('li:nth-of-type(5)')) return { ok: true, count: frameId === 0 ? 1 : 1 }
             return { ok: true, count: 0 }
           }
+          if (message.cmd === 'wait') {
+            await new Promise(resolve => setTimeout(resolve, 5))
+            return { ok: true, found: true, selector: message.args.selector, timeoutMs: message.args.timeoutMs ?? 10000 }
+          }
           if (message.cmd === 'click') return { ok: true, selector: message.args.selector, tag: 'a', text: '防火墙dnat及策略开放的相关数据采集内容优化' }
           if (message.cmd === 'snapshot') {
             return {
@@ -92,12 +105,15 @@ function loadFrameSupport(topElements: any[] = []) {
             }
           }
           throw new Error(`unexpected frame command ${message.cmd}`)
+          } finally {
+            inFlight -= 1
+          }
         },
       },
     },
   })
   vm.runInContext(source, context)
-  return { context, calls }
+  return { context, calls, get maxInFlight() { return maxInFlight } }
 }
 
 describe('frame-aware browser bridge', () => {
@@ -141,6 +157,36 @@ describe('frame-aware browser bridge', () => {
     expect(value.elements.some((item: any) => String(item.selector).startsWith('frame-url('))).toBe(true)
     expect(value.elements.length).toBeGreaterThan(475)
     expect(value.elements.length).toBeLessThanOrEqual(500)
+  })
+
+  it('probes multiple child frames concurrently while preserving frame-qualified page data', async () => {
+    const loaded = loadFrameSupport([], [
+      { frameId: 0, parentFrameId: -1, url: 'https://portal.local/' },
+      ...Array.from({ length: 6 }, (_, index) => ({
+        frameId: index + 7,
+        parentFrameId: 0,
+        url: `https://portal.local/frame-${index + 1}`,
+      })),
+    ])
+    const value = await vm.runInContext(`sendDomCommand('readPage', { tabId: 1, maxChars: 20000 })`, loaded.context)
+    expect(loaded.maxInFlight).toBeGreaterThan(1)
+    expect(loaded.maxInFlight).toBeLessThanOrEqual(4)
+    expect(value.text).toContain('[Frame 7 - https://portal.local/frame-1]')
+    expect(value.text).toContain('[Frame 12 - https://portal.local/frame-6]')
+  })
+
+  it('keeps wait probes on the same bounded concurrency budget', async () => {
+    const loaded = loadFrameSupport([], [
+      { frameId: 0, parentFrameId: -1, url: 'https://portal.local/' },
+      ...Array.from({ length: 6 }, (_, index) => ({
+        frameId: index + 7,
+        parentFrameId: 0,
+        url: `https://portal.local/frame-${index + 1}`,
+      })),
+    ])
+    const value = await vm.runInContext(`sendDomCommand('wait', { tabId: 1, selector: '#ready', condition: 'visible', timeoutMs: 100 })`, loaded.context)
+    expect(value.found).toBe(true)
+    expect(loaded.maxInFlight).toBeLessThanOrEqual(4)
   })
 })
 
