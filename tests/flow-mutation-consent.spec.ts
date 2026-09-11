@@ -27,6 +27,22 @@ describe('destructive flow mutation consent', () => {
     })).toMatch(/destructive-flow guard/i)
   })
 
+  it('accepts patrol_delete confirmed=true as the explicit whole-flow deletion gate', () => {
+    const controller = createFlowMutationConsentController()
+
+    expect(controller.guard({
+      name: 'patrol_delete',
+      arguments: { inspectionId: 'important-flow', confirmed: true },
+    })).toBeUndefined()
+
+    const blocked = controller.guard({
+      name: 'patrol_delete',
+      arguments: { inspectionId: 'important-flow', confirmed: false },
+    })
+    expect(blocked).toMatch(/destructive-flow guard/i)
+    expect(blocked).toMatch(/confirmed=true/i)
+  })
+
   it('renders exactly the requested three options through Harness userQuestions and applies the selected choice', async () => {
     const ask = vi.fn(async (request: any) => ({
       answers: [{ id: request.questions[0].id, selected: ['新建一份流程图'] }],
