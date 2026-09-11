@@ -58,7 +58,7 @@ export class BrowserBridge {
   request(cmd, args = {}, options = {}) {
     const client = this.client
     if (!client) {
-      return Promise.reject(new BridgeError('NOT_CONNECTED', 'Patrol managed browser is not connected. Automatic provisioning should start or repair it; run patrol_doctor and inspect the managed-browser error if it remains unavailable.'))
+      return Promise.reject(new BridgeError('NOT_CONNECTED', 'Patrol managed browser is not connected. Automatic provisioning should start or repair it; run patrol_browser_recover if it remains unavailable.'))
     }
     const id = `r${++this.seq}`
     return new Promise((resolve, reject) => {
@@ -99,6 +99,19 @@ export class BrowserBridge {
         reject(new BridgeError('SEND_FAILED', `Failed to send browser command: ${safeMessage(error)}`))
       }
     })
+  }
+
+  resetConnection(reason = 'Patrol browser bridge connection reset for recovery') {
+    const connection = this.client
+    if (!connection) return false
+    this.client = null
+    this.clientOrigin = null
+    this.extensionInfo = null
+    this.stopPing()
+    this.failAll(new BridgeError('DISCONNECTED', reason))
+    try { connection.close(4001, reason) } catch {}
+    this.logger?.warn?.(`[dsh-patrol/browser-bridge] reset stale extension connection: ${reason}`)
+    return true
   }
 
   saveScreenshot(dataUrl, targetDirectory) {
