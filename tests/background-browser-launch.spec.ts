@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  isTransientPatrolLaunchError,
   patrolBrowserLaunchArgs,
   patrolBrowserVisible,
 } from '../browser-bridge-runtime/background-browser-launch.js'
@@ -29,5 +30,12 @@ describe('managed Patrol background browser launch', () => {
     expect(args).not.toContain('--window-position=-32000,-32000')
     expect(args).toContain('--disable-extensions-except=C:/extension')
     expect(args).toContain('--load-extension=C:/extension')
+  })
+
+  it('recognizes only transient closing/profile-lock launch failures as retryable', () => {
+    expect(isTransientPatrolLaunchError(new Error('Protocol error: Browser is closing.'))).toBe(true)
+    expect(isTransientPatrolLaunchError(new Error('user data directory is already in use'))).toBe(true)
+    expect(isTransientPatrolLaunchError(new Error('Failed to launch: profile is locked by another Chromium process'))).toBe(true)
+    expect(isTransientPatrolLaunchError(new Error('No usable sandbox!'))).toBe(false)
   })
 })
