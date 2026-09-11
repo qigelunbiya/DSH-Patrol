@@ -9,11 +9,13 @@
 // Harness Loader prefers a module's default export and would otherwise discard
 // the sibling `inject` metadata before the preset is mounted.
 //
-// Transport delegation lives in resilient-bridge.js. Browser startup is lazy:
-// opening Patrol mode alone must not create a blank Chromium window. The first
-// actual browser command starts/reuses the managed browser and waits inside the
-// same bounded request path. createResilientBrowserBridge calls
-// service.ensureBrowser lazily instead of this plugin eagerly awaiting it.
+// Transport delegation lives in resilient-bridge.js: its wrapper calls
+// service.bridge.request for commands and service.bridge.saveScreenshot for
+// screenshot persistence. Browser startup is lazy: opening Patrol mode alone
+// must not create a blank Chromium window. The first actual browser command
+// starts/reuses the managed browser and waits inside the same bounded request
+// path. createResilientBrowserBridge calls service.ensureBrowser lazily instead
+// of this plugin eagerly awaiting it.
 import { registerChallengeTool } from './challenge-tool.js'
 import { registerCountTool } from './count-tool.js'
 import { registerImageCodeRefreshTool } from './image-code-refresh-tool.js'
