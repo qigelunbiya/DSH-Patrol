@@ -1,5 +1,6 @@
 const DEFAULT_ATTEMPT_TIMEOUT_MS = 10_000
-const DEFAULT_REPAIR_WAIT_MS = 5_000
+const DEFAULT_INITIAL_CONNECT_WAIT_MS = 18_000
+const DEFAULT_REPAIR_WAIT_MS = 8_000
 const DEFAULT_POLL_MS = 100
 
 const PAGE_BRIDGE_RETRYABLE = new Set([
@@ -17,19 +18,29 @@ export function createResilientBrowserBridge(service, options = {}) {
   const logger = options.logger ?? console
   const configuredTimeoutMs = positiveInt(options.commandTimeoutMs, 60_000)
   const attemptTimeoutMs = Math.min(configuredTimeoutMs, positiveInt(options.attemptTimeoutMs, DEFAULT_ATTEMPT_TIMEOUT_MS))
+  const initialConnectWaitMs = positiveInt(options.initialConnectWaitMs, DEFAULT_INITIAL_CONNECT_WAIT_MS)
   const repairWaitMs = positiveInt(options.repairWaitMs, DEFAULT_REPAIR_WAIT_MS)
   const pollMs = positiveInt(options.pollMs, DEFAULT_POLL_MS)
 
   return {
-    get connected() { return service.bridge.connected === true },
+    get connected() { return transportReady(service) },
     status: (...args) => service.bridge.status(...args),
     saveScreenshot: (...args) => service.bridge.saveScreenshot(...args),
 
     async request(cmd, args = {}, requestOptions = {}) {
-      if (!service.bridge.connected) {
-        const ready = await kickRepairAndWait(service, repairWaitMs, pollMs, logger, false)
+      if (!transportReady(service)) {
+        const resetWrongOrStaleOrigin = service.bridge.connected === true
+        const ready = await kickRepairAndWait(service, initialConnectWaitMs, pollMs, logger, resetWrongOrStaleOrigin)
         if (!ready) {
-          throw new Error(`Patrol managed browser is not connected after ${repairWaitMs}ms of bounded automatic repair. The repair continues in the background; call patrol_browser_recover once before retrying the failed Patrol action.`)
+          const state = managedState(service)
+          throw new Error([
+            `Patrol managed browser did not become ready within ${initialConnectWaitMs}ms.`,
+            `running=${state.running ?? 'unknown'}`,
+            `starting=${state.starting ?? 'unknown'}`,
+            `connected=${state.connected ?? service.bridge.connected === true}`,
+            `managedError=${state.error ?? 'none'}`,
+            'The browser process is kept open for repair instead of being closed. Call patrol_browser_recover once; if it still fails, report its managedError instead of looping.',
+          ].join(' '))
         }
       }
 
@@ -54,7 +65,14 @@ export function createResilientBrowserBridge(service, options = {}) {
       const replaySafe = isTransportReplaySafe(cmd, args)
       const ready = await kickRepairAndWait(service, repairWaitMs, pollMs, logger, true)
       if (!ready) {
-        throw enrichTransportError(lastError, `Automatic browser repair was started but did not reconnect within ${repairWaitMs}ms. The repair is still allowed to finish in the background; call patrol_browser_recover before retrying.`)
+        const state = managedState(service)
+        throw enrichTransportError(lastError, [
+          `Automatic browser transport repair did not reconnect within ${repairWaitMs}ms.`,
+          `running=${state.running ?? 'unknown'}`,
+          `starting=${state.starting ?? 'unknown'}`,
+          `managedError=${state.error ?? 'none'}.`,
+          'The managed browser is intentionally kept open; call patrol_browser_recover once before retrying.',
+        ].join(' '))
       }
       if (!replaySafe) {
         throw enrichTransportError(lastError, 'The browser connection was repaired, but Patrol deliberately did not repeat this mutating command because the first attempt may already have changed the page. Observe CURRENT state and retry only if evidence shows the action did not happen.')
@@ -70,25 +88,25 @@ export function createResilientBrowserBridge(service, options = {}) {
 
 export async function kickRepairAndWait(service, waitMs = DEFAULT_REPAIR_WAIT_MS, pollMs = DEFAULT_POLL_MS, logger = console, resetStaleConnection = false) {
   if (resetStaleConnection && service?.bridge?.connected === true && typeof service.bridge.resetConnection === 'function') {
-    try { service.bridge.resetConnection('Patrol transport recovery after a failed command') } catch {}
+    try { service.bridge.resetConnection('Patrol transport recovery after a failed or mismatched connection') } catch {}
   }
 
   try {
     const pending = service?.ensureBrowser?.()
     if (pending && typeof pending.then === 'function') {
-      void pending.catch(error => logger?.warn?.(`[dsh-patrol/browser-tools] background managed-browser repair failed: ${errorMessage(error)}`))
+      void pending.catch(error => logger?.warn?.(`[dsh-patrol/browser-tools] managed-browser repair failed: ${errorMessage(error)}`))
     }
   } catch (error) {
     logger?.warn?.(`[dsh-patrol/browser-tools] could not start managed-browser repair: ${errorMessage(error)}`)
   }
 
-  if (service?.bridge?.connected === true) return true
+  if (transportReady(service)) return true
   const deadline = Date.now() + Math.max(0, waitMs)
   while (Date.now() < deadline) {
     await delay(Math.min(pollMs, Math.max(1, deadline - Date.now())))
-    if (service?.bridge?.connected === true) return true
+    if (transportReady(service)) return true
   }
-  return service?.bridge?.connected === true
+  return transportReady(service)
 }
 
 export function isTransportReplaySafe(cmd, args = {}) {
@@ -106,6 +124,25 @@ export function isTransportFailure(error) {
   if (['NOT_CONNECTED', 'DISCONNECTED', 'TIMEOUT', 'SEND_FAILED'].includes(code)) return true
   if (code === 'ABORTED') return false
   return /not connected|disconnected|did not answer|failed to send browser command|websocket|socket.*closed|connection.*closed/i.test(errorMessage(error))
+}
+
+function transportReady(service) {
+  if (service?.bridge?.connected !== true) return false
+  const state = managedState(service)
+  if (typeof state.connected === 'boolean' && state.connected !== true) return false
+  const bridgeState = typeof service?.bridge?.status === 'function' ? service.bridge.status() : undefined
+  if (bridgeState && Object.prototype.hasOwnProperty.call(bridgeState, 'extension')) {
+    if (bridgeState.extension === null || typeof bridgeState.extension !== 'object') return false
+  }
+  return true
+}
+
+function managedState(service) {
+  try {
+    return service?.managedBrowserStatus?.() ?? {}
+  } catch {
+    return {}
+  }
 }
 
 function isPageBridgeTransient(error) {

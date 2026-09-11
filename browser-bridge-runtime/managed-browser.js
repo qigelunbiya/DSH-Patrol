@@ -8,6 +8,7 @@ const DEFAULT_START_TIMEOUT_MS = 30_000
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000
 const CERT_INTERSTITIAL_ATTEMPTS = 20
 const CERT_INTERSTITIAL_RETRY_MS = 100
+const PATROL_EXTENSION_NAME = 'DSH Patrol Browser Bridge'
 const EXTENSION_DIR = fileURLToPath(new URL('../browser-extension/', import.meta.url))
 
 export function createManagedBrowserController(options = {}) {
@@ -38,7 +39,7 @@ export function createManagedBrowserController(options = {}) {
       return {
         running: browser !== undefined && browser.connected !== false,
         starting: starting !== undefined,
-        connected: bridge.connected === true && originMatches(bridge, extensionId),
+        connected: bridge.connected === true && originMatches(bridge, extensionId) && extensionHelloReceived(bridge),
         profilePath,
         extensionPath,
         executable: lastExecutable,
@@ -53,7 +54,8 @@ export function createManagedBrowserController(options = {}) {
       if (bridge.connected === true
         && browser !== undefined
         && browser.connected !== false
-        && originMatches(bridge, extensionId)) {
+        && originMatches(bridge, extensionId)
+        && extensionHelloReceived(bridge)) {
         return this.status
       }
       if (starting !== undefined) return await starting
@@ -81,17 +83,26 @@ export function createManagedBrowserController(options = {}) {
     let launchedHere = false
     try {
       if (browser !== undefined && browser.connected !== false) {
-        extensionId = await configureRuntimeExtension(browser)
-        extensionLoadMode = 'runtime'
-      await waitForBridge(bridge, connectTimeoutMs, extensionId)
-      if (hasStaleSemanticCapability() ) {
-        logger.warn?.('[dsh-patrol/managed-browser] live extension is missing semanticClick; restarting with source-loaded extension')
-        await safeClose(browser, logger)
-        browser = undefined
-        return await startOrRepair(true)
-      }
-      lastError = undefined
-      return controller.status
+        // A browser originally launched with --load-extension must keep using
+        // that already-loaded worker during repair. Trying runtime installation
+        // on every reconnect can replace/restart the extension repeatedly and
+        // leave the visible browser stranded on about:blank.
+        if (extensionLoadMode === 'legacy-launch') {
+          extensionId = await configureLegacyExtension(browser)
+        } else {
+          extensionId = await configureRuntimeExtension(browser)
+          extensionLoadMode = 'runtime'
+        }
+        await waitForBridge(bridge, connectTimeoutMs, extensionId)
+        if (hasStaleSemanticCapability()) {
+          logger.warn?.('[dsh-patrol/managed-browser] live extension is missing semanticClick; restarting with source-loaded extension')
+          await safeClose(browser, logger)
+          browser = undefined
+          return await startOrRepair(true)
+        }
+        lastError = undefined
+        writeCurrentState(browser)
+        return controller.status
       }
 
       mkdirSync(profilePath, { recursive: true, mode: 0o700 })
@@ -134,14 +145,7 @@ export function createManagedBrowserController(options = {}) {
 
       attachBrowser(active)
       browser = active
-      writeStateFile(statePath, {
-        pid: active.process?.()?.pid,
-        executable: lastExecutable,
-        profilePath,
-        extensionPath,
-        extensionId,
-        extensionLoadMode,
-      })
+      writeCurrentState(active)
       await waitForBridge(bridge, connectTimeoutMs, extensionId)
       if (hasStaleSemanticCapability()) {
         if (!forceLegacy) {
@@ -155,18 +159,42 @@ export function createManagedBrowserController(options = {}) {
       }
       if (disposed) throw new Error('managed Patrol browser was disposed while provisioning')
       lastError = undefined
+      writeCurrentState(active)
       logger.info?.(`[dsh-patrol/managed-browser] ready; extension=${extensionId}; mode=${extensionLoadMode}`)
       return controller.status
     } catch (error) {
       lastError = errorMessage(error)
       logger.warn?.(`[dsh-patrol/managed-browser] automatic browser setup failed: ${lastError}`)
       if (launchedHere && active !== undefined) {
-        if (browser === active) browser = undefined
-        await safeClose(active, logger)
+        if (browser === active && active.connected !== false && isBridgeHandshakeFailure(error)) {
+          // Do not tear down a healthy Chromium process merely because the
+          // extension WebSocket handshake was late. Keeping the same browser
+          // preserves its tab/session and lets the next recovery attempt
+          // reconfigure the worker in-place instead of producing a close/open
+          // loop with a new blank page every time.
+          writeCurrentState(active)
+          logger.warn?.('[dsh-patrol/managed-browser] keeping Chromium open after bridge handshake failure so recovery can reuse the same browser and tabs')
+        } else {
+          if (browser === active) browser = undefined
+          await safeClose(active, logger)
+        }
       }
-      removeStateFile(statePath)
+      if (browser === undefined || browser.connected === false) removeStateFile(statePath)
       throw error
     }
+  }
+
+  function writeCurrentState(active) {
+    if (active === undefined || active.connected === false) return
+    writeStateFile(statePath, {
+      pid: active.process?.()?.pid,
+      executable: lastExecutable,
+      profilePath,
+      extensionPath,
+      extensionId,
+      extensionLoadMode,
+      ...(lastError === undefined ? {} : { error: lastError }),
+    })
   }
 
   function hasStaleSemanticCapability() {
@@ -405,9 +433,12 @@ function findOnPath(command) {
 async function findInstalledExtension(browser, extensionPath) {
   const extensions = await browser.extensions()
   for (const [id, extension] of extensions) {
+    let samePath = false
     try {
-      if (extension?.path && resolve(extension.path) === extensionPath) return { id, extension }
+      samePath = typeof extension?.path === 'string' && resolve(extension.path) === extensionPath
     } catch {}
+    const samePatrolExtension = typeof extension?.name === 'string' && extension.name === PATROL_EXTENSION_NAME
+    if (samePath || samePatrolExtension) return { id, extension }
   }
   return undefined
 }
@@ -487,6 +518,10 @@ async function safeClose(browser, logger) {
 function isExtensionApiUnavailable(error) {
   const message = errorMessage(error)
   return /Extensions\.loadUnpacked|Method not available|method.*not found|wasn't found|method.*unsupported/i.test(message)
+}
+
+function isBridgeHandshakeFailure(error) {
+  return /Patrol extension did not connect to the local bridge|extension hello handshake was not received/i.test(errorMessage(error))
 }
 
 function writeStateFile(path, value) {

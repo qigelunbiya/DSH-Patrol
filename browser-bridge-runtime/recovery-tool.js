@@ -4,10 +4,11 @@ const optInt = { type: 'integer' }
 
 export function registerBrowserRecoveryTools(ctx, bridge, service, config = {}) {
   const timeoutMs = config.commandTimeoutMs ?? 60_000
+  const recoveryTimeoutMs = config.recoveryTimeoutMs ?? 20_000
 
   const recover = defineTool({
     name: 'patrol_browser_recover',
-    description: 'Recover the DSH Patrol managed browser after a Patrol action reports timeout, disconnect, or unavailable browser. This is a transient runtime repair: it is NOT recorded in the Runbook and is safe to call once before retrying the failed patrol_* business action.',
+    description: 'Recover the DSH Patrol managed browser after a Patrol action reports timeout, disconnect, or unavailable browser. This is a one-shot transient runtime repair: it is NOT recorded in the Runbook. Call it once, then either retry the failed Patrol action or report the returned managedError; do not loop this tool.',
     parameters: {},
     output: {
       schema: { type: 'string' },
@@ -17,27 +18,40 @@ export function registerBrowserRecoveryTools(ctx, bridge, service, config = {}) 
     async execute(_args, exec) {
       const before = service.managedBrowserStatus?.() ?? {}
       try {
-        const value = await bridge.request('listTabs', {}, { timeoutMs, signal: exec?.signal })
+        if (typeof service.ensureBrowser !== 'function') throw new Error('managed browser controller is unavailable')
+        await withTimeout(service.ensureBrowser(), recoveryTimeoutMs, 'managed browser recovery')
+        const afterEnsure = service.managedBrowserStatus?.() ?? {}
+        if (afterEnsure.connected !== true || service.bridge.connected !== true) {
+          throw new Error(afterEnsure.error || 'managed browser process is running but the Patrol extension bridge is still disconnected')
+        }
+
+        // Verify the actual raw transport once. Do not route this verification
+        // through the resilient wrapper or a failed recovery could recursively
+        // start another recovery cycle.
+        const verifyTimeout = Math.min(5_000, timeoutMs)
+        const value = await service.bridge.request('listTabs', {}, { timeoutMs: verifyTimeout, signal: exec?.signal })
         const after = service.managedBrowserStatus?.() ?? {}
         const tabs = Array.isArray(value?.tabs) ? value.tabs.length : 0
         return [
-          'Patrol browser transport is healthy.',
-          `connected=${bridge.connected === true}`,
+          'Patrol browser recovery succeeded.',
+          `connected=${service.bridge.connected === true}`,
           `managedRunning=${after.running ?? before.running ?? 'unknown'}`,
           `managedStarting=${after.starting ?? false}`,
+          `extensionMode=${after.extensionLoadMode ?? 'unknown'}`,
           `tabs=${tabs}`,
-          'Retry the failed patrol_* action once. Do not repeat the business action if CURRENT evidence shows it already happened.',
+          'Retry the failed patrol_* action once. Do not repeat a mutating business action if CURRENT evidence shows it already happened.',
         ].join('; ')
       } catch (error) {
         const after = service.managedBrowserStatus?.() ?? {}
         return [
-          'Patrol browser recovery did not complete in the bounded foreground window.',
-          `connected=${bridge.connected === true}`,
+          'Patrol browser recovery failed.',
+          `connected=${service.bridge.connected === true}`,
           `managedRunning=${after.running ?? before.running ?? 'unknown'}`,
           `managedStarting=${after.starting ?? false}`,
+          `extensionMode=${after.extensionLoadMode ?? 'unknown'}`,
           `managedError=${after.error ?? 'none'}`,
           `error=${errorMessage(error)}`,
-          'Automatic repair may still be finishing in the background. Wait briefly, call patrol_browser_recover once more, and if it still fails report the managedError instead of looping navigation.',
+          'STOP browser recovery here and report managedError. Do not call patrol_browser_recover again in the same recovery attempt and do not guess a replacement URL.',
         ].join('; ')
       }
     },
@@ -65,6 +79,20 @@ export function registerBrowserRecoveryTools(ctx, bridge, service, config = {}) 
 
   const disposers = [ctx.tools.register(recover), ctx.tools.register(reload)]
   return () => { for (const dispose of disposers) dispose() }
+}
+
+async function withTimeout(promise, timeoutMs, label) {
+  let timer
+  try {
+    return await Promise.race([
+      Promise.resolve(promise),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} did not finish within ${timeoutMs}ms`)), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 function errorMessage(error) {

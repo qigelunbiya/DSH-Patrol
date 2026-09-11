@@ -9,9 +9,13 @@
 // Harness Loader prefers a module's default export and would otherwise discard
 // the sibling `inject` metadata before the preset is mounted.
 //
-// Transport delegation now lives in resilient-bridge.js. That wrapper delegates
-// requests to service.bridge.request and screenshot persistence to
-// service.bridge.saveScreenshot while adding bounded repair/retry semantics.
+// Transport delegation lives in resilient-bridge.js: its wrapper calls
+// service.bridge.request for commands and service.bridge.saveScreenshot for
+// screenshot persistence. Browser startup is lazy: opening Patrol mode alone
+// must not create a blank Chromium window. The first actual browser command
+// starts/reuses the managed browser and waits inside the same bounded request
+// path. createResilientBrowserBridge calls service.ensureBrowser lazily instead
+// of this plugin eagerly awaiting it.
 import { registerChallengeTool } from './challenge-tool.js'
 import { registerCountTool } from './count-tool.js'
 import { registerImageCodeRefreshTool } from './image-code-refresh-tool.js'
@@ -34,25 +38,11 @@ export async function apply(ctx, config = {}) {
     throw new Error('dsh-patrol/browser-tools: host patrolBrowserBridge service is unavailable; install the DSH Patrol host bundle before using the Patrol preset')
   }
 
-  // Browser startup is intentionally kicked in the background. A slow Chromium
-  // launch or stale extension worker must not make the whole Patrol preset wait
-  // past Harness' foreground tool deadline. Every actual browser command below
-  // goes through the bounded resilient bridge and will wait briefly for the same
-  // deduplicated managed-browser startup before failing with actionable state.
-  if (typeof service.ensureBrowser === 'function') {
-    try {
-      const pending = service.ensureBrowser()
-      if (pending && typeof pending.then === 'function') {
-        void pending.catch(error => ctx.logger.warn?.(`[dsh-patrol/browser-tools] background managed browser startup failed: ${error?.message ?? error}`))
-      }
-    } catch (error) {
-      ctx.logger.warn?.(`[dsh-patrol/browser-tools] could not start managed browser: ${error?.message ?? error}`)
-    }
-  }
-
   const commandTimeoutMs = config.commandTimeoutMs ?? 60000
   const bridge = createResilientBrowserBridge(service, {
     commandTimeoutMs,
+    initialConnectWaitMs: config.browserInitialConnectWaitMs ?? 18000,
+    repairWaitMs: config.browserRepairWaitMs ?? 8000,
     logger: ctx.logger,
   })
 
@@ -90,5 +80,6 @@ export async function apply(ctx, config = {}) {
   }), 'dsh-patrol/browser-tools: scoped transient input replay')
   ctx.effect(() => registerBrowserRecoveryTools(ctx, bridge, service, {
     commandTimeoutMs,
+    recoveryTimeoutMs: config.browserRecoveryTimeoutMs ?? 20000,
   }), 'dsh-patrol/browser-tools: bounded managed-browser recovery helpers')
 }
