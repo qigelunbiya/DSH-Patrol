@@ -162,6 +162,33 @@ export function findUniqueHealingSelector(snapshotValue: unknown, locator: Seman
   return matches[0]?.selector as string
 }
 
+/**
+ * Verify that a caller-provided selector was observed in the fresh snapshot
+ * and that the observed element agrees with the semantic locator. The locator
+ * text itself may legitimately be duplicated across frames; the selector hint
+ * is the disambiguator, while browser_count performs the final live uniqueness
+ * check immediately before the click.
+ */
+export function isSelectorBoundToCurrentSnapshot(snapshotValue: unknown, selector: string, locator: SemanticLocator): boolean {
+  if (snapshotValue === null || typeof snapshotValue !== 'object') return false
+  const elements = (snapshotValue as { elements?: unknown }).elements
+  if (!Array.isArray(elements)) return false
+  const normalized = normalizeSemanticLocator(locator)
+  if (normalized === undefined) return false
+  const selectorMatches = elements.filter((item): item is SnapshotElement => (
+    item !== null
+    && typeof item === 'object'
+    && typeof (item as SnapshotElement).selector === 'string'
+    && (item as SnapshotElement).selector === selector
+  ))
+  if (selectorMatches.length !== 1) return false
+  const element = selectorMatches[0]!
+  if (normalized.text !== undefined && String(element.text ?? '').trim() !== normalized.text) return false
+  if (normalized.role !== undefined && String(element.role ?? '').trim().toLowerCase() !== normalized.role) return false
+  if (normalized.tag !== undefined && String(element.tag ?? '').trim().toLowerCase() !== normalized.tag) return false
+  return true
+}
+
 export function isScreenshotStep(step: ToolStep): boolean {
   return step.tool === 'browser_screenshot'
 }

@@ -64,6 +64,20 @@ describe('Patrol page understanding planner', () => {
     })).toMatch(/patrol_analyze_step/)
   })
 
+  it('keeps a failed semantic click on patrol_click_target instead of switching to raw patrol_click', () => {
+    const guard = createPatrolPlanningGuard()
+    const semantic = { name: 'patrol_click_target', arguments: { inspectionId: 'demo', stepName: '点击我的工作台', locatorText: '我的工作台' } }
+    expect(guard(semantic)).toBeUndefined()
+    expect(guard({ name: 'patrol_analyze_step', arguments: { inspectionId: 'demo', task: '点击我的工作台' } })).toBeUndefined()
+
+    const raw = guard({ name: 'patrol_click', arguments: { inspectionId: 'demo', stepName: '点击我的工作台', selector: 'nav a' } })
+    expect(raw).toMatch(/patrol_click_target/)
+    expect(raw).toMatch(/不要切换|不要用 patrol_click/)
+
+    // The blocked raw click must not consume the one remaining semantic retry.
+    expect(guard({ name: 'patrol_click_target', arguments: { inspectionId: 'demo', stepName: '点击我的工作台', selector: 'nav a', locatorText: '我的工作台' } })).toBeUndefined()
+  })
+
   it('resets a stalled click phase after meaningful non-click progress', () => {
     const guard = createPatrolPlanningGuard()
     expect(guard({ name: 'patrol_click_target', arguments: { inspectionId: 'demo', stepName: '点击确定', locatorText: '确定' } })).toBeUndefined()

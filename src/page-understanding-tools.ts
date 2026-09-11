@@ -23,6 +23,7 @@ interface PlanningGuardState {
   analyzed: boolean
   lastAnalysisTask: string
   clickAttempts: Map<string, number>
+  clickModes: Map<string, 'semantic' | 'selector'>
 }
 
 interface SnapshotElement {
@@ -43,7 +44,7 @@ export const PATROL_PAGE_UNDERSTANDING_PROMPT = `DSH Patrol 页面理解与执�
 - taskChecklist 只描述业务动作；真正执行页面动作前，要根据 CURRENT DOM/iframe/modal/structured table 判断该业务动作对应的真实前端结构，不要把用户文字直接翻译成 nth-of-type 后盲点。
 - 唯一且明显的文本目标可直接 patrol_click_target。第一次定位失败、出现 ambiguous、同名控件有多个、目标位于表格行/弹窗/iframe 时，必须先 patrol_analyze_step，再按其 CURRENT 证据给出的 A/B 方案执行；不要先堆 snapshot/read_page/wait 试探。
 - patrol_analyze_step 永远不写 Runbook。它优先把“行身份 + 行内动作”绑定，例如“10.192.3.174 + RDP”，避免只按 [RDP] 命中多行。不要把分析器给出的 selector 再扩写成更长的 nth-of-type。
-- 同一业务点击最多两个外部方案：第一次可以直接语义点击；失败后必须重新理解页面，第二次必须基于新的 CURRENT 证据。第二次仍失败就停止并报告，不得在 click_target/click/observe/snapshot 之间循环换皮重试。
+- 同一业务点击最多两个受控方案：第一次优先 patrol_click_target 语义点击；若它因扩展瞬态错误失败，优先在同一次调用内完成 selector fallback，或重新取得 CURRENT 证据后继续使用 patrol_click_target。禁止把失败的语义点击换成 raw patrol_click 来绕过验证/记录；第二次仍失败就停止并报告，不得在 click_target/click/observe/snapshot 之间循环换皮重试。
 - 不要为每个内部工具调用向用户重复“我再观察一下/我再试一下/让我换个选择器”。只有需要用户输入/确认、遇到不可恢复阻塞、或任务最终完成时才发自然语言说明。
 - 教学轨迹不等于 Runbook。诊断 snapshot/read、失败点击、重复输入、临时等待都不是最终流程。任务完成后必须 patrol_finalize_flow，只保留真正完成 taskChecklist 的已验证业务路径，再确认流程。已有非空 DRAFT 缺 checklist 时使用非破坏性 backfill，不能因此清空/重建。
 - targetUrl/browser_navigate 必须是纯 http/https URL。若对话渲染成 Markdown 链接 [url](url)，还原 href 后再调用工具，禁止把 Markdown 链接字符串写进 Flow JSON。
@@ -66,7 +67,7 @@ export function createPatrolPlanningGuard() {
     for (const [key, value] of states) if (now - value.touchedAt > STATE_TTL_MS) states.delete(key)
     let state = states.get(inspectionId)
     if (state === undefined) {
-      state = { touchedAt: now, analyses: 0, analyzed: false, lastAnalysisTask: '', clickAttempts: new Map() }
+      state = { touchedAt: now, analyses: 0, analyzed: false, lastAnalysisTask: '', clickAttempts: new Map(), clickModes: new Map() }
       states.set(inspectionId, state)
     }
     state.touchedAt = now
@@ -93,6 +94,10 @@ export function createPatrolPlanningGuard() {
 
     const key = businessClickKey(args)
     const attempts = state.clickAttempts.get(key) ?? 0
+    const previousMode = state.clickModes.get(key)
+    if (name === 'patrol_click' && previousMode === 'semantic' && attempts > 0) {
+      return 'DSH Patrol 页面规划器：该业务动作已先用 patrol_click_target 做过语义点击。不要切换到 patrol_click 或重复原始 CSS；请继续使用 patrol_click_target，并把新的 CURRENT selector 作为提示交给同一次受控点击，或停止并报告阻塞。'
+    }
     if (attempts >= 2) {
       return 'DSH Patrol 页面规划器：同一业务点击已经尝试两个方案。禁止继续 click_target/click、改名、换 nth-of-type 或包一层 observe 后重试；停止并报告最后的 CURRENT 证据和错误。'
     }
@@ -100,9 +105,14 @@ export function createPatrolPlanningGuard() {
       return 'DSH Patrol 页面规划器：不要直接猜 CSS 或重复同一业务点击。先调用 patrol_analyze_step，提供 taskChecklist 中当前业务动作，再基于 CURRENT DOM/iframe/modal/structured table 方案执行。'
     }
     state.clickAttempts.set(key, attempts + 1)
+    state.clickModes.set(key, name === 'patrol_click_target' && hasSemanticLocator(args) ? 'semantic' : 'selector')
     if (state.analyzed) state.analyzed = false
     return undefined
   }
+}
+
+function hasSemanticLocator(args: Record<string, unknown>): boolean {
+  return ['locatorText', 'locatorRole', 'locatorTag'].some(key => cleanString(args[key]) !== '')
 }
 
 export function registerPatrolPageUnderstandingTools(ctx: Context, store: PatrolStore, runner: PatrolRunner): () => void {

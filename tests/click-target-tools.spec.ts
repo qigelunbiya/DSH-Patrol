@@ -234,6 +234,40 @@ describe('semantic Patrol click target', () => {
     expect((await store.load('click-target')).steps).toEqual([])
   })
 
+  it('allows a CURRENT selector that disambiguates duplicate semantic text across frames', async () => {
+    let clicked = false
+    const { store, tool, exec } = await setup(async (name) => {
+      if (name === 'browser_read_page') return page(clicked ? '工作台侧栏' : '首页')
+      if (name === 'browser_semantic_click') return { ok: false, text: '', error: 'semantic click transport unavailable' }
+      if (name === 'browser_snapshot') {
+        return clicked
+          ? snapshot([{ tag: 'aside', role: 'navigation', text: '工作台侧栏', selector: 'top-frame::#sidebar' }])
+          : snapshot([
+              { tag: 'a', role: 'link', text: '我的工作台', selector: 'top-frame::#workbench' },
+              { tag: 'a', role: 'link', text: '我的工作台', selector: 'frame-url(https%3A%2F%2Fexample.test%2Fembed)::#workbench' },
+            ])
+      }
+      if (name === 'browser_count') return { ok: true, text: '1', value: { ok: true, count: 1 } }
+      if (name === 'browser_click') {
+        clicked = true
+        return { ok: true, text: 'Clicked workbench', value: { ok: true } }
+      }
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    const result = await tool.execute({
+      inspectionId: 'click-target',
+      stepName: '点击我的工作台',
+      selector: 'top-frame::#workbench',
+      locatorText: '我的工作台',
+    }, exec)
+
+    expect(result).toContain('selector-compatible fallback')
+    expect((await store.load('click-target')).steps[0]).toMatchObject({
+      arguments: { selector: 'top-frame::#workbench' },
+    })
+  })
+
   it('passes task context and selector only as a hint to the atomic resolver', async () => {
     const calls: Array<{ tool: string; args: JsonObject }> = []
     const { tool, exec } = await setup(async (name, args) => {

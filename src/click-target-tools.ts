@@ -1,7 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { verifyPostClickExpectation } from './post-click-verification.js'
-import { findUniqueHealingSelector } from './browser.js'
+import { isSelectorBoundToCurrentSnapshot } from './browser.js'
 import { assertSafePersistentText } from './security.js'
 import { stepExecutionNotes } from './step-notes.js'
 import { installTeachingRunbookFilter } from './teaching-runbook-filter.js'
@@ -134,10 +134,9 @@ export function registerPatrolClickTargetTool(
             includeHidden: false,
             tabId: args.tabId,
           }), exec)
-          const observedSelector = currentSnapshot.ok && locator !== undefined
-            ? findUniqueHealingSelector(currentSnapshot.value, locator)
-            : undefined
-          if (observedSelector !== selector) {
+          const selectorBound = currentSnapshot.ok && locator !== undefined
+            && isSelectorBoundToCurrentSnapshot(currentSnapshot.value, selector, locator)
+          if (!selectorBound) {
             return [
               'Reliable semantic click failed and selector fallback was NOT recorded.',
               atomic.error ?? atomic.text ?? 'Unknown atomic semantic click error',
