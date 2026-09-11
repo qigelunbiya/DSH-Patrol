@@ -36,6 +36,48 @@ describe('resilient Patrol browser bridge', () => {
     expect(request).toHaveBeenCalledTimes(1)
   })
 
+  it('never dispatches through a provisional extension socket while the managed browser is still starting', async () => {
+    let starting = true
+    let requestWhileStarting = false
+    const rawBridge: any = {
+      connected: true,
+      async request() {
+        if (starting) requestWhileStarting = true
+        return { tabs: [{ id: 1 }] }
+      },
+      status: () => ({ connected: rawBridge.connected, extension: { capabilities: ['semanticClick'] } }),
+      saveScreenshot: () => '',
+      resetConnection: vi.fn(() => {
+        rawBridge.connected = false
+        return true
+      }),
+    }
+    const service: any = {
+      bridge: rawBridge,
+      managedBrowserStatus: () => ({
+        running: true,
+        starting,
+        connected: rawBridge.connected,
+      }),
+      ensureBrowser: vi.fn(async () => {
+        await new Promise(resolve => setTimeout(resolve, 20))
+        rawBridge.connected = true
+        starting = false
+        return { running: true, connected: true }
+      }),
+    }
+    const bridge = createResilientBrowserBridge(service, {
+      initialConnectWaitMs: 200,
+      pollMs: 5,
+      logger: { warn() {} },
+    })
+
+    await expect(bridge.request('listTabs')).resolves.toEqual({ tabs: [{ id: 1 }] })
+    expect(service.ensureBrowser).toHaveBeenCalledTimes(1)
+    expect(rawBridge.resetConnection).toHaveBeenCalledTimes(1)
+    expect(requestWhileStarting).toBe(false)
+  })
+
   it('resets a stale transport and retries a read-only command once', async () => {
     let calls = 0
     const rawBridge: any = {
