@@ -12,7 +12,8 @@
 // Transport delegation lives in resilient-bridge.js. Browser startup is lazy:
 // opening Patrol mode alone must not create a blank Chromium window. The first
 // actual browser command starts/reuses the managed browser and waits inside the
-// same bounded request path.
+// same bounded request path. createResilientBrowserBridge calls
+// service.ensureBrowser lazily instead of this plugin eagerly awaiting it.
 import { registerChallengeTool } from './challenge-tool.js'
 import { registerCountTool } from './count-tool.js'
 import { registerImageCodeRefreshTool } from './image-code-refresh-tool.js'
@@ -39,7 +40,7 @@ export async function apply(ctx, config = {}) {
   const bridge = createResilientBrowserBridge(service, {
     commandTimeoutMs,
     initialConnectWaitMs: config.browserInitialConnectWaitMs ?? 18000,
-    repairWaitMs: config.browserRepairWaitMs ?? 12000,
+    repairWaitMs: config.browserRepairWaitMs ?? 8000,
     logger: ctx.logger,
   })
 
