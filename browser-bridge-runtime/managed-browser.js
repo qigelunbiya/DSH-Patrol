@@ -76,16 +76,22 @@ export function createManagedBrowserController(options = {}) {
 
   return controller
 
-  async function startOrRepair() {
+  async function startOrRepair(forceLegacy = false) {
     let active
     let launchedHere = false
     try {
       if (browser !== undefined && browser.connected !== false) {
         extensionId = await configureRuntimeExtension(browser)
         extensionLoadMode = 'runtime'
-        await waitForBridge(bridge, connectTimeoutMs, extensionId)
-        lastError = undefined
-        return controller.status
+      await waitForBridge(bridge, connectTimeoutMs, extensionId)
+      if (hasStaleSemanticCapability() ) {
+        logger.warn?.('[dsh-patrol/managed-browser] live extension is missing semanticClick; restarting with source-loaded extension')
+        await safeClose(browser, logger)
+        browser = undefined
+        return await startOrRepair(true)
+      }
+      lastError = undefined
+      return controller.status
       }
 
       mkdirSync(profilePath, { recursive: true, mode: 0o700 })
@@ -98,27 +104,32 @@ export function createManagedBrowserController(options = {}) {
         profilePath,
         extensionPath,
         startTimeoutMs,
-        legacyExtensionLoad: false,
+        legacyExtensionLoad: forceLegacy,
       })
       launchedHere = true
 
-      try {
-        extensionId = await configureRuntimeExtension(active)
-        extensionLoadMode = 'runtime'
-      } catch (error) {
-        if (!isExtensionApiUnavailable(error)) throw error
-        logger.warn?.(`[dsh-patrol/managed-browser] runtime extension API unavailable; retrying with automatic legacy launch loading: ${errorMessage(error)}`)
-        await safeClose(active, logger)
-        active = undefined
-        active = await launchBrowser({
-          executablePath: lastExecutable,
-          profilePath,
-          extensionPath,
-          startTimeoutMs,
-          legacyExtensionLoad: true,
-        })
+      if (forceLegacy) {
         extensionId = await configureLegacyExtension(active)
         extensionLoadMode = 'legacy-launch'
+      } else {
+        try {
+          extensionId = await configureRuntimeExtension(active)
+          extensionLoadMode = 'runtime'
+        } catch (error) {
+          if (!isExtensionApiUnavailable(error)) throw error
+          logger.warn?.(`[dsh-patrol/managed-browser] runtime extension API unavailable; retrying with automatic legacy launch loading: ${errorMessage(error)}`)
+          await safeClose(active, logger)
+          active = undefined
+          active = await launchBrowser({
+            executablePath: lastExecutable,
+            profilePath,
+            extensionPath,
+            startTimeoutMs,
+            legacyExtensionLoad: true,
+          })
+          extensionId = await configureLegacyExtension(active)
+          extensionLoadMode = 'legacy-launch'
+        }
       }
 
       attachBrowser(active)
@@ -132,6 +143,16 @@ export function createManagedBrowserController(options = {}) {
         extensionLoadMode,
       })
       await waitForBridge(bridge, connectTimeoutMs, extensionId)
+      if (hasStaleSemanticCapability()) {
+        if (!forceLegacy) {
+          logger.warn?.('[dsh-patrol/managed-browser] live extension is missing semanticClick; restarting with source-loaded extension')
+          await safeClose(active, logger)
+          active = undefined
+          browser = undefined
+          return await startOrRepair(true)
+        }
+        throw new Error('current Patrol browser extension is missing semanticClick after source-loaded repair')
+      }
       if (disposed) throw new Error('managed Patrol browser was disposed while provisioning')
       lastError = undefined
       logger.info?.(`[dsh-patrol/managed-browser] ready; extension=${extensionId}; mode=${extensionLoadMode}`)
@@ -146,6 +167,12 @@ export function createManagedBrowserController(options = {}) {
       removeStateFile(statePath)
       throw error
     }
+  }
+
+  function hasStaleSemanticCapability() {
+    const extension = bridge.status?.()?.extension
+    const capabilities = extension?.capabilities
+    return Array.isArray(capabilities) && !capabilities.includes('semanticClick')
   }
 
   function attachBrowser(active) {

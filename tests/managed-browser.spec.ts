@@ -164,6 +164,59 @@ describe('managed Patrol browser', () => {
     await controller.dispose()
   })
 
+  it('restarts with the current source when runtime extension capabilities are stale', async () => {
+    const { extensionPath, profilePath, statePath } = fixtureRoot('dsh-patrol-managed-capability-repair-')
+    writeFileSync(join(extensionPath, 'manifest.json'), JSON.stringify({
+      manifest_version: 3,
+      name: 'DSH Patrol Browser Bridge',
+      version: '0.3.0',
+    }))
+    const bridge = {
+      connected: false,
+      status: () => ({
+        extension: bridge.extension,
+      }),
+      extension: { capabilities: ['captureImageCode'] },
+    }
+    const launches: boolean[] = []
+    const workers = [
+      workerThatConnects(bridge, {}),
+      workerThatConnects(bridge, {}),
+    ]
+    const browsers = workers.map((worker, index) => ({
+      connected: true,
+      on() {},
+      process: () => ({ pid: 8000 + index }),
+      async waitForTarget() {
+        return { url: () => 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/background.js', worker: async () => worker }
+      },
+      async extensions() {
+        return new Map([['patrol-id', { name: 'DSH Patrol Browser Bridge', workers: async () => [worker] }]])
+      },
+      async installExtension() { return 'patrol-id' },
+      async close() { this.connected = false; bridge.connected = false },
+    }))
+    browsers[1].extensions = async () => new Map([['patrol-id', { name: 'DSH Patrol Browser Bridge', workers: async () => [workers[1]] }]])
+    workers[1].evaluate = async (_fn, url) => { bridge.extension = { capabilities: ['captureImageCode', 'semanticClick'] }; bridge.connected = true; return url }
+    const controller = createManagedBrowserController({
+      bridge,
+      extensionPath,
+      profilePath,
+      statePath,
+      browserExecutable: process.execPath,
+      bridgeUrlHint: () => 'ws://127.0.0.1:3080/patrol-browser-bridge',
+      launchBrowser: async options => { launches.push(options.legacyExtensionLoad === true); return browsers[launches.length - 1] },
+      logger: { info() {}, warn() {} },
+      connectTimeoutMs: 1000,
+      startTimeoutMs: 1000,
+    })
+
+    const result = await controller.ensureStarted()
+    expect(result.connected).toBe(true)
+    expect(result.extensionLoadMode).toBe('legacy-launch')
+    expect(launches).toEqual([false, true])
+  })
+
   it('falls back automatically when Chromium lacks the runtime extension API', async () => {
     const { extensionPath, profilePath, statePath } = fixtureRoot('dsh-patrol-managed-fallback-')
     const bridge = { connected: false }
