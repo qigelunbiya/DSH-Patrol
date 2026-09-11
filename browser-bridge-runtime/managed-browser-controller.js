@@ -16,7 +16,13 @@ export function createManagedBrowserController(options = {}) {
   return createBaseManagedBrowserController({
     ...options,
     launchBrowser: async launchOptions => {
-      const browser = await launchBrowser(launchOptions)
+      // Puppeteer may keep Browser.connected=true for a short interval while
+      // Chromium is already shutting down. If an extension/CDP call then throws
+      // "Browser is closing", the base controller would otherwise keep reusing
+      // that same dying handle on every recovery attempt. Wrap the handle so
+      // browser-level closing errors immediately make connected=false; the next
+      // bounded recovery can launch a fresh Chromium instead of looping forever.
+      const browser = createClosingAwareBrowser(await launchBrowser(launchOptions), logger)
       try {
         // A persistent Chromium profile can retain an older runtime-installed
         // unpacked extension even when the checkout at extensionPath has newer
@@ -46,6 +52,51 @@ export function createManagedBrowserController(options = {}) {
   })
 }
 
+export function createClosingAwareBrowser(browser, logger = console) {
+  if (!browser || typeof browser !== 'object') return browser
+  let staleClosing = false
+  let warned = false
+
+  const markIfClosing = error => {
+    if (!isBrowserClosingError(error)) return
+    staleClosing = true
+    if (!warned) {
+      warned = true
+      logger.warn?.('[dsh-patrol/managed-browser] Chromium reported that the browser is closing; marking this Puppeteer handle stale so the next recovery relaunches instead of reusing it')
+    }
+  }
+
+  return new Proxy(browser, {
+    get(target, property) {
+      if (property === 'connected') {
+        return staleClosing ? false : target.connected
+      }
+      const value = Reflect.get(target, property, target)
+      if (typeof value !== 'function') return value
+      return (...args) => {
+        try {
+          const result = value.apply(target, args)
+          if (result && typeof result.then === 'function') {
+            return Promise.resolve(result).catch(error => {
+              markIfClosing(error)
+              throw error
+            })
+          }
+          return result
+        } catch (error) {
+          markIfClosing(error)
+          throw error
+        }
+      }
+    },
+  })
+}
+
+export function isBrowserClosingError(error) {
+  const message = errorMessage(error)
+  return /browser\s+(?:is|was)\s+closing|browser\s+has\s+disconnected|browser\s+(?:is|was)\s+closed|connection\s+closed.*browser|protocol error[^\n]*browser[^\n]*closing/i.test(message)
+}
+
 export async function refreshBundledExtensionInstall(browser, extensionPath, logger = console) {
   if (!extensionPath
     || typeof browser?.extensions !== 'function'
@@ -60,7 +111,8 @@ export async function refreshBundledExtensionInstall(browser, extensionPath, log
     extensions = await browser.extensions()
   } catch {
     // Chromium builds without the runtime extension API are handled by the
-    // base controller's legacy --load-extension fallback.
+    // base controller's legacy --load-extension fallback. Closing-aware browser
+    // wrappers also mark the handle stale before this soft compatibility return.
     return false
   }
 

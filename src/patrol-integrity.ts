@@ -13,8 +13,9 @@ export const PATROL_INTEGRITY_PROMPT = `DSH Patrol 可复用流程完整性规�
 - 用户明确要求填写的字段必须拥有真实可重放的输入步骤。即使 CURRENT 页面已经自动填好用户名、工号或普通文本，也必须通过对应 patrol_* 输入工具规范化并记录；“这次页面碰巧预填”不能替代下一次重放所需动作。敏感值仍只保存安全引用，绝不保存明文。
 - 业务点击优先使用 patrol_click_target。若点击后的具体业务文本已经从用户要求或 CURRENT 证据中明确知道，可提供 expectedText；若未知（例如 Logo 揭示表单、自定义菜单展开），不要猜 expectedText，直接省略，让 Patrol 通过点击前后 URL/可交互 DOM/页面状态变化自动验证。禁止为了满足参数而杜撰成功条件。
 - 新建 DRAFT 的顶层 targetUrl 在教学开始后锁定。用户要求“点击某入口”时，不得用猜测 URL 的 patrol_navigate 代替该点击，也不得先调用 patrol_update_inspection 把猜测 URL 改成新 target 再绕过导航保护。只有用户明确改变了任务目标时才允许重建/清空流程后使用新 target。
-- 已有非空流程与当前用户描述不完全一致时，默认策略必须是“保留旧流程并做最小化定位/修复”，绝不能因为 replay 失败、缺任务清单、步骤较多或新需求相似，就先 patrol_delete、patrol_remove_steps、patrol_delete_step 或 patrol_rewrite_flow_path 清空/重写旧流程。需要任何删除、清空、批量移除或重写步骤时，必须调用 patrol_request_flow_change_choice 弹出原生三选一卡片，让用户选择：① 确定（允许一次） ② 新建一份流程图 ③ 总是确定。只有卡片返回选择后才能继续；若当前客户端不支持卡片，才退回相同三个选项的纯文本询问，并在用户明确回答后调用 patrol_flow_change_choice。
-- 用户选择“确定（允许一次）”后只授权一次破坏性工具调用；用户选择“新建一份流程图”后必须保留旧流程原样并使用新的 inspectionId；用户选择“总是确定”仅对当前 inspectionId、当前 Harness 进程有效，不得把这个偏好持久化到未来重启后的会话。
+- 已有非空流程与当前用户描述不完全一致时，默认策略必须是“保留旧流程并做最小化定位/修复”，绝不能因为 replay 失败、缺任务清单、步骤较多或新需求相似，就先 patrol_delete、patrol_remove_steps、patrol_delete_step 或 patrol_rewrite_flow_path 清空/重写旧流程。
+- 但是，如果 CURRENT 用户消息本身已经明确要求“旧流程删掉/清空/重建/重新创建”这类完整流程替换，不要再弹一遍确认卡造成死循环；直接对旧 inspection 调用 patrol_delete，并且 confirmed=true，然后按用户要求重新创建。patrol_delete 自身的 confirmed=true 就是完整流程删除的显式确认门槛。只有用户没有明确要求删除整个旧流程、而模型为了局部修复想删除/清理/批量移除/重写步骤时，才必须调用 patrol_request_flow_change_choice 弹出原生三选一卡片：① 确定（允许一次） ② 新建一份流程图 ③ 总是确定。
+- 用户选择“确定（允许一次）”后只授权一次局部破坏性工具调用；用户选择“新建一份流程图”后必须保留旧流程原样并使用新的 inspectionId；用户选择“总是确定”仅对当前 inspectionId、当前 Harness 进程有效，不得把这个偏好持久化到未来重启后的会话。
 - 一个清单步骤只有获得 CURRENT 可观察证据后才能标记完成。工具仅返回 ok、页面标题相似、URL 猜测或“看起来像工作台”都不是业务完成证据。若用户说明“出现侧栏才算点击工作台成功”，必须以侧栏/目标菜单的真实出现作为成功证据。
 - 必需业务步骤遇到扩展能力缺失、页面加载、iframe 重建或 selector 失效且尚未发生物理点击时，先取得新的 CURRENT 证据并走受控恢复，不得把工具调用次数误算成业务失败。若物理点击已发生但结果未验证，必须先确认 CURRENT 状态，且最多允许一次恢复点击；两次仍未验证就停止，避免重复提交或其他副作用。禁止跳过失败步骤制造“完成”的流程。
 - DRAFT 教学轨迹可以包含诊断探针，但最终 Runbook 只能保留与任务清单一一对应且已验证成功的路线。失败点击、猜 URL、回退/重进、重复 wait/read/snapshot、诊断 probe、被后续修正覆盖的输入都属于教学轨迹，不属于最终可复用流程。

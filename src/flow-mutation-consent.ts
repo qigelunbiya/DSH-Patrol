@@ -53,6 +53,11 @@ const DESTRUCTIVE_FLOW_TOOLS = new Set([
   'patrol_rewrite_flow_path',
 ])
 
+const WHOLE_FLOW_DELETE_TOOLS = new Set([
+  'patrol_delete',
+  'patrol_delete_flow',
+])
+
 const OPTION_ALLOW_ONCE = '确定（允许一次）'
 const OPTION_CREATE_NEW = '新建一份流程图'
 const OPTION_ALWAYS_ALLOW = '总是确定'
@@ -60,10 +65,12 @@ const OPTION_ALWAYS_ALLOW = '总是确定'
 /**
  * Conversation-level safety gate for destructive changes to an existing flow.
  *
- * Destructive calls remain blocked until the user makes one explicit choice.
- * When the Harness user-questions provider is available the choice is rendered
- * as a native three-option question card. Plain-text choice recording remains
- * as a compatibility fallback for clients that do not provide that UI.
+ * Fine-grained destructive edits remain blocked until the user makes one
+ * explicit choice. Whole-flow deletion is slightly different: patrol_delete
+ * already requires confirmed=true at the tool schema/executor layer. Requiring
+ * a second confirmation card after the user has explicitly asked to delete or
+ * clear the old flow creates a deadlock, so confirmed whole-flow deletion is
+ * allowed directly unless the user previously chose create-new.
  *
  * "always-allow" is scoped to one inspection id and the current Harness
  * process. It is intentionally not persisted across restarts, so a stale
@@ -114,7 +121,7 @@ export function createFlowMutationConsentController(ctx?: Context) {
 
   const requestChoiceTool = defineTool({
     name: 'patrol_request_flow_change_choice',
-    description: 'Show the native Harness three-option confirmation card before deleting, clearing, removing, or rewriting steps in an existing Patrol flow. Use this when a destructive-flow guard blocks an operation. The options are exactly: 确定（允许一次）, 新建一份流程图, 总是确定. The returned choice immediately configures the guard; do not call the destructive tool before this tool returns.',
+    description: 'Show the native Harness three-option confirmation card before fine-grained deletion, clearing, removal, or rewriting of steps in an existing Patrol flow. Do not use this extra card when the current user message already explicitly asks to delete/clear the whole old flow; use patrol_delete with confirmed=true in that case. The options are exactly: 确定（允许一次）, 新建一份流程图, 总是确定.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       reason: { type: 'string', description: 'Short user-language explanation of why the existing flow would need destructive cleanup/rewrite. Do not include secrets.' },
@@ -183,11 +190,6 @@ export function createFlowMutationConsentController(ctx?: Context) {
     if (!inspectionId) return flowMutationPrompt('(unknown flow)')
 
     const permission = permissions.get(inspectionId)
-    if (permission === 'always-allow') return undefined
-    if (permission === 'allow-once') {
-      permissions.delete(inspectionId)
-      return undefined
-    }
     if (permission === 'create-new') {
       return [
         'DSH Patrol destructive-flow guard: this destructive action was NOT executed.',
@@ -195,6 +197,18 @@ export function createFlowMutationConsentController(ctx?: Context) {
         'Create a new inspection id and continue there. If the user later changes their mind, ask again through patrol_request_flow_change_choice.',
       ].join(' ')
     }
+    if (permission === 'always-allow') return undefined
+    if (permission === 'allow-once') {
+      permissions.delete(inspectionId)
+      return undefined
+    }
+
+    // Whole-flow deletion already has a mandatory confirmed=true gate inside
+    // patrol_delete. When the user explicitly says “delete/clear the old flow”,
+    // the Agent should pass confirmed=true and must not be forced through a
+    // second confirmation loop. Keep partial edits protected by the card.
+    if (WHOLE_FLOW_DELETE_TOOLS.has(name) && args.confirmed === true) return undefined
+
     return flowMutationPrompt(inspectionId)
   }
 
@@ -225,9 +239,10 @@ function flowMutationPrompt(inspectionId: string): string {
   return [
     'DSH Patrol destructive-flow guard: this destructive action was NOT executed.',
     `Changing ${inspectionId} would delete, clear, remove, or rewrite existing flow steps.`,
-    `Call patrol_request_flow_change_choice to show the native three-option prompt: ① ${OPTION_ALLOW_ONCE} ② ${OPTION_CREATE_NEW} ③ ${OPTION_ALWAYS_ALLOW}.`,
-    'Do not infer consent from a similar patrol request, from the fact that the flow is DRAFT, or from an earlier failed replay.',
-    'If the client has no question-card provider, ask those same three options in plain text and use patrol_flow_change_choice only after the user explicitly answers.',
+    `For partial step cleanup/rewrite, call patrol_request_flow_change_choice to show the native three-option prompt: ① ${OPTION_ALLOW_ONCE} ② ${OPTION_CREATE_NEW} ③ ${OPTION_ALWAYS_ALLOW}.`,
+    'If the CURRENT user message explicitly asks to delete/clear the whole old flow, call patrol_delete with confirmed=true instead of asking the same question again.',
+    'Do not infer consent from a merely similar patrol request, from the fact that the flow is DRAFT, or from an earlier failed replay.',
+    'If the client has no question-card provider and a partial destructive edit really is needed, ask those same three options in plain text and use patrol_flow_change_choice only after the user explicitly answers.',
   ].join(' ')
 }
 
