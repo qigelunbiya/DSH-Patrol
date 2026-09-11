@@ -71,7 +71,8 @@ async function extensionHarness() {
     }, { cmd, args, tabId: id })
   }
 
-  return { browser, page, command }
+  const manifest = await worker.evaluate(() => chrome.runtime.getManifest())
+  return { browser, page, command, manifest }
 }
 
 describe('public real-browser Patrol interaction smoke', () => {
@@ -79,6 +80,7 @@ describe('public real-browser Patrol interaction smoke', () => {
     const site = await localTestSite()
     const harness = await extensionHarness()
     try {
+      expect(harness.manifest.version).toBe('0.3.1')
       await harness.page.goto(`${site.root}/add_remove_elements/`, { waitUntil: 'domcontentloaded', timeout: 20000 })
 
       // The business target is resolved and clicked inside one extension command,
