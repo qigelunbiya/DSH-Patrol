@@ -106,6 +106,26 @@ describe('Patrol page understanding planner', () => {
     expect(guard(click)).toBeUndefined()
   })
 
+  it('clears stale click outcomes when an existing flow is reopened for editing', () => {
+    const outcomes = createPatrolClickOutcomeTracker()
+    const guard = createPatrolPlanningGuard(outcomes)
+    const click = { name: 'patrol_click_target', arguments: {
+      inspectionId: 'legacy-flow', stepName: '点击 Logo', locatorText: '长城网际',
+    } }
+
+    outcomes.recordUnverifiedPhysicalClick(click.arguments)
+    outcomes.recordUnverifiedPhysicalClick(click.arguments)
+    expect(guard(click)).toMatch(/两次未验证|two unverified/i)
+
+    // Reopening a READY/DRAFT flow starts a new teaching episode. Old
+    // in-memory click outcomes must not poison the repaired flow.
+    expect(guard({
+      name: 'patrol_begin_edit',
+      arguments: { inspectionId: 'legacy-flow' },
+    })).toBeUndefined()
+    expect(guard(click)).toBeUndefined()
+  })
+
   it('keeps the existing image-code OCR path explicitly out of the planner', () => {
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/不能替换图片字符验证码链路/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/patrol_solve_current_image_code/)

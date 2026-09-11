@@ -18,6 +18,23 @@ const PHASE_PROGRESS_TOOLS = new Set([
   'patrol_resume', 'patrol_resume_validation', 'patrol_run', 'patrol_run_flow',
 ])
 
+// These tools start a fresh teaching/editing episode for an existing
+// inspection. Outcomes from a previous episode must not poison its first
+// repaired click with a duplicate-click block.
+const RESET_EPISODE_TOOLS = new Set([
+  'patrol_create_draft',
+  'patrol_create_inspection',
+  'patrol_begin_edit',
+  'patrol_update_inspection',
+  'patrol_set_task_checklist',
+  'patrol_delete',
+  'patrol_reteach_text',
+  'patrol_reteach_credential',
+  'patrol_reteach_transient',
+  'patrol_reteach_browser_step',
+  'patrol_reteach_checkpoint',
+])
+
 interface PlanningGuardState {
   touchedAt: number
   analyzed: boolean
@@ -68,6 +85,12 @@ export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = 
       states.set(inspectionId, state)
     }
     state.touchedAt = now
+
+    if (RESET_EPISODE_TOOLS.has(name)) {
+      outcomes.clearInspection(inspectionId)
+      states.delete(inspectionId)
+      return undefined
+    }
 
     if (PHASE_PROGRESS_TOOLS.has(name)) {
       outcomes.clearInspection(inspectionId)
