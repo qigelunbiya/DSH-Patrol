@@ -7,7 +7,9 @@
 // makes raw legacy CSS top-document-first so identical iframe structure cannot
 // create false ambiguity. modal-target-hardening scopes ordinary snapshots to a
 // real foreground dialog. Interaction hardening delegates non-legacy commands
-// through the semantic wrapper, so its later load remains compatible.
+// through the semantic wrapper, so its later load remains compatible. The final
+// semantic-intent fallback only relaxes an over-specific text locator when the
+// user explicitly asked for a Logo and the atomic resolver found no target.
 importScripts('background.js')
 importScripts('semantic-click.js')
 importScripts('frame-registration.js')
@@ -17,3 +19,4 @@ importScripts('snapshot-resilient.js')
 importScripts('interaction-hardening.js')
 importScripts('selector-scope-hardening.js')
 importScripts('modal-target-hardening.js')
+importScripts('semantic-intent-fallback.js')
