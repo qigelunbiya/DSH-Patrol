@@ -2,8 +2,8 @@
 //
 // The WebSocket/HTTP transport and the zero-config managed Chromium launcher
 // are host-owned by browser-bridge-runtime/index.js. This plugin belongs in the
-// Patrol Agent Preset and contributes only browser_* tool schemas to that
-// preset's scoped ToolRuntime layer.
+// Patrol Agent Preset and contributes browser primitives plus transient Patrol
+// recovery helpers to that preset's scoped ToolRuntime layer.
 //
 // Keep this as a namespace Cordis plugin: do NOT add `export default apply`.
 // Harness Loader prefers a module's default export and would otherwise discard
@@ -13,6 +13,8 @@ import { registerCountTool } from './count-tool.js'
 import { registerImageCodeRefreshTool } from './image-code-refresh-tool.js'
 import { registerImageCodeVisualTool } from './image-code-visual-tool.js'
 import { registerLoginStateTool } from './login-state-tool.js'
+import { registerBrowserRecoveryTools } from './recovery-tool.js'
+import { createResilientBrowserBridge } from './resilient-bridge.js'
 import { registerSelectTool } from './select-tool.js'
 import { registerSemanticClickTool } from './semantic-click-tool.js'
 import { registerTotpTool } from './totp-tool.js'
@@ -28,75 +30,61 @@ export async function apply(ctx, config = {}) {
     throw new Error('dsh-patrol/browser-tools: host patrolBrowserBridge service is unavailable; install the DSH Patrol host bundle before using the Patrol preset')
   }
 
+  // Browser startup is intentionally kicked in the background. A slow Chromium
+  // launch or stale extension worker must not make the whole Patrol preset wait
+  // past Harness' foreground tool deadline. Every actual browser command below
+  // goes through the bounded resilient bridge and will wait briefly for the same
+  // deduplicated managed-browser startup before failing with actionable state.
   if (typeof service.ensureBrowser === 'function') {
     try {
-      await service.ensureBrowser()
+      const pending = service.ensureBrowser()
+      if (pending && typeof pending.then === 'function') {
+        void pending.catch(error => ctx.logger.warn?.(`[dsh-patrol/browser-tools] background managed browser startup failed: ${error?.message ?? error}`))
+      }
     } catch (error) {
-      ctx.logger.warn?.(`[dsh-patrol/browser-tools] managed browser is not ready: ${error?.message ?? error}`)
+      ctx.logger.warn?.(`[dsh-patrol/browser-tools] could not start managed browser: ${error?.message ?? error}`)
     }
   }
 
-  const retryableDomCommands = new Set([
-    'snapshot', 'readPage', 'challengeSignals', 'imageCodeTarget', 'captureImageCode', 'count',
-    'click', 'semanticClick', 'select', 'type', 'press', 'scroll', 'wait',
-  ])
-  const bridge = {
-    get connected() { return service.bridge.connected },
-    status: (...args) => service.bridge.status(...args),
-    saveScreenshot: (...args) => service.bridge.saveScreenshot(...args),
-    async request(cmd, args, options) {
-      if (!service.bridge.connected && typeof service.ensureBrowser === 'function') {
-        await service.ensureBrowser()
-      }
-      const delays = retryableDomCommands.has(cmd) ? [0, 160, 360, 700] : [0]
-      let lastError
-      for (const delay of delays) {
-        if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay))
-        try {
-          return await service.bridge.request(cmd, args, options)
-        } catch (error) {
-          lastError = error
-          const message = String(error?.message ?? error)
-          if (!retryableDomCommands.has(cmd)
-            || !/page bridge unavailable|receiving end does not exist|could not establish connection|message port closed/i.test(message)) {
-            throw error
-          }
-        }
-      }
-      throw lastError
-    },
-  }
+  const commandTimeoutMs = config.commandTimeoutMs ?? 60000
+  const bridge = createResilientBrowserBridge(service, {
+    commandTimeoutMs,
+    logger: ctx.logger,
+  })
 
   ctx.effect(() => registerTools(ctx, bridge, {
-    commandTimeoutMs: config.commandTimeoutMs ?? 60000,
+    commandTimeoutMs,
     bridgeUrlHint: typeof service.bridgeUrlHint === 'function' ? service.bridgeUrlHint : () => '',
   }), 'dsh-patrol/browser-tools: scoped browser tools')
   ctx.effect(() => registerCountTool(ctx, bridge, {
-    commandTimeoutMs: config.commandTimeoutMs ?? 60000,
+    commandTimeoutMs,
   }), 'dsh-patrol/browser-tools: scoped count tool')
   ctx.effect(() => registerSelectTool(ctx, bridge, {
-    commandTimeoutMs: config.commandTimeoutMs ?? 60000,
+    commandTimeoutMs,
   }), 'dsh-patrol/browser-tools: native select tool')
   ctx.effect(() => registerSemanticClickTool(ctx, bridge, {
-    commandTimeoutMs: config.commandTimeoutMs ?? 60000,
+    commandTimeoutMs,
   }), 'dsh-patrol/browser-tools: atomic semantic click')
   ctx.effect(() => registerChallengeTool(ctx, bridge, {
-    commandTimeoutMs: config.commandTimeoutMs ?? 60000,
+    commandTimeoutMs,
   }), 'dsh-patrol/browser-tools: scoped auth challenge detector')
   ctx.effect(() => registerImageCodeVisualTool(ctx, bridge, {
-    commandTimeoutMs: config.commandTimeoutMs ?? 60000,
+    commandTimeoutMs,
   }), 'dsh-patrol/browser-tools: current image-code visual crop')
   ctx.effect(() => registerImageCodeRefreshTool(ctx, bridge, {
-    commandTimeoutMs: config.commandTimeoutMs ?? 60000,
+    commandTimeoutMs,
   }), 'dsh-patrol/browser-tools: current image-code refresh recovery')
   ctx.effect(() => registerTotpTool(ctx, bridge, {
-    commandTimeoutMs: config.commandTimeoutMs ?? 60000,
+    commandTimeoutMs,
     minimumValiditySeconds: config.totpMinimumValiditySeconds ?? 5,
   }), 'dsh-patrol/browser-tools: encrypted TOTP profile input')
   ctx.effect(() => registerLoginStateTool(ctx, bridge, {
-    commandTimeoutMs: config.commandTimeoutMs ?? 60000,
+    commandTimeoutMs,
   }), 'dsh-patrol/browser-tools: scoped login-state detector')
   ctx.effect(() => registerTransientTool(ctx, bridge, {
-    commandTimeoutMs: config.commandTimeoutMs ?? 60000,
+    commandTimeoutMs,
   }), 'dsh-patrol/browser-tools: scoped transient input replay')
+  ctx.effect(() => registerBrowserRecoveryTools(ctx, bridge, service, {
+    commandTimeoutMs,
+  }), 'dsh-patrol/browser-tools: bounded managed-browser recovery helpers')
 }
