@@ -2,6 +2,7 @@ import puppeteer from 'puppeteer-core'
 
 const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on', 'visible', 'foreground'])
 const FALSE_VALUES = new Set(['0', 'false', 'no', 'off', 'hidden', 'background'])
+const LAUNCH_RETRY_DELAYS_MS = [0, 500, 1500]
 
 export function patrolBrowserVisible(env = process.env) {
   const explicit = String(env.DSH_PATROL_BROWSER_VISIBLE ?? '').trim().toLowerCase()
@@ -45,6 +46,11 @@ export function patrolBrowserLaunchArgs({ extensionPath, legacyExtensionLoad = f
   return args
 }
 
+export function isTransientPatrolLaunchError(error) {
+  const message = error instanceof Error ? error.message : String(error)
+  return /browser\s+(?:is|was)\s+closing|user data directory[^\n]*(?:already in use|in use)|profile[^\n]*(?:already in use|in use|locked)|singleton(?:lock|socket|cookie)|browser is already running|failed to launch[^\n]*(?:profile|lock)/i.test(message)
+}
+
 export async function defaultPatrolLaunchBrowser({
   executablePath,
   profilePath,
@@ -52,18 +58,33 @@ export async function defaultPatrolLaunchBrowser({
   startTimeoutMs,
   legacyExtensionLoad = false,
 }) {
-  return await puppeteer.launch({
-    browser: 'chrome',
-    executablePath,
-    pipe: true,
-    headless: false,
-    userDataDir: profilePath,
-    enableExtensions: true,
-    defaultViewport: null,
-    handleSIGINT: false,
-    handleSIGTERM: false,
-    handleSIGHUP: false,
-    timeout: startTimeoutMs,
-    args: patrolBrowserLaunchArgs({ extensionPath, legacyExtensionLoad }),
-  })
+  let lastError
+  for (let attempt = 0; attempt < LAUNCH_RETRY_DELAYS_MS.length; attempt += 1) {
+    const delayMs = LAUNCH_RETRY_DELAYS_MS[attempt]
+    if (delayMs > 0) await delay(delayMs)
+    try {
+      return await puppeteer.launch({
+        browser: 'chrome',
+        executablePath,
+        pipe: true,
+        headless: false,
+        userDataDir: profilePath,
+        enableExtensions: true,
+        defaultViewport: null,
+        handleSIGINT: false,
+        handleSIGTERM: false,
+        handleSIGHUP: false,
+        timeout: startTimeoutMs,
+        args: patrolBrowserLaunchArgs({ extensionPath, legacyExtensionLoad }),
+      })
+    } catch (error) {
+      lastError = error
+      if (!isTransientPatrolLaunchError(error) || attempt === LAUNCH_RETRY_DELAYS_MS.length - 1) throw error
+    }
+  }
+  throw lastError
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
 }
