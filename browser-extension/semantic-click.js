@@ -189,6 +189,10 @@ async function semanticClickPageCommand(mode, spec) {
     if (wantedTag && normalize(tag) !== wantedTag) return null
     let score = 0
     if (wantedText) {
+      // An empty accessible name is never a valid fuzzy match. Without this
+      // guard, `wantedText.includes('')` evaluates true and visible shell
+      // links/icons can steal clicks from the requested business target.
+      if (!normText) return null
       if (normText === wantedText) score += 140
       else if (normText.includes(wantedText) || wantedText.includes(normText)) score += 80
       else return null

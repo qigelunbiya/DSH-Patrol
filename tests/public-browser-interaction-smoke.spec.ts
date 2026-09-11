@@ -13,7 +13,7 @@ async function localTestSite() {
   const server = createServer((request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8')
     if (request.url === '/add_remove_elements/') {
-      response.end(`<!doctype html><button id="add" onclick="this.insertAdjacentHTML('afterend','<button class=added onclick=this.remove()>Delete</button>')">Add Element</button>`)
+      response.end(`<!doctype html><a href="#blank" style="display:inline-block;width:10px;height:10px"></a><button id="add" onclick="this.insertAdjacentHTML('afterend','<button class=added onclick=this.remove()>Delete</button>')">Add Element</button>`)
       return
     }
     if (request.url === '/dropdown') {
@@ -82,6 +82,11 @@ describe('public real-browser Patrol interaction smoke', () => {
     try {
       expect(harness.manifest.version).toBe('0.3.1')
       await harness.page.goto(`${site.root}/add_remove_elements/`, { waitUntil: 'domcontentloaded', timeout: 20000 })
+
+      await expect(harness.command('semanticClick', {
+        locatorText: 'Missing target',
+        task: '点击不存在的目标',
+      })).rejects.toThrow(/target not found|ambiguous/i)
 
       // The business target is resolved and clicked inside one extension command,
       // exactly like patrol_click_target now does. No snapshot selector is fed
