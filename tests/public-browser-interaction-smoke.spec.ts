@@ -20,6 +20,10 @@ async function localTestSite() {
       response.end('<!doctype html><select id="dropdown"><option value="">Please select</option><option value="1">Option 1</option><option value="2">Option 2</option></select>')
       return
     }
+    if (request.url === '/menu') {
+      response.end('<!doctype html><a class="hamburger" href="#menu" aria-label="打开侧栏菜单" style="display:inline-block;width:10px;height:10px"><span></span></a><a href="#other" style="display:inline-block;width:10px;height:10px"><span></span></a>')
+      return
+    }
     response.statusCode = 404
     response.end('not found')
   })
@@ -119,6 +123,11 @@ describe('public real-browser Patrol interaction smoke', () => {
       const selected = await harness.command('select', { selector: dropdown.selector, label: 'Option 2' })
       expect(selected).toMatchObject({ ok: true, value: '2', label: 'Option 2', index: 2 })
       expect(await harness.page.$eval('#dropdown', element => element.value)).toBe('2')
+
+      await harness.page.goto(`${site.root}/menu`, { waitUntil: 'domcontentloaded', timeout: 20000 })
+      await new Promise(resolve => setTimeout(resolve, 300))
+      const menu = await harness.command('semanticClick', { task: '打开侧栏菜单' })
+      expect(menu.selector).toContain('aria-label="打开侧栏菜单"')
     } finally {
       await harness.browser.close()
       await site.close()

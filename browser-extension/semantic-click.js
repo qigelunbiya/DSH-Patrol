@@ -179,6 +179,7 @@ async function semanticClickPageCommand(mode, spec) {
   const ipTokens = String(spec.task || '').match(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g) || []
   const actionTokens = String(spec.task || '').match(/\b(?:RDP|SSH|VNC|SFTP|FTP|HTTP|HTTPS)\b/gi) || []
   const wantsLogo = /logo|徽标|标志/i.test(String(spec.task || ''))
+  const wantsMenu = /菜单|侧栏|汉堡|导航/i.test(String(spec.task || ''))
 
   const scored = candidates.map(element => {
     const text = actionText(element)
@@ -210,6 +211,15 @@ async function semanticClickPageCommand(mode, spec) {
         ...[...(element.querySelectorAll?.('img,svg') || [])].map(child => `${child.id || ''} ${child.getAttribute?.('class') || ''} ${child.getAttribute?.('src') || ''}`),
       ].join(' ')
       if (/logo/i.test(logoEvidence)) score += 120
+    }
+    if (wantsMenu) {
+      const menuEvidence = [
+        element.id || '',
+        element.getAttribute?.('class') || '',
+        element.getAttribute?.('aria-label') || '',
+        element.getAttribute?.('title') || '',
+      ].join(' ')
+      if (/menu|sidebar|hamburger|nav|侧栏|菜单|导航/i.test(menuEvidence)) score += 120
     }
     const context = compact(element.closest?.('tr,li,form,nav,[role="dialog"],.ant-modal-content,.el-dialog')?.innerText || '')
     for (const token of ipTokens) if (context.includes(token)) score += 90
