@@ -1,9 +1,22 @@
 import puppeteer from 'puppeteer-core'
 
 const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on', 'visible', 'foreground'])
+const FALSE_VALUES = new Set(['0', 'false', 'no', 'off', 'hidden', 'background'])
 
 export function patrolBrowserVisible(env = process.env) {
-  return TRUE_VALUES.has(String(env.DSH_PATROL_BROWSER_VISIBLE || '').trim().toLowerCase())
+  const explicit = String(env.DSH_PATROL_BROWSER_VISIBLE ?? '').trim().toLowerCase()
+  if (TRUE_VALUES.has(explicit)) return true
+  if (FALSE_VALUES.has(explicit)) return false
+
+  // A managed Patrol browser is an interactive inspection surface: users need
+  // to see that it is still alive, especially when a site presents a private
+  // certificate page, a manual checkpoint, an external-protocol prompt, or a
+  // slow enterprise splash screen. Hiding the window off-screen by default made
+  // a healthy browser look as if it had closed. Background mode is therefore
+  // opt-in instead of the default.
+  const background = String(env.DSH_PATROL_BROWSER_BACKGROUND ?? '').trim().toLowerCase()
+  if (TRUE_VALUES.has(background)) return false
+  return true
 }
 
 export function patrolBrowserLaunchArgs({ extensionPath, legacyExtensionLoad = false, visible = patrolBrowserVisible() } = {}) {
@@ -15,11 +28,9 @@ export function patrolBrowserLaunchArgs({ extensionPath, legacyExtensionLoad = f
   if (visible) {
     args.push('--start-maximized')
   } else {
-    // Keep the managed browser headful so unpacked-extension APIs, private
-    // enterprise sites and occasional manual checkpoints retain compatibility,
-    // but place its dedicated window outside the user's desktop by default.
-    // Chromium keeps rendering while occluded/off-screen so screenshots and
-    // DOM automation remain usable without repeatedly stealing foreground focus.
+    // Explicit background mode remains available for unattended schedules.
+    // Chromium stays headful so unpacked extensions and enterprise/private
+    // sites keep working, but its dedicated window is placed off-screen.
     args.push('--window-position=-32000,-32000')
     args.push('--window-size=1440,900')
     args.push('--disable-backgrounding-occluded-windows')
