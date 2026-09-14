@@ -161,30 +161,15 @@ describe('Patrol regression hardening', () => {
     expect(save).toHaveBeenCalledTimes(1)
   })
 
-  it('uses the local verification detector first in TEST MODE and records only a dynamic image-code solver step', async () => {
+  it('skips the local OCR preflight in TEST MODE and routes interactive image-code teaching to CURRENT vision', async () => {
     process.env.DSH_PATROL_CAPTCHA_MODE = 'test'
-    const definition = draftDefinition('ocr-first')
+    const definition = draftDefinition('visual-first')
     const save = vi.fn(async () => {})
     const store = {
       load: vi.fn(async () => definition),
       save,
     } as unknown as PatrolStore
-    const dispatch = vi.fn(async () => ({
-      ok: true,
-      text: 'Auth challenge handled without exposing its value.',
-      value: {
-        ok: true,
-        kind: 'none',
-        subtype: 'none',
-        observedKind: 'captcha',
-        observedSubtype: 'image-code',
-        strategy: 'windows-system-ocr',
-        selectors: ['#captcha'],
-        autoFilled: true,
-        handoffRequired: false,
-        testModeFallback: false,
-      },
-    }))
+    const dispatch = vi.fn(async () => ({ ok: true, text: 'unexpected detector call' }))
     const definitions: any[] = []
     const ctx = {
       tools: {
@@ -200,11 +185,10 @@ describe('Patrol regression hardening', () => {
 
     const result = await solve.execute({ inspectionId: definition.id }, { token: Symbol('exec') })
 
-    expect(dispatch).toHaveBeenCalledWith('browser_detect_auth_challenge', {}, expect.anything())
-    expect(definition.steps).toHaveLength(1)
-    expect(definition.steps[0]?.tool).toBe('browser_detect_auth_challenge')
-    expect(definition.steps[0]?.arguments).toEqual({})
-    expect(result).toContain('dynamic solver step')
-    expect(save).toHaveBeenCalledOnce()
+    expect(dispatch).not.toHaveBeenCalled()
+    expect(definition.steps).toHaveLength(0)
+    expect(result).toContain('no local OCR was executed')
+    expect(result).toContain('browser_capture_image_code_visual')
+    expect(save).not.toHaveBeenCalled()
   })
 })

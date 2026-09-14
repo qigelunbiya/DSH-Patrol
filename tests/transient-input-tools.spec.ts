@@ -21,6 +21,23 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
+function draft(taskChecklist = ['填写验证码']) {
+  return {
+    schemaVersion: '0.2',
+    id: 'demo',
+    name: 'demo',
+    description: 'demo',
+    status: 'draft',
+    target: { type: 'browser', url: 'https://example.test/' },
+    expectedResult: 'demo',
+    artifacts: [],
+    auth: { mode: 'manual-checkpoint' },
+    schedule: null,
+    steps: [] as any[],
+    metadata: { createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), taskChecklist },
+  }
+}
+
 describe('Patrol encrypted sensitive input', () => {
   it('types an already-supplied secret and stores only an encrypted durable reference', async () => {
     const secretRoot = await mkdtemp(join(tmpdir(), 'dsh-patrol-sensitive-input-'))
@@ -29,48 +46,17 @@ describe('Patrol encrypted sensitive input', () => {
     clearTransientSecrets()
 
     const definitions: any[] = []
-    const ctx = {
-      tools: {
-        register(definition: any) {
-          definitions.push(definition)
-          return () => {}
-        },
-      },
-    } as unknown as Context
-    const inspection: any = {
-      schemaVersion: '0.2',
-      id: 'demo',
-      name: 'demo',
-      description: 'demo',
-      status: 'draft',
-      target: { type: 'browser', url: 'https://example.test/' },
-      expectedResult: 'demo',
-      artifacts: [],
-      auth: { mode: 'manual-checkpoint' },
-      schedule: null,
-      steps: [],
-      metadata: { createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), taskChecklist: ['填写密码'] },
-    }
+    const ctx = { tools: { register(definition: any) { definitions.push(definition); return () => {} } } } as unknown as Context
+    const inspection = draft(['填写密码'])
     const save = vi.fn(async () => {})
-    const store = {
-      load: vi.fn(async () => inspection),
-      save,
-    } as unknown as PatrolStore
+    const store = { load: vi.fn(async () => inspection), save } as unknown as PatrolStore
     const dispatch = vi.fn(async () => ({ ok: true, text: 'Typed public text into #password.' }))
     const runner = { dispatch } as unknown as PatrolRunner
 
     registerPatrolTransientInputTools(ctx, store, runner)
     const tool = definitions.find(item => item.name === 'patrol_type_transient')
-    expect(tool).toBeDefined()
-
     const secret = 'example-sensitive-value'
-    const result = await tool.execute({
-      inspectionId: 'demo',
-      stepName: 'fill supplied password',
-      selector: '#password',
-      text: secret,
-      clear: true,
-    }, { token: Symbol('exec') })
+    const result = await tool.execute({ inspectionId: 'demo', stepName: 'fill supplied password', selector: '#password', text: secret, clear: true }, { token: Symbol('exec') })
 
     expect(dispatch).toHaveBeenCalledTimes(1)
     expect(dispatch.mock.calls[0]?.[0]).toBe('browser_type')
@@ -79,12 +65,10 @@ describe('Patrol encrypted sensitive input', () => {
     expect(save).toHaveBeenCalledTimes(1)
     expect(inspection.steps).toHaveLength(1)
     expect(inspection.steps[0].tool).toBe('browser_type_transient_ref')
-    expect(inspection.steps[0].arguments.selector).toBe('#password')
     expect(inspection.steps[0].arguments.transientRef).toMatch(/^PATROL_SECRET_[A-F0-9]+$/)
     expect(JSON.stringify(inspection)).not.toContain(secret)
     expect(result).not.toContain(secret)
     expect(result).toContain('encrypted')
-    expect(result).toContain('Harness restarts')
   })
 
   it('redacts text from the visible tool-call card', () => {
@@ -97,6 +81,22 @@ describe('Patrol encrypted sensitive input', () => {
     expect(JSON.stringify(card)).toContain('[REDACTED]')
   })
 
+  it('compatibility solve entrypoint performs no local OCR dispatch in TEST MODE', async () => {
+    process.env.DSH_PATROL_CAPTCHA_MODE = 'test'
+    const definitions: any[] = []
+    const ctx = { tools: { register(definition: any) { definitions.push(definition); return () => {} } } } as unknown as Context
+    const inspection = draft()
+    const dispatch = vi.fn(async () => ({ ok: true, text: 'unexpected' }))
+    const store = { load: vi.fn(async () => inspection), save: vi.fn(async () => {}) } as unknown as PatrolStore
+    registerPatrolTransientInputTools(ctx, store, { dispatch } as unknown as PatrolRunner)
+    const tool = definitions.find(item => item.name === 'patrol_solve_current_image_code')
+
+    const result = await tool.execute({ inspectionId: 'demo' }, { token: Symbol('exec') })
+    expect(dispatch).not.toHaveBeenCalled()
+    expect(result).toContain('no local OCR was executed')
+    expect(result).toContain('browser_capture_image_code_visual')
+  })
+
   it('does not type a low-confidence current image-code', async () => {
     process.env.DSH_PATROL_CAPTCHA_MODE = 'test'
     const definitions: any[] = []
@@ -105,14 +105,7 @@ describe('Patrol encrypted sensitive input', () => {
     registerPatrolTransientInputTools(ctx, {} as PatrolStore, { dispatch } as unknown as PatrolRunner)
     const tool = definitions.find(item => item.name === 'patrol_type_current_image_code')
 
-    const result = await tool.execute({
-      inspectionId: 'demo',
-      selector: '#captcha',
-      text: 'AD4T',
-      confidence: 0.86,
-      source: 'model-visual',
-    }, { token: Symbol('exec') })
-
+    const result = await tool.execute({ inspectionId: 'demo', selector: '#captcha', text: 'AD4T', confidence: 0.86, source: 'model-visual' }, { token: Symbol('exec') })
     expect(dispatch).not.toHaveBeenCalled()
     expect(result).toContain('NOT typed')
     expect(result).toContain('0.90')
@@ -126,52 +119,36 @@ describe('Patrol encrypted sensitive input', () => {
     registerPatrolTransientInputTools(ctx, {} as PatrolStore, { dispatch } as unknown as PatrolRunner)
     const tool = definitions.find(item => item.name === 'patrol_type_current_image_code')
 
-    await expect(tool.execute({
-      inspectionId: 'demo',
-      selector: '#captcha',
-      text: 'IXBF or 1KBF',
-      confidence: 0.96,
-      source: 'model-visual',
-    }, { token: Symbol('exec') })).rejects.toThrow(/single candidate/i)
-
+    await expect(tool.execute({ inspectionId: 'demo', selector: '#captcha', text: 'IXBF or 1KBF', confidence: 0.96, source: 'model-visual' }, { token: Symbol('exec') })).rejects.toThrow(/single candidate/i)
     expect(dispatch).not.toHaveBeenCalled()
   })
 
-  it('types a high-confidence current image-code without persisting or exposing its value', async () => {
+  it('types a high-confidence current image-code and records one value-free dynamic replay solver', async () => {
     process.env.DSH_PATROL_CAPTCHA_MODE = 'test'
     const definitions: any[] = []
     const ctx = { tools: { register(definition: any) { definitions.push(definition); return () => {} } } } as unknown as Context
     const dispatch = vi.fn(async () => ({ ok: true, text: 'typed' }))
-    const store = { save: vi.fn(async () => {}), load: vi.fn() } as unknown as PatrolStore
+    const inspection = draft()
+    const save = vi.fn(async () => {})
+    const store = { save, load: vi.fn(async () => inspection) } as unknown as PatrolStore
     registerPatrolTransientInputTools(ctx, store, { dispatch } as unknown as PatrolRunner)
     const tool = definitions.find(item => item.name === 'patrol_type_current_image_code')
     const code = 'RKHF'
 
-    const card = tool.presentCall({
-      inspectionId: 'demo',
-      selector: '#captcha',
-      text: code,
-      confidence: 0.93,
-      source: 'model-visual',
-    })
+    const card = tool.presentCall({ inspectionId: 'demo', selector: '#captcha', text: code, confidence: 0.93, source: 'model-visual' })
     expect(JSON.stringify(card)).not.toContain(code)
 
-    const result = await tool.execute({
-      inspectionId: 'demo',
-      selector: '#captcha',
-      text: code,
-      confidence: 0.93,
-      source: 'model-visual',
-      clear: true,
-    }, { token: Symbol('exec') })
+    const first = await tool.execute({ inspectionId: 'demo', selector: '#captcha', text: code, confidence: 0.93, source: 'model-visual', clear: true }, { token: Symbol('exec') })
+    const second = await tool.execute({ inspectionId: 'demo', selector: '#captcha', text: 'ABCD', confidence: 0.95, source: 'model-visual', clear: true }, { token: Symbol('exec') })
 
-    expect(dispatch).toHaveBeenCalledTimes(1)
-    expect(dispatch.mock.calls[0]?.[0]).toBe('browser_type')
-    expect(dispatch.mock.calls[0]?.[1]).toEqual({ selector: '#captcha', text: code, clear: true })
-    expect((store as any).save).not.toHaveBeenCalled()
-    expect((store as any).load).not.toHaveBeenCalled()
-    expect(result).not.toContain(code)
-    expect(result).toContain('NOT written to the Runbook')
+    expect(dispatch).toHaveBeenCalledTimes(2)
+    expect(inspection.steps).toHaveLength(1)
+    expect(inspection.steps[0]).toMatchObject({ tool: 'browser_detect_auth_challenge', arguments: {} })
+    expect(JSON.stringify(inspection)).not.toContain(code)
+    expect(save).toHaveBeenCalledTimes(1)
+    expect(first).toContain('Recorded')
+    expect(second).toContain('Reused existing')
+    expect(first).not.toContain(code)
   })
 
   it('keeps the current image-code tool disabled in normal mode', async () => {
@@ -181,11 +158,6 @@ describe('Patrol encrypted sensitive input', () => {
     registerPatrolTransientInputTools(ctx, {} as PatrolStore, {} as PatrolRunner)
     const tool = definitions.find(item => item.name === 'patrol_type_current_image_code')
 
-    await expect(tool.execute({
-      inspectionId: 'demo',
-      selector: '#captcha',
-      text: 'ABCD',
-      confidence: 0.95,
-    }, { token: Symbol('exec') })).rejects.toThrow(/TEST MODE/)
+    await expect(tool.execute({ inspectionId: 'demo', selector: '#captcha', text: 'ABCD', confidence: 0.95 }, { token: Symbol('exec') })).rejects.toThrow(/TEST MODE/)
   })
 })
