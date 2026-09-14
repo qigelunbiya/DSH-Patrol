@@ -89,7 +89,7 @@ export function registerPatrolCreationTools(ctx: Context, store: PatrolStore): (
       if (!inspectionId) return undefined
 
       if (name === 'patrol_set_task_checklist' && Array.isArray(args.items)) {
-        const items = args.items.filter((item): item is string => typeof item === 'string')
+        const items = args.items.filter((item: unknown): item is string => typeof item === 'string')
         captchaConstraints.set(inspectionId, inferImageCodeConstraint(items))
         return undefined
       }
