@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { assertSafePersistentText } from './security.js'
 import type { PatrolStore } from './store.js'
+import { normalizeInspectionId } from './validation.js'
 
 const TEXT_OUTPUT = {
   schema: { type: 'string' as const },
@@ -18,7 +19,7 @@ const TEXT_OUTPUT = {
 export function registerPatrolTaskChecklistTools(ctx: Context, store: PatrolStore): () => void {
   const setChecklist = defineTool({
     name: 'patrol_set_task_checklist',
-    description: 'Persist the ordered business steps derived from the user request. Prefer immediately after patrol_create_draft. For a legacy/reused non-empty DRAFT that has no checklist yet, this safely backfills the checklist without deleting or rewriting existing steps. One item per user-required business action; exclude diagnostic observations and recovery guesses.',
+    description: 'Persist the ordered business steps derived from the user request. inspectionId is normalized with the same rule as patrol_create_inspection, so a human-friendly id cannot make the immediately-following checklist call point at a different path. Prefer immediately after patrol_create_draft/create_inspection. For a legacy/reused non-empty DRAFT that has no checklist yet, this safely backfills the checklist without deleting or rewriting existing steps. One item per user-required business action; exclude diagnostic observations and recovery guesses.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       items: {
@@ -30,7 +31,8 @@ export function registerPatrolTaskChecklistTools(ctx: Context, store: PatrolStor
     },
     output: TEXT_OUTPUT,
     async execute(args) {
-      const definition = await store.load(args.inspectionId)
+      const inspectionId = normalizeInspectionId(String(args.inspectionId ?? '').trim())
+      const definition = await store.load(inspectionId)
       if (definition.status !== 'draft') throw new Error(`inspection ${definition.id} is ${definition.status}; task checklist can only be set on a DRAFT`)
       if (!Array.isArray(args.items) || args.items.length === 0) throw new Error('task checklist must contain at least one business action')
       if (args.items.length > 100) throw new Error('task checklist is too large; keep it to <= 100 concrete business actions')
@@ -75,11 +77,12 @@ export function registerPatrolTaskChecklistTools(ctx: Context, store: PatrolStor
 
   const showChecklist = defineTool({
     name: 'patrol_task_checklist',
-    description: 'Show the persisted ordered business checklist for a DRAFT/READY inspection.',
+    description: 'Show the persisted ordered business checklist for a DRAFT/READY inspection. Human-friendly inspection ids are normalized consistently with flow creation.',
     parameters: { inspectionId: { type: 'string', required: true } },
     output: TEXT_OUTPUT,
     async execute(args) {
-      const definition = await store.load(args.inspectionId)
+      const inspectionId = normalizeInspectionId(String(args.inspectionId ?? '').trim())
+      const definition = await store.load(inspectionId)
       const items = definition.metadata.taskChecklist ?? []
       if (items.length === 0) return `Inspection ${definition.id} has no persisted task checklist.`
       return items.map((item, index) => `${index + 1}. ${item}`).join('\n')
