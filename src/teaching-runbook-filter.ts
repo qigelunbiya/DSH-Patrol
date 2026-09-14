@@ -15,16 +15,6 @@ const GENERIC_WORDS = new Set([
 
 type BusinessAction = 'navigate' | 'click' | 'type' | 'read' | 'screenshot' | 'wait' | 'context' | 'other'
 
-/**
- * Install the business-only DRAFT filter on one live Patrol store instance.
- * This deliberately avoids import-time prototype patching: PatrolStore and the
- * browser helpers depend on each other in normal runtime, so an ESM side-effect
- * patch can observe an uninitialised class during module evaluation.
- *
- * Registration happens while the Patrol plugin is being applied, before a user
- * can execute teaching tools. READY definitions and legacy drafts without a
- * taskChecklist remain untouched for compatibility.
- */
 export function installTeachingRunbookFilter(store: PatrolStore): void {
   if (installedStores.has(store)) return
   installedStores.add(store)
@@ -51,8 +41,10 @@ export function filterDraftRunbookInPlace(definition: InspectionDefinition): voi
   const deduped = removeDuplicateResetNavigations(kept)
   if (deduped.length === definition.steps.length && deduped.every((step, index) => step === definition.steps[index])) return
 
+  // A live DRAFT keeps stable ids. Recording tools return the id they just
+  // created, so filtering must not renumber it behind the caller's back.
+  // Finalization performs the canonical contiguous renumbering once.
   definition.steps = deduped
-  renumberSteps(definition)
   definition.metadata.updatedAt = new Date().toISOString()
   delete definition.metadata.flowHealth
 }
@@ -66,9 +58,6 @@ function shouldKeepToolStep(step: ToolStep, checklist: readonly string[], refere
   if (CONTEXT_TOOLS.has(step.tool) || SUPPORT_TOOLS.has(step.tool)) return checklistExplicitlyMatches(step, checklist)
   if (step.tool === 'browser_read_page' || step.tool === 'browser_screenshot') return checklistExplicitlyMatches(step, checklist)
 
-  // Successful navigation/input/select/press mutations and verified semantic
-  // clicks are actual business progress, so retain them. Failed actions never
-  // reach store.save in the recording tools.
   return true
 }
 
@@ -145,8 +134,6 @@ function removeDuplicateResetNavigations(steps: readonly InspectionStep[]): Insp
     }
     const between = out.slice(previousIndex + 1)
     if (between.some(isDurableBusinessProgress)) out.push(step)
-    // Otherwise this is only a reset/retry of the same target after transient
-    // diagnostics. Keep the original completed navigation and drop the reset.
   }
   return out
 }
@@ -177,15 +164,4 @@ function isDurableBusinessProgress(step: InspectionStep): boolean {
     || step.tool === 'browser_press'
     || step.tool === 'browser_select'
     || step.tool.startsWith('browser_type')
-}
-
-function renumberSteps(definition: InspectionDefinition): void {
-  const idMap = new Map<string, string>()
-  definition.steps.forEach((step, index) => idMap.set(step.id, `step-${String(index + 1).padStart(3, '0')}`))
-  definition.steps = definition.steps.map((step, index) => {
-    const id = `step-${String(index + 1).padStart(3, '0')}`
-    if (step.when === undefined) return { ...step, id }
-    const sourceStepId = idMap.get(step.when.sourceStepId)
-    return sourceStepId === undefined ? { ...step, id } : { ...step, id, when: { ...step.when, sourceStepId } }
-  })
 }
