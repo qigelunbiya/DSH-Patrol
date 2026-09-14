@@ -114,8 +114,6 @@ async function captureCurrentImageCodeVisual(bridge, args, exec, timeoutMs) {
   let captureError = ''
   try {
     const captured = await bridge.request('captureImageCode', {
-      // A caller may provide a CURRENT tab id, but interactive prompts are
-      // instructed to omit it so a historical tab id cannot poison capture.
       tabId: args.tabId,
       inputSelector: args.inputSelector,
       imageSelector: args.imageSelector,
@@ -127,9 +125,6 @@ async function captureCurrentImageCodeVisual(bridge, args, exec, timeoutMs) {
     if (!CAPTURE_FALLBACK_ERROR.test(captureError)) throw error
   }
 
-  // Do exactly one fallback on the active CURRENT tab. This absorbs stale tab
-  // ids and temporary content-script/selector failures without sending the
-  // model through recover -> list-tabs -> screenshot -> read_image loops.
   const shot = await bridge.request('screenshot', {
     format: 'png',
   }, { timeoutMs, signal: exec?.signal })
@@ -138,7 +133,7 @@ async function captureCurrentImageCodeVisual(bridge, args, exec, timeoutMs) {
     captured: {
       ok: true,
       dataUrl: shot.dataUrl,
-      captureMode: 'full-page-current-tab-fallback',
+      captureMode: 'full-page-screenshot-fallback',
       inputSelector: typeof args.inputSelector === 'string' ? args.inputSelector : '',
       imageSelector: '',
       imageError: captureError,
