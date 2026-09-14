@@ -41,6 +41,6 @@ describe('task checklist inspection id normalization', () => {
 
     expect(load).toHaveBeenCalledWith('ADBBAF')
     expect(save).toHaveBeenCalledTimes(1)
-    expect(inspection.metadata.taskChecklist).toHaveLength(2)
+    expect((inspection.metadata as any).taskChecklist).toHaveLength(2)
   })
 })
