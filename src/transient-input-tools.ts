@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { forgetTransientSecret, rememberTransientSecret } from '../browser-bridge-runtime/transient-secret-store.js'
+import { imageCodeConstraintError, inferImageCodeConstraint, renderImageCodeConstraint } from './captcha-constraints.js'
 import { isPatrolTestMode } from './test-mode.js'
 import { assertSafePersistentText } from './security.js'
 import { PatrolRunner } from './runner.js'
@@ -24,6 +25,7 @@ export const PATROL_TRANSIENT_INPUT_PROMPT = `敏感输入规则：
 - 只有用户明确要求 Harness credential reference 时才使用 patrol_type_credential / patrol_credential_help。
 - 普通图片字符验证码 image-code 是一次性页面状态，不得存入 secret vault，也不得作为固定 browser_type 值写进 Runbook。
 - TEST MODE 交互教学使用视觉优先：直接 browser_capture_image_code_visual 获取 CURRENT 图像，再以 patrol_type_current_image_code 的 0.90 置信度门槛填写。不要先运行本地 ddddocr/Windows OCR 预检；patrol_solve_current_image_code 仅保留为兼容入口并会立即提示走视觉路径，不再执行 OCR。
+- 用户在 taskChecklist 中声明的验证码格式是硬约束。例如“四位英文、没有数字”只允许恰好 4 个 ASCII 字母；即使视觉模型给出高置信度、但候选包含数字，也不得填写或提交，必须重新读取/刷新 CURRENT 验证码。
 - 高置信度视觉验证码填写成功后，Patrol 只记录一个不含验证码字符的动态 browser_detect_auth_challenge solver 步骤，供 NORMAL/无人值守 replay 识别未来的新验证码；重复视觉尝试不会重复追加 solver 步骤。
 - 密码、TOTP/OTP、token 等真正敏感值仍必须走专用敏感输入流程。`
 
@@ -119,13 +121,13 @@ export function registerPatrolTransientInputTools(
       if (definition.status !== 'draft') throw new Error(`inspection ${definition.id} is ${definition.status}; call patrol_begin_edit before teaching image-code handling`)
       assertPersistedTaskChecklist(definition)
       if (args.stepName !== undefined) assertSafePersistentText(args.stepName, 'stepName')
-      return 'TEST MODE visual-first CAPTCHA path: no local OCR was executed. Call browser_capture_image_code_visual on the CURRENT page without a historical tabId, read the attached image once, then call patrol_type_current_image_code only when confidence >= 0.90.'
+      return 'TEST MODE visual-first CAPTCHA path: no local OCR was executed. Call browser_capture_image_code_visual on the CURRENT page without a historical tabId, read the attached image once, then call patrol_type_current_image_code only when confidence >= 0.90. Obey the persisted taskChecklist format exactly; if it says letters-only/no-digits, a digit-looking candidate must be rejected rather than typed.'
     },
   })
 
   const typeCurrentImageCode = defineTool({
     name: 'patrol_type_current_image_code',
-    description: 'TEST MODE visual input: type the CURRENT conventional image-text CAPTCHA without persisting its one-time characters. Requires confidence >= 0.90. On a successful type, records/reuses one dynamic browser_detect_auth_challenge replay step without storing the CAPTCHA value.',
+    description: 'TEST MODE visual input: type the CURRENT conventional image-text CAPTCHA without persisting its one-time characters. Requires confidence >= 0.90 and also enforces the persisted taskChecklist CAPTCHA length/character-set contract. On a successful type, records/reuses one dynamic browser_detect_auth_challenge replay step without storing the CAPTCHA value.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       selector: { type: 'string', required: true },
@@ -173,6 +175,15 @@ export function registerPatrolTransientInputTools(
       const definition = await store.load(args.inspectionId)
       if (definition.status !== 'draft') throw new Error(`inspection ${definition.id} is ${definition.status}; call patrol_begin_edit before teaching image-code handling`)
       assertPersistedTaskChecklist(definition)
+      const constraint = inferImageCodeConstraint(definition.metadata.taskChecklist ?? [])
+      const constraintError = imageCodeConstraintError(code, constraint)
+      if (constraintError !== undefined) {
+        return [
+          `CURRENT CAPTCHA was NOT typed because it violates the persisted task contract: ${constraintError}.`,
+          renderImageCodeConstraint(constraint),
+          'Re-read or refresh the CURRENT CAPTCHA under the declared format before any login submission.',
+        ].filter(Boolean).join(' ')
+      }
 
       const dispatched = await runner.dispatch('browser_type', {
         selector: args.selector,
@@ -211,11 +222,12 @@ export function registerPatrolTransientInputTools(
 
       return [
         `TEST MODE: typed the CURRENT image-code with confidence=${confidence.toFixed(3)}${args.source ? ` (${args.source})` : ''}.`,
+        renderImageCodeConstraint(constraint),
         'Its one-time characters were NOT written to the Runbook, Patrol secret vault, notes, reports, or visible tool card.',
         recorded
           ? `Recorded ${solverStep.id} as the single dynamic image-code solver step for future replay.`
           : `Reused existing dynamic image-code solver step ${solverStep.id}; no duplicate solver step was appended.`,
-      ].join('\n')
+      ].filter(Boolean).join('\n')
     },
   })
 
