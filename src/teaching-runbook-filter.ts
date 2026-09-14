@@ -16,10 +16,6 @@ const GENERIC_WORDS = new Set([
 type BusinessAction = 'navigate' | 'click' | 'type' | 'read' | 'screenshot' | 'wait' | 'context' | 'other'
 type ChecklistMatch = { kind: 'none' } | { kind: 'available'; index: number } | { kind: 'exhausted' }
 
-/**
- * Install the business-only DRAFT filter on one live Patrol store instance.
- * READY definitions and legacy drafts without a taskChecklist remain untouched.
- */
 export function installTeachingRunbookFilter(store: PatrolStore): void {
   if (installedStores.has(store)) return
   installedStores.add(store)
@@ -72,13 +68,6 @@ function checklistExplicitlyMatches(step: ToolStep, checklist: readonly string[]
   return rankedChecklistIndexes(step, checklist).length > 0
 }
 
-/**
- * One persisted taskChecklist slot owns at most one unconditioned business
- * action in a live DRAFT. This prevents a repair attempt from appending a
- * second login/workbench/menu sequence below an already taught route. If a
- * checklist intentionally contains two equivalent actions, the next matching
- * action consumes the next equivalent slot instead of being discarded.
- */
 function removeRepeatedChecklistActions(
   steps: readonly InspectionStep[],
   checklist: readonly string[],
@@ -130,8 +119,10 @@ function rankedChecklistIndexes(step: ToolStep, checklist: readonly string[]): n
     for (const token of stepTokens) if (itemTokens.has(token)) score += token.length
     if (score > 0) scored.push({ index, score })
   }
+  if (scored.length === 0) return []
   scored.sort((left, right) => right.score - left.score || left.index - right.index)
-  return scored.map(item => item.index)
+  const bestScore = scored[0]!.score
+  return scored.filter(item => item.score === bestScore).map(item => item.index)
 }
 
 function actionKindForTool(tool: string): BusinessAction {
