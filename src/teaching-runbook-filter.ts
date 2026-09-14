@@ -6,6 +6,7 @@ const installedStores = new WeakSet<object>()
 const ALWAYS_TRANSIENT_TOOLS = new Set(['browser_snapshot', 'browser_count'])
 const CONTEXT_TOOLS = new Set(['browser_login_state', 'browser_detect_auth_challenge'])
 const SUPPORT_TOOLS = new Set(['browser_wait', 'browser_scroll'])
+const DYNAMIC_IMAGE_CODE_SOLVER_NOTE = 'PATROL_DYNAMIC_IMAGE_CODE_SOLVER'
 const GENERIC_WORDS = new Set([
   '访问', '导航', '打开', '点击', '点开', '进入', '查看', '读取', '整理', '获取', '检查', '确认',
   '输入', '填写', '填入', '截图', '页面', '内容', '信息', '当前', '目标', '等待', '加载', '完成',
@@ -58,6 +59,7 @@ function shouldKeepToolStep(step: ToolStep, checklist: readonly string[], refere
 
   if (ALWAYS_TRANSIENT_TOOLS.has(step.tool)) return false
   if (step.tool === 'browser_navigate') return checklistExplicitlyMatches(step, checklist)
+  if (isDynamicImageCodeSolver(step)) return checklistExplicitlyMatches(step, checklist)
   if (CONTEXT_TOOLS.has(step.tool) || SUPPORT_TOOLS.has(step.tool)) return checklistExplicitlyMatches(step, checklist)
   if (step.tool === 'browser_read_page' || step.tool === 'browser_screenshot') return checklistExplicitlyMatches(step, checklist)
 
@@ -105,7 +107,7 @@ function checklistMatch(step: ToolStep, checklist: readonly string[], claimed: R
 }
 
 function rankedChecklistIndexes(step: ToolStep, checklist: readonly string[]): number[] {
-  const stepAction = actionKindForTool(step.tool)
+  const stepAction = actionKindForStep(step)
   if (!['navigate', 'click', 'type', 'read', 'screenshot'].includes(stepAction)) return []
   const stepTokens = businessTokens(step.name)
   if (stepTokens.size === 0) return []
@@ -123,6 +125,17 @@ function rankedChecklistIndexes(step: ToolStep, checklist: readonly string[]): n
   scored.sort((left, right) => right.score - left.score || left.index - right.index)
   const bestScore = scored[0]!.score
   return scored.filter(item => item.score === bestScore).map(item => item.index)
+}
+
+function actionKindForStep(step: ToolStep): BusinessAction {
+  if (isDynamicImageCodeSolver(step)) return 'type'
+  return actionKindForTool(step.tool)
+}
+
+function isDynamicImageCodeSolver(step: ToolStep): boolean {
+  return step.tool === 'browser_detect_auth_challenge'
+    && typeof step.notes === 'string'
+    && step.notes.includes(DYNAMIC_IMAGE_CODE_SOLVER_NOTE)
 }
 
 function actionKindForTool(tool: string): BusinessAction {
