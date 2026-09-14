@@ -14,6 +14,7 @@ const GENERIC_WORDS = new Set([
 ])
 
 type BusinessAction = 'navigate' | 'click' | 'type' | 'read' | 'screenshot' | 'wait' | 'context' | 'other'
+type ChecklistMatch = { kind: 'none' } | { kind: 'available'; index: number } | { kind: 'exhausted' }
 
 /**
  * Install the business-only DRAFT filter on one live Patrol store instance.
@@ -68,15 +69,15 @@ function shouldKeepToolStep(step: ToolStep, checklist: readonly string[], refere
 }
 
 function checklistExplicitlyMatches(step: ToolStep, checklist: readonly string[]): boolean {
-  return bestChecklistIndex(step, checklist) !== undefined
+  return rankedChecklistIndexes(step, checklist).length > 0
 }
 
 /**
- * One persisted taskChecklist item owns at most one unconditioned business
+ * One persisted taskChecklist slot owns at most one unconditioned business
  * action in a live DRAFT. This prevents a repair attempt from appending a
  * second login/workbench/menu sequence below an already taught route. If a
- * checklist intentionally contains two equivalent actions, they are separate
- * indexes and both remain available.
+ * checklist intentionally contains two equivalent actions, the next matching
+ * action consumes the next equivalent slot instead of being discarded.
  */
 function removeRepeatedChecklistActions(
   steps: readonly InspectionStep[],
@@ -95,42 +96,42 @@ function removeRepeatedChecklistActions(
       out.push(step)
       continue
     }
-    const index = bestChecklistIndex(step, checklist, claimed)
-    if (index === undefined) {
+    const match = checklistMatch(step, checklist, claimed)
+    if (match.kind === 'none') {
       out.push(step)
       continue
     }
-    claimed.add(index)
+    if (match.kind === 'exhausted') continue
+    claimed.add(match.index)
     out.push(step)
   }
   return out
 }
 
-function bestChecklistIndex(
-  step: ToolStep,
-  checklist: readonly string[],
-  alreadyClaimed: ReadonlySet<number> = new Set<number>(),
-): number | undefined {
-  const stepAction = actionKindForTool(step.tool)
-  if (!['navigate', 'click', 'type', 'read', 'screenshot'].includes(stepAction)) return undefined
-  const stepTokens = businessTokens(step.name)
-  if (stepTokens.size === 0) return undefined
+function checklistMatch(step: ToolStep, checklist: readonly string[], claimed: ReadonlySet<number>): ChecklistMatch {
+  const ranked = rankedChecklistIndexes(step, checklist)
+  if (ranked.length === 0) return { kind: 'none' }
+  const available = ranked.find(index => !claimed.has(index))
+  return available === undefined ? { kind: 'exhausted' } : { kind: 'available', index: available }
+}
 
-  let bestIndex = -1
-  let bestScore = 0
+function rankedChecklistIndexes(step: ToolStep, checklist: readonly string[]): number[] {
+  const stepAction = actionKindForTool(step.tool)
+  if (!['navigate', 'click', 'type', 'read', 'screenshot'].includes(stepAction)) return []
+  const stepTokens = businessTokens(step.name)
+  if (stepTokens.size === 0) return []
+
+  const scored: Array<{ index: number; score: number }> = []
   for (let index = 0; index < checklist.length; index += 1) {
-    if (alreadyClaimed.has(index)) continue
     const item = checklist[index] ?? ''
     if (stepAction !== actionKindForChecklist(item)) continue
     const itemTokens = businessTokens(item)
     let score = 0
     for (const token of stepTokens) if (itemTokens.has(token)) score += token.length
-    if (score > bestScore) {
-      bestScore = score
-      bestIndex = index
-    }
+    if (score > 0) scored.push({ index, score })
   }
-  return bestScore > 0 ? bestIndex : undefined
+  scored.sort((left, right) => right.score - left.score || left.index - right.index)
+  return scored.map(item => item.index)
 }
 
 function actionKindForTool(tool: string): BusinessAction {
