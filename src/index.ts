@@ -80,8 +80,8 @@ export const inject = ['tools', 'userQuestions']
 const DEFAULT_STORAGE_PATH = resolve(process.cwd(), '.dsh-patrol')
 const DEFAULT_MAX_STEPS = 200
 const DEFAULT_REPORT_MAX_CHARS = 30_000
-const TEST_MODE_BUILD_MARKER = 'test-bypass-v6-page-understanding'
-const TEST_MODE_DIRECT_BROWSER_READ_ONLY = new Set([
+const TEST_MODE_BUILD_MARKER = 'test-bypass-v7-operational-click-fallbacks'
+const TEST_MODE_DIRECT_BROWSER_ALLOWED = new Set([
   'browser_status',
   'browser_list_tabs',
   'browser_activate_tab',
@@ -92,6 +92,15 @@ const TEST_MODE_DIRECT_BROWSER_READ_ONLY = new Set([
   'browser_wait',
   'browser_screenshot',
   'browser_capture_image_code_visual',
+  // TEST MODE operational escape hatches. These are deliberately limited to
+  // non-secret interaction primitives so a complex enterprise UI can still be
+  // operated when a Patrol composite cannot express the final click. Direct
+  // calls are live-only; patrol_* remains preferred for record/replay.
+  'browser_semantic_click',
+  'browser_click',
+  'browser_press',
+  'browser_scroll',
+  'browser_select',
 ])
 
 export interface Config {
@@ -214,7 +223,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     },
     execute: async () => [
       `mode=${runtimePolicy.testMode ? 'test' : 'normal'}`,
-      `guards=${runtimePolicy.installGuards ? 'enabled' : 'diagnostic-only-direct-browser'}`,
+      `guards=${runtimePolicy.installGuards ? 'enabled' : 'operational-click-fallbacks'}`,
       `strictPrompts=${runtimePolicy.injectStrictWorkflowPrompt ? 'enabled' : 'disabled'}`,
       `visualCaptchaFallback=${runtimePolicy.testMode ? 'enabled' : 'disabled'}`,
       `build=${TEST_MODE_BUILD_MARKER}`,
@@ -222,15 +231,15 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   })
   ctx.effect(() => ctx.tools.register(runtimeModeTool), 'dsh-patrol: runtime mode diagnostic')
 
-  // The page-planning guard deliberately stays active in TEST MODE. Test mode
-  // relaxes the older orchestration guards for CAPTCHA diagnostics, but it must
-  // not re-enable unbounded selector/reply loops around ordinary business clicks.
-  ctx.effect(
-    () => ctx.tools.guard(execution => planningGuard(execution)),
-    'dsh-patrol: always-on page-understanding click strategy breaker',
-  )
-
   if (runtimePolicy.installGuards) {
+    // NORMAL MODE keeps the strict planning circuit breaker. TEST MODE is an
+    // interactive teaching/debug environment: the analyzer stays available,
+    // but it must not reject an otherwise valid patrol_click merely because the
+    // model did not call patrol_analyze_step first.
+    ctx.effect(
+      () => ctx.tools.guard(execution => planningGuard(execution)),
+      'dsh-patrol: strict page-understanding click strategy breaker',
+    )
     ctx.effect(
       () => ctx.tools.guard(execution => observationGate.guard(execution)),
       'dsh-patrol: observe-before-mutate browser state gate',
@@ -249,18 +258,17 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       'dsh-patrol: deny direct model browser calls',
     )
   } else {
-    // Test mode still permits direct read-only provider diagnostics, but direct
-    // page mutations would bypass PatrolLifecycleStore and therefore disappear
-    // from both the selected flow's recent patrols and the global record list.
-    // Force mutations through patrol_* while preserving low-level observation
-    // freedom for CAPTCHA/browser debugging.
+    // TEST MODE must remain operational on difficult enterprise pages. Keep
+    // secret-bearing and lifecycle-sensitive mutations behind patrol_*, but do
+    // not turn a click/press/scroll/select fallback into an Error card that
+    // prevents the patrol from making progress.
     ctx.effect(
       () => ctx.tools.guard(execution => {
         if (!execution.name.startsWith('browser_')) return undefined
-        if (TEST_MODE_DIRECT_BROWSER_READ_ONLY.has(execution.name)) return undefined
+        if (TEST_MODE_DIRECT_BROWSER_ALLOWED.has(execution.name)) return undefined
         return runner.browserGuard(execution.name, execution.parent)
       }),
-      'dsh-patrol: test-mode browser mutations must be recordable patrol actions',
+      'dsh-patrol: test-mode operational browser fallbacks with secret mutations protected',
     )
   }
 
@@ -272,15 +280,16 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       text: PATROL_FLOW_REFERENCE_PROMPT,
     }), 'dsh-patrol: deterministic flow reference and existing-flow replay prompt')
 
-    // This prompt is always injected, including TEST MODE. It is intentionally
-    // ordered after the test-mode override and reusable-flow integrity prompt so
-    // page planning/loop discipline cannot silently disappear while CAPTCHA
-    // diagnostics are enabled.
-    ctx.effect(() => systemPrompt.section({
-      name: 'agent:dsh-patrol-page-understanding',
-      order: 1120,
-      text: PATROL_PAGE_UNDERSTANDING_PROMPT,
-    }), 'dsh-patrol: always-on current-page understanding and bounded plan execution prompt')
+    // NORMAL MODE receives the strict planner contract. TEST MODE gets the
+    // lighter operational policy from PATROL_TEST_MODE_OVERRIDE_PROMPT so old
+    // HARD STOP wording cannot make the model stop a valid patrol by itself.
+    if (runtimePolicy.installGuards) {
+      ctx.effect(() => systemPrompt.section({
+        name: 'agent:dsh-patrol-page-understanding',
+        order: 1120,
+        text: PATROL_PAGE_UNDERSTANDING_PROMPT,
+      }), 'dsh-patrol: strict current-page understanding and bounded plan execution prompt')
+    }
 
     if (runtimePolicy.injectStrictWorkflowPrompt) {
       ctx.effect(() => systemPrompt.section({
@@ -352,10 +361,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         name: 'agent:dsh-patrol-test-mode-override',
         order: 999,
         text: PATROL_TEST_MODE_OVERRIDE_PROMPT,
-      }), 'dsh-patrol: test-mode debugging override with recordable patrol mutations')
+      }), 'dsh-patrol: test-mode debugging override with operational click fallbacks')
     }
   }
 
-  const guardMode = runtimePolicy.testMode ? 'test-diagnostics-recorded-mutations' : 'normal-strict'
-  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; guard-mode=${guardMode}; build=${TEST_MODE_BUILD_MARKER}; scheduler=enabled; credential helper=optional; transient sensitive replay=enabled; encrypted TOTP profile replay=enabled; semantic click resolver=enabled; page-understanding-planner=enabled; native select=enabled; task-checklist=required; secret-safe creation=enabled; flat action tools=enabled; OpenXML Excel v5 tools=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled`)
+  const guardMode = runtimePolicy.testMode ? 'test-operational-click-fallbacks' : 'normal-strict'
+  const plannerMode = runtimePolicy.testMode ? 'advisory' : 'strict'
+  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; guard-mode=${guardMode}; build=${TEST_MODE_BUILD_MARKER}; scheduler=enabled; credential helper=optional; transient sensitive replay=enabled; encrypted TOTP profile replay=enabled; semantic click resolver=enabled; page-understanding-planner=${plannerMode}; native select=enabled; task-checklist=required; secret-safe creation=enabled; flat action tools=enabled; OpenXML Excel v5 tools=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled`)
 }

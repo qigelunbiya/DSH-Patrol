@@ -19,12 +19,23 @@ describe('semantic row-context hardening', () => {
     expect(source).toMatch(/identityTokens/)
     expect(source).toMatch(/actionTokens/)
     expect(source).toMatch(/RDP\|SSH\|VNC\|SFTP\|FTP/)
+    expect(source).toContain('semanticRowContextSource')
     expect(source).toContain('identities.every')
   })
 
-  it('prefers the nearest small row context rather than the outer table containing every duplicate action', () => {
+  it('correlates fixed or split action columns back to the identity row', () => {
     const source = readFileSync(join(root, 'browser-extension', 'semantic-row-context-hardening.js'), 'utf8')
-    expect(source).toContain('depth * 45')
+    expect(source).toContain('data-row-key')
+    expect(source).toContain('aria-rowindex')
+    expect(source).toContain('rowOrdinal')
+    expect(source).toContain('parallel-row-ordinal')
+    expect(source).toContain('parallel-row-top')
+    expect(source).toContain('correlateLogicalRow')
+  })
+
+  it('prefers a real actionable target and still reports the row-context transport', () => {
+    const source = readFileSync(join(root, 'browser-extension', 'semantic-row-context-hardening.js'), 'utf8')
+    expect(source).toContain('nativeActionBonus')
     expect(source).toContain('contextLengthPenalty')
     expect(source).toContain('rowLikeBonus')
     expect(source).toContain('atomic-main-world-row-context-click')
