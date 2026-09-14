@@ -14,17 +14,8 @@ const GENERIC_WORDS = new Set([
 ])
 
 type BusinessAction = 'navigate' | 'click' | 'type' | 'read' | 'screenshot' | 'wait' | 'context' | 'other'
+type ChecklistMatch = { kind: 'none' } | { kind: 'available'; index: number } | { kind: 'exhausted' }
 
-/**
- * Install the business-only DRAFT filter on one live Patrol store instance.
- * This deliberately avoids import-time prototype patching: PatrolStore and the
- * browser helpers depend on each other in normal runtime, so an ESM side-effect
- * patch can observe an uninitialised class during module evaluation.
- *
- * Registration happens while the Patrol plugin is being applied, before a user
- * can execute teaching tools. READY definitions and legacy drafts without a
- * taskChecklist remain untouched for compatibility.
- */
 export function installTeachingRunbookFilter(store: PatrolStore): void {
   if (installedStores.has(store)) return
   installedStores.add(store)
@@ -48,11 +39,14 @@ export function filterDraftRunbookInPlace(definition: InspectionDefinition): voi
     if (step.kind === 'checkpoint') return true
     return shouldKeepToolStep(step, checklist, referenced)
   })
-  const deduped = removeDuplicateResetNavigations(kept)
+  const checklistDeduped = removeRepeatedChecklistActions(kept, checklist, referenced)
+  const deduped = removeDuplicateResetNavigations(checklistDeduped)
   if (deduped.length === definition.steps.length && deduped.every((step, index) => step === definition.steps[index])) return
 
+  // A live DRAFT keeps stable ids. Recording tools return the id they just
+  // created, so filtering must not renumber it behind the caller's back.
+  // Finalization performs the canonical contiguous renumbering once.
   definition.steps = deduped
-  renumberSteps(definition)
   definition.metadata.updatedAt = new Date().toISOString()
   delete definition.metadata.flowHealth
 }
@@ -63,25 +57,72 @@ function shouldKeepToolStep(step: ToolStep, checklist: readonly string[], refere
   if (step.expectation !== undefined || step.when !== undefined) return true
 
   if (ALWAYS_TRANSIENT_TOOLS.has(step.tool)) return false
+  if (step.tool === 'browser_navigate') return checklistExplicitlyMatches(step, checklist)
   if (CONTEXT_TOOLS.has(step.tool) || SUPPORT_TOOLS.has(step.tool)) return checklistExplicitlyMatches(step, checklist)
   if (step.tool === 'browser_read_page' || step.tool === 'browser_screenshot') return checklistExplicitlyMatches(step, checklist)
 
-  // Successful navigation/input/select/press mutations and verified semantic
-  // clicks are actual business progress, so retain them. Failed actions never
-  // reach store.save in the recording tools.
   return true
 }
 
 function checklistExplicitlyMatches(step: ToolStep, checklist: readonly string[]): boolean {
+  return rankedChecklistIndexes(step, checklist).length > 0
+}
+
+function removeRepeatedChecklistActions(
+  steps: readonly InspectionStep[],
+  checklist: readonly string[],
+  referenced: ReadonlySet<string>,
+): InspectionStep[] {
+  const claimed = new Set<number>()
+  const out: InspectionStep[] = []
+
+  for (const step of steps) {
+    if (step.kind === 'checkpoint') {
+      out.push(step)
+      continue
+    }
+    if (referenced.has(step.id) || step.when !== undefined) {
+      out.push(step)
+      continue
+    }
+    const match = checklistMatch(step, checklist, claimed)
+    if (match.kind === 'none') {
+      out.push(step)
+      continue
+    }
+    if (match.kind === 'exhausted') continue
+    claimed.add(match.index)
+    out.push(step)
+  }
+  return out
+}
+
+function checklistMatch(step: ToolStep, checklist: readonly string[], claimed: ReadonlySet<number>): ChecklistMatch {
+  const ranked = rankedChecklistIndexes(step, checklist)
+  if (ranked.length === 0) return { kind: 'none' }
+  const available = ranked.find(index => !claimed.has(index))
+  return available === undefined ? { kind: 'exhausted' } : { kind: 'available', index: available }
+}
+
+function rankedChecklistIndexes(step: ToolStep, checklist: readonly string[]): number[] {
   const stepAction = actionKindForTool(step.tool)
+  if (!['navigate', 'click', 'type', 'read', 'screenshot'].includes(stepAction)) return []
   const stepTokens = businessTokens(step.name)
-  for (const item of checklist) {
+  if (stepTokens.size === 0) return []
+
+  const scored: Array<{ index: number; score: number }> = []
+  for (let index = 0; index < checklist.length; index += 1) {
+    const item = checklist[index] ?? ''
     if (stepAction !== actionKindForChecklist(item)) continue
     const itemTokens = businessTokens(item)
-    if (stepTokens.size === 0 || itemTokens.size === 0) continue
-    for (const token of stepTokens) if (itemTokens.has(token)) return true
+    let score = 0
+    for (const token of stepTokens) if (itemTokens.has(token)) score += token.length
+    if (score > 0) scored.push({ index, score })
   }
-  return false
+  if (scored.length === 0) return []
+  scored.sort((left, right) => right.score - left.score || left.index - right.index)
+  const bestScore = scored[0]!.score
+  return scored.filter(item => item.score === bestScore).map(item => item.index)
 }
 
 function actionKindForTool(tool: string): BusinessAction {
@@ -145,8 +186,6 @@ function removeDuplicateResetNavigations(steps: readonly InspectionStep[]): Insp
     }
     const between = out.slice(previousIndex + 1)
     if (between.some(isDurableBusinessProgress)) out.push(step)
-    // Otherwise this is only a reset/retry of the same target after transient
-    // diagnostics. Keep the original completed navigation and drop the reset.
   }
   return out
 }
@@ -177,15 +216,4 @@ function isDurableBusinessProgress(step: InspectionStep): boolean {
     || step.tool === 'browser_press'
     || step.tool === 'browser_select'
     || step.tool.startsWith('browser_type')
-}
-
-function renumberSteps(definition: InspectionDefinition): void {
-  const idMap = new Map<string, string>()
-  definition.steps.forEach((step, index) => idMap.set(step.id, `step-${String(index + 1).padStart(3, '0')}`))
-  definition.steps = definition.steps.map((step, index) => {
-    const id = `step-${String(index + 1).padStart(3, '0')}`
-    if (step.when === undefined) return { ...step, id }
-    const sourceStepId = idMap.get(step.when.sourceStepId)
-    return sourceStepId === undefined ? { ...step, id } : { ...step, id, when: { ...step.when, sourceStepId } }
-  })
 }

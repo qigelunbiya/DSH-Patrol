@@ -76,7 +76,7 @@ describe('draft teaching Runbook filter', () => {
     })
   })
 
-  it('keeps user-requested work-order read and screenshots while dropping diagnostic ones', () => {
+  it('keeps user-requested work-order read and screenshots without renumbering live DRAFT ids', () => {
     const definition = baseDefinition()
     definition.steps = [
       { ...tool('step-001', '读取登录页面内容', 'browser_read_page'), artifact: 'page-text' },
@@ -93,7 +93,7 @@ describe('draft teaching Runbook filter', () => {
       '截图工单列表',
       '截图工单详情',
     ])
-    expect(definition.steps.map(step => step.id)).toEqual(['step-001', 'step-002', 'step-003'])
+    expect(definition.steps.map(step => step.id)).toEqual(['step-003', 'step-004', 'step-005'])
   })
 
   it('keeps an internal context step only when another Runbook step depends on it', () => {
@@ -115,7 +115,7 @@ describe('draft teaching Runbook filter', () => {
     expect(definition.steps[1]?.when?.sourceStepId).toBe('step-001')
   })
 
-  it('drops explicitly unverified clicks and renumbers surviving dependencies', () => {
+  it('drops explicitly unverified clicks while preserving surviving ids and dependencies', () => {
     const definition = baseDefinition()
     const bad = tool('step-001', '点击 Logo', 'browser_click', { selector: '#logo' })
     bad.teaching = { status: 'unverified', method: 'execution-only' }
@@ -131,8 +131,40 @@ describe('draft teaching Runbook filter', () => {
 
     filterDraftRunbookInPlace(definition)
 
-    expect(definition.steps.map(step => step.id)).toEqual(['step-001', 'step-002'])
+    expect(definition.steps.map(step => step.id)).toEqual(['step-002', 'step-003'])
     expect(definition.steps[0]?.tool).toBe('browser_login_state')
-    expect(definition.steps[1]?.when?.sourceStepId).toBe('step-001')
+    expect(definition.steps[1]?.when?.sourceStepId).toBe('step-002')
+  })
+
+  it('prevents a repair attempt from appending a second login/workbench/menu route', () => {
+    const definition = baseDefinition()
+    definition.steps = [
+      tool('step-001', '访问目标 URL', 'browser_navigate', { url: 'http://172.21.9.122/com-portal' }),
+      tool('step-002', '点击 Logo', 'browser_click', { selector: '#logo' }),
+      tool('step-003', '输入用户名 fangzeming', 'browser_type', { selector: '#username' }),
+      tool('step-004', '输入密码', 'browser_type_transient_ref', { selector: '#password', transientRef: 'ref-a' }),
+      tool('step-005', '输入短信验证码 123', 'browser_type_transient_ref', { selector: '#sms', transientRef: 'ref-b' }),
+      tool('step-006', '点击登录', 'browser_click', { selector: '#login' }),
+      tool('step-007', '点击我的工作台', 'browser_click', { selector: '#workbench' }),
+      tool('step-008', '点击待办待阅工单', 'browser_click', { selector: '#todo' }),
+      tool('step-009', '返回工单列表', 'browser_navigate', { url: 'http://172.21.9.122/com-portal/todo' }),
+      tool('step-010', '点击 Logo 进入登录', 'browser_click', { selector: '#logo' }),
+      tool('step-011', '输入用户名 fangzeming', 'browser_type', { selector: '#username' }),
+      tool('step-012', '输入密码', 'browser_type_transient_ref', { selector: '#password', transientRef: 'ref-c' }),
+      tool('step-013', '输入短信验证码 123', 'browser_type_transient_ref', { selector: '#sms', transientRef: 'ref-d' }),
+      tool('step-014', '点击登录', 'browser_click', { selector: '#login' }),
+      tool('step-015', '点击我的工作台', 'browser_click', { selector: '#workbench' }),
+      tool('step-016', '点击待办待阅工单', 'browser_click', { selector: '#todo' }),
+    ]
+
+    filterDraftRunbookInPlace(definition)
+
+    expect(definition.steps.map(step => step.id)).toEqual([
+      'step-001', 'step-002', 'step-003', 'step-004',
+      'step-005', 'step-006', 'step-007', 'step-008',
+    ])
+    expect(definition.steps.map(step => step.name)).not.toContain('返回工单列表')
+    expect(definition.steps.filter(step => step.kind === 'tool' && step.name.includes('点击登录'))).toHaveLength(1)
+    expect(definition.steps.filter(step => step.kind === 'tool' && step.name.includes('我的工作台'))).toHaveLength(1)
   })
 })

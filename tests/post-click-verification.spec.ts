@@ -55,6 +55,27 @@ describe('post-click page verification', () => {
     expect(reads).toBe(3)
   })
 
+  it('accepts business identity exposed by the new detail tab title or decoded URL', async () => {
+    const expectation: TextExpectation = {
+      mode: 'contains',
+      value: '工单审批',
+      caseSensitive: false,
+    }
+    const result = await verifyPostClickExpectation(async () => ({
+      ok: true,
+      text: '应用外壳',
+      value: {
+        ok: true,
+        text: '应用外壳',
+        title: '工单详情',
+        url: 'http://example.test/detail/%E5%B7%A5%E5%8D%95%E5%AE%A1%E6%89%B9?id=1',
+      },
+    }), exec, expectation, 22, [0])
+
+    expect(result).toMatchObject({ ok: true, attempts: 1 })
+    expect(result.text).toContain('工单审批')
+  })
+
   it('fails after the bounded retry window when a readable page never reaches the business expectation', async () => {
     let reads = 0
     const result = await verifyPostClickExpectation(async () => {

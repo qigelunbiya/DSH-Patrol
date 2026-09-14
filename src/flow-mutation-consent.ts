@@ -9,6 +9,11 @@ const TEXT_OUTPUT = {
 export type FlowMutationChoice = 'allow-once' | 'create-new' | 'always-allow'
 type FlowMutationPermission = FlowMutationChoice
 
+interface SharedConsentState {
+  permissions: Map<string, FlowMutationPermission>
+  allowOnceTimers: Map<string, ReturnType<typeof setTimeout>>
+}
+
 interface AskUserQuestionOption {
   label: string
   description?: string
@@ -61,30 +66,32 @@ const WHOLE_FLOW_DELETE_TOOLS = new Set([
 const OPTION_ALLOW_ONCE = '确定（允许一次）'
 const OPTION_CREATE_NEW = '新建一份流程图'
 const OPTION_ALWAYS_ALLOW = '总是确定'
+const SHARED_CONSENT_KEY = Symbol.for('dsh-patrol.flow-mutation-consent.v2')
+const ALLOW_ONCE_GUARD_GRACE_MS = 1500
 
 /**
  * Conversation-level safety gate for destructive changes to an existing flow.
  *
- * Fine-grained destructive edits remain blocked until the user makes one
- * explicit choice. Whole-flow deletion is slightly different: patrol_delete
- * already requires confirmed=true at the tool schema/executor layer. Requiring
- * a second confirmation card after the user has explicitly asked to delete or
- * clear the old flow creates a deadlock, so confirmed whole-flow deletion is
- * allowed directly unless the user previously chose create-new.
+ * A real Harness Context uses process-shared permission state. This matters
+ * during plugin effect re-registration/hot reload: a confirmation tool and a
+ * guard can briefly belong to different controller instances. Without shared
+ * state, the tool can say permission was recorded while another live guard
+ * immediately blocks the same operation.
  *
- * "always-allow" is scoped to one inspection id and the current Harness
- * process. It is intentionally not persisted across restarts, so a stale
- * preference cannot silently destroy a flow days later.
+ * Tests that construct the controller without a Context keep isolated state and
+ * preserve the exact one-guard/one-call semantics.
  */
 export function createFlowMutationConsentController(ctx?: Context) {
-  const permissions = new Map<string, FlowMutationPermission>()
+  const state = consentState(ctx)
+  const permissions = state.permissions
 
   const applyChoice = (inspectionId: string, choice: FlowMutationChoice): string => {
+    clearAllowOnceTimer(state, inspectionId)
     permissions.set(inspectionId, choice)
     if (choice === 'allow-once') {
       return [
         `Recorded one-time destructive-change permission for ${inspectionId}.`,
-        'Exactly one subsequent destructive flow tool call is allowed; the permission is consumed immediately after that call.',
+        'Exactly one subsequent destructive flow tool call is allowed.',
       ].join(' ')
     }
     if (choice === 'create-new') {
@@ -199,20 +206,48 @@ export function createFlowMutationConsentController(ctx?: Context) {
     }
     if (permission === 'always-allow') return undefined
     if (permission === 'allow-once') {
-      permissions.delete(inspectionId)
+      if (ctx === undefined) {
+        permissions.delete(inspectionId)
+      } else if (!state.allowOnceTimers.has(inspectionId)) {
+        // Duplicate live guards can inspect one tool invocation. Keep the grant
+        // alive for this short synchronous dispatch window, then consume it
+        // before a later destructive tool call can be issued.
+        const timer = setTimeout(() => {
+          if (permissions.get(inspectionId) === 'allow-once') permissions.delete(inspectionId)
+          state.allowOnceTimers.delete(inspectionId)
+        }, ALLOW_ONCE_GUARD_GRACE_MS)
+        timer.unref?.()
+        state.allowOnceTimers.set(inspectionId, timer)
+      }
       return undefined
     }
 
-    // Whole-flow deletion already has a mandatory confirmed=true gate inside
-    // patrol_delete. When the user explicitly says “delete/clear the old flow”,
-    // the Agent should pass confirmed=true and must not be forced through a
-    // second confirmation loop. Keep partial edits protected by the card.
     if (WHOLE_FLOW_DELETE_TOOLS.has(name) && args.confirmed === true) return undefined
 
     return flowMutationPrompt(inspectionId)
   }
 
   return { choiceTool, requestChoiceTool, guard }
+}
+
+function consentState(ctx: Context | undefined): SharedConsentState {
+  if (ctx === undefined) return { permissions: new Map(), allowOnceTimers: new Map() }
+  const globalRecord = globalThis as Record<PropertyKey, unknown>
+  const existing = globalRecord[SHARED_CONSENT_KEY]
+  if (isConsentState(existing)) return existing
+  const created: SharedConsentState = { permissions: new Map(), allowOnceTimers: new Map() }
+  globalRecord[SHARED_CONSENT_KEY] = created
+  return created
+}
+
+function isConsentState(value: unknown): value is SharedConsentState {
+  return isRecord(value) && value.permissions instanceof Map && value.allowOnceTimers instanceof Map
+}
+
+function clearAllowOnceTimer(state: SharedConsentState, inspectionId: string): void {
+  const timer = state.allowOnceTimers.get(inspectionId)
+  if (timer !== undefined) clearTimeout(timer)
+  state.allowOnceTimers.delete(inspectionId)
 }
 
 function requireInspectionId(value: unknown): string {
@@ -246,6 +281,6 @@ function flowMutationPrompt(inspectionId: string): string {
   ].join(' ')
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+function isRecord(value: unknown): value is Record<PropertyKey, any> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
