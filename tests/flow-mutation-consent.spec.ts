@@ -20,7 +20,7 @@ describe('destructive flow mutation consent', () => {
       arguments: { inspectionId: 'important-flow', stepIds: ['step-001'] },
     })).toBeUndefined()
 
-    // One-time permission is consumed by exactly one destructive call.
+    // Isolated test controller: one-time permission is consumed immediately.
     expect(controller.guard({
       name: 'patrol_remove_steps',
       arguments: { inspectionId: 'important-flow', stepIds: ['step-002'] },
@@ -50,7 +50,7 @@ describe('destructive flow mutation consent', () => {
     const controller = createFlowMutationConsentController({ userQuestions: { ask } } as any)
 
     const result = await controller.requestChoiceTool.execute({
-      inspectionId: 'important-flow',
+      inspectionId: 'important-flow-card',
       reason: '新需求与已有流程不完全一致',
     } as any, { signal: new AbortController().signal } as any)
 
@@ -62,10 +62,10 @@ describe('destructive flow mutation consent', () => {
       '新建一份流程图',
       '总是确定',
     ])
-    expect(result).toContain('preserve important-flow unchanged')
+    expect(result).toContain('preserve important-flow-card unchanged')
     expect(controller.guard({
       name: 'patrol_delete',
-      arguments: { inspectionId: 'important-flow', confirmed: true },
+      arguments: { inspectionId: 'important-flow-card', confirmed: true },
     })).toMatch(/existing flow must remain untouched/i)
   })
 
@@ -92,6 +92,32 @@ describe('destructive flow mutation consent', () => {
     expect(controller.guard({
       name: 'patrol_rewrite_flow_path',
       arguments: { inspectionId: 'important-flow', keptStepIds: ['step-002'] },
+    })).toBeUndefined()
+  })
+
+  it('shares an accepted choice across duplicate live controllers/guards', async () => {
+    const ctx = { userQuestions: { ask: vi.fn() } } as any
+    const first = createFlowMutationConsentController(ctx)
+    const second = createFlowMutationConsentController(ctx)
+    const inspectionId = `shared-flow-${Date.now()}`
+
+    await first.choiceTool.execute({ inspectionId, choice: 'always-allow' } as any, {} as any)
+    expect(second.guard({
+      name: 'patrol_remove_steps',
+      arguments: { inspectionId, stepIds: ['step-010'] },
+    })).toBeUndefined()
+
+    const onceId = `${inspectionId}-once`
+    await first.choiceTool.execute({ inspectionId: onceId, choice: 'allow-once' } as any, {} as any)
+    expect(first.guard({
+      name: 'patrol_remove_steps',
+      arguments: { inspectionId: onceId, stepIds: ['step-010'] },
+    })).toBeUndefined()
+    // A second live guard inspecting the same dispatch must agree instead of
+    // reopening the confirmation loop.
+    expect(second.guard({
+      name: 'patrol_remove_steps',
+      arguments: { inspectionId: onceId, stepIds: ['step-010'] },
     })).toBeUndefined()
   })
 
