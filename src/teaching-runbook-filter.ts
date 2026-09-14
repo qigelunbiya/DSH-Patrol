@@ -15,6 +15,10 @@ const GENERIC_WORDS = new Set([
 
 type BusinessAction = 'navigate' | 'click' | 'type' | 'read' | 'screenshot' | 'wait' | 'context' | 'other'
 
+/**
+ * Install the business-only DRAFT filter on one live Patrol store instance.
+ * READY definitions and legacy drafts without a taskChecklist remain untouched.
+ */
 export function installTeachingRunbookFilter(store: PatrolStore): void {
   if (installedStores.has(store)) return
   installedStores.add(store)
@@ -38,7 +42,8 @@ export function filterDraftRunbookInPlace(definition: InspectionDefinition): voi
     if (step.kind === 'checkpoint') return true
     return shouldKeepToolStep(step, checklist, referenced)
   })
-  const deduped = removeDuplicateResetNavigations(kept)
+  const checklistDeduped = removeRepeatedChecklistActions(kept, checklist, referenced)
+  const deduped = removeDuplicateResetNavigations(checklistDeduped)
   if (deduped.length === definition.steps.length && deduped.every((step, index) => step === definition.steps[index])) return
 
   // A live DRAFT keeps stable ids. Recording tools return the id they just
@@ -55,6 +60,7 @@ function shouldKeepToolStep(step: ToolStep, checklist: readonly string[], refere
   if (step.expectation !== undefined || step.when !== undefined) return true
 
   if (ALWAYS_TRANSIENT_TOOLS.has(step.tool)) return false
+  if (step.tool === 'browser_navigate') return checklistExplicitlyMatches(step, checklist)
   if (CONTEXT_TOOLS.has(step.tool) || SUPPORT_TOOLS.has(step.tool)) return checklistExplicitlyMatches(step, checklist)
   if (step.tool === 'browser_read_page' || step.tool === 'browser_screenshot') return checklistExplicitlyMatches(step, checklist)
 
@@ -62,15 +68,69 @@ function shouldKeepToolStep(step: ToolStep, checklist: readonly string[], refere
 }
 
 function checklistExplicitlyMatches(step: ToolStep, checklist: readonly string[]): boolean {
+  return bestChecklistIndex(step, checklist) !== undefined
+}
+
+/**
+ * One persisted taskChecklist item owns at most one unconditioned business
+ * action in a live DRAFT. This prevents a repair attempt from appending a
+ * second login/workbench/menu sequence below an already taught route. If a
+ * checklist intentionally contains two equivalent actions, they are separate
+ * indexes and both remain available.
+ */
+function removeRepeatedChecklistActions(
+  steps: readonly InspectionStep[],
+  checklist: readonly string[],
+  referenced: ReadonlySet<string>,
+): InspectionStep[] {
+  const claimed = new Set<number>()
+  const out: InspectionStep[] = []
+
+  for (const step of steps) {
+    if (step.kind === 'checkpoint') {
+      out.push(step)
+      continue
+    }
+    if (referenced.has(step.id) || step.when !== undefined) {
+      out.push(step)
+      continue
+    }
+    const index = bestChecklistIndex(step, checklist, claimed)
+    if (index === undefined) {
+      out.push(step)
+      continue
+    }
+    claimed.add(index)
+    out.push(step)
+  }
+  return out
+}
+
+function bestChecklistIndex(
+  step: ToolStep,
+  checklist: readonly string[],
+  alreadyClaimed: ReadonlySet<number> = new Set<number>(),
+): number | undefined {
   const stepAction = actionKindForTool(step.tool)
+  if (!['navigate', 'click', 'type', 'read', 'screenshot'].includes(stepAction)) return undefined
   const stepTokens = businessTokens(step.name)
-  for (const item of checklist) {
+  if (stepTokens.size === 0) return undefined
+
+  let bestIndex = -1
+  let bestScore = 0
+  for (let index = 0; index < checklist.length; index += 1) {
+    if (alreadyClaimed.has(index)) continue
+    const item = checklist[index] ?? ''
     if (stepAction !== actionKindForChecklist(item)) continue
     const itemTokens = businessTokens(item)
-    if (stepTokens.size === 0 || itemTokens.size === 0) continue
-    for (const token of stepTokens) if (itemTokens.has(token)) return true
+    let score = 0
+    for (const token of stepTokens) if (itemTokens.has(token)) score += token.length
+    if (score > bestScore) {
+      bestScore = score
+      bestIndex = index
+    }
   }
-  return false
+  return bestScore > 0 ? bestIndex : undefined
 }
 
 function actionKindForTool(tool: string): BusinessAction {
