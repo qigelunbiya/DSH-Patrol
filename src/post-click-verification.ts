@@ -31,9 +31,9 @@ const DEFAULT_RETRY_DELAYS_MS = [0, 140, 320, 700] as const
  *
  * Retry both transient transport errors AND a bounded sequence of successful
  * reads that still show the old state. Verification considers visible body text
- * together with the CURRENT page title and decoded URL. Detail pages opened in
- * a new tab often expose their strongest business identity in title/URL while
- * the body still contains only an application shell.
+ * together with the CURRENT page title and a secret-safe decoded URL. Detail
+ * pages opened in a new tab often expose their strongest business identity in
+ * title/route while the body still contains only an application shell.
  */
 export async function verifyPostClickExpectation(
   dispatch: PostClickDispatch,
@@ -104,9 +104,13 @@ function outputText(value: JsonValue | undefined, fallback: string | undefined):
 
 function readableUrl(value: string): string {
   try {
-    return decodeURIComponent(value)
+    const url = new URL(value)
+    url.username = ''
+    url.password = ''
+    url.search = ''
+    return decodeURIComponent(url.toString())
   } catch {
-    return value
+    try { return decodeURIComponent(value.split('?')[0] ?? value) } catch { return value.split('?')[0] ?? value }
   }
 }
 
