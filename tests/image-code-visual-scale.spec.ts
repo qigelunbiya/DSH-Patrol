@@ -14,7 +14,7 @@ describe('CAPTCHA visual fallback readability', () => {
   it('falls back once to the active current-page screenshot instead of browser recovery loops', () => {
     const tool = readFileSync(join(process.cwd(), 'browser-bridge-runtime', 'image-code-visual-tool.js'), 'utf8')
     expect(tool).toContain('CAPTURE_FALLBACK_ERROR')
-    expect(tool).toContain("captureMode: 'full-page-current-tab-fallback'")
+    expect(tool).toContain("captureMode: 'full-page-screenshot-fallback'")
     expect(tool).toMatch(/bridge\.request\('screenshot',[\s\S]*format: 'png'/)
   })
 
