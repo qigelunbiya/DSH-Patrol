@@ -13,7 +13,7 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { BrowserBridge } from './bridge.js'
 import { registerPatrolDashboardRoutes } from './dashboard-runtime.js'
-import { createManagedBrowserController, defaultProfilePath } from './managed-browser-controller.js'
+import { createManagedBrowserController, defaultProfilePath } from './stable-managed-browser-controller.js'
 import { registerTotpManagementRoutes } from './totp-management.js'
 import { handleUpgrade } from './ws.js'
 
