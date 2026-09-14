@@ -1,5 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import { imageCodeConstraintError, inferImageCodeConstraint, renderImageCodeConstraint, type ImageCodeConstraint } from './captcha-constraints.js'
 import { assertSafeForStorage, assertSafePersistentText } from './security.js'
 import { PatrolStore } from './store.js'
 import { INSPECTION_ARTIFACTS, type AuthMode, type InspectionArtifact, type InspectionDefinition, type RunReport } from './types.js'
@@ -15,6 +16,7 @@ type InteractivePatrolStore = PatrolStore & {
 }
 
 export function registerPatrolCreationTools(ctx: Context, store: PatrolStore): () => void {
+  const captchaConstraints = new Map<string, ImageCodeConstraint>()
   const createInspection = defineTool({
     name: 'patrol_create_inspection',
     description: 'Create or reuse a Patrol DRAFT using only non-secret metadata. inspectionId may be human-friendly input; Patrol normalizes it to the supported ASCII id format before storage. Triggering this tool for a DRAFT also starts an in-progress patrol history record immediately, before the browser workflow is finished.',
@@ -75,8 +77,38 @@ export function registerPatrolCreationTools(ctx: Context, store: PatrolStore): (
     },
   })
 
-  const dispose = ctx.tools.register(createInspection)
-  return () => dispose()
+  const disposers: Array<() => void> = [ctx.tools.register(createInspection)]
+  const tools = ctx.tools as unknown as { guard?: (callback: (execution: any) => string | undefined) => (() => void) }
+  if (typeof tools.guard === 'function') {
+    disposers.push(tools.guard(execution => {
+      const name = String(execution?.name ?? '')
+      const args = execution?.arguments
+      if (args === null || typeof args !== 'object' || Array.isArray(args)) return undefined
+      const rawInspectionId = typeof args.inspectionId === 'string' ? args.inspectionId.trim() : ''
+      const inspectionId = rawInspectionId ? normalizeInspectionId(rawInspectionId) : ''
+      if (!inspectionId) return undefined
+
+      if (name === 'patrol_set_task_checklist' && Array.isArray(args.items)) {
+        const items = args.items.filter((item): item is string => typeof item === 'string')
+        captchaConstraints.set(inspectionId, inferImageCodeConstraint(items))
+        return undefined
+      }
+
+      if (name !== 'patrol_type_current_image_code') return undefined
+      const constraint = captchaConstraints.get(inspectionId)
+      const code = typeof args.text === 'string' ? args.text.trim().replace(/\s+/g, '') : ''
+      if (constraint === undefined || !code) return undefined
+      const error = imageCodeConstraintError(code, constraint)
+      if (error === undefined) return undefined
+      return [
+        `DSH Patrol CAPTCHA format guard: candidate was NOT typed (${error}).`,
+        renderImageCodeConstraint(constraint),
+        'The task checklist is authoritative. Re-read the current image-code under the declared length/character-set constraint before submitting it.',
+      ].filter(Boolean).join(' ')
+    }))
+  }
+
+  return () => { for (const dispose of disposers) dispose() }
 }
 
 async function beginInteractivePatrol(store: PatrolStore, inspectionId: string, workspaceRoot?: string): Promise<void> {
