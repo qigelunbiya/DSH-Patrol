@@ -30,10 +30,10 @@ const DEFAULT_RETRY_DELAYS_MS = [0, 140, 320, 700] as const
  * are common examples.
  *
  * Retry both transient transport errors AND a bounded sequence of successful
- * reads that still show the old state. The final mismatch remains a hard
- * failure; this only gives the clicked application a short deterministic window
- * to publish the expected business state, so the causal click is not lost from
- * the Runbook merely because the first immediate read raced the UI transition.
+ * reads that still show the old state. Verification considers visible body text
+ * together with the CURRENT page title and decoded URL. Detail pages opened in
+ * a new tab often expose their strongest business identity in title/URL while
+ * the body still contains only an application shell.
  */
 export async function verifyPostClickExpectation(
   dispatch: PostClickDispatch,
@@ -92,10 +92,22 @@ export function evaluateTextExpectation(text: string, expectation: TextExpectati
 
 function outputText(value: JsonValue | undefined, fallback: string | undefined): string {
   if (value !== null && value !== undefined && typeof value === 'object' && !Array.isArray(value)) {
-    const text = (value as JsonObject).text
-    if (typeof text === 'string') return text
+    const object = value as JsonObject
+    const text = typeof object.text === 'string' ? object.text : ''
+    const title = typeof object.title === 'string' ? object.title : ''
+    const url = typeof object.url === 'string' ? readableUrl(object.url) : ''
+    const combined = [text, title, url].filter(Boolean).join('\n')
+    if (combined) return combined
   }
   return fallback ?? ''
+}
+
+function readableUrl(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
 }
 
 function sleep(ms: number): Promise<void> {
