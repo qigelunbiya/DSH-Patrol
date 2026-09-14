@@ -96,6 +96,34 @@ describe('draft teaching Runbook filter', () => {
     expect(definition.steps.map(step => step.id)).toEqual(['step-003', 'step-004', 'step-005'])
   })
 
+  it('keeps a dynamic image-code solver when the checklist requires recognizing and filling the captcha', () => {
+    const definition = baseDefinition()
+    definition.metadata.taskChecklist = [
+      '访问目标URL',
+      '识别并填写四位数英文验证码',
+      '输入用户名',
+      '输入密码',
+      '点击登录',
+    ]
+    const solver = tool('step-002', '动态识别并填写图片验证码', 'browser_detect_auth_challenge')
+    solver.notes = 'PATROL_DYNAMIC_IMAGE_CODE_SOLVER；重放阶段动态识别新验证码。'
+    definition.steps = [
+      tool('step-001', '访问目标URL', 'browser_navigate', { url: 'http://172.21.9.122/com-portal' }),
+      solver,
+      tool('step-003', '输入用户名', 'browser_type', { selector: '#username', text: 'fangzeming' }),
+      tool('step-004', '输入密码', 'browser_type_transient_ref', { selector: '#password', transientRef: 'ref-a' }),
+      tool('step-005', '点击登录', 'browser_click', { selector: '#login' }),
+    ]
+
+    filterDraftRunbookInPlace(definition)
+
+    expect(definition.steps.map(step => step.id)).toEqual(['step-001', 'step-002', 'step-003', 'step-004', 'step-005'])
+    expect(definition.steps[1]).toMatchObject({
+      name: '动态识别并填写图片验证码',
+      tool: 'browser_detect_auth_challenge',
+    })
+  })
+
   it('keeps an internal context step only when another Runbook step depends on it', () => {
     const definition = baseDefinition()
     const loginState = tool('step-001', '检查登录状态', 'browser_login_state')
