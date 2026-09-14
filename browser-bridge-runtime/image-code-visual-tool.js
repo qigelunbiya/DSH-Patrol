@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { recognizeImageCodeWithDdddocr } from './image-code-ddddocr.js'
 
 const reqBool = { type: 'boolean', required: true }
 const str = { type: 'string' }
@@ -29,11 +28,13 @@ const IMAGE_SCHEMA = {
   },
 }
 
+const CAPTURE_FALLBACK_ERROR = /unsupported browser command:\s*captureImageCode|page bridge unavailable|receiving end does not exist|could not establish connection|no tab with id|element not found/i
+
 export function registerImageCodeVisualTool(ctx, bridge, config = {}) {
   const timeoutMs = config.commandTimeoutMs ?? 60000
   const definition = defineTool({
     name: 'browser_capture_image_code_visual',
-    description: 'Capture the CURRENT conventional image-code CAPTCHA as a tight enlarged image crop and attach it to the model. It also reports the local ddddocr preprocessing-ensemble hint for the exact same crop as secondary evidence; it never types or submits the hint automatically.',
+    description: 'Capture the CURRENT conventional image-code CAPTCHA for model vision. Prefer a tight 3x crop; if the page bridge or a stale tab prevents element discovery, fall back once to the CURRENT active-page screenshot. This visual tool deliberately runs no local OCR and never types or submits a value.',
     parameters: {
       tabId: optInt,
       inputSelector: optStr,
@@ -51,34 +52,24 @@ export function registerImageCodeVisualTool(ctx, bridge, config = {}) {
           imageSelector: str,
           imageStatus: { type: 'string', required: true, enum: ['attached', 'tool-unavailable', 'read-failed'] },
           imageError: str,
-          localOcrText: str,
-          localOcrConfidence: { type: 'number' },
-          localOcrSupport: { type: 'integer' },
-          localOcrAlternatives: str,
           image: IMAGE_SCHEMA,
         },
       },
       render: (_args, value) => {
         const lines = [
-          `CURRENT image-code crop: ${value.path}`,
+          `CURRENT image-code visual: ${value.path}`,
           `captureMode=${value.captureMode || 'unknown'}; inputSelector=${value.inputSelector || '(auto)'}; imageSelector=${value.imageSelector || '(auto)'}`,
+          'No ddddocr/Windows OCR preflight was run for this visual capture.',
         ]
-        if (value.localOcrText) {
-          lines.push(
-            `Local OCR ensemble for THIS crop: ${value.localOcrText}; confidence=${Number(value.localOcrConfidence || 0).toFixed(3)}; support=${value.localOcrSupport || 1}.`,
-          )
-          if (value.localOcrAlternatives) lines.push(`Other local OCR candidates: ${value.localOcrAlternatives}`)
-          lines.push('Use these only as secondary evidence against the attached crop. Never silently turn 4/7/0/1/2/5/8 into A/T/O/I/Z/S/B unless the CURRENT pixels and any known CAPTCHA charset both support it.')
-        } else {
-          lines.push('Local OCR produced no usable consensus for this crop. Do not compensate by inventing a low-confidence string.')
-        }
         if (value.imageStatus === 'attached' && value.image !== undefined) {
-          lines.push('The attached image is a tight enlarged crop of the CURRENT CAPTCHA. Read this image visually; do not reuse any historical CAPTCHA text.')
+          lines.push(value.captureMode?.startsWith('full-page')
+            ? 'The exact CURRENT page screenshot is attached because tight element capture was unavailable. Read only the visible CURRENT CAPTCHA and do not reuse historical text.'
+            : 'The attached image is a tight enlarged crop of the CURRENT CAPTCHA. Read it visually; do not reuse any historical CAPTCHA text.')
         } else {
-          lines.push(`The crop was saved but could not be attached as an image (${value.imageStatus}). Use read_image on the returned path.`)
+          lines.push(`The image was saved but could not be attached (${value.imageStatus}). Use read_image once on the returned path.`)
           if (value.imageError) lines.push(`Image attachment note: ${value.imageError}`)
         }
-        lines.push('If local OCR and visual reading disagree or confidence is below the Patrol visual threshold, refresh the CAPTCHA instead of submitting a guess. One failed visual submission is evidence to refresh, not permission to try several nearby strings.')
+        lines.push('Return one candidate plus confidence. If confidence is below the Patrol visual threshold, refresh instead of submitting a guess.')
         const blocks = [{ type: 'text', text: lines.join('\n') }]
         if (value.image !== undefined) blocks.push({ type: 'image', attachment: value.image })
         return blocks
@@ -86,37 +77,13 @@ export function registerImageCodeVisualTool(ctx, bridge, config = {}) {
     },
     presentCall: args => ({
       card: 'generic',
-      title: 'Capture current CAPTCHA crop',
+      title: 'Capture current CAPTCHA visual',
       kind: 'other',
       rawInput: args,
     }),
     async execute(args, exec) {
       assertImageCodeCaptureCapability(bridge)
-      let captured
-      let captureError = ''
-      try {
-        captured = await bridge.request('captureImageCode', {
-          tabId: args.tabId,
-          inputSelector: args.inputSelector,
-          imageSelector: args.imageSelector,
-          visualScale: 3,
-        }, { timeoutMs, signal: exec?.signal })
-      } catch (error) {
-        captureError = error instanceof Error ? error.message : String(error)
-        if (!/unsupported browser command:\s*captureImageCode/i.test(captureError)) throw error
-        const shot = await bridge.request('screenshot', {
-          tabId: args.tabId,
-          format: 'png',
-        }, { timeoutMs, signal: exec?.signal })
-        captured = {
-          ok: true,
-          dataUrl: shot.dataUrl,
-          captureMode: 'full-page-screenshot-fallback',
-          inputSelector: typeof args.inputSelector === 'string' ? args.inputSelector : '',
-          imageSelector: '',
-          imageError: captureError,
-        }
-      }
+      const { captured, captureError } = await captureCurrentImageCodeVisual(bridge, args, exec, timeoutMs)
       if (!captured || typeof captured !== 'object' || captured.ok === false || typeof captured.dataUrl !== 'string') {
         throw new Error(String(captured?.error || 'captureImageCode did not return a CAPTCHA image'))
       }
@@ -126,11 +93,7 @@ export function registerImageCodeVisualTool(ctx, bridge, config = {}) {
         ? join(workspace, '.dsh-patrol', 'captcha-visual')
         : undefined
       const path = bridge.saveScreenshot(captured.dataUrl, targetDirectory)
-
-      const [attached, localOcr] = await Promise.all([
-        tryReadImage(ctx, exec, path),
-        tryLocalOcr(captured.dataUrl, exec?.signal, timeoutMs),
-      ])
+      const attached = await tryReadImage(ctx, exec, path)
       return {
         ok: true,
         path,
@@ -139,13 +102,48 @@ export function registerImageCodeVisualTool(ctx, bridge, config = {}) {
         imageSelector: typeof captured.imageSelector === 'string' ? captured.imageSelector : '',
         imageStatus: attached.status,
         ...(captureError || attached.error ? { imageError: [captureError, attached.error].filter(Boolean).join('; ') } : {}),
-        ...localOcr,
         ...(attached.image === undefined ? {} : { image: attached.image }),
       }
     },
   })
 
   return ctx.tools.register(definition)
+}
+
+async function captureCurrentImageCodeVisual(bridge, args, exec, timeoutMs) {
+  let captureError = ''
+  try {
+    const captured = await bridge.request('captureImageCode', {
+      // A caller may provide a CURRENT tab id, but interactive prompts are
+      // instructed to omit it so a historical tab id cannot poison capture.
+      tabId: args.tabId,
+      inputSelector: args.inputSelector,
+      imageSelector: args.imageSelector,
+      visualScale: 3,
+    }, { timeoutMs, signal: exec?.signal })
+    return { captured, captureError }
+  } catch (error) {
+    captureError = error instanceof Error ? error.message : String(error)
+    if (!CAPTURE_FALLBACK_ERROR.test(captureError)) throw error
+  }
+
+  // Do exactly one fallback on the active CURRENT tab. This absorbs stale tab
+  // ids and temporary content-script/selector failures without sending the
+  // model through recover -> list-tabs -> screenshot -> read_image loops.
+  const shot = await bridge.request('screenshot', {
+    format: 'png',
+  }, { timeoutMs, signal: exec?.signal })
+  return {
+    captureError,
+    captured: {
+      ok: true,
+      dataUrl: shot.dataUrl,
+      captureMode: 'full-page-current-tab-fallback',
+      inputSelector: typeof args.inputSelector === 'string' ? args.inputSelector : '',
+      imageSelector: '',
+      imageError: captureError,
+    },
+  }
 }
 
 export function assertImageCodeCaptureCapability(bridge) {
@@ -155,49 +153,9 @@ export function assertImageCodeCaptureCapability(bridge) {
   const capabilities = Array.isArray(extension.capabilities)
     ? extension.capabilities.filter(item => typeof item === 'string')
     : undefined
-  if (capabilities === undefined) {
-    return
-  }
+  if (capabilities === undefined) return
   if (!capabilities.includes('captureImageCode')) {
     throw new Error(`Patrol browser extension ${extension.version || '?'} is missing capability captureImageCode. This is a runtime/extension version mismatch; restart Harness before CAPTCHA visual capture.`)
-  }
-}
-
-async function tryLocalOcr(dataUrl, signal, timeoutMs) {
-  try {
-    const result = await recognizeImageCodeWithDdddocr(dataUrl, {
-      signal,
-      timeoutMs: Math.min(Number(timeoutMs) || 30000, 30000),
-    })
-    if (result?.ok !== true || typeof result.text !== 'string') return {}
-    const text = String(result.text).replace(/[^A-Za-z0-9]/g, '').slice(0, 12)
-    if (!text) return {}
-    const confidence = Number.isFinite(Number(result.confidence))
-      ? Math.max(0, Math.min(1, Number(result.confidence)))
-      : 0
-    const support = Number.isFinite(Number(result.support)) ? Math.max(1, Math.trunc(Number(result.support))) : 1
-    const alternatives = Array.isArray(result.candidates)
-      ? result.candidates
-        .filter(item => item && typeof item === 'object' && typeof item.text === 'string')
-        .filter(item => String(item.text).replace(/[^A-Za-z0-9]/g, '') !== text)
-        .slice(0, 3)
-        .map(item => {
-          const candidate = String(item.text).replace(/[^A-Za-z0-9]/g, '').slice(0, 12)
-          const score = Number.isFinite(Number(item.confidence)) ? Math.max(0, Math.min(1, Number(item.confidence))) : 0
-          const count = Number.isFinite(Number(item.support)) ? Math.max(1, Math.trunc(Number(item.support))) : 1
-          return `${candidate} (${score.toFixed(2)}, support=${count})`
-        })
-        .filter(Boolean)
-        .join('; ')
-      : ''
-    return {
-      localOcrText: text,
-      localOcrConfidence: confidence,
-      localOcrSupport: support,
-      ...(alternatives ? { localOcrAlternatives: alternatives } : {}),
-    }
-  } catch {
-    return {}
   }
 }
 
