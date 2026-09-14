@@ -114,11 +114,12 @@ describe('resilient Patrol browser bridge', () => {
   })
 
   it('repairs transport but never blindly repeats an uncertain mutating click', async () => {
-    let calls = 0
+    let clickCalls = 0
     const rawBridge: any = {
       connected: true,
-      async request() {
-        calls += 1
+      async request(cmd: string) {
+        if (cmd === 'listTabs') return { tabs: [{ id: 1, active: true }] }
+        clickCalls += 1
         throw Object.assign(new Error('The browser did not answer click within 10s.'), { code: 'TIMEOUT' })
       },
       resetConnection() {
@@ -143,7 +144,7 @@ describe('resilient Patrol browser bridge', () => {
 
     await expect(bridge.request('click', { selector: '#login' }))
       .rejects.toThrow(/deliberately did not repeat this mutating command/i)
-    expect(calls).toBe(1)
+    expect(clickCalls).toBe(1)
     expect(rawBridge.connected).toBe(true)
   })
 
