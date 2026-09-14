@@ -17,9 +17,9 @@ type InteractivePatrolStore = PatrolStore & {
 export function registerPatrolCreationTools(ctx: Context, store: PatrolStore): () => void {
   const createInspection = defineTool({
     name: 'patrol_create_inspection',
-    description: 'Create or reuse a Patrol DRAFT using only non-secret metadata. Triggering this tool for a DRAFT also starts an in-progress patrol history record immediately, before the browser workflow is finished.',
+    description: 'Create or reuse a Patrol DRAFT using only non-secret metadata. inspectionId may be human-friendly input; Patrol normalizes it to the supported ASCII id format before storage. Triggering this tool for a DRAFT also starts an in-progress patrol history record immediately, before the browser workflow is finished.',
     parameters: {
-      inspectionId: { type: 'string', required: true, description: 'Stable short id, e.g. idc-project-task-weekly.' },
+      inspectionId: { type: 'string', required: true, description: 'Stable short id. ASCII letters/digits/dot/underscore/hyphen are preserved; unsupported characters are normalized automatically.' },
       name: { type: 'string', required: true },
       description: { type: 'string', required: true },
       targetUrl: { type: 'string', required: true },
@@ -29,16 +29,20 @@ export function registerPatrolCreationTools(ctx: Context, store: PatrolStore): (
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
-      const inspectionId = normalizeInspectionId(args.inspectionId)
+      const requestedInspectionId = String(args.inspectionId ?? '').trim()
+      const inspectionId = normalizeInspectionId(requestedInspectionId)
       assertInspectionId(inspectionId)
+      const normalizedNotice = requestedInspectionId === inspectionId
+        ? ''
+        : ` Requested inspectionId was normalized to ${inspectionId}; use this id for subsequent Patrol calls.`
       const workspaceRoot = exec?.agent?.session.header.cwd
       if (await store.exists(inspectionId)) {
         const existing = await store.load(inspectionId)
         if (existing.status === 'draft' && existing.steps.length === 0) {
           await beginInteractivePatrol(store, existing.id, workspaceRoot ?? existing.metadata.workspaceRoot)
-          return `Inspection ${existing.id} already exists as an empty DRAFT. Continue teaching it with patrol_* action tools; this interactive patrol has already been added to patrol history as an in-progress run.`
+          return `Inspection ${existing.id} already exists as an empty DRAFT.${normalizedNotice} Continue teaching it with patrol_* action tools; this interactive patrol has already been added to patrol history as an in-progress run.`
         }
-        return `Inspection ${existing.id} already exists with status=${existing.status} and ${existing.steps.length} step(s). Reuse it without appending: call patrol_run_flow to execute the existing flow, or call patrol_begin_edit only when the user explicitly wants to change a specific step. Do not continue recording browser actions at the end of this Runbook.`
+        return `Inspection ${existing.id} already exists with status=${existing.status} and ${existing.steps.length} step(s).${normalizedNotice} Reuse it without appending: call patrol_run_flow to execute the existing flow, or call patrol_begin_edit only when the user explicitly wants to change a specific step. Do not continue recording browser actions at the end of this Runbook.`
       }
 
       assertSafePersistentText(args.name, 'inspection.name')
@@ -67,7 +71,7 @@ export function registerPatrolCreationTools(ctx: Context, store: PatrolStore): (
       }
       await store.create(definition)
       await beginInteractivePatrol(store, definition.id, workspaceRoot)
-      return `Created DRAFT ${definition.id} without persisting any auth notes or plaintext secret. An in-progress patrol history record was created immediately. User-visible run outputs will default to the current Harness workspace${workspaceRoot === undefined ? '' : `: ${workspaceRoot}`}. Next run patrol_doctor, then teach with the flat patrol_* action tools.`
+      return `Created DRAFT ${definition.id} without persisting any auth notes or plaintext secret.${normalizedNotice} An in-progress patrol history record was created immediately. User-visible run outputs will default to the current Harness workspace${workspaceRoot === undefined ? '' : `: ${workspaceRoot}`}. Next run patrol_doctor, then teach with the flat patrol_* action tools.`
     },
   })
 
