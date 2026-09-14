@@ -2,6 +2,8 @@ const DEFAULT_ATTEMPT_TIMEOUT_MS = 10_000
 const DEFAULT_INITIAL_CONNECT_WAIT_MS = 18_000
 const DEFAULT_REPAIR_WAIT_MS = 8_000
 const DEFAULT_POLL_MS = 100
+const TAB_TRANSITION_TTL_MS = 5_000
+const TAB_TRANSITION_DELAYS_MS = [0, 60, 140, 300, 600]
 
 const PAGE_BRIDGE_RETRYABLE = new Set([
   'snapshot', 'readPage', 'challengeSignals', 'imageCodeTarget', 'captureImageCode', 'count',
@@ -13,6 +15,9 @@ const TRANSPORT_REPLAY_SAFE = new Set([
   'captureImageCode', 'count', 'screenshot', 'captchaDemoInfo', 'captchaDemoTarget',
 ])
 
+const TAB_TRANSITION_ACTIONS = new Set(['click', 'semanticClick'])
+const TAB_TRANSITION_READS = new Set(['snapshot', 'readPage', 'challengeSignals', 'count', 'screenshot'])
+
 export function createResilientBrowserBridge(service, options = {}) {
   if (!service?.bridge) throw new Error('resilient Patrol bridge requires patrolBrowserBridge service')
   const logger = options.logger ?? console
@@ -21,6 +26,7 @@ export function createResilientBrowserBridge(service, options = {}) {
   const initialConnectWaitMs = positiveInt(options.initialConnectWaitMs, DEFAULT_INITIAL_CONNECT_WAIT_MS)
   const repairWaitMs = positiveInt(options.repairWaitMs, DEFAULT_REPAIR_WAIT_MS)
   const pollMs = positiveInt(options.pollMs, DEFAULT_POLL_MS)
+  const tabTransitions = new Map()
 
   return {
     get connected() { return transportReady(service) },
@@ -44,15 +50,27 @@ export function createResilientBrowserBridge(service, options = {}) {
         }
       }
 
+      const dispatchArgs = redirectedTabArgs(cmd, args, tabTransitions)
+      const beforeTabs = TAB_TRANSITION_ACTIONS.has(cmd)
+        ? await captureTabState(service.bridge, attemptTimeoutMs)
+        : undefined
+      const sourceTabId = TAB_TRANSITION_ACTIONS.has(cmd)
+        ? resolveSourceTabId(args, beforeTabs)
+        : undefined
+
       const transientDelays = PAGE_BRIDGE_RETRYABLE.has(cmd) ? [0, 160, 360, 700] : [0]
       let lastError
       for (const delayMs of transientDelays) {
         if (delayMs > 0) await delay(delayMs)
         try {
-          return await service.bridge.request(cmd, args, {
+          const value = await service.bridge.request(cmd, dispatchArgs, {
             ...requestOptions,
-            timeoutMs: effectiveAttemptTimeout(cmd, args, requestOptions.timeoutMs, attemptTimeoutMs, configuredTimeoutMs),
+            timeoutMs: effectiveAttemptTimeout(cmd, dispatchArgs, requestOptions.timeoutMs, attemptTimeoutMs, configuredTimeoutMs),
           })
+          if (sourceTabId !== undefined && beforeTabs !== undefined) {
+            await rememberOpenedTabTransition(service.bridge, sourceTabId, beforeTabs.ids, tabTransitions, logger, attemptTimeoutMs)
+          }
+          return value
         } catch (error) {
           lastError = error
           if (isPageBridgeTransient(error) && PAGE_BRIDGE_RETRYABLE.has(cmd)) continue
@@ -62,7 +80,7 @@ export function createResilientBrowserBridge(service, options = {}) {
 
       if (!isTransportFailure(lastError)) throw lastError
 
-      const replaySafe = isTransportReplaySafe(cmd, args)
+      const replaySafe = isTransportReplaySafe(cmd, dispatchArgs)
       const ready = await kickRepairAndWait(service, repairWaitMs, pollMs, logger, true)
       if (!ready) {
         const state = managedState(service)
@@ -78,9 +96,10 @@ export function createResilientBrowserBridge(service, options = {}) {
         throw enrichTransportError(lastError, 'The browser connection was repaired, but Patrol deliberately did not repeat this mutating command because the first attempt may already have changed the page. Observe CURRENT state and retry only if evidence shows the action did not happen.')
       }
 
-      return await service.bridge.request(cmd, args, {
+      const retryArgs = redirectedTabArgs(cmd, dispatchArgs, tabTransitions)
+      return await service.bridge.request(cmd, retryArgs, {
         ...requestOptions,
-        timeoutMs: effectiveAttemptTimeout(cmd, args, requestOptions.timeoutMs, attemptTimeoutMs, configuredTimeoutMs),
+        timeoutMs: effectiveAttemptTimeout(cmd, retryArgs, requestOptions.timeoutMs, attemptTimeoutMs, configuredTimeoutMs),
       })
     },
   }
@@ -126,18 +145,72 @@ export function isTransportFailure(error) {
   return /not connected|disconnected|did not answer|failed to send browser command|websocket|socket.*closed|connection.*closed/i.test(errorMessage(error))
 }
 
+function redirectedTabArgs(cmd, args, tabTransitions) {
+  if (!TAB_TRANSITION_READS.has(cmd)) return args
+  pruneTabTransitions(tabTransitions)
+
+  let transition
+  if (Number.isInteger(args?.tabId)) {
+    transition = tabTransitions.get(args.tabId)
+  } else if (tabTransitions.size > 0) {
+    transition = [...tabTransitions.values()].sort((left, right) => right.expiresAt - left.expiresAt)[0]
+  }
+  return transition === undefined ? args : { ...args, tabId: transition.targetTabId }
+}
+
+function pruneTabTransitions(tabTransitions) {
+  const now = Date.now()
+  for (const [sourceTabId, transition] of tabTransitions) {
+    if (now > transition.expiresAt) tabTransitions.delete(sourceTabId)
+  }
+}
+
+function resolveSourceTabId(args, state) {
+  if (Number.isInteger(args?.tabId)) return args.tabId
+  if (state === undefined || state.activeIds.length !== 1) return undefined
+  return state.activeIds[0]
+}
+
+async function captureTabState(bridge, timeoutMs) {
+  try {
+    const value = await bridge.request('listTabs', {}, { timeoutMs: Math.min(2_000, timeoutMs) })
+    const tabs = Array.isArray(value?.tabs) ? value.tabs : []
+    return {
+      ids: new Set(tabs.map(tab => tab?.id).filter(Number.isInteger)),
+      activeIds: tabs.filter(tab => tab?.active === true && Number.isInteger(tab?.id)).map(tab => tab.id),
+    }
+  } catch {
+    return undefined
+  }
+}
+
+async function rememberOpenedTabTransition(bridge, sourceTabId, beforeTabIds, tabTransitions, logger, timeoutMs) {
+  for (const waitMs of TAB_TRANSITION_DELAYS_MS) {
+    if (waitMs > 0) await delay(waitMs)
+    let tabs
+    try {
+      const value = await bridge.request('listTabs', {}, { timeoutMs: Math.min(2_000, timeoutMs) })
+      tabs = Array.isArray(value?.tabs) ? value.tabs : []
+    } catch {
+      return
+    }
+    const added = tabs.filter(tab => Number.isInteger(tab?.id) && !beforeTabIds.has(tab.id))
+    if (added.length === 0) continue
+    const opened = added.find(tab => tab?.active === true) ?? added[0]
+    if (!Number.isInteger(opened?.id)) return
+    tabTransitions.set(sourceTabId, {
+      targetTabId: opened.id,
+      expiresAt: Date.now() + TAB_TRANSITION_TTL_MS,
+    })
+    logger?.info?.(`[dsh-patrol/browser-tools] business action opened tab ${opened.id}; bounded verification will follow it from source tab ${sourceTabId}`)
+    return
+  }
+}
+
 function transportReady(service) {
   const state = managedState(service)
 
-  // A bridge socket can come up before managed-browser provisioning has
-  // finished. In particular, a persisted extension may reconnect to the first
-  // Chromium process while the controller is still deciding whether that
-  // process/extension is usable. The previous code treated that provisional
-  // socket as ready, executed the first patrol command, and then the controller
-  // closed/replaced the browser underneath the next command. Never dispatch any
-  // browser action while the managed controller still reports starting=true.
   if (state.starting === true) return false
-
   if (service?.bridge?.connected !== true) return false
   if (typeof state.connected === 'boolean' && state.connected !== true) return false
   if (typeof state.running === 'boolean' && state.running !== true) return false
