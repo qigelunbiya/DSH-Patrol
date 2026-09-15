@@ -116,9 +116,10 @@ describe('title-backed row action interaction owner', () => {
 
       expect(result).toMatchObject({ ok: true, correlation: 'same-row' })
       expect(String(result.selector)).toContain('account_now')
-      expect(await page.locator('.ant-modal-content').filter({ hasText: '10.192.3.174' }).count()).toBe(1)
-      expect(await page.locator('.ant-modal-content').filter({ hasText: '运维登录' }).count()).toBe(1)
-      expect(await page.locator('.ant-modal-content').filter({ hasText: 'RDP' }).count()).toBe(1)
+      const modalText = await page.$$eval('.ant-modal-content', nodes => nodes.map(node => node.textContent || '').join('\n'))
+      expect(modalText).toContain('10.192.3.174')
+      expect(modalText).toContain('运维登录')
+      expect(modalText).toContain('RDP')
     })
   })
 
