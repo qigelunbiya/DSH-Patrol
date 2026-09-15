@@ -2,6 +2,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   IMAGE_CODE_OCR_ENGINE_ENV,
+  WINDOWS_IMAGE_CODE_OCR_SCALE,
+  imageCodeCaptureArgsForEngine,
   imageCodeOcrEngineOrder,
   recognizeCapturedImageCodeWithDdddocr,
   recognizeCapturedImageCodeWithWindowsOcr,
@@ -13,6 +15,19 @@ describe('image-code OCR engine policy', () => {
   it('uses Windows OCR before ddddocr in auto mode', () => {
     expect(imageCodeOcrEngineOrder()).toEqual(['windows', 'ddddocr'])
     expect(imageCodeOcrEngineOrder('auto')).toEqual(['windows', 'ddddocr'])
+  })
+
+  it('gives Windows OCR its own enlarged capture while ddddocr keeps original bytes', () => {
+    expect(WINDOWS_IMAGE_CODE_OCR_SCALE).toBe(2)
+    expect(imageCodeCaptureArgsForEngine('windows', { tabId: 7, inputSelector: '#captcha' })).toEqual({
+      tabId: 7,
+      inputSelector: '#captcha',
+      visualScale: 2,
+    })
+    expect(imageCodeCaptureArgsForEngine('ddddocr', { tabId: 7, inputSelector: '#captcha', visualScale: 4 })).toEqual({
+      tabId: 7,
+      inputSelector: '#captcha',
+    })
   })
 
   it('accepts a Windows OCR result without consulting ddddocr', async () => {

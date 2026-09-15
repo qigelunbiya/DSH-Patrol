@@ -8,6 +8,7 @@ export const IMAGE_CODE_MIN_CONFIDENCE = 0.80
 export const IMAGE_CODE_MAX_REFRESH_ATTEMPTS = 3
 export const IMAGE_CODE_OCR_ENGINE_ENV = 'DSH_PATROL_IMAGE_CODE_OCR_ENGINE'
 export const IMAGE_CODE_OCR_ENGINES = ['auto', 'windows', 'ddddocr']
+export const WINDOWS_IMAGE_CODE_OCR_SCALE = 2
 
 export function resolveImageCodeOcrEngine(env = process.env) {
   return normalizeImageCodeOcrEngine(env?.[IMAGE_CODE_OCR_ENGINE_ENV] ?? 'auto')
@@ -18,6 +19,14 @@ export function imageCodeOcrEngineOrder(mode = 'auto') {
   if (normalized === 'windows') return ['windows']
   if (normalized === 'ddddocr') return ['ddddocr']
   return ['windows', 'ddddocr']
+}
+
+export function imageCodeCaptureArgsForEngine(engine, args = {}) {
+  const normalized = normalizeConcreteImageCodeOcrEngine(engine)
+  const captureArgs = { ...args }
+  if (normalized === 'windows') captureArgs.visualScale = WINDOWS_IMAGE_CODE_OCR_SCALE
+  else delete captureArgs.visualScale
+  return captureArgs
 }
 
 export async function runImageCodeOcrPolicy({ mode = 'auto', windowsOcr, ddddocrOcr } = {}) {
@@ -77,91 +86,109 @@ export async function tryFillImageCode(bridge, tabId, options = {}) {
     }
   }
 
-  throw new Error(`image-code recognition exhausted confidence-qualified paths after at most ${IMAGE_CODE_MAX_REFRESH_ATTEMPTS} CAPTCHA refreshes: ${diagnostics.filter(Boolean).slice(0, 28).join(' | ') || 'no diagnostic detail'}`)
+  throw new Error(`image-code recognition exhausted confidence-qualified paths after at most ${IMAGE_CODE_MAX_REFRESH_ATTEMPTS} CAPTCHA refreshes: ${diagnostics.filter(Boolean).slice(0, 32).join(' | ') || 'no diagnostic detail'}`)
 }
 
 async function recognizeCurrentImageCode(bridge, tabId, options, diagnostics) {
-  let inputSelector
-  let code = ''
+  const mode = currentImageCodeOcrEngine(options)
+  let inputSelector = ''
 
-  // Primary capture path: ask the extension for the cleanest captcha-sized
-  // image. OCR engine selection happens afterwards and each engine receives the
-  // same bytes independently; no engine is allowed to validate or veto another.
+  // Engine ordering is policy only. Every engine owns its entire capture and
+  // recognition pipeline so image preparation for one OCR method cannot alter,
+  // validate, veto, or otherwise influence another method.
+  for (const engine of imageCodeOcrEngineOrder(mode)) {
+    diagnostics.push(`${engine}: pipeline-start`)
+    const current = await recognizeCurrentImageCodeWithEngine(bridge, tabId, engine, options, diagnostics)
+    if (current.inputSelector) inputSelector = current.inputSelector
+    if (isStrongImageCode(current.code)) {
+      diagnostics.push(`${engine}: pipeline-success`)
+      return current
+    }
+    diagnostics.push(`${engine}: pipeline-exhausted`)
+  }
+
+  return { inputSelector, code: '' }
+}
+
+async function recognizeCurrentImageCodeWithEngine(bridge, tabId, engine, options, diagnostics) {
+  let inputSelector = ''
+  let code = ''
+  const captureArgs = imageCodeCaptureArgsForEngine(engine, { tabId })
+
+  // Primary engine-owned capture. Windows OCR intentionally receives the same
+  // 2x nearest-neighbour enlargement used by the previously working dedicated
+  // Windows OCR tool. ddddocr receives the original CAPTCHA bytes because its
+  // Python helper already owns its preprocessing/upscale ensemble.
   try {
-    const captured = await bridge.request('captureImageCode', { tabId }, options)
+    const captured = await bridge.request('captureImageCode', captureArgs, options)
     if (!captured || typeof captured !== 'object' || captured.ok === false) {
-      diagnostics.push(`captureImageCode: ${shortDiagnostic(captured?.error || 'invalid capture result')}`)
+      diagnostics.push(`${engine}: primary-capture failed (${shortDiagnostic(captured?.error || 'invalid capture result')})`)
     } else if (typeof captured.dataUrl !== 'string' || typeof captured.inputSelector !== 'string') {
-      diagnostics.push('captureImageCode: missing image bytes or input selector')
+      diagnostics.push(`${engine}: primary-capture missing image bytes/input selector`)
     } else if (!await isExplicitImageCodeInput(bridge, captured.inputSelector, tabId, options)) {
-      diagnostics.push(`captureImageCode: ${captured.inputSelector} was not verified as the explicit image-code input`)
+      diagnostics.push(`${engine}: primary-capture input selector was not verified`)
     } else {
       inputSelector = captured.inputSelector
       const captureMode = typeof captured.captureMode === 'string' ? captured.captureMode : 'unknown'
-      code = await recognizeCapturedImageCode(captured.dataUrl, captureMode, options, diagnostics)
-      if (!isStrongImageCode(code)) {
-        if (isPlausibleImageCode(code)) diagnostics.push(`${captureMode}: weak candidate rejected`)
-        code = ''
-      }
+      diagnostics.push(`${engine}: primary-capture mode=${captureMode}; scale=${engine === 'windows' ? WINDOWS_IMAGE_CODE_OCR_SCALE : 1}; bytes=${Number(captured.bytes || 0)}`)
+      code = await recognizeCapturedImageCodeWithEngine(engine, captured.dataUrl, captureMode, options, diagnostics)
+      if (!isStrongImageCode(code)) code = ''
     }
   } catch (error) {
-    diagnostics.push(`captureImageCode: ${shortDiagnostic(error)}`)
+    diagnostics.push(`${engine}: primary-capture exception (${shortDiagnostic(error)})`)
   }
 
-  // Aggressive visual recovery: when the extension's single best guess is not
-  // readable, enumerate other small visual regions from the same page and crop
-  // them one-by-one against the already verified captcha input.
-  if (!isPlausibleImageCode(code)) {
-    const alternative = await recognizeImageCodeFromVisualCandidates(bridge, tabId, inputSelector, options, diagnostics)
-    if (alternative) {
-      inputSelector = alternative.inputSelector
-      code = alternative.code
-    }
-  }
+  if (isStrongImageCode(code)) return { inputSelector, code }
 
-  // Final local recovery uses a whole-page image. Windows OCR and ddddocr stay
-  // independent here too: Windows is tried first by default, ddddocr is only a
-  // later fallback, and neither result is used to confirm or reject the other.
-  if (!inputSelector || !isPlausibleImageCode(code)) {
-    const fallback = await recognizeImageCodeFromPage(bridge, tabId, options, diagnostics)
-    if (fallback) {
-      inputSelector = fallback.inputSelector
-      code = fallback.code
-    } else {
-      diagnostics.push('page-level OCR: no confidence-qualified image-code candidate')
-    }
-  }
+  const alternative = await recognizeImageCodeFromVisualCandidatesWithEngine(
+    bridge,
+    tabId,
+    engine,
+    inputSelector,
+    options,
+    diagnostics,
+  )
+  if (alternative) return alternative
 
-  return { inputSelector: inputSelector || '', code }
+  const pageFallback = await recognizeImageCodeFromPageWithEngine(
+    bridge,
+    tabId,
+    engine,
+    inputSelector,
+    options,
+    diagnostics,
+  )
+  if (pageFallback) return pageFallback
+
+  return { inputSelector, code: '' }
 }
 
-async function recognizeCapturedImageCode(dataUrl, captureMode, options, diagnostics) {
-  const mode = currentImageCodeOcrEngine(options)
-  const result = await runImageCodeOcrPolicy({
-    mode,
-    windowsOcr: () => recognizeCapturedImageCodeWithWindowsOcr(dataUrl, captureMode, options, diagnostics),
-    ddddocrOcr: () => recognizeCapturedImageCodeWithDdddocr(dataUrl, captureMode, options, diagnostics),
-  })
-  if (result.engine !== 'none') diagnostics.push(`local-ocr(${captureMode}): selected=${result.engine}`)
-  return result.code
+async function recognizeCapturedImageCodeWithEngine(engine, dataUrl, captureMode, options, diagnostics, knownText = '') {
+  if (engine === 'windows') {
+    return await recognizeCapturedImageCodeWithWindowsOcr(dataUrl, captureMode, options, diagnostics, knownText)
+  }
+  if (engine === 'ddddocr') {
+    return await recognizeCapturedImageCodeWithDdddocr(dataUrl, captureMode, options, diagnostics, knownText)
+  }
+  throw new Error(`unsupported image-code OCR engine: ${engine}`)
 }
 
 export async function recognizeCapturedImageCodeWithWindowsOcr(dataUrl, captureMode = 'capture', options = {}, diagnostics = [], knownText = '') {
   try {
     const recognized = await recognizeScreenshotText(dataUrl, { signal: options.signal })
     if (recognized?.status !== 'recognized' || !recognized.text) {
-      diagnostics.push(`windows-ocr(${captureMode}): ${shortDiagnostic(recognized?.status || 'no text')}`)
+      diagnostics.push(`windows-ocr(${captureMode}): status=${shortDiagnostic(recognized?.status || 'no-text')}`)
       return ''
     }
     const code = selectImageCodeCandidate(recognized.text, knownText)
     if (!isStrongImageCode(code)) {
-      diagnostics.push(`windows-ocr(${captureMode}): no strong standalone candidate`)
+      diagnostics.push(`windows-ocr(${captureMode}): OCR returned text but no strong standalone image-code candidate`)
       return ''
     }
-    diagnostics.push(`windows-ocr(${captureMode}): strong candidate accepted independently`)
+    diagnostics.push(`windows-ocr(${captureMode}): strong standalone candidate accepted; rawChars=${String(recognized.text).length}`)
     return code
   } catch (error) {
-    diagnostics.push(`windows-ocr(${captureMode}): ${shortDiagnostic(error)}`)
+    diagnostics.push(`windows-ocr(${captureMode}): exception=${shortDiagnostic(error)}`)
     return ''
   }
 }
@@ -178,22 +205,22 @@ export async function recognizeCapturedImageCodeWithDdddocr(dataUrl, captureMode
     const comparable = cleanupComparable(code)
     const unseen = !knownText || Boolean(comparable && !cleanupComparable(knownText).includes(comparable))
     if (!isStrongImageCode(code) || !unseen) {
-      diagnostics.push(`ddddocr(${captureMode}): candidate rejected by standalone format/page-text checks`)
+      diagnostics.push(`ddddocr(${captureMode}): candidate rejected by standalone format/page-text checks; confidence=${confidence.toFixed(3)}; support=${Number(ddddocr.support || 0)}`)
       return ''
     }
     if (confidence < IMAGE_CODE_MIN_CONFIDENCE) {
-      diagnostics.push(`ddddocr(${captureMode}): confidence=${confidence.toFixed(3)} below ${IMAGE_CODE_MIN_CONFIDENCE.toFixed(2)}`)
+      diagnostics.push(`ddddocr(${captureMode}): confidence=${confidence.toFixed(3)} below ${IMAGE_CODE_MIN_CONFIDENCE.toFixed(2)}; support=${Number(ddddocr.support || 0)}; variant=${shortDiagnostic(ddddocr.variant || 'unknown')}`)
       return ''
     }
-    diagnostics.push(`ddddocr(${captureMode}): confidence=${confidence.toFixed(3)} accepted independently`)
+    diagnostics.push(`ddddocr(${captureMode}): accepted independently; confidence=${confidence.toFixed(3)}; support=${Number(ddddocr.support || 0)}; variant=${shortDiagnostic(ddddocr.variant || 'unknown')}`)
     return code
   } catch (error) {
-    diagnostics.push(`ddddocr(${captureMode}): ${shortDiagnostic(error)}`)
+    diagnostics.push(`ddddocr(${captureMode}): exception=${shortDiagnostic(error)}`)
     return ''
   }
 }
 
-async function recognizeImageCodeFromVisualCandidates(bridge, tabId, preferredInputSelector, options, diagnostics) {
+async function recognizeImageCodeFromVisualCandidatesWithEngine(bridge, tabId, engine, preferredInputSelector, options, diagnostics) {
   let snapshot
   try {
     snapshot = await bridge.request('snapshot', {
@@ -202,41 +229,56 @@ async function recognizeImageCodeFromVisualCandidates(bridge, tabId, preferredIn
       tabId,
     }, options)
   } catch (error) {
-    diagnostics.push(`alternate visual snapshot: ${shortDiagnostic(error)}`)
+    diagnostics.push(`${engine}: alternate-snapshot failed (${shortDiagnostic(error)})`)
     return undefined
   }
 
   const inputSelector = preferredInputSelector || findExplicitImageCodeInputSelector(snapshot)
-  if (!inputSelector) return undefined
+  if (!inputSelector) {
+    diagnostics.push(`${engine}: alternate-crops skipped (no explicit image-code input)`)
+    return undefined
+  }
   const selectors = findVisualImageCodeCandidateSelectors(snapshot, inputSelector).slice(0, 8)
-  if (selectors.length === 0) return undefined
+  if (selectors.length === 0) {
+    diagnostics.push(`${engine}: alternate-crops skipped (no visual candidates)`)
+    return undefined
+  }
 
+  let captures = 0
+  let recognized = 0
+  let lastError = ''
   for (const imageSelector of selectors) {
     let captured
     try {
-      captured = await bridge.request('captureImageCode', {
+      captured = await bridge.request('captureImageCode', imageCodeCaptureArgsForEngine(engine, {
         tabId,
         inputSelector,
         imageSelector,
-      }, options)
+      }), options)
     } catch (error) {
-      diagnostics.push(`alternate crop ${imageSelector}: ${shortDiagnostic(error)}`)
+      lastError = shortDiagnostic(error)
       continue
     }
     if (!captured || typeof captured !== 'object' || captured.ok === false || typeof captured.dataUrl !== 'string') {
-      diagnostics.push(`alternate crop ${imageSelector}: invalid capture result`)
+      lastError = shortDiagnostic(captured?.error || 'invalid capture result')
       continue
     }
+    captures += 1
 
     const captureMode = `alternate:${typeof captured.captureMode === 'string' ? captured.captureMode : 'element-crop'}`
-    const candidate = await recognizeCapturedImageCode(captured.dataUrl, captureMode, options, diagnostics)
-    if (isStrongImageCode(candidate)) return { inputSelector, code: candidate }
-    if (isPlausibleImageCode(candidate)) diagnostics.push(`${captureMode}: weak candidate rejected`)
+    const candidate = await recognizeCapturedImageCodeWithEngine(engine, captured.dataUrl, captureMode, options, diagnostics)
+    if (isStrongImageCode(candidate)) {
+      recognized += 1
+      diagnostics.push(`${engine}: alternate-crops success after ${captures}/${selectors.length} capture(s)`)
+      return { inputSelector, code: candidate }
+    }
   }
+
+  diagnostics.push(`${engine}: alternate-crops exhausted candidates=${selectors.length}; captured=${captures}; recognized=${recognized}${lastError ? `; lastError=${lastError}` : ''}`)
   return undefined
 }
 
-async function recognizeImageCodeFromPage(bridge, tabId, options, diagnostics = []) {
+async function recognizeImageCodeFromPageWithEngine(bridge, tabId, engine, preferredInputSelector, options, diagnostics = []) {
   let snapshot
   try {
     snapshot = await bridge.request('snapshot', {
@@ -244,20 +286,28 @@ async function recognizeImageCodeFromPage(bridge, tabId, options, diagnostics = 
       includeHidden: false,
       tabId,
     }, options)
-  } catch {
+  } catch (error) {
+    diagnostics.push(`${engine}: page-fallback snapshot failed (${shortDiagnostic(error)})`)
     return undefined
   }
 
-  const inputSelector = findExplicitImageCodeInputSelector(snapshot)
-  if (!inputSelector) return undefined
+  const inputSelector = preferredInputSelector || findExplicitImageCodeInputSelector(snapshot)
+  if (!inputSelector) {
+    diagnostics.push(`${engine}: page-fallback skipped (no explicit image-code input)`)
+    return undefined
+  }
 
   let shot
   try {
     shot = await bridge.request('screenshot', { tabId, format: 'png' }, options)
-  } catch {
+  } catch (error) {
+    diagnostics.push(`${engine}: page-fallback screenshot failed (${shortDiagnostic(error)})`)
     return undefined
   }
-  if (!shot || typeof shot !== 'object' || shot.ok === false || typeof shot.dataUrl !== 'string') return undefined
+  if (!shot || typeof shot !== 'object' || shot.ok === false || typeof shot.dataUrl !== 'string') {
+    diagnostics.push(`${engine}: page-fallback screenshot returned no PNG data`)
+    return undefined
+  }
 
   let knownText = snapshotText(snapshot)
   try {
@@ -265,18 +315,17 @@ async function recognizeImageCodeFromPage(bridge, tabId, options, diagnostics = 
     if (page && typeof page === 'object' && page.ok !== false && typeof page.text === 'string') {
       knownText += `\n${page.text}`
     }
-  } catch {
+  } catch (error) {
+    diagnostics.push(`${engine}: page-fallback readPage unavailable (${shortDiagnostic(error)})`)
   }
 
-  const mode = currentImageCodeOcrEngine(options)
-  const result = await runImageCodeOcrPolicy({
-    mode,
-    windowsOcr: () => recognizeCapturedImageCodeWithWindowsOcr(shot.dataUrl, 'page', options, diagnostics, knownText),
-    ddddocrOcr: () => recognizeCapturedImageCodeWithDdddocr(shot.dataUrl, 'page', options, diagnostics, knownText),
-  })
-  if (result.engine === 'none') return undefined
-  diagnostics.push(`page-level local-ocr: selected=${result.engine}`)
-  return { inputSelector, code: result.code }
+  const candidate = await recognizeCapturedImageCodeWithEngine(engine, shot.dataUrl, 'page', options, diagnostics, knownText)
+  if (!isStrongImageCode(candidate)) {
+    diagnostics.push(`${engine}: page-fallback produced no strong unseen candidate`)
+    return undefined
+  }
+  diagnostics.push(`${engine}: page-fallback success`)
+  return { inputSelector, code: candidate }
 }
 
 export function findExplicitImageCodeInputSelector(snapshot) {
@@ -389,6 +438,12 @@ function normalizeImageCodeOcrEngine(value) {
   if (requested === 'windows' || requested === 'windows-system-ocr') return 'windows'
   if (requested === 'ddddocr') return 'ddddocr'
   throw new Error(`Unsupported ${IMAGE_CODE_OCR_ENGINE_ENV} value "${requested}". Expected one of: ${IMAGE_CODE_OCR_ENGINES.join(', ')}.`)
+}
+
+function normalizeConcreteImageCodeOcrEngine(value) {
+  const normalized = normalizeImageCodeOcrEngine(value)
+  if (normalized === 'auto') throw new Error('imageCodeCaptureArgsForEngine requires a concrete OCR engine')
+  return normalized
 }
 
 async function isExplicitImageCodeInput(bridge, selector, tabId, options) {
