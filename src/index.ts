@@ -185,7 +185,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     'dsh-patrol: deterministic native select recording',
   )
   ctx.effect(
-    () => registerPatrolObservationTools(ctx, runner, observationGate),
+    () => registerPatrolObservationTools(ctx, store, runner, observationGate),
     'dsh-patrol: current-state visual observation',
   )
   ctx.effect(
