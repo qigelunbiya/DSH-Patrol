@@ -24,9 +24,11 @@ export const PATROL_TRANSIENT_INPUT_PROMPT = `敏感输入规则：
 - patrol_type_transient 明文只在本次工具执行与浏览器输入瞬间存在，随后以 AES-256-GCM 认证加密保存到本机 Patrol secret vault；Runbook 只保存不透明引用。不要把明文密码写进 Runbook、报告、notes 或回复。
 - 只有用户明确要求 Harness credential reference 时才使用 patrol_type_credential / patrol_credential_help。
 - 普通图片字符验证码 image-code 是一次性页面状态，不得存入 secret vault，也不得作为固定 browser_type 值写进 Runbook。
-- TEST MODE 交互教学使用视觉优先：直接 browser_capture_image_code_visual 获取 CURRENT 图像，再以 patrol_type_current_image_code 的 0.90 置信度门槛填写。不要先运行本地 ddddocr/Windows OCR 预检；patrol_solve_current_image_code 仅保留为兼容入口并会立即提示走视觉路径，不再执行 OCR。
+- TEST MODE 图片字符验证码必须先调用 patrol_solve_current_image_code。该工具会在 Patrol 授权上下文中执行 browser_detect_auth_challenge，优先走现有本地 OCR（包括 Windows OCR）路径；禁止直接从 browser_capture_image_code_visual 开始。
+- 当 patrol_solve_current_image_code 返回 autoFilled=true 时，验证码已经由本地 solver 填写，直接继续登录/提交，不要重复截图、重复 OCR 或再次填写同一张验证码。
+- 只有 patrol_solve_current_image_code 明确返回 testModeFallback=true / strategy=model-visual-test 时，才允许 browser_capture_image_code_visual + patrol_type_current_image_code 作为模型视觉后备。Model Vision 是 fallback，不是第一路径。
 - 用户在 taskChecklist 中声明的验证码格式是硬约束。例如“四位英文、没有数字”只允许恰好 4 个 ASCII 字母；即使视觉模型给出高置信度、但候选包含数字，也不得填写或提交，必须重新读取/刷新 CURRENT 验证码。
-- 高置信度视觉验证码填写成功后，Patrol 只记录一个不含验证码字符的动态 browser_detect_auth_challenge solver 步骤，供 NORMAL/无人值守 replay 识别未来的新验证码；重复视觉尝试不会重复追加 solver 步骤。
+- 模型视觉后备高置信度填写成功后，Patrol 只记录一个不含验证码字符的动态 browser_detect_auth_challenge solver 步骤，供后续 replay 动态识别未来的新验证码；重复视觉尝试不会重复追加 solver 步骤。
 - 密码、TOTP/OTP、token 等真正敏感值仍必须走专用敏感输入流程。`
 
 export function registerPatrolTransientInputTools(
@@ -106,14 +108,14 @@ export function registerPatrolTransientInputTools(
 
   const solveCurrentImageCode = defineTool({
     name: 'patrol_solve_current_image_code',
-    description: 'Compatibility entrypoint for TEST MODE image-code teaching. It deliberately does NOT run ddddocr/Windows OCR anymore; interactive teaching is visual-first. Use browser_capture_image_code_visual for the CURRENT image, then patrol_type_current_image_code with confidence >= 0.90.',
+    description: 'TEST MODE image-code solver entrypoint. It always runs the existing local OCR detector first (including the Windows OCR path) through browser_detect_auth_challenge. Model vision is allowed only when that detector explicitly returns testModeFallback=true / strategy=model-visual-test.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string' },
       tabId: { type: 'integer' },
     },
     output: TEXT_OUTPUT,
-    async execute(args) {
+    async execute(args, exec: ToolRunContext) {
       if (!isPatrolTestMode()) {
         throw new Error('patrol_solve_current_image_code is available only in DSH Patrol TEST MODE; normal mode uses the replay detector/solver')
       }
@@ -121,13 +123,84 @@ export function registerPatrolTransientInputTools(
       if (definition.status !== 'draft') throw new Error(`inspection ${definition.id} is ${definition.status}; call patrol_begin_edit before teaching image-code handling`)
       assertPersistedTaskChecklist(definition)
       if (args.stepName !== undefined) assertSafePersistentText(args.stepName, 'stepName')
-      return 'TEST MODE visual-first CAPTCHA path: no local OCR was executed. Call browser_capture_image_code_visual on the CURRENT page without a historical tabId, read the attached image once, then call patrol_type_current_image_code only when confidence >= 0.90. Obey the persisted taskChecklist format exactly; if it says letters-only/no-digits, a digit-looking candidate must be rejected rather than typed.'
+
+      const dispatched = await runner.dispatch(
+        'browser_detect_auth_challenge',
+        args.tabId === undefined ? {} : { tabId: args.tabId },
+        exec,
+      )
+      if (!dispatched.ok) {
+        return [
+          `TEST MODE local OCR attempt failed and was NOT converted into a model-vision guess. ${dispatched.error ?? 'Unknown browser error'}`,
+          dispatched.text,
+          'Fix/retry the CURRENT browser state. Model vision is allowed only after an explicit detector fallback result, not after a transport/tool error.',
+        ].filter(Boolean).join('\n')
+      }
+
+      const detector = dispatched.value as {
+        autoFilled?: boolean
+        testModeFallback?: boolean
+        strategy?: string
+      } | undefined
+      const autoFilled = detector?.autoFilled === true
+      const visualFallback = detector?.testModeFallback === true && detector?.strategy === 'model-visual-test'
+
+      if (autoFilled) {
+        let solverStep = definition.steps.find(step =>
+          step.kind === 'tool'
+          && step.tool === 'browser_detect_auth_challenge'
+          && typeof step.notes === 'string'
+          && step.notes.includes(VISUAL_SOLVER_NOTE),
+        ) as ToolStep | undefined
+        let recorded = false
+        if (solverStep === undefined) {
+          solverStep = {
+            id: nextStepId(definition.steps),
+            kind: 'tool',
+            name: '动态识别并填写图片验证码',
+            tool: 'browser_detect_auth_challenge',
+            arguments: {},
+            notes: stepExecutionNotes({
+              tool: 'browser_detect_auth_challenge',
+              args: {},
+              providedNotes: `${VISUAL_SOLVER_NOTE}；TEST/NORMAL 优先使用本地 OCR（包括 Windows OCR）动态识别未来的新验证码；TEST MODE 仅在明确 fallback 时才允许 CURRENT 模型视觉；不保存一次性验证码字符。`,
+            }),
+            recordedAt: new Date().toISOString(),
+          }
+          definition.steps.push(solverStep)
+          definition.schemaVersion = '0.2'
+          definition.metadata.updatedAt = new Date().toISOString()
+          await store.save(definition)
+          recorded = true
+        }
+
+        return [
+          dispatched.text,
+          'TEST MODE: local OCR auto-filled the CURRENT image-code. Continue with the login/submit step; do NOT capture or recognize the same CAPTCHA again.',
+          recorded
+            ? `Recorded ${solverStep.id} as the single dynamic image-code solver step for future replay.`
+            : `Reused existing dynamic image-code solver step ${solverStep.id}; no duplicate solver step was appended.`,
+        ].filter(Boolean).join('\n')
+      }
+
+      if (visualFallback) {
+        return [
+          dispatched.text,
+          'TEST MODE: local OCR did not safely auto-fill the CURRENT image-code and explicitly authorized the model-vision fallback.',
+          'Now call browser_capture_image_code_visual on the CURRENT page, then patrol_type_current_image_code only when confidence >= 0.90 and the persisted taskChecklist format is satisfied.',
+        ].filter(Boolean).join('\n')
+      }
+
+      return [
+        dispatched.text,
+        'No model-vision fallback was authorized. Do not call browser_capture_image_code_visual unless the detector explicitly returns testModeFallback=true / strategy=model-visual-test.',
+      ].filter(Boolean).join('\n')
     },
   })
 
   const typeCurrentImageCode = defineTool({
     name: 'patrol_type_current_image_code',
-    description: 'TEST MODE visual input: type the CURRENT conventional image-text CAPTCHA without persisting its one-time characters. Requires confidence >= 0.90 and also enforces the persisted taskChecklist CAPTCHA length/character-set contract. On a successful type, records/reuses one dynamic browser_detect_auth_challenge replay step without storing the CAPTCHA value.',
+    description: 'TEST MODE model-vision fallback input: type the CURRENT conventional image-text CAPTCHA without persisting its one-time characters. Use only after patrol_solve_current_image_code explicitly authorizes model-visual-test fallback. Requires confidence >= 0.90 and also enforces the persisted taskChecklist CAPTCHA length/character-set contract.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       selector: { type: 'string', required: true },
@@ -209,7 +282,7 @@ export function registerPatrolTransientInputTools(
           notes: stepExecutionNotes({
             tool: 'browser_detect_auth_challenge',
             args: {},
-            providedNotes: `${VISUAL_SOLVER_NOTE}；教学阶段使用 CURRENT 模型视觉；重放阶段动态识别新验证码；不保存一次性验证码字符。`,
+            providedNotes: `${VISUAL_SOLVER_NOTE}；TEST/NORMAL 优先使用本地 OCR（包括 Windows OCR）动态识别未来的新验证码；TEST MODE 仅在明确 fallback 时才允许 CURRENT 模型视觉；不保存一次性验证码字符。`,
           }),
           recordedAt: new Date().toISOString(),
         }
@@ -221,7 +294,7 @@ export function registerPatrolTransientInputTools(
       }
 
       return [
-        `TEST MODE: typed the CURRENT image-code with confidence=${confidence.toFixed(3)}${args.source ? ` (${args.source})` : ''}.`,
+        `TEST MODE fallback: typed the CURRENT image-code with confidence=${confidence.toFixed(3)}${args.source ? ` (${args.source})` : ''}.`,
         renderImageCodeConstraint(constraint),
         'Its one-time characters were NOT written to the Runbook, Patrol secret vault, notes, reports, or visible tool card.',
         recorded

@@ -37,9 +37,10 @@ describe('Patrol test-mode guard policy', () => {
     expect(() => isPatrolTestMode({ DSH_PATROL_CAPTCHA_MODE: 'nromal' })).toThrow(/Unsupported DSH_PATROL_CAPTCHA_MODE/)
   })
 
-  it('uses local OCR before model vision and keeps test-mode click fallbacks operational', () => {
+  it('uses Patrol local OCR before model vision and keeps test-mode click fallbacks operational', () => {
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/image-code.*不再视觉优先/s)
-    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/第一次识别必须先调用 browser_detect_auth_challenge/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/第一次识别必须先调用 patrol_solve_current_image_code/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/browser_detect_auth_challenge 本地 OCR solver/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/禁止一上来直接调用 browser_capture_image_code_visual/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/autoFilled=true/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/testModeFallback=true \/ strategy=model-visual-test/)
@@ -64,7 +65,7 @@ describe('Patrol test-mode guard policy', () => {
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/operational-click-fallbacks/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/patrol_runtime_mode/)
 
-    const localOcrFirst = PATROL_TEST_MODE_OVERRIDE_PROMPT.indexOf('browser_detect_auth_challenge')
+    const localOcrFirst = PATROL_TEST_MODE_OVERRIDE_PROMPT.indexOf('patrol_solve_current_image_code')
     const modelVisionFallback = PATROL_TEST_MODE_OVERRIDE_PROMPT.indexOf('browser_capture_image_code_visual')
     expect(localOcrFirst).toBeGreaterThanOrEqual(0)
     expect(modelVisionFallback).toBeGreaterThan(localOcrFirst)

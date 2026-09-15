@@ -161,15 +161,23 @@ describe('Patrol regression hardening', () => {
     expect(save).toHaveBeenCalledTimes(1)
   })
 
-  it('skips the local OCR preflight in TEST MODE and routes interactive image-code teaching to CURRENT vision', async () => {
+  it('runs local OCR first in TEST MODE and does not route to vision after successful auto-fill', async () => {
     process.env.DSH_PATROL_CAPTCHA_MODE = 'test'
-    const definition = draftDefinition('visual-first')
+    const definition = draftDefinition('local-ocr-first')
     const save = vi.fn(async () => {})
     const store = {
       load: vi.fn(async () => definition),
       save,
     } as unknown as PatrolStore
-    const dispatch = vi.fn(async () => ({ ok: true, text: 'unexpected detector call' }))
+    const dispatch = vi.fn(async () => ({
+      ok: true,
+      text: 'Auth challenge: strategy=windows-system-ocr; verification input auto-filled by the local Patrol solver',
+      value: {
+        autoFilled: true,
+        strategy: 'windows-system-ocr',
+        testModeFallback: false,
+      },
+    }))
     const definitions: any[] = []
     const ctx = {
       tools: {
@@ -182,13 +190,16 @@ describe('Patrol regression hardening', () => {
     registerPatrolTransientInputTools(ctx, store, { dispatch } as unknown as PatrolRunner)
     const solve = definitions.find(tool => tool.name === 'patrol_solve_current_image_code')
     expect(solve).toBeDefined()
+    const exec = { token: Symbol('exec') }
 
-    const result = await solve.execute({ inspectionId: definition.id }, { token: Symbol('exec') })
+    const result = await solve.execute({ inspectionId: definition.id }, exec)
 
-    expect(dispatch).not.toHaveBeenCalled()
-    expect(definition.steps).toHaveLength(0)
-    expect(result).toContain('no local OCR was executed')
-    expect(result).toContain('browser_capture_image_code_visual')
-    expect(save).not.toHaveBeenCalled()
+    expect(dispatch).toHaveBeenCalledTimes(1)
+    expect(dispatch).toHaveBeenCalledWith('browser_detect_auth_challenge', {}, exec)
+    expect(definition.steps).toHaveLength(1)
+    expect(definition.steps[0]).toMatchObject({ tool: 'browser_detect_auth_challenge', arguments: {} })
+    expect(result).toContain('local OCR auto-filled')
+    expect(result).not.toContain('Now call browser_capture_image_code_visual')
+    expect(save).toHaveBeenCalledTimes(1)
   })
 })
