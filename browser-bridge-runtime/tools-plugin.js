@@ -58,7 +58,6 @@ export async function apply(ctx, config = {}) {
   }), 'dsh-patrol/browser-tools: native select tool')
   ctx.effect(() => registerSemanticClickTool(ctx, bridge, {
     commandTimeoutMs,
-    trustedClick: typeof service.trustedClick === 'function' ? service.trustedClick : undefined,
   }), 'dsh-patrol/browser-tools: atomic semantic click')
   ctx.effect(() => registerChallengeTool(ctx, bridge, {
     commandTimeoutMs,

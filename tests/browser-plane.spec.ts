@@ -72,7 +72,6 @@ describe('browser host/agent plane split', () => {
     expect(service.bridge).toBeDefined()
     expect(typeof service.bridgeUrlHint).toBe('function')
     expect(typeof service.ensureBrowser).toBe('function')
-    expect(typeof service.trustedClick).toBe('function')
   })
 
   it('agent plugin registers browser tools without owning any WebServer route', async () => {

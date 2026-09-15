@@ -57,12 +57,6 @@ export function apply(ctx, config = {}) {
     ensureBrowser: async () => managedBrowser === undefined
       ? { managed: false, connected: bridge.connected }
       : await managedBrowser.ensureStarted(),
-    trustedClick: async spec => {
-      if (managedBrowser === undefined) {
-        throw new Error('trusted physical click requires the DSH Patrol managed browser')
-      }
-      return await managedBrowser.trustedClick(spec)
-    },
     managedBrowserStatus: () => managedBrowser?.status ?? { managed: false, connected: bridge.connected },
   })
 

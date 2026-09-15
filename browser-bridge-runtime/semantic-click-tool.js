@@ -7,10 +7,9 @@ const optInt = { type: 'integer' }
 
 export function registerSemanticClickTool(ctx, bridge, config = {}) {
   const timeoutMs = config.commandTimeoutMs ?? 60000
-  const trustedClick = config.trustedClick
   const tool = defineTool({
     name: 'browser_semantic_click',
-    description: 'Internal Patrol primitive: resolve one CURRENT semantic target across frames and click it atomically. Ordinary controls use the page MAIN-world path; custom title-backed actions may hand the verified CURRENT selector to the managed Puppeteer browser for a real input click. Use through Patrol recording tools, not directly from the model.',
+    description: 'Internal Patrol primitive: resolve one CURRENT semantic target across frames and click it atomically in page MAIN world. This avoids snapshot-to-click selector/frame races. Use through Patrol recording tools, not directly from the model.',
     parameters: {
       locatorText: optStr,
       locatorRole: optStr,
@@ -56,27 +55,6 @@ export function registerSemanticClickTool(ctx, bridge, config = {}) {
       if (!result || typeof result !== 'object') throw new Error('semanticClick returned an invalid browser response')
       if (result.ok === false) throw new Error(String(result.error || 'semanticClick failed'))
       if (typeof result.selector !== 'string' || !result.selector) throw new Error('semanticClick returned no reusable selector')
-
-      let transport = typeof result.transport === 'string' ? result.transport : undefined
-      if (result.trustedClickRequired === true) {
-        if (typeof trustedClick !== 'function') {
-          throw new Error('semanticClick resolved a custom action that requires trusted browser input, but the managed Puppeteer click transport is unavailable')
-        }
-        if (typeof result.trustedSelector !== 'string' || !result.trustedSelector.trim()) {
-          throw new Error('semanticClick requested trusted browser input without a CURRENT target selector')
-        }
-        const physical = await trustedClick({
-          selector: result.trustedSelector,
-          ...(typeof result.pageUrl === 'string' ? { pageUrl: result.pageUrl } : {}),
-          ...(typeof result.frameUrl === 'string' ? { frameUrl: result.frameUrl } : {}),
-          ...(Number.isInteger(result.frameId) ? { frameId: result.frameId } : {}),
-        })
-        if (!physical || physical.ok === false) {
-          throw new Error(String(physical?.error || 'managed Puppeteer trusted click failed'))
-        }
-        transport = typeof physical.transport === 'string' ? physical.transport : 'puppeteer-trusted-click'
-      }
-
       return {
         ok: true,
         selector: result.selector,
@@ -85,7 +63,7 @@ export function registerSemanticClickTool(ctx, bridge, config = {}) {
         ...(typeof result.tag === 'string' ? { tag: result.tag } : {}),
         ...(Number.isInteger(result.frameId) ? { frameId: result.frameId } : {}),
         ...(typeof result.frameUrl === 'string' ? { frameUrl: result.frameUrl } : {}),
-        ...(transport === undefined ? {} : { transport }),
+        ...(typeof result.transport === 'string' ? { transport: result.transport } : {}),
       }
     },
   })
