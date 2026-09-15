@@ -37,10 +37,15 @@ describe('Patrol test-mode guard policy', () => {
     expect(() => isPatrolTestMode({ DSH_PATROL_CAPTCHA_MODE: 'nromal' })).toThrow(/Unsupported DSH_PATROL_CAPTCHA_MODE/)
   })
 
-  it('uses visual-first image-code teaching and keeps test-mode click fallbacks operational', () => {
-    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/image-code.*视觉优先/s)
-    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/browser_capture_image_code_visual/)
-    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/不再先运行 ddddocr\/Windows OCR 预检/)
+  it('uses local Windows OCR path before model-visual fallback and keeps test-mode click fallbacks operational', () => {
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/image-code.*本地 OCR 优先于视觉模型/s)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/先调用 browser_detect_auth_challenge/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/ddddocr\/Windows OCR 自动识别与填写/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/禁止一上来直接调用 browser_capture_image_code_visual/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/testModeFallback=true \/ strategy=model-visual-test/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/才调用 browser_capture_image_code_visual/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT.indexOf('browser_detect_auth_challenge')).toBeLessThan(PATROL_TEST_MODE_OVERRIDE_PROMPT.indexOf('browser_capture_image_code_visual'))
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).not.toMatch(/image-code.*视觉优先/s)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/默认不要传历史 tabId/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/置信度 >= 0\.90/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/patrol_type_current_image_code/)
