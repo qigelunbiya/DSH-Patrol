@@ -4,6 +4,7 @@ import { CallId } from '@deepseek-ai/dsh-llm'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { PatrolBootstrapObservationKind, PatrolObservationGate } from './observation-guard.js'
 import { PatrolRunner } from './runner.js'
+import { PatrolStore } from './store.js'
 
 const IMAGE_SCHEMA = {
   type: 'object',
@@ -67,6 +68,7 @@ interface ImageAttachmentAttempt {
 
 export function registerPatrolObservationTools(
   ctx: Context,
+  store: PatrolStore,
   runner: PatrolRunner,
   gate: PatrolObservationGate,
 ): () => void {
@@ -167,8 +169,12 @@ export function registerPatrolObservationTools(
         throw new Error(`current-page screenshot failed: ${shot.error ?? shot.text}`)
       }
 
-      const path = objectString(shot.value, 'path')
-      if (path === undefined) throw new Error('current-page screenshot did not return a workspace path')
+      const capturedPath = objectString(shot.value, 'path')
+      if (capturedPath === undefined) throw new Error('current-page screenshot did not return a workspace path')
+      const workspaceRoot = exec.agent?.session.header.cwd
+      const path = workspaceRoot
+        ? await store.organizeTeachingScreenshot(args.inspectionId, capturedPath, workspaceRoot)
+        : capturedPath
 
       let url = ''
       let title = ''
