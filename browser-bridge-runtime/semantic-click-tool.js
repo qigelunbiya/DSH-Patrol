@@ -9,13 +9,14 @@ export function registerSemanticClickTool(ctx, bridge, config = {}) {
   const timeoutMs = config.commandTimeoutMs ?? 60000
   const tool = defineTool({
     name: 'browser_semantic_click',
-    description: 'Internal Patrol primitive: resolve one CURRENT semantic target across frames and click it atomically in page MAIN world. This avoids snapshot-to-click selector/frame races. Use through Patrol recording tools, not directly from the model.',
+    description: 'Internal Patrol primitive: resolve one CURRENT semantic target across frames and click it atomically in page MAIN world. This avoids snapshot-to-click selector/frame races. targetContext may carry a persisted secret-safe business identity used to disambiguate repeated row actions. Use through Patrol recording tools, not directly from the model.',
     parameters: {
       locatorText: optStr,
       locatorRole: optStr,
       locatorTag: optStr,
       selectorHint: optStr,
       task: optStr,
+      targetContext: optStr,
       tabId: optInt,
     },
     output: {
@@ -50,6 +51,7 @@ export function registerSemanticClickTool(ctx, bridge, config = {}) {
         locatorTag: args.locatorTag,
         selectorHint: args.selectorHint,
         task: args.task,
+        targetContext: args.targetContext,
         tabId: args.tabId,
       }, { timeoutMs, signal: exec?.signal })
       if (!result || typeof result !== 'object') throw new Error('semanticClick returned an invalid browser response')
