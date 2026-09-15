@@ -5,6 +5,11 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
   const PATROL_TOOL = /^patrol_/u;
   const PATROL_PRESET_ID = 'patrol';
   const DASHBOARD_UI = '/patrol-browser-bridge/dashboard/ui';
+  const FLOW_CATALOG_API = '/patrol-browser-bridge/dashboard/catalog';
+  const BROWSER_VISIBILITY_API = '/patrol-browser-bridge/browser-visibility';
+  const FLOW_REFERENCE_SOURCE = 'patrol-flow-reference';
+  const FLOW_REFERENCE_SECTION = '巡检流程';
+  const HERO_CONTROLS_SELECTOR = '[data-dsh-patrol-hero-controls]';
   const TOTP_TAB_ID = 'dsh-patrol:totp';
   const TOTP_ENTRY_SELECTOR = '[data-dsh-patrol-token-entry]';
   const TOTP_OPEN_EVENT = 'dsh-patrol:open-token-manager';
@@ -19,6 +24,283 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
 
   function errorMessage(error) {
     return error instanceof Error ? error.message : String(error || '操作失败');
+  }
+
+  function sessionSummary(ctx, sessionId) {
+    const state = ctx.sessions.list.getSnapshot();
+    return state.byId && state.byId[sessionId];
+  }
+
+  function workspaceForSession(ctx, sessionId) {
+    const summary = sessionSummary(ctx, sessionId);
+    return typeof summary?.cwd === 'string' ? summary.cwd : '';
+  }
+
+  async function loadPatrolFlows(workspaceRoot, signal) {
+    if (!workspaceRoot) return [];
+    const params = new URLSearchParams({ workspace: workspaceRoot });
+    const response = await fetch(`${FLOW_CATALOG_API}?${params.toString()}`, {
+      method: 'GET', credentials: 'same-origin', cache: 'no-store', signal,
+      headers: { accept: 'application/json' },
+    });
+    const payload = await response.json();
+    if (!response.ok || payload?.ok !== true) throw new Error(payload?.error || '无法读取巡检流程');
+    return (Array.isArray(payload.inspections) ? payload.inspections : [])
+      .map(item => item && typeof item === 'object' ? (item.definition || item) : null)
+      .filter(item => item && typeof item.id === 'string' && typeof item.name === 'string');
+  }
+
+  function flowReplayPrompt(inspectionId, flowName) {
+    const id = String(inspectionId || '').trim();
+    const name = String(flowName || id).trim();
+    const label = name && name !== id ? `（${name}）` : '';
+    return `运行巡检流程 ${id}${label}。请直接使用 patrol_run_flow 重放已有流程，不要修改、重教或新增流程步骤。执行过程中用简体中文实时说明关键巡检进展、当前页面状态和最终结果。`;
+  }
+
+  async function sendFlowReplay(ctx, sessionId, inspectionId, flowName) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(String(inspectionId || ''))) throw new Error('巡检流程 ID 无效');
+    const scoped = typeof ctx.sessions.scope === 'function' ? ctx.sessions.scope(sessionId) : undefined;
+    const conversation = scoped?.get?.('conversation') ?? scoped?.conversation;
+    if (!conversation || typeof conversation.send !== 'function') throw new Error('当前会话尚未提供对话发送服务');
+    await conversation.send(flowReplayPrompt(inspectionId, flowName));
+  }
+
+  async function readBrowserVisibility() {
+    const response = await fetch(BROWSER_VISIBILITY_API, { method: 'GET', credentials: 'same-origin', cache: 'no-store', headers: { accept: 'application/json' } });
+    const payload = await response.json();
+    if (!response.ok || payload?.ok !== true || typeof payload.visible !== 'boolean') throw new Error(payload?.error || '无法读取浏览器显示设置');
+    return payload;
+  }
+
+  async function writeBrowserVisibility(visible) {
+    const response = await fetch(BROWSER_VISIBILITY_API, {
+      method: 'POST', credentials: 'same-origin', cache: 'no-store',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ visible: Boolean(visible) }),
+    });
+    const payload = await response.json();
+    if (!response.ok || payload?.ok !== true || typeof payload.visible !== 'boolean') throw new Error(payload?.error || '无法更新浏览器显示设置');
+    return payload;
+  }
+
+  function flowReferenceValue(flow) {
+    return { v: 1, id: flow.id, name: flow.name };
+  }
+
+  function parseFlowReferenceValue(raw) {
+    if (typeof raw !== 'string') return undefined;
+    try {
+      const value = JSON.parse(raw);
+      if (value?.v !== 1) return undefined;
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(String(value.id || ''))) return undefined;
+      return { v: 1, id: String(value.id), name: String(value.name || value.id) };
+    } catch { return undefined; }
+  }
+
+  function flowMentionToken(value) {
+    return `@flow:${value.id}`;
+  }
+
+  function registerPatrolFlowReferenceSource(ctx) {
+    const source = {
+      trigger: '@',
+      name: FLOW_REFERENCE_SOURCE,
+      order: 20,
+      showGroupTitle: true,
+      async candidates(session, request) {
+        const workspaceRoot = workspaceForSession(ctx, String(session.sessionId));
+        if (!workspaceRoot || request.signal.aborted) return [];
+        try {
+          const flows = await loadPatrolFlows(workspaceRoot, request.signal);
+          const query = String(request.query || '').trim().toLocaleLowerCase();
+          return flows
+            .filter(flow => !query || flow.name.toLocaleLowerCase().includes(query) || flow.id.toLocaleLowerCase().includes(query))
+            .slice(0, 50)
+            .map(flow => ({
+              name: flow.name,
+              description: `${flow.id} · ${String(flow.status || 'draft').toUpperCase()} · ${Array.isArray(flow.steps) ? flow.steps.length : 0} 步`,
+              section: FLOW_REFERENCE_SECTION,
+              value: JSON.stringify(flowReferenceValue(flow)),
+            }));
+        } catch (error) {
+          if (!request.signal.aborted) console.warn('[dsh-patrol] Patrol @ flow search failed:', errorMessage(error));
+          return [];
+        }
+      },
+      onPick({ candidate }) {
+        const value = parseFlowReferenceValue(candidate?.value);
+        if (!value) return undefined;
+        return {
+          insert: {
+            source: FLOW_REFERENCE_SOURCE,
+            ref: JSON.stringify(value),
+            label: `流程 · ${value.name}`,
+            appearance: 'file',
+            clipboardText: flowMentionToken(value),
+          },
+        };
+      },
+      codec: {
+        clipboardText(ref) {
+          const value = parseFlowReferenceValue(ref);
+          return value ? flowMentionToken(value) : '@flow:';
+        },
+        async serialize(ref) {
+          const value = parseFlowReferenceValue(ref);
+          if (!value) throw new Error('invalid Patrol flow reference');
+          return flowMentionToken(value);
+        },
+      },
+    };
+    const inputTriggers = typeof ctx.get === 'function' ? ctx.get('inputTriggers') : ctx.inputTriggers;
+    if (!inputTriggers || typeof inputTriggers.registerSource !== 'function') throw new Error('inputTriggers service is unavailable; Patrol @ flow references cannot be registered');
+    return inputTriggers.registerSource(source);
+  }
+
+  function BrowserVisibilityButton() {
+    const [visible, setVisible] = React.useState(null);
+    const [busy, setBusy] = React.useState(false);
+    const [note, setNote] = React.useState('');
+    React.useEffect(() => {
+      let cancelled = false;
+      readBrowserVisibility().then(value => { if (!cancelled) setVisible(value.visible); }).catch(error => { if (!cancelled) setNote(errorMessage(error)); });
+      return () => { cancelled = true; };
+    }, []);
+    const toggle = async () => {
+      if (busy) return;
+      setBusy(true); setNote('');
+      try {
+        const result = await writeBrowserVisibility(visible === false);
+        setVisible(result.visible);
+        if (result.note) setNote(result.note);
+      } catch (error) { setNote(errorMessage(error)); }
+      finally { setBusy(false); }
+    };
+    return React.createElement('span', { style: { position: 'relative', display: 'inline-flex' }, title: note || (visible === false ? '后台巡检：浏览器窗口隐藏' : '可视巡检：显示浏览器窗口') },
+      React.createElement('button', { type: 'button', onClick: toggle, disabled: busy, style: { ...BUTTON, height: '28px', padding: '0 9px', whiteSpace: 'nowrap' }, 'data-dsh-patrol-browser-visibility': visible === false ? 'hidden' : 'visible' },
+        busy ? '切换中…' : (visible === false ? '浏览器：后台' : '浏览器：显示')),
+    );
+  }
+
+  function FlowRunButton({ workspaceRoot, runFlow }) {
+    const [open, setOpen] = React.useState(false);
+    const [flows, setFlows] = React.useState([]);
+    const [status, setStatus] = React.useState('');
+    const [busy, setBusy] = React.useState(false);
+    React.useEffect(() => {
+      if (!open) return undefined;
+      const controller = new AbortController();
+      setStatus('正在读取流程…');
+      loadPatrolFlows(workspaceRoot, controller.signal)
+        .then(items => { setFlows(items); setStatus(items.length ? '' : '当前工作区还没有可运行流程。'); })
+        .catch(error => { if (!controller.signal.aborted) setStatus(errorMessage(error)); });
+      return () => controller.abort();
+    }, [open, workspaceRoot]);
+    const execute = async flow => {
+      setBusy(true); setStatus('');
+      try { await runFlow(flow.id, flow.name); setOpen(false); }
+      catch (error) { setStatus(errorMessage(error)); }
+      finally { setBusy(false); }
+    };
+    return React.createElement('span', { style: { position: 'relative', display: 'inline-flex' } },
+      React.createElement('button', { type: 'button', style: { ...BUTTON, height: '28px', padding: '0 9px' }, onClick: () => setOpen(value => !value) }, '▶ 运行流程'),
+      open ? React.createElement('div', { style: { position: 'absolute', zIndex: 10020, top: '34px', right: 0, width: '320px', maxHeight: '360px', overflow: 'auto', ...CARD, boxShadow: '0 16px 48px rgba(0,0,0,.18)' } },
+        React.createElement('div', { style: { fontWeight: 700, fontSize: '13px', marginBottom: '8px' } }, '运行已有巡检流程'),
+        status ? React.createElement('div', { style: { color: MUTED, fontSize: '12px', padding: '8px 0' } }, status) : null,
+        flows.map(flow => React.createElement('button', { key: flow.id, type: 'button', disabled: busy, onClick: () => execute(flow), style: { display: 'block', width: '100%', textAlign: 'left', border: 0, borderTop: `1px solid ${BORDER}`, background: 'transparent', color: TEXT, cursor: 'pointer', padding: '9px 3px' } },
+          React.createElement('div', { style: { fontSize: '12px', fontWeight: 650 } }, flow.name),
+          React.createElement('div', { style: { fontSize: '10px', color: MUTED, marginTop: '3px' } }, `${flow.id} · ${String(flow.status || 'draft').toUpperCase()} · ${Array.isArray(flow.steps) ? flow.steps.length : 0} 步`),
+        )),
+      ) : null,
+    );
+  }
+
+  function PatrolHeaderControls({ workspaceRoot, runFlow }) {
+    return React.createElement('div', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' }, 'data-dsh-patrol-runtime-controls': 'header' },
+      React.createElement(FlowRunButton, { workspaceRoot, runFlow }),
+      React.createElement(BrowserVisibilityButton),
+    );
+  }
+
+  function registerPatrolHeaderControls(ctx) {
+    return ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
+      name: 'conversation.session.header.actions', id: 'dsh-patrol-runtime-controls', order: 15,
+      inject: sessionId => ({
+        workspaceRoot: workspaceForSession(ctx, sessionId),
+        runFlow: (inspectionId, flowName) => sendFlowReplay(ctx, sessionId, inspectionId, flowName),
+      }),
+    }, PatrolHeaderControls));
+  }
+
+  function createHeroFlowChooser(ctx, sessionId, workspaceRoot) {
+    const backdrop = document.createElement('div');
+    backdrop.setAttribute('data-dsh-patrol-flow-chooser', '');
+    Object.assign(backdrop.style, { position: 'fixed', inset: '0', zIndex: '10060', display: 'grid', placeItems: 'center', background: 'rgba(15,23,42,.36)', padding: '20px' });
+    const panel = document.createElement('div');
+    Object.assign(panel.style, { width: 'min(520px, calc(100vw - 40px))', maxHeight: 'min(620px, calc(100vh - 40px))', overflow: 'auto', background: 'var(--dsh-color-bg,#fff)', color: 'var(--dsh-color-text,#172033)', border: '1px solid rgba(127,127,127,.24)', borderRadius: '14px', padding: '16px', boxShadow: '0 24px 80px rgba(0,0,0,.25)' });
+    panel.innerHTML = '<div style="font-size:15px;font-weight:700;margin-bottom:4px">运行已有巡检流程</div><div data-status style="font-size:12px;color:#667085;margin-bottom:10px">正在读取流程…</div><div data-list></div>';
+    backdrop.appendChild(panel); document.body.appendChild(backdrop);
+    backdrop.addEventListener('mousedown', event => { if (event.target === backdrop) backdrop.remove(); });
+    const status = panel.querySelector('[data-status]');
+    const list = panel.querySelector('[data-list]');
+    loadPatrolFlows(workspaceRoot).then(flows => {
+      if (!backdrop.isConnected) return;
+      status.textContent = flows.length ? '选择一个流程即可直接开始运行，无需先发送消息。' : '当前工作区还没有可运行流程。';
+      for (const flow of flows) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.style.cssText = 'display:block;width:100%;text-align:left;border:0;border-top:1px solid rgba(127,127,127,.18);background:transparent;color:inherit;cursor:pointer;padding:10px 3px';
+        const title = document.createElement('div'); title.textContent = flow.name; title.style.cssText = 'font-size:13px;font-weight:650';
+        const meta = document.createElement('div'); meta.textContent = `${flow.id} · ${String(flow.status || 'draft').toUpperCase()} · ${Array.isArray(flow.steps) ? flow.steps.length : 0} 步`; meta.style.cssText = 'font-size:10px;color:#667085;margin-top:3px';
+        button.append(title, meta);
+        button.addEventListener('click', async () => {
+          button.disabled = true; status.textContent = '正在启动流程…';
+          try { await sendFlowReplay(ctx, sessionId, flow.id, flow.name); backdrop.remove(); }
+          catch (error) { button.disabled = false; status.textContent = errorMessage(error); }
+        });
+        list.appendChild(button);
+      }
+    }).catch(error => { if (backdrop.isConnected) status.textContent = errorMessage(error); });
+  }
+
+  function mountPatrolHeroControls(ctx) {
+    if (typeof document === 'undefined' || typeof MutationObserver !== 'function' || !document.body) return () => {};
+    let scheduled = false;
+    let visibility = null;
+    const syncVisibility = async button => {
+      try { const value = await readBrowserVisibility(); visibility = value.visible; if (button.isConnected) button.textContent = visibility ? '浏览器：显示' : '浏览器：后台'; }
+      catch { if (button.isConnected) button.textContent = '浏览器设置'; }
+    };
+    const place = () => {
+      scheduled = false;
+      const state = ctx.sessions.list.getSnapshot();
+      const sessionId = state.current;
+      const existing = document.querySelector(HERO_CONTROLS_SELECTOR);
+      if (sessionId === undefined || !currentSessionUsesPatrol(ctx, sessionId)) { if (existing instanceof HTMLElement) existing.remove(); return; }
+      const seat = document.querySelector('[data-composer-seat]');
+      if (!(seat instanceof HTMLElement)) return;
+      const modeButton = Array.from(seat.querySelectorAll('button')).find(button => String(button.textContent || '').trim() === '巡检模式');
+      if (!(modeButton instanceof HTMLElement) || !(modeButton.parentElement instanceof HTMLElement)) { if (existing instanceof HTMLElement) existing.remove(); return; }
+      if (existing instanceof HTMLElement && existing.parentElement === modeButton.parentElement) return;
+      if (existing instanceof HTMLElement) existing.remove();
+      const wrapper = document.createElement('span');
+      wrapper.setAttribute('data-dsh-patrol-hero-controls', '');
+      wrapper.style.cssText = 'display:inline-flex;align-items:center;gap:6px;margin-left:4px';
+      const run = document.createElement('button'); run.type = 'button'; run.textContent = '▶ 运行流程'; run.style.cssText = 'height:28px;padding:0 9px;border:1px solid rgba(127,127,127,.24);border-radius:8px;background:transparent;color:inherit;cursor:pointer;font-size:12px';
+      run.addEventListener('click', () => createHeroFlowChooser(ctx, sessionId, workspaceForSession(ctx, sessionId)));
+      const browser = document.createElement('button'); browser.type = 'button'; browser.textContent = '浏览器设置'; browser.style.cssText = run.style.cssText;
+      browser.addEventListener('click', async () => {
+        browser.disabled = true;
+        try { const result = await writeBrowserVisibility(visibility === false); visibility = result.visible; browser.textContent = visibility ? '浏览器：显示' : '浏览器：后台'; }
+        catch (error) { browser.title = errorMessage(error); }
+        finally { browser.disabled = false; }
+      });
+      wrapper.append(run, browser); modeButton.parentElement.appendChild(wrapper); void syncVisibility(browser);
+    };
+    const schedule = () => { if (scheduled) return; scheduled = true; queueMicrotask(place); };
+    const observer = new MutationObserver(schedule); observer.observe(document.body, { childList: true, subtree: true });
+    const stopSessions = ctx.sessions.list.subscribe(schedule); place();
+    return () => { observer.disconnect(); stopSessions(); const existing = document.querySelector(HERO_CONTROLS_SELECTOR); if (existing instanceof HTMLElement) existing.remove(); };
   }
 
   function TokenIcon({ size = 16 }) {
@@ -401,11 +683,7 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
           console.warn('[dsh-patrol] conversation input actions are unavailable; cannot submit Patrol flow replay');
           return;
         }
-        const flowName = String(data.flowName || inspectionId).trim();
-        const label = flowName && flowName !== inspectionId ? `（${flowName}）` : '';
-        inputActions.setDraft(
-          `运行巡检流程 ${inspectionId}${label}。请直接使用 patrol_run_flow 重放已有流程，不要修改、重教或新增流程步骤。执行过程中用简体中文实时说明关键巡检进展、当前页面状态和最终结果。`,
-        );
+        inputActions.setDraft(flowReplayPrompt(inspectionId, String(data.flowName || inspectionId).trim()));
         setTimeout(() => inputActions.submit(), 0);
       };
       window.addEventListener('message', onMessage);
@@ -429,16 +707,14 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
       inject: sessionId => {
         const binding = ctx.sessions.binding(sessionId);
         if (!binding) throw new Error(`dsh-patrol client: session ${sessionId} is unavailable`);
-        const state = ctx.sessions.list.getSnapshot();
-        const summary = state.byId && state.byId[sessionId];
-        return { workspaceRoot: typeof summary?.cwd === 'string' ? summary.cwd : '' };
+        return { workspaceRoot: workspaceForSession(ctx, sessionId) };
       },
     }, Component));
   }
 
-  function currentSessionUsesPatrol(ctx) {
+  function currentSessionUsesPatrol(ctx, requestedSessionId) {
     const state = ctx.sessions.list.getSnapshot();
-    const sessionId = state.current;
+    const sessionId = requestedSessionId === undefined ? state.current : requestedSessionId;
     if (sessionId === undefined) return false;
     const summary = state.byId && state.byId[sessionId];
     if (!summary) return false;
@@ -447,9 +723,12 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
   }
 
   exports.name = 'dsh-patrol-client-host';
-  exports.inject = ['slots', 'sessions'];
+  exports.inject = ['slots', 'sessions', 'inputTriggers'];
   exports.apply = function apply(ctx) {
     ctx.effect(() => registerTokenSurfaces(ctx), 'dsh-patrol-client-host: token management surfaces');
+    ctx.effect(() => registerPatrolFlowReferenceSource(ctx), 'dsh-patrol-client-host: Patrol flow @ references');
+    ctx.effect(() => registerPatrolHeaderControls(ctx), 'dsh-patrol-client-host: Patrol runtime header controls');
+    ctx.effect(() => mountPatrolHeroControls(ctx), 'dsh-patrol-client-host: blank-conversation Patrol controls');
     ctx.effect(() => {
       let disposeViews = null;
       const sync = () => {
