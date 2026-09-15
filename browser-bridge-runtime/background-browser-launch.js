@@ -57,6 +57,7 @@ export async function defaultPatrolLaunchBrowser({
   extensionPath,
   startTimeoutMs,
   legacyExtensionLoad = false,
+  visible = patrolBrowserVisible(),
 }) {
   let lastError
   for (let attempt = 0; attempt < LAUNCH_RETRY_DELAYS_MS.length; attempt += 1) {
@@ -75,7 +76,7 @@ export async function defaultPatrolLaunchBrowser({
         handleSIGTERM: false,
         handleSIGHUP: false,
         timeout: startTimeoutMs,
-        args: patrolBrowserLaunchArgs({ extensionPath, legacyExtensionLoad }),
+        args: patrolBrowserLaunchArgs({ extensionPath, legacyExtensionLoad, visible }),
       })
     } catch (error) {
       lastError = error
