@@ -7,7 +7,7 @@
 // handler. Guessing an <a> selector can therefore never work. This layer uses
 // the user task's business identity (for example a host IP) plus the requested
 // protocol/action, correlates the correct logical row, and clicks the actual
-// title-backed node in the page MAIN world.
+// interaction owner in the page MAIN world.
 
 const titleBackedRowActionPreviousHandleCommand = handleCommand
 
@@ -175,6 +175,43 @@ function titleBackedRowActionPageCommand(mode, spec) {
     return parts.join(' > ')
   }
 
+  // A title/text leaf is often only the label. React/Ant Design commonly binds
+  // the actual handler to a wrapper such as .account_now. Clicking the label
+  // usually bubbles, but some enterprise widgets inspect event.target or keep
+  // the actionable hit area on the wrapper. Resolve that interaction owner
+  // before clicking and return its selector so replay uses the same real target.
+  const hasFrameworkClickHandler = element => {
+    if (!(element instanceof Element)) return false
+    for (const key of Object.keys(element)) {
+      if (!/^__react(?:Props|EventHandlers)\$/.test(key)) continue
+      const props = element[key]
+      if (!props || typeof props !== 'object') continue
+      if (['onClick', 'onMouseDown', 'onPointerDown', 'onPointerUp'].some(name => typeof props[name] === 'function')) return true
+    }
+    return false
+  }
+  const interactionOwner = leaf => {
+    if (!(leaf instanceof Element)) return leaf
+    const row = leaf.closest(rowLikeSelector)
+    let node = leaf
+    let pointerOwner = null
+    for (let level = 0; node instanceof Element && level < 8; level += 1, node = node.parentElement) {
+      if (node === row || node.tagName === 'TD' || node.tagName === 'TH') break
+      const role = normalize(node.getAttribute('role') || '')
+      const tag = node.tagName.toLowerCase()
+      const nativeInteractive = tag === 'a' || tag === 'button'
+        || (tag === 'input' && ['button', 'submit', 'reset'].includes(String(node.type || '').toLowerCase()))
+        || ['button', 'link', 'menuitem'].includes(role)
+        || node.hasAttribute('onclick')
+      if (nativeInteractive || hasFrameworkClickHandler(node)) return node
+      try {
+        if (getComputedStyle(node).cursor === 'pointer') pointerOwner = node
+        else if (pointerOwner) break
+      } catch {}
+    }
+    return pointerOwner || leaf
+  }
+
   const identities = Array.isArray(spec.identityTokens) ? spec.identityTokens.map(normalize).filter(Boolean) : []
   const actions = Array.isArray(spec.actionTokens) ? spec.actionTokens.map(normalize).filter(Boolean) : []
   const allRows = [...new Set([...document.querySelectorAll(rowLikeSelector)])].filter(visible)
@@ -254,7 +291,8 @@ function titleBackedRowActionPageCommand(mode, spec) {
   if (best.length !== 1) return { ok: false, error: `title-backed row action is ambiguous (${best.length})`, candidates: serialized }
 
   const chosen = best[0]
-  const element = chosen.element
+  const labelElement = chosen.element
+  const element = interactionOwner(labelElement)
   element.scrollIntoView?.({ block: 'center', inline: 'center', behavior: 'instant' })
   const rect = element.getBoundingClientRect()
   const x = rect.left + Math.max(1, rect.width / 2)
@@ -279,5 +317,6 @@ function titleBackedRowActionPageCommand(mode, spec) {
     tag: element.tagName.toLowerCase(),
     context: chosen.context,
     correlation: chosen.correlation,
+    labelSelector: stableSelector(labelElement),
   }
 }
