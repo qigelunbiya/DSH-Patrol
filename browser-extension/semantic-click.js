@@ -72,7 +72,7 @@ async function semanticClickCommand(args) {
 
 function semanticSerializableSpec(args) {
   const out = {}
-  for (const key of ['locatorText', 'locatorRole', 'locatorTag', 'selectorHint', 'task']) {
+  for (const key of ['locatorText', 'locatorRole', 'locatorTag', 'selectorHint', 'task', 'targetContext']) {
     if (typeof args?.[key] === 'string' && args[key].trim()) out[key] = args[key].trim()
   }
   return out
@@ -108,7 +108,13 @@ function semanticScopeSelector(frame, selector) {
 }
 
 function semanticDescribeSpec(spec) {
-  return JSON.stringify({ text: spec.locatorText || '', role: spec.locatorRole || '', tag: spec.locatorTag || '', task: spec.task || '' })
+  return JSON.stringify({
+    text: spec.locatorText || '',
+    role: spec.locatorRole || '',
+    tag: spec.locatorTag || '',
+    task: spec.task || '',
+    targetContext: spec.targetContext || '',
+  })
 }
 
 // Serialized into the page MAIN world. Keep self-contained.
@@ -116,6 +122,7 @@ async function semanticClickPageCommand(mode, spec) {
   const compact = value => String(value || '').replace(/\s+/g, ' ').trim()
   const normalize = value => compact(value).replace(/\s+/g, '').toLocaleLowerCase()
   const cssEscape = value => globalThis.CSS?.escape ? CSS.escape(String(value)) : String(value).replace(/[^a-zA-Z0-9_-]/g, char => `\\${char}`)
+  const cssString = value => String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')
   const visible = element => {
     if (!(element instanceof Element) || !element.isConnected) return false
     const style = getComputedStyle(element)
@@ -133,20 +140,43 @@ async function semanticClickPageCommand(mode, spec) {
     return compact(parts.filter(Boolean).join(' '))
   }
   const roleOf = element => compact(element.getAttribute?.('role') || (element.tagName === 'A' ? 'link' : element.tagName === 'BUTTON' ? 'button' : element instanceof HTMLInputElement && ['button', 'submit', 'reset'].includes(String(element.type || '').toLowerCase()) ? 'button' : ''))
+  const unique = selector => {
+    try { return document.querySelectorAll(selector).length === 1 } catch { return false }
+  }
+  const rowLikeSelector = 'tr,[role="row"],[data-row-key],[aria-rowindex],[data-index],.ant-table-row,.el-table__row,.ivu-table-row,.arco-table-tr,.vxe-body--row'
   const stableSelector = element => {
     if (element.id) return `#${cssEscape(element.id)}`
     for (const attr of ['data-testid', 'data-test', 'data-cy', 'name', 'menuid', 'aria-label']) {
       const value = element.getAttribute?.(attr)
-      if (value) return `${element.tagName.toLowerCase()}[${attr}="${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]`
+      if (value) {
+        const candidate = `${element.tagName.toLowerCase()}[${attr}="${cssString(value)}"]`
+        if (unique(candidate)) return candidate
+      }
     }
+
+    const title = element.getAttribute?.('title')
+    if (title) {
+      const byTitle = `${element.tagName.toLowerCase()}[title="${cssString(title)}"]`
+      if (unique(byTitle)) return byTitle
+      const row = element.closest?.(rowLikeSelector)
+      if (row instanceof Element) {
+        for (const attr of ['data-row-key', 'aria-rowindex', 'data-index']) {
+          const value = row.getAttribute(attr)
+          if (!value) continue
+          const candidate = `[${attr}="${cssString(value)}"] ${byTitle}`
+          if (unique(candidate)) return candidate
+        }
+      }
+    }
+
     const classes = [...(element.classList || [])].filter(name => /^[A-Za-z_-][A-Za-z0-9_-]*$/.test(name)).slice(0, 2)
     if (classes.length) {
       const selector = `${element.tagName.toLowerCase()}.${classes.map(cssEscape).join('.')}`
-      try { if (document.querySelectorAll(selector).length === 1) return selector } catch {}
+      if (unique(selector)) return selector
     }
     const path = []
     let node = element
-    while (node instanceof Element && node !== document.documentElement && path.length < 7) {
+    while (node instanceof Element && node !== document.documentElement && path.length < 9) {
       let part = node.tagName.toLowerCase()
       const parent = node.parentElement
       if (parent) {
@@ -155,7 +185,7 @@ async function semanticClickPageCommand(mode, spec) {
       }
       path.unshift(part)
       const candidate = path.join(' > ')
-      try { if (document.querySelectorAll(candidate).length === 1) return candidate } catch {}
+      if (unique(candidate)) return candidate
       node = parent
     }
     return path.join(' > ')
@@ -168,36 +198,45 @@ async function semanticClickPageCommand(mode, spec) {
     'a', 'button', 'input[type="button"]', 'input[type="submit"]', 'input[type="reset"]',
     '[role="button"]', '[role="link"]', '[role="menuitem"]', '[role="tab"]',
     '[onclick]', '[bg-click]', '[ng-click]', '[data-action]', '[tabindex]:not([tabindex="-1"])',
+    '[title]', '[class*="act_" i]', '[class*="action" i]',
     'img', 'svg', '[id*="logo" i]', '[class*="logo" i]',
   ].join(',')
   const candidates = [...new Set([...root.querySelectorAll(selector)])].filter(element => visible(element) && !disabled(element))
   const wantedText = normalize(spec.locatorText || '')
   const wantedRole = normalize(spec.locatorRole || '')
   const wantedTag = normalize(spec.locatorTag || '')
-  const task = normalize(spec.task || '')
+  const contextSource = [spec.task, spec.targetContext].filter(value => typeof value === 'string' && value.trim()).join(' ')
+  const task = normalize(contextSource)
   const selectorHint = String(spec.selectorHint || '').replace(/^top-frame::/, '').replace(/^frame-url\([^)]*\)::/, '')
-  const ipTokens = String(spec.task || '').match(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g) || []
-  const actionTokens = String(spec.task || '').match(/\b(?:RDP|SSH|VNC|SFTP|FTP|HTTP|HTTPS)\b/gi) || []
-  const wantsLogo = /logo|徽标|标志/i.test(String(spec.task || ''))
-  const wantsMenu = /菜单|侧栏|汉堡|导航/i.test(String(spec.task || ''))
+  const ipTokens = contextSource.match(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g) || []
+  const actionTokens = contextSource.match(/\b(?:RDP|SSH|VNC|SFTP|FTP|HTTP|HTTPS)\b/gi) || []
+  const wantsLogo = /logo|徽标|标志/i.test(contextSource)
+  const wantsMenu = /菜单|侧栏|汉堡|导航/i.test(contextSource)
 
   const scored = candidates.map(element => {
     const text = actionText(element)
     const role = roleOf(element)
     const tag = element.tagName.toLowerCase()
     const normText = normalize(text)
-    if (wantedRole && normalize(role) !== wantedRole) return null
-    if (wantedTag && normalize(tag) !== wantedTag) return null
+    const titleText = normalize(element.getAttribute?.('title') || '')
+    const customTitleAction = Boolean(wantedText && titleText && (titleText.includes(wantedText) || wantedText.includes(titleText)))
+      && !role
+      && !['a', 'button'].includes(tag)
+
+    if (wantedRole && role && normalize(role) !== wantedRole) return null
+    if (wantedRole && !role && !customTitleAction) return null
+    if (wantedTag && normalize(tag) !== wantedTag && !customTitleAction) return null
+
     let score = 0
     if (wantedText) {
-      // An empty accessible name is never a valid fuzzy match. Without this
-      // guard, `wantedText.includes('')` evaluates true and visible shell
-      // links/icons can steal clicks from the requested business target.
       if (!normText) return null
       if (normText === wantedText) score += 140
+      else if (titleText && titleText === wantedText) score += 135
       else if (normText.includes(wantedText) || wantedText.includes(normText)) score += 80
+      else if (titleText && (titleText.includes(wantedText) || wantedText.includes(titleText))) score += 95
       else return null
     }
+    if (customTitleAction) score += 45
     if (selectorHint) {
       try { if (element.matches(selectorHint)) score += 35 } catch {}
     }
@@ -221,8 +260,10 @@ async function semanticClickPageCommand(mode, spec) {
       ].join(' ')
       if (/menu|sidebar|hamburger|nav|侧栏|菜单|导航/i.test(menuEvidence)) score += 120
     }
-    const context = compact(element.closest?.('tr,li,form,nav,[role="dialog"],.ant-modal-content,.el-dialog')?.innerText || '')
-    for (const token of ipTokens) if (context.includes(token)) score += 90
+    // Keep the historical prefix so existing compatibility tests still assert
+    // the same ordinary-row contract, then extend it with structured row ids.
+    const context = compact(element.closest?.('tr,li,form,nav,[role="row"],[data-row-key],[aria-rowindex],[data-index],[role="dialog"],.ant-modal-content,.el-dialog')?.innerText || '')
+    for (const token of ipTokens) if (context.includes(token)) score += 180
     for (const token of actionTokens) if (normalize(text).includes(normalize(token)) || normalize(context).includes(normalize(token))) score += 35
     if (!wantedText && !wantsLogo && task && normalize(`${text} ${context}`).includes(task)) score += 20
     return { element, text, role, tag, score, context }
