@@ -4,9 +4,11 @@
 // duplicate action labels such as RDP/SSH/详情 against the nearest ancestor that
 // contains the task's business identity. title-backed-row-action-hardening adds
 // a focused MAIN-world path for enterprise action cells rendered as clickable
-// spans/divs with title attributes instead of anchors/buttons. Frame handling
-// and MAIN-world recovery are layered afterwards. snapshot-resilient guarantees
-// that semantic target discovery survives content-script/frame churn;
+// spans/divs with title attributes instead of anchors/buttons. The generic title
+// row layer broadens that proven click path to arbitrary title-backed row actions
+// and business identifiers without replacing the compatibility resolver. Frame
+// handling and MAIN-world recovery are layered afterwards. snapshot-resilient
+// guarantees that semantic target discovery survives content-script/frame churn;
 // snapshot-title-action-enrichment adds read-only CURRENT evidence for custom
 // title-backed span/div actions so callers do not invent anchor selectors for
 // DOM nodes that are not anchors. interaction-hardening prefers MAIN-world
@@ -20,6 +22,7 @@ importScripts('background.js')
 importScripts('semantic-click.js')
 importScripts('semantic-row-context-hardening.js')
 importScripts('title-backed-row-action-hardening.js')
+importScripts('generic-title-row-action-hardening.js')
 importScripts('frame-registration.js')
 importScripts('frame-support.js')
 importScripts('frame-resilient.js')
