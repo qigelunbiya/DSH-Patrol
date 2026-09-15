@@ -28,6 +28,7 @@ import { registerSemanticClickTool } from './semantic-click-tool.js'
 import { registerTotpTool } from './totp-tool.js'
 import { registerTransientTool } from './transient-tool.js'
 import { registerTools } from './tools.js'
+import { registerWindowsImageCodeOcrTool } from './windows-image-code-ocr-tool.js'
 
 export const name = 'dsh-patrol-browser-tools'
 export const inject = ['tools', 'patrolBrowserBridge']
@@ -62,6 +63,9 @@ export async function apply(ctx, config = {}) {
   ctx.effect(() => registerChallengeTool(ctx, bridge, {
     commandTimeoutMs,
   }), 'dsh-patrol/browser-tools: scoped auth challenge detector')
+  ctx.effect(() => registerWindowsImageCodeOcrTool(ctx, bridge, {
+    commandTimeoutMs,
+  }), 'dsh-patrol/browser-tools: Windows OCR current image-code reader')
   ctx.effect(() => registerImageCodeVisualTool(ctx, bridge, {
     commandTimeoutMs,
   }), 'dsh-patrol/browser-tools: current image-code visual crop')
