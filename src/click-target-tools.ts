@@ -100,6 +100,9 @@ export function registerPatrolClickTargetTool(
       }
 
       const definition = await loadEditable(store, args.inspectionId, options.maxSteps)
+      const targetContext = locator === undefined
+        ? undefined
+        : deriveSemanticTargetContext(definition, args.stepName, locator.text)
       const expectation = optionalExpectation(args.expectedText, args.expectationMode, args.caseSensitive)
       const beforeState = expectation.expectation === undefined && locator !== undefined
         ? await capturePageState(runner, exec, args.tabId)
@@ -117,6 +120,7 @@ export function registerPatrolClickTargetTool(
           locatorTag: locator.tag,
           selectorHint: selector,
           task: args.stepName,
+          targetContext,
           tabId: args.tabId,
         }), exec)
         if (!atomic.ok) {
@@ -373,6 +377,70 @@ function normalizeLocator(text: unknown, role: unknown, tag: unknown): SemanticL
   if (cleanRole !== undefined) locator.role = cleanRole.toLowerCase()
   if (cleanTag !== undefined) locator.tag = cleanTag.toLowerCase()
   return Object.keys(locator).length === 0 ? undefined : locator
+}
+
+/**
+ * Recover row identity from the persisted, secret-safe business checklist.
+ *
+ * Models sometimes preserve only the action label in stepName (for example
+ * "点击RDP") even though the user's checklist contains the host/device identity.
+ * Custom table actions often repeat the same visible label on every row, so the
+ * browser extension needs that identity to select the correct logical row.
+ *
+ * We only provide context when it is deterministic: a unique checklist item for
+ * the action, or a unique item narrowed by a stable identity token already in
+ * stepName. Ambiguous multiple-action flows remain fail-closed.
+ */
+export function deriveSemanticTargetContext(
+  definition: Pick<InspectionDefinition, 'metadata'>,
+  stepName: string,
+  locatorText?: string,
+): string | undefined {
+  const checklist = definition.metadata.taskChecklist ?? []
+  if (checklist.length === 0) return undefined
+
+  const locatorTerms = semanticContextTerms(locatorText)
+  const actionTerms = locatorTerms.length > 0 ? locatorTerms : semanticContextTerms(stepName)
+  if (actionTerms.length === 0) return undefined
+
+  const actionMatches = checklist.filter(item => {
+    const normalized = normalizeSemanticContext(item)
+    return actionTerms.some(term => normalized.includes(term))
+  })
+  if (actionMatches.length === 1) return actionMatches[0]
+  if (actionMatches.length === 0) return undefined
+
+  const identities = semanticIdentityTokens(stepName)
+  if (identities.length === 0) return undefined
+  const narrowed = actionMatches.filter(item => {
+    const normalized = normalizeSemanticContext(item)
+    return identities.some(identity => normalized.includes(identity))
+  })
+  return narrowed.length === 1 ? narrowed[0] : undefined
+}
+
+const SEMANTIC_CONTEXT_STOP_WORDS = new Set([
+  'empty', 'button', 'link', 'span', 'div', 'click', 'open', 'select', 'target', 'current',
+  '点击', '打开', '选择', '按钮', '目标', '当前', '对应', '这一行', '该行', '操作', '访问方式',
+].map(normalizeSemanticContext))
+
+function semanticContextTerms(value: unknown): string[] {
+  const text = typeof value === 'string' ? value.normalize('NFKC') : ''
+  if (!text.trim()) return []
+  const raw = text.match(/\b\d{1,3}(?:\.\d{1,3}){3}\b|[A-Za-z][A-Za-z0-9._:/-]{1,}|[\u3400-\u9fff]{2,}/g) ?? []
+  return [...new Set(raw
+    .map(normalizeSemanticContext)
+    .filter(term => term.length >= 2 && !SEMANTIC_CONTEXT_STOP_WORDS.has(term)))]
+}
+
+function semanticIdentityTokens(value: unknown): string[] {
+  return semanticContextTerms(value)
+    .filter(token => /\d|[._:/-]/.test(token) || /[\u3400-\u9fff]{3,}/.test(token))
+    .filter(token => !/^(rdp|ssh|vnc|sftp|ftp|https?)$/i.test(token))
+}
+
+function normalizeSemanticContext(value: unknown): string {
+  return String(value ?? '').normalize('NFKC').replace(/\s+/g, '').toLocaleLowerCase()
 }
 
 function cleanString(value: unknown): string | undefined {
