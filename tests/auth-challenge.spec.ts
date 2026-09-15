@@ -84,10 +84,12 @@ describe('auth challenge classification', () => {
     expect(result.subtype).toBe('image-code')
   })
 
-  it('makes an image-code solver failure terminal instead of allowing human handoff', () => {
+  it('makes an unresolved image-code solver failure terminal at that step', () => {
     const classified = { kind: 'captcha', subtype: 'image-code' }
     expect(() => assertImageCodeAutoSolved(classified, false, 'win32'))
-      .toThrow(/Manual handoff is disabled for image-code/)
+      .toThrow(/image-code automation failed at the image-code step/)
+    expect(() => assertImageCodeAutoSolved(classified, false, 'win32'))
+      .toThrow(/must stop here instead of continuing to login\/TOTP/)
     expect(assertImageCodeAutoSolved(classified, true, 'win32')).toBe(true)
   })
 

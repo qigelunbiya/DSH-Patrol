@@ -1,6 +1,7 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { currentCaptchaMode } from './captcha-mode.js'
 import { tryFillImageCode } from './image-code.js'
+import { readCurrentImageCodeWithWindowsOcr } from './windows-image-code-reader.js'
 import { probeOwnedSiteChallenge, trySolveOwnedSiteChallenge } from './captcha-demo.js'
 
 const reqStr = { type: 'string', required: true }
@@ -197,7 +198,7 @@ export function assertImageCodeAutoSolved(classified, automationRan, platform = 
     throw new Error('DSH Patrol image-code automation failed: conventional image-text CAPTCHA requires automatic local recognition, manual handoff is disabled, and this runtime is not Windows.')
   }
   const suffix = String(detail || '').trim() ? ` Detail: ${compact(detail, 180)}` : ''
-  throw new Error(`DSH Patrol image-code automation failed: local ddddocr/Windows OCR could not confidently recognize and fill the CAPTCHA. Manual handoff is disabled for image-code; the patrol must fail instead of asking the user to type this CAPTCHA.${suffix}`)
+  throw new Error(`DSH Patrol image-code automation failed at the image-code step: Windows OCR/local OCR did not confidently recognize and fill the CURRENT CAPTCHA. The runbook must stop here instead of continuing to login/TOTP.${suffix}`)
 }
 
 export function registerChallengeTool(ctx, bridge, config = {}) {
@@ -206,9 +207,12 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
   const definition = defineTool({
     name: 'browser_detect_auth_challenge',
     description: testMode
-      ? 'Detect login verification and try supported automation. In TEST MODE, conventional image-code uses local ddddocr/Windows OCR first; only a confidence-qualified OCR failure is non-terminal and falls back to the CURRENT screenshot/model-vision debug path.'
+      ? 'Detect login verification and try supported automation. For conventional image-code in TEST MODE, Windows System OCR is attempted first, then the legacy local solver. A replay step fails at this CAPTCHA step when both local paths fail; optional model-visual fallback is only enabled by an explicit allowTestFallback debug call.'
       : 'Detect login verification and automate supported local flows. Conventional image-text CAPTCHA is mandatory automatic local recognition/fill; if that solver fails the detector fails and never falls back to a human checkpoint. OTP, device approval, rotate/unsupported challenges, and third-party reCAPTCHA/hCaptcha/Turnstile/Arkose-style widgets remain human handoffs.',
-    parameters: { tabId: optInt },
+    parameters: {
+      tabId: optInt,
+      allowTestFallback: bool,
+    },
     output: {
       schema: {
         type: 'object',
@@ -229,7 +233,7 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
       },
       render: (_args, value) => [{
         type: 'text',
-        text: `Auth challenge: kind=${value.kind}; subtype=${value.subtype}; observed=${value.observedKind}/${value.observedSubtype}; strategy=${value.strategy}; hasChallenge=${value.hasChallenge}; handoffRequired=${value.handoffRequired}${value.testModeFallback ? '; TEST MODE fallback is active: local OCR did not auto-fill, continue with CURRENT screenshot/model vision/read_image/manual debug typing instead of stopping' : ''}${value.autoFilled && !value.handoffRequired ? '; verification input auto-filled by the local Patrol solver; continue with the observed submit/login step' : ''}${value.selectors?.length ? `; selectors=${value.selectors.join(', ')}` : ''}`,
+        text: `Auth challenge: kind=${value.kind}; subtype=${value.subtype}; observed=${value.observedKind}/${value.observedSubtype}; strategy=${value.strategy}; hasChallenge=${value.hasChallenge}; handoffRequired=${value.handoffRequired}${value.testModeFallback ? '; explicit TEST MODE fallback is active: local OCR did not auto-fill; recover from CURRENT evidence without re-running the same recognition path' : ''}${value.autoFilled && !value.handoffRequired ? '; verification input auto-filled by the local Patrol solver; continue with the observed submit/login step' : ''}${value.selectors?.length ? `; selectors=${value.selectors.join(', ')}` : ''}`,
       }],
     },
     presentCall: args => ({ card: 'generic', title: 'Detect login verification', kind: 'other', rawInput: args }),
@@ -245,37 +249,72 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
 
       if (imageCodeObserved) {
         let imageAutomationError = ''
-        // TEST MODE used to bypass the installed OCR stack entirely and force
-        // the model to guess from screenshots. Run the same local solver first
-        // in both modes; TEST MODE differs only in allowing a visual fallback
-        // when the confidence gate cannot produce a safe automatic fill.
+        const allowTestDebugFallback = testMode && args.allowTestFallback === true
+
         if (process.platform === 'win32') {
-          try {
-            imageAutomationRan = await tryFillImageCode(bridge, args.tabId, options)
-          } catch (error) {
-            imageAutomationRan = false
-            imageAutomationError = error instanceof Error ? error.message : String(error)
+          // TEST-mode replay must match the user-facing priority contract rather
+          // than silently taking the legacy ddddocr-first path. The dedicated
+          // shared Windows reader is the first actual recognizer here, not just a
+          // prompt preference. If it cannot produce a safe candidate, preserve
+          // the mature legacy local solver as a second automatic chance.
+          if (testMode) {
+            try {
+              const windows = await readCurrentImageCodeWithWindowsOcr(bridge, { tabId: args.tabId }, {
+                commandTimeoutMs: timeoutMs,
+                signal: exec?.signal,
+              })
+              if (windows?.ok === true
+                && Number(windows.confidence) >= 0.90
+                && typeof windows.text === 'string'
+                && windows.text
+                && typeof windows.inputSelector === 'string'
+                && windows.inputSelector) {
+                const typeArgs = {
+                  selector: windows.inputSelector,
+                  text: windows.text,
+                  clear: true,
+                  ...(Number.isInteger(windows.resolvedTabId) ? { tabId: windows.resolvedTabId } : {}),
+                }
+                const typed = await bridge.request('type', typeArgs, options)
+                if (!typed || typeof typed !== 'object' || typed.ok === false) {
+                  throw new Error(String(typed?.error || 'Windows OCR recognized the CAPTCHA but typing the CURRENT input failed'))
+                }
+                imageAutomationRan = true
+                strategy = 'windows-system-ocr'
+              } else {
+                imageAutomationError = `Windows OCR ${String(windows?.status || 'did not produce a strong candidate')}`
+              }
+            } catch (error) {
+              imageAutomationError = error instanceof Error ? error.message : String(error)
+            }
+          }
+
+          if (!imageAutomationRan) {
+            try {
+              imageAutomationRan = await tryFillImageCode(bridge, args.tabId, options)
+              if (imageAutomationRan) strategy = 'windows-system-ocr'
+            } catch (error) {
+              imageAutomationRan = false
+              const legacyError = error instanceof Error ? error.message : String(error)
+              imageAutomationError = [imageAutomationError, legacyError].filter(Boolean).join(' | ')
+            }
           }
         } else {
           imageAutomationError = 'local image-code OCR is available only on the Windows Patrol runtime'
         }
+
         const autoSolved = assertImageCodeAutoSolved(
           classified,
           imageAutomationRan,
           process.platform,
           imageAutomationError,
-          testMode,
+          allowTestDebugFallback,
         )
 
         if (autoSolved) {
-          // Recognition/fill is the whole responsibility of this solver. The
-          // observed Runbook button remains responsible for submitting the form.
           autoFilled = true
           classified = emptyClassification()
-        } else if (testMode) {
-          // Do not destroy the current CAPTCHA state. Keep the classification so
-          // the model can use the authoritative current patrol_observe image (or
-          // a workspace read_image) and type a debug result directly.
+        } else if (allowTestDebugFallback) {
           strategy = 'model-visual-test'
           testModeFallback = true
         }
@@ -314,8 +353,7 @@ export function registerChallengeTool(ctx, bridge, config = {}) {
           let visibleProbe = { available: false, kinds: [] }
           try {
             visibleProbe = await probeOwnedSiteChallenge(bridge, args.tabId, options)
-          } catch {
-          }
+          } catch {}
           const explicitStillVisible = visibleProbe.available === true
             && Array.isArray(visibleProbe.kinds)
             && visibleProbe.kinds.includes(demo.observedSubtype)
@@ -368,8 +406,7 @@ async function observeAuthChallenge(bridge, tabId, options) {
     if (signalResult && typeof signalResult === 'object' && Array.isArray(signalResult.signals)) {
       extraSignals = signalResult.signals.filter(item => typeof item === 'string').slice(0, 40)
     }
-  } catch {
-  }
+  } catch {}
 
   const signalText = extraSignals.length > 0 ? `\n${extraSignals.join('\n')}` : ''
   return classifyAuthChallenge(snapshot, `${page.text || ''}${signalText}`)
