@@ -1,6 +1,7 @@
 import { recognizeScreenshotText } from './screenshot-ocr.js'
 import { recognizeImageCodeWithDdddocr } from './image-code-ddddocr.js'
 import { refreshCurrentImageCode } from './image-code-refresh-tool.js'
+import { imageCodeCaptureSelector, imageCodeSelectorsEquivalent } from './image-code-selector.js'
 
 const IMAGE_CODE_INPUT_HINT = /(captcha|image[-_ ]?code|img[-_ ]?code|verify[-_ ]?code|verification[-_ ]?code|validation[-_ ]?code|check[-_ ]?code|auth[-_ ]?code|\bcode\b|验证码|校验码|图形码)/i
 const VISUAL_NOISE_HINT = /(logo|brand|avatar|favicon|icon|qrcode|qr[-_ ]?code|二维码)/i
@@ -24,6 +25,16 @@ export function imageCodeOcrEngineOrder(mode = 'auto') {
 export function imageCodeCaptureArgsForEngine(engine, args = {}) {
   const normalized = normalizeConcreteImageCodeOcrEngine(engine)
   const captureArgs = { ...args }
+  if (typeof captureArgs.inputSelector === 'string') {
+    const selector = imageCodeCaptureSelector(captureArgs.inputSelector)
+    if (selector) captureArgs.inputSelector = selector
+    else delete captureArgs.inputSelector
+  }
+  if (typeof captureArgs.imageSelector === 'string') {
+    const selector = imageCodeCaptureSelector(captureArgs.imageSelector)
+    if (selector) captureArgs.imageSelector = selector
+    else delete captureArgs.imageSelector
+  }
   if (normalized === 'windows') captureArgs.visualScale = WINDOWS_IMAGE_CODE_OCR_SCALE
   else delete captureArgs.visualScale
   return captureArgs
@@ -37,6 +48,10 @@ export async function runImageCodeOcrPolicy({ mode = 'auto', windowsOcr, ddddocr
     if (isStrongImageCode(code)) return { engine, code }
   }
   return { engine: 'none', code: '' }
+}
+
+export function shouldRefreshImageCodeAfterAttempt(attempt) {
+  return attempt?.recognitionAttempted === true
 }
 
 export async function tryFillImageCode(bridge, tabId, options = {}) {
@@ -66,6 +81,13 @@ export async function tryFillImageCode(bridge, tabId, options = {}) {
       return true
     }
 
+    // A selector/bridge/capture failure is infrastructure failure, not an OCR
+    // miss. Refreshing here would destroy the CURRENT CAPTCHA before any OCR
+    // engine had a chance to inspect it and would make diagnostics misleading.
+    if (!shouldRefreshImageCodeAfterAttempt(current)) {
+      throw new Error(`image-code capture infrastructure failed before any OCR engine inspected CAPTCHA pixels; CAPTCHA was not refreshed: ${diagnostics.filter(Boolean).slice(0, 32).join(' | ') || 'no diagnostic detail'}`)
+    }
+
     if (refreshAttempt >= IMAGE_CODE_MAX_REFRESH_ATTEMPTS) break
 
     try {
@@ -92,6 +114,7 @@ export async function tryFillImageCode(bridge, tabId, options = {}) {
 async function recognizeCurrentImageCode(bridge, tabId, options, diagnostics) {
   const mode = currentImageCodeOcrEngine(options)
   let inputSelector = ''
+  let recognitionAttempted = false
 
   // Engine ordering is policy only. Every engine owns its entire capture and
   // recognition pipeline so image preparation for one OCR method cannot alter,
@@ -100,19 +123,21 @@ async function recognizeCurrentImageCode(bridge, tabId, options, diagnostics) {
     diagnostics.push(`${engine}: pipeline-start`)
     const current = await recognizeCurrentImageCodeWithEngine(bridge, tabId, engine, options, diagnostics)
     if (current.inputSelector) inputSelector = current.inputSelector
+    recognitionAttempted ||= current.recognitionAttempted === true
     if (isStrongImageCode(current.code)) {
       diagnostics.push(`${engine}: pipeline-success`)
-      return current
+      return { ...current, recognitionAttempted }
     }
     diagnostics.push(`${engine}: pipeline-exhausted`)
   }
 
-  return { inputSelector, code: '' }
+  return { inputSelector, code: '', recognitionAttempted }
 }
 
 async function recognizeCurrentImageCodeWithEngine(bridge, tabId, engine, options, diagnostics) {
   let inputSelector = ''
   let code = ''
+  let recognitionAttempted = false
   const captureArgs = imageCodeCaptureArgsForEngine(engine, { tabId })
 
   // Primary engine-owned capture. Windows OCR intentionally receives the same
@@ -131,6 +156,7 @@ async function recognizeCurrentImageCodeWithEngine(bridge, tabId, engine, option
       inputSelector = captured.inputSelector
       const captureMode = typeof captured.captureMode === 'string' ? captured.captureMode : 'unknown'
       diagnostics.push(`${engine}: primary-capture mode=${captureMode}; scale=${engine === 'windows' ? WINDOWS_IMAGE_CODE_OCR_SCALE : 1}; bytes=${Number(captured.bytes || 0)}`)
+      recognitionAttempted = true
       code = await recognizeCapturedImageCodeWithEngine(engine, captured.dataUrl, captureMode, options, diagnostics)
       if (!isStrongImageCode(code)) code = ''
     }
@@ -138,7 +164,7 @@ async function recognizeCurrentImageCodeWithEngine(bridge, tabId, engine, option
     diagnostics.push(`${engine}: primary-capture exception (${shortDiagnostic(error)})`)
   }
 
-  if (isStrongImageCode(code)) return { inputSelector, code }
+  if (isStrongImageCode(code)) return { inputSelector, code, recognitionAttempted }
 
   const alternative = await recognizeImageCodeFromVisualCandidatesWithEngine(
     bridge,
@@ -148,7 +174,8 @@ async function recognizeCurrentImageCodeWithEngine(bridge, tabId, engine, option
     options,
     diagnostics,
   )
-  if (alternative) return alternative
+  recognitionAttempted ||= alternative.recognitionAttempted
+  if (alternative.match) return { ...alternative.match, recognitionAttempted }
 
   const pageFallback = await recognizeImageCodeFromPageWithEngine(
     bridge,
@@ -158,9 +185,10 @@ async function recognizeCurrentImageCodeWithEngine(bridge, tabId, engine, option
     options,
     diagnostics,
   )
-  if (pageFallback) return pageFallback
+  recognitionAttempted ||= pageFallback.recognitionAttempted
+  if (pageFallback.match) return { ...pageFallback.match, recognitionAttempted }
 
-  return { inputSelector, code: '' }
+  return { inputSelector, code: '', recognitionAttempted }
 }
 
 async function recognizeCapturedImageCodeWithEngine(engine, dataUrl, captureMode, options, diagnostics, knownText = '') {
@@ -230,23 +258,24 @@ async function recognizeImageCodeFromVisualCandidatesWithEngine(bridge, tabId, e
     }, options)
   } catch (error) {
     diagnostics.push(`${engine}: alternate-snapshot failed (${shortDiagnostic(error)})`)
-    return undefined
+    return { match: undefined, recognitionAttempted: false }
   }
 
   const inputSelector = preferredInputSelector || findExplicitImageCodeInputSelector(snapshot)
   if (!inputSelector) {
     diagnostics.push(`${engine}: alternate-crops skipped (no explicit image-code input)`)
-    return undefined
+    return { match: undefined, recognitionAttempted: false }
   }
   const selectors = findVisualImageCodeCandidateSelectors(snapshot, inputSelector).slice(0, 8)
   if (selectors.length === 0) {
     diagnostics.push(`${engine}: alternate-crops skipped (no visual candidates)`)
-    return undefined
+    return { match: undefined, recognitionAttempted: false }
   }
 
   let captures = 0
   let recognized = 0
   let lastError = ''
+  let recognitionAttempted = false
   for (const imageSelector of selectors) {
     let captured
     try {
@@ -264,18 +293,19 @@ async function recognizeImageCodeFromVisualCandidatesWithEngine(bridge, tabId, e
       continue
     }
     captures += 1
+    recognitionAttempted = true
 
     const captureMode = `alternate:${typeof captured.captureMode === 'string' ? captured.captureMode : 'element-crop'}`
     const candidate = await recognizeCapturedImageCodeWithEngine(engine, captured.dataUrl, captureMode, options, diagnostics)
     if (isStrongImageCode(candidate)) {
       recognized += 1
       diagnostics.push(`${engine}: alternate-crops success after ${captures}/${selectors.length} capture(s)`)
-      return { inputSelector, code: candidate }
+      return { match: { inputSelector, code: candidate }, recognitionAttempted }
     }
   }
 
   diagnostics.push(`${engine}: alternate-crops exhausted candidates=${selectors.length}; captured=${captures}; recognized=${recognized}${lastError ? `; lastError=${lastError}` : ''}`)
-  return undefined
+  return { match: undefined, recognitionAttempted }
 }
 
 async function recognizeImageCodeFromPageWithEngine(bridge, tabId, engine, preferredInputSelector, options, diagnostics = []) {
@@ -288,13 +318,13 @@ async function recognizeImageCodeFromPageWithEngine(bridge, tabId, engine, prefe
     }, options)
   } catch (error) {
     diagnostics.push(`${engine}: page-fallback snapshot failed (${shortDiagnostic(error)})`)
-    return undefined
+    return { match: undefined, recognitionAttempted: false }
   }
 
   const inputSelector = preferredInputSelector || findExplicitImageCodeInputSelector(snapshot)
   if (!inputSelector) {
     diagnostics.push(`${engine}: page-fallback skipped (no explicit image-code input)`)
-    return undefined
+    return { match: undefined, recognitionAttempted: false }
   }
 
   let shot
@@ -302,11 +332,11 @@ async function recognizeImageCodeFromPageWithEngine(bridge, tabId, engine, prefe
     shot = await bridge.request('screenshot', { tabId, format: 'png' }, options)
   } catch (error) {
     diagnostics.push(`${engine}: page-fallback screenshot failed (${shortDiagnostic(error)})`)
-    return undefined
+    return { match: undefined, recognitionAttempted: false }
   }
   if (!shot || typeof shot !== 'object' || shot.ok === false || typeof shot.dataUrl !== 'string') {
     diagnostics.push(`${engine}: page-fallback screenshot returned no PNG data`)
-    return undefined
+    return { match: undefined, recognitionAttempted: false }
   }
 
   let knownText = snapshotText(snapshot)
@@ -322,10 +352,10 @@ async function recognizeImageCodeFromPageWithEngine(bridge, tabId, engine, prefe
   const candidate = await recognizeCapturedImageCodeWithEngine(engine, shot.dataUrl, 'page', options, diagnostics, knownText)
   if (!isStrongImageCode(candidate)) {
     diagnostics.push(`${engine}: page-fallback produced no strong unseen candidate`)
-    return undefined
+    return { match: undefined, recognitionAttempted: true }
   }
   diagnostics.push(`${engine}: page-fallback success`)
-  return { inputSelector, code: candidate }
+  return { match: { inputSelector, code: candidate }, recognitionAttempted: true }
 }
 
 export function findExplicitImageCodeInputSelector(snapshot) {
@@ -356,7 +386,7 @@ export function findVisualImageCodeCandidateSelectors(snapshot, inputSelector = 
   for (let index = 0; index < elements.length; index += 1) {
     const element = elements[index]
     if (!element || typeof element !== 'object' || typeof element.selector !== 'string') continue
-    if (element.selector === inputSelector) continue
+    if (imageCodeSelectorsEquivalent(element.selector, inputSelector)) continue
     const text = String(element.text || '')
     const tag = String(element.tag || '').toLowerCase()
     if (!text.startsWith('visual:') && !['img', 'canvas', 'svg'].includes(tag)) continue
@@ -457,9 +487,10 @@ async function isExplicitImageCodeInput(bridge, selector, tabId, options) {
   } catch {
     return false
   }
-  return findExplicitImageCodeInputSelector(snapshot) === selector
+  const explicit = findExplicitImageCodeInputSelector(snapshot)
+  return imageCodeSelectorsEquivalent(explicit, selector)
     || Array.isArray(snapshot?.elements) && snapshot.elements.some(element => {
-      if (!element || typeof element !== 'object' || element.selector !== selector) return false
+      if (!element || typeof element !== 'object' || !imageCodeSelectorsEquivalent(element.selector, selector)) return false
       const hint = [element.selector, element.name, element.text, element.type]
         .filter(value => typeof value === 'string')
         .join(' ')

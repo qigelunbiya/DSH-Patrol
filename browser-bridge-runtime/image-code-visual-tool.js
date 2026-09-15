@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import { imageCodeCaptureSelector, imageCodeSelectorsEquivalent } from './image-code-selector.js'
 
 const reqBool = { type: 'boolean', required: true }
 const str = { type: 'string' }
@@ -110,13 +111,22 @@ export function registerImageCodeVisualTool(ctx, bridge, config = {}) {
   return ctx.tools.register(definition)
 }
 
-async function captureCurrentImageCodeVisual(bridge, args, exec, timeoutMs) {
+export async function captureCurrentImageCodeVisual(bridge, args, exec, timeoutMs) {
   let captureError = ''
+  const inputSelector = imageCodeCaptureSelector(args.inputSelector)
+  let imageSelector = imageCodeCaptureSelector(args.imageSelector)
+
+  // A common model mistake is to pass the CAPTCHA input as imageSelector. That
+  // crops the text field/label instead of the CAPTCHA pixels. Treat equivalent
+  // selectors as "auto image" and let captureImageCode discover the neighboring
+  // img/canvas/svg target.
+  if (imageCodeSelectorsEquivalent(inputSelector, imageSelector)) imageSelector = ''
+
   try {
     const captured = await bridge.request('captureImageCode', {
       tabId: args.tabId,
-      inputSelector: args.inputSelector,
-      imageSelector: args.imageSelector,
+      ...(inputSelector ? { inputSelector } : {}),
+      ...(imageSelector ? { imageSelector } : {}),
       visualScale: 3,
     }, { timeoutMs, signal: exec?.signal })
     return { captured, captureError }
@@ -134,7 +144,7 @@ async function captureCurrentImageCodeVisual(bridge, args, exec, timeoutMs) {
       ok: true,
       dataUrl: shot.dataUrl,
       captureMode: 'full-page-screenshot-fallback',
-      inputSelector: typeof args.inputSelector === 'string' ? args.inputSelector : '',
+      inputSelector,
       imageSelector: '',
       imageError: captureError,
     },
