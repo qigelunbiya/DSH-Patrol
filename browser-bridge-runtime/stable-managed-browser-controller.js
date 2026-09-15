@@ -10,6 +10,7 @@ import {
 import { defaultPatrolLaunchBrowser } from './background-browser-launch.js'
 import { createClosingAwareBrowser } from './managed-browser-controller.js'
 import { installPrivateCertificateErrorHandler } from './private-cert.js'
+import { trustedClickManagedTarget } from './trusted-click.js'
 
 const PATROL_EXTENSION_NAME = 'DSH Patrol Browser Bridge'
 const EXTENSION_DIR = fileURLToPath(new URL('../browser-extension/', import.meta.url))
@@ -76,6 +77,15 @@ export function createManagedBrowserController(options = {}) {
       if (starting !== undefined) return await starting
       starting = provisionOrRepair().finally(() => { starting = undefined })
       return await starting
+    },
+
+    async trustedClick(spec = {}) {
+      if (disposed) throw new Error('managed Patrol browser is disposed')
+      await controller.ensureStarted()
+      if (browser === undefined || browser.connected === false) {
+        throw new Error('managed Patrol browser is unavailable for trusted click')
+      }
+      return await trustedClickManagedTarget(browser, spec)
     },
 
     async dispose() {

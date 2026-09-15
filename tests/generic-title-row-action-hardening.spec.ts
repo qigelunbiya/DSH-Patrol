@@ -40,14 +40,29 @@ describe('generic title-backed row action hardening', () => {
     expect(source).toContain('const byTarget = new Map()')
   })
 
-  it('reuses the proven title-backed click mechanics and refuses equal best matches', () => {
+  it('revalidates the target but delegates custom actions to trusted host input instead of synthetic DOM click', () => {
     const source = readFileSync(join(root, 'browser-extension', 'generic-title-row-action-hardening.js'), 'utf8')
 
     expect(source).toContain('func: titleBackedRowActionPageCommand')
     expect(source).toContain("args: ['probe', spec]")
-    expect(source).toContain("args: ['click', chosen.spec]")
+    expect(source).toContain("args: ['probe', chosen.spec]")
     expect(source).toContain('if (best.length !== 1) return undefined')
-    expect(source).toContain('atomic-main-world-generic-title-row-action-click')
+    expect(source).toContain('trustedClickRequired: true')
+    expect(source).toContain('trustedSelector: verified.selector')
+    expect(source).toContain('host-trusted-click-target')
+    expect(source).not.toContain("args: ['click', chosen.spec]")
     expect(source).toContain('return await genericTitleRowPreviousHandleCommand(cmd, args)')
+  })
+
+  it('wires the resolved custom target to the managed-browser trusted click service', () => {
+    const host = readFileSync(join(root, 'browser-bridge-runtime', 'index.js'), 'utf8')
+    const plugin = readFileSync(join(root, 'browser-bridge-runtime', 'tools-plugin.js'), 'utf8')
+    const semantic = readFileSync(join(root, 'browser-bridge-runtime', 'semantic-click-tool.js'), 'utf8')
+
+    expect(host).toContain('trustedClick: async spec =>')
+    expect(plugin).toContain("trustedClick: typeof service.trustedClick === 'function'")
+    expect(semantic).toContain('result.trustedClickRequired === true')
+    expect(semantic).toContain('await trustedClick({')
+    expect(semantic).toContain("transport = typeof physical.transport === 'string' ? physical.transport : 'puppeteer-trusted-click'")
   })
 })

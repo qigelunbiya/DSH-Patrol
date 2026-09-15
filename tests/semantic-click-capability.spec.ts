@@ -34,4 +34,49 @@ describe('semantic click capability gate', () => {
       .resolves.toMatchObject({ ok: true, selector: '#login' })
     expect(requests).toEqual(['semanticClick'])
   })
+
+  it('delegates a verified custom action target to managed Puppeteer trusted input', async () => {
+    const definitions = []
+    const trustedCalls = []
+    const ctx = { tools: { register(tool) { definitions.push(tool); return () => {} } } }
+    const bridge = {
+      status: () => ({ extension: { version: '0.3.1', capabilities: ['semanticClick'] } }),
+      async request(command) {
+        expect(command).toBe('semanticClick')
+        return {
+          ok: true,
+          selector: 'top-frame::span[title="详情"]',
+          text: '详情',
+          role: 'button',
+          tag: 'span',
+          frameId: 0,
+          frameUrl: 'https://example.test/app',
+          pageUrl: 'https://example.test/app#hosts',
+          trustedClickRequired: true,
+          trustedSelector: 'span[title="详情"]',
+          transport: 'host-trusted-click-target',
+        }
+      },
+    }
+    registerSemanticClickTool(ctx, bridge, {
+      trustedClick: async spec => {
+        trustedCalls.push(spec)
+        return { ok: true, transport: 'puppeteer-trusted-click' }
+      },
+    })
+    const tool = definitions.find(item => item.name === 'browser_semantic_click')
+
+    const result = await tool.execute({ locatorText: '详情', task: '打开主机 alpha-01 的详情' }, {})
+    expect(trustedCalls).toEqual([{
+      selector: 'span[title="详情"]',
+      pageUrl: 'https://example.test/app#hosts',
+      frameUrl: 'https://example.test/app',
+      frameId: 0,
+    }])
+    expect(result).toMatchObject({
+      ok: true,
+      selector: 'top-frame::span[title="详情"]',
+      transport: 'puppeteer-trusted-click',
+    })
+  })
 })

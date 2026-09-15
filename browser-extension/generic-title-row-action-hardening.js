@@ -1,12 +1,16 @@
 // Generic precision layer for custom row actions rendered as title-backed spans/divs.
 //
 // The existing title-backed resolver deliberately stays as a compatibility path.
-// This layer broadens it without changing its click mechanics: locatorText supplies
+// This layer broadens it without changing target discovery: locatorText supplies
 // the action label, while task/targetContext supplies one or more business identity
 // tokens (IP, host name, ticket/device id, Chinese row name, etc.). Each identity is
 // tried independently so unrelated identifiers in a long task do not poison the
 // target by requiring every identifier to appear in the same row.
 //
+// Unlike ordinary semantic targets, these enterprise custom actions are handed back
+// to the host for a Puppeteer/CDP input click after CURRENT target revalidation.
+// This avoids synthetic element.click()/dispatchEvent behavior for actions that may
+// require a browser user gesture to open a window or external protocol handler.
 // If more than one logical row remains equally plausible, this layer refuses to
 // guess and falls through to the previous semantic resolver.
 
@@ -119,24 +123,35 @@ async function genericTitleRowClick(args) {
   const best = candidates.filter(item => item.score === bestScore)
   if (best.length !== 1) return undefined
 
+  // Re-probe immediately before handing the target to the host. The host will
+  // send the physical input, so this layer must not synthesize a click itself.
   const chosen = best[0]
-  const results = await chrome.scripting.executeScript({
+  const verifiedResults = await chrome.scripting.executeScript({
     target: { tabId, frameIds: [chosen.frame.frameId] },
     world: 'MAIN',
     func: titleBackedRowActionPageCommand,
-    args: ['click', chosen.spec],
+    args: ['probe', chosen.spec],
   })
-  const clicked = Array.isArray(results) ? results[0]?.result : undefined
-  if (!clicked || clicked.ok !== true || typeof clicked.selector !== 'string' || !clicked.selector) return undefined
+  const verifiedValue = Array.isArray(verifiedResults) ? verifiedResults[0]?.result : undefined
+  const verifiedMatches = (Array.isArray(verifiedValue?.candidates) ? verifiedValue.candidates : [])
+    .filter(candidate => candidate?.selector === chosen.candidate.selector)
+  if (verifiedMatches.length !== 1) return undefined
+  const verified = verifiedMatches[0]
+
+  let pageUrl = ''
+  try { pageUrl = String((await chrome.tabs.get(tabId))?.url || '') } catch {}
 
   return {
     ok: true,
-    selector: semanticScopeSelector(chosen.frame, clicked.selector),
-    text: String(clicked.text || ''),
-    role: String(clicked.role || 'button'),
-    tag: String(clicked.tag || ''),
+    selector: semanticScopeSelector(chosen.frame, verified.selector),
+    text: String(verified.text || chosen.candidate.text || ''),
+    role: String(verified.role || chosen.candidate.role || 'button'),
+    tag: String(verified.tag || chosen.candidate.tag || ''),
     frameId: chosen.frame.frameId,
     frameUrl: chosen.frame.url || '',
-    transport: 'atomic-main-world-generic-title-row-action-click',
+    pageUrl,
+    trustedClickRequired: true,
+    trustedSelector: verified.selector,
+    transport: 'host-trusted-click-target',
   }
 }
