@@ -154,9 +154,6 @@ async function semanticClickPageCommand(mode, spec) {
       }
     }
 
-    // Enterprise action cells often expose the only meaningful locator through
-    // title while repeating the same action text in many rows. Bind the title to
-    // a stable row identity before falling back to positional CSS.
     const title = element.getAttribute?.('title')
     if (title) {
       const byTitle = `${element.tagName.toLowerCase()}[title="${cssString(title)}"]`
@@ -201,9 +198,6 @@ async function semanticClickPageCommand(mode, spec) {
     'a', 'button', 'input[type="button"]', 'input[type="submit"]', 'input[type="reset"]',
     '[role="button"]', '[role="link"]', '[role="menuitem"]', '[role="tab"]',
     '[onclick]', '[bg-click]', '[ng-click]', '[data-action]', '[tabindex]:not([tabindex="-1"])',
-    // Custom enterprise actions are frequently spans/divs with a title or an
-    // action-ish class. Including them in the core resolver avoids forcing the
-    // model to invent non-existent anchors such as a[href*=RDP].
     '[title]', '[class*="act_" i]', '[class*="action" i]',
     'img', 'svg', '[id*="logo" i]', '[class*="logo" i]',
   ].join(',')
@@ -229,9 +223,6 @@ async function semanticClickPageCommand(mode, spec) {
       && !role
       && !['a', 'button'].includes(tag)
 
-    // locatorRole/locatorTag can be model-supplied hints. Do not let a guessed
-    // "link/a" discard a role-less title-backed span that is otherwise the only
-    // exact row-correlated action. Explicit native/ARIA roles remain strict.
     if (wantedRole && role && normalize(role) !== wantedRole) return null
     if (wantedRole && !role && !customTitleAction) return null
     if (wantedTag && normalize(tag) !== wantedTag && !customTitleAction) return null
@@ -240,9 +231,9 @@ async function semanticClickPageCommand(mode, spec) {
     if (wantedText) {
       if (!normText) return null
       if (normText === wantedText) score += 140
-      else if (titleText === wantedText) score += 135
+      else if (titleText && titleText === wantedText) score += 135
       else if (normText.includes(wantedText) || wantedText.includes(normText)) score += 80
-      else if (titleText.includes(wantedText) || wantedText.includes(titleText)) score += 95
+      else if (titleText && (titleText.includes(wantedText) || wantedText.includes(titleText))) score += 95
       else return null
     }
     if (customTitleAction) score += 45
@@ -269,7 +260,9 @@ async function semanticClickPageCommand(mode, spec) {
       ].join(' ')
       if (/menu|sidebar|hamburger|nav|侧栏|菜单|导航/i.test(menuEvidence)) score += 120
     }
-    const context = compact(element.closest?.('tr,[role="row"],[data-row-key],[aria-rowindex],[data-index],li,form,nav,[role="dialog"],.ant-modal-content,.el-dialog')?.innerText || '')
+    // Keep the historical prefix so existing compatibility tests still assert
+    // the same ordinary-row contract, then extend it with structured row ids.
+    const context = compact(element.closest?.('tr,li,form,nav,[role="row"],[data-row-key],[aria-rowindex],[data-index],[role="dialog"],.ant-modal-content,.el-dialog')?.innerText || '')
     for (const token of ipTokens) if (context.includes(token)) score += 180
     for (const token of actionTokens) if (normalize(text).includes(normalize(token)) || normalize(context).includes(normalize(token))) score += 35
     if (!wantedText && !wantsLogo && task && normalize(`${text} ${context}`).includes(task)) score += 20
