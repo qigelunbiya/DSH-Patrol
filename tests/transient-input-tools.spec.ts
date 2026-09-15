@@ -81,20 +81,34 @@ describe('Patrol encrypted sensitive input', () => {
     expect(JSON.stringify(card)).toContain('[REDACTED]')
   })
 
-  it('compatibility solve entrypoint performs no local OCR dispatch in TEST MODE', async () => {
+  it('solve entrypoint runs local OCR detector first in TEST MODE', async () => {
     process.env.DSH_PATROL_CAPTCHA_MODE = 'test'
     const definitions: any[] = []
     const ctx = { tools: { register(definition: any) { definitions.push(definition); return () => {} } } } as unknown as Context
     const inspection = draft()
-    const dispatch = vi.fn(async () => ({ ok: true, text: 'unexpected' }))
-    const store = { load: vi.fn(async () => inspection), save: vi.fn(async () => {}) } as unknown as PatrolStore
+    const save = vi.fn(async () => {})
+    const dispatch = vi.fn(async () => ({
+      ok: true,
+      text: 'Auth challenge: strategy=windows-system-ocr; verification input auto-filled by the local Patrol solver',
+      value: {
+        autoFilled: true,
+        strategy: 'windows-system-ocr',
+        testModeFallback: false,
+      },
+    }))
+    const store = { load: vi.fn(async () => inspection), save } as unknown as PatrolStore
     registerPatrolTransientInputTools(ctx, store, { dispatch } as unknown as PatrolRunner)
     const tool = definitions.find(item => item.name === 'patrol_solve_current_image_code')
+    const exec = { token: Symbol('exec') }
 
-    const result = await tool.execute({ inspectionId: 'demo' }, { token: Symbol('exec') })
-    expect(dispatch).not.toHaveBeenCalled()
-    expect(result).toContain('no local OCR was executed')
-    expect(result).toContain('browser_capture_image_code_visual')
+    const result = await tool.execute({ inspectionId: 'demo' }, exec)
+    expect(dispatch).toHaveBeenCalledTimes(1)
+    expect(dispatch).toHaveBeenCalledWith('browser_detect_auth_challenge', {}, exec)
+    expect(result).toContain('local OCR auto-filled')
+    expect(result).not.toContain('Now call browser_capture_image_code_visual')
+    expect(inspection.steps).toHaveLength(1)
+    expect(inspection.steps[0]).toMatchObject({ tool: 'browser_detect_auth_challenge', arguments: {} })
+    expect(save).toHaveBeenCalledTimes(1)
   })
 
   it('does not type a low-confidence current image-code', async () => {
