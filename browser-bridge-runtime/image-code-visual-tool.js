@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import { readCurrentImageCodeWithWindowsOcr } from './windows-image-code-ocr-tool.js'
 
 const reqBool = { type: 'boolean', required: true }
 const str = { type: 'string' }
@@ -34,7 +35,7 @@ export function registerImageCodeVisualTool(ctx, bridge, config = {}) {
   const timeoutMs = config.commandTimeoutMs ?? 60000
   const definition = defineTool({
     name: 'browser_capture_image_code_visual',
-    description: 'Capture the CURRENT conventional image-code CAPTCHA for model vision. Prefer a tight 3x crop; if the page bridge or a stale tab prevents element discovery, fall back once to the CURRENT active-page screenshot. This visual tool deliberately runs no local OCR and never types or submits a value.',
+    description: 'LAST-RESORT model-vision capture for the CURRENT conventional image-code CAPTCHA. On Windows this tool enforces a Windows System OCR preflight itself, so a model cannot bypass the required Windows-OCR-first order by calling visual capture directly. A visual image is attached only after both Windows OCR paths fail to produce a strong candidate. The tool never types or submits a value.',
     parameters: {
       tabId: optInt,
       inputSelector: optStr,
@@ -50,16 +51,30 @@ export function registerImageCodeVisualTool(ctx, bridge, config = {}) {
           captureMode: str,
           inputSelector: str,
           imageSelector: str,
-          imageStatus: { type: 'string', required: true, enum: ['attached', 'tool-unavailable', 'read-failed'] },
+          imageStatus: { type: 'string', required: true, enum: ['attached', 'tool-unavailable', 'read-failed', 'skipped-windows-ocr'] },
           imageError: str,
+          ocrStatus: str,
+          ocrCandidate: str,
+          ocrConfidence: { type: 'number' },
           image: IMAGE_SCHEMA,
         },
       },
       render: (_args, value) => {
+        if (value.imageStatus === 'skipped-windows-ocr' && value.ocrCandidate) {
+          return [{
+            type: 'text',
+            text: [
+              `Windows OCR preflight succeeded before visual fallback: candidate=${value.ocrCandidate}; confidence=${Number(value.ocrConfidence || 0).toFixed(2)}; status=${value.ocrStatus || 'recognized'}.`,
+              `captureMode=${value.captureMode || 'windows-ocr'}; inputSelector=${value.inputSelector || '(auto)'}.`,
+              'Visual capture was intentionally skipped. Use patrol_type_current_image_code with this CURRENT Windows-OCR candidate; do not re-read it with model vision.',
+            ].join('\n'),
+          }]
+        }
+
         const lines = [
           `CURRENT image-code visual: ${value.path}`,
           `captureMode=${value.captureMode || 'unknown'}; inputSelector=${value.inputSelector || '(auto)'}; imageSelector=${value.imageSelector || '(auto)'}`,
-          'No ddddocr/Windows OCR preflight was run for this visual capture.',
+          `Windows OCR preflight status=${value.ocrStatus || 'not-applicable'}${value.ocrCandidate ? `; weakCandidate=${value.ocrCandidate}` : ''}. Visual fallback is being used only because Windows OCR did not return a strong candidate.`,
         ]
         if (value.imageStatus === 'attached' && value.image !== undefined) {
           lines.push(value.captureMode?.startsWith('full-page')
@@ -83,6 +98,25 @@ export function registerImageCodeVisualTool(ctx, bridge, config = {}) {
     }),
     async execute(args, exec) {
       assertImageCodeCaptureCapability(bridge)
+
+      // Runtime enforcement, not just prompt guidance. Even if the model calls
+      // visual capture first, Windows TEST environments still attempt both native
+      // Windows OCR paths before any image attachment reaches model vision.
+      const windows = await readCurrentImageCodeWithWindowsOcr(bridge, args, exec, { timeoutMs })
+      if (windows.ok === true && typeof windows.text === 'string' && windows.text && Number(windows.confidence) >= 0.90) {
+        return {
+          ok: true,
+          path: '',
+          captureMode: typeof windows.captureMode === 'string' ? windows.captureMode : 'windows-ocr-preflight',
+          inputSelector: typeof windows.inputSelector === 'string' ? windows.inputSelector : '',
+          imageSelector: typeof windows.imageSelector === 'string' ? windows.imageSelector : '',
+          imageStatus: 'skipped-windows-ocr',
+          ocrStatus: typeof windows.status === 'string' ? windows.status : 'recognized',
+          ocrCandidate: windows.text,
+          ocrConfidence: Number(windows.confidence || 0),
+        }
+      }
+
       const { captured, captureError } = await captureCurrentImageCodeVisual(bridge, args, exec, timeoutMs)
       if (!captured || typeof captured !== 'object' || captured.ok === false || typeof captured.dataUrl !== 'string') {
         throw new Error(String(captured?.error || 'captureImageCode did not return a CAPTCHA image'))
@@ -101,6 +135,9 @@ export function registerImageCodeVisualTool(ctx, bridge, config = {}) {
         inputSelector: typeof captured.inputSelector === 'string' ? captured.inputSelector : '',
         imageSelector: typeof captured.imageSelector === 'string' ? captured.imageSelector : '',
         imageStatus: attached.status,
+        ocrStatus: typeof windows.status === 'string' ? windows.status : '',
+        ...(typeof windows.text === 'string' && windows.text ? { ocrCandidate: windows.text } : {}),
+        ...(Number.isFinite(Number(windows.confidence)) ? { ocrConfidence: Number(windows.confidence) } : {}),
         ...(captureError || attached.error ? { imageError: [captureError, attached.error].filter(Boolean).join('; ') } : {}),
         ...(attached.image === undefined ? {} : { image: attached.image }),
       }
