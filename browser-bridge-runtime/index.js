@@ -11,7 +11,14 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { defaultPatrolLaunchBrowser } from './background-browser-launch.js'
 import { BrowserBridge } from './bridge.js'
+import {
+  defaultBrowserVisibilityPath,
+  readBrowserVisibility,
+  registerBrowserVisibilityRoutes,
+  writeBrowserVisibility,
+} from './browser-visibility.js'
 import { registerPatrolDashboardRoutes } from './dashboard-runtime.js'
 import { createManagedBrowserController, defaultProfilePath } from './stable-managed-browser-controller.js'
 import { registerTotpManagementRoutes } from './totp-management.js'
@@ -28,6 +35,8 @@ export function apply(ctx, config = {}) {
   })
   const path = config.path ?? '/patrol-browser-bridge'
   const originTrustFile = config.originTrustFile ?? defaultOriginTrustFile()
+  const browserVisibilityFile = config.browserVisibilityFile ?? defaultBrowserVisibilityPath()
+  let browserVisible = readBrowserVisibility(browserVisibilityFile)
   let trustedOrigin = readTrustedOrigin(originTrustFile)
   let managedOrigin
   let urlHint = ''
@@ -40,6 +49,7 @@ export function apply(ctx, config = {}) {
     profilePath: config.browserProfilePath ?? defaultProfilePath(),
     startTimeoutMs: config.browserStartTimeoutMs,
     connectTimeoutMs: config.browserConnectTimeoutMs,
+    launchBrowser: args => defaultPatrolLaunchBrowser({ ...args, visible: browserVisible }),
     onExtensionReady(extensionId) {
       managedOrigin = `chrome-extension://${extensionId}`
       trustedOrigin = trustManagedOrigin(originTrustFile, managedOrigin)
@@ -111,6 +121,7 @@ export function apply(ctx, config = {}) {
         connected: bridge.connected,
         paired: trustedOrigin !== undefined,
         managedBrowser: managedBrowser !== undefined,
+        browserVisible,
         ...(managed === undefined ? {} : {
           managedRunning: managed.running,
           managedStarting: managed.starting,
@@ -127,6 +138,27 @@ export function apply(ctx, config = {}) {
   })
   ctx.effect(() => httpDispose, 'dsh-patrol/browser-bridge: info route')
 
+  const visibilityDispose = registerBrowserVisibilityRoutes(ctx, path, {
+    bridge,
+    getVisible: () => browserVisible,
+    async setVisible(visible) {
+      browserVisible = writeBrowserVisibility(Boolean(visible), browserVisibilityFile)
+      if (!bridge.connected) {
+        return { applied: false, note: '偏好已保存，将在下次 Patrol 浏览器启动时生效。' }
+      }
+      try {
+        await bridge.request('setWindowVisibility', { visible: browserVisible }, { timeoutMs: 5000 })
+        return { applied: true }
+      } catch (error) {
+        return {
+          applied: false,
+          note: `偏好已保存；当前浏览器未能即时切换，请重启 Patrol 浏览器后生效：${String(error?.message ?? error).slice(0, 180)}`,
+        }
+      }
+    },
+  })
+  ctx.effect(() => visibilityDispose, 'dsh-patrol/browser-bridge: browser visibility route')
+
   const dashboardDispose = registerPatrolDashboardRoutes(ctx, path, config)
   ctx.effect(() => dashboardDispose, 'dsh-patrol/browser-bridge: workspace dashboard routes')
 
@@ -136,7 +168,7 @@ export function apply(ctx, config = {}) {
   const host = ctx.webServer.host ?? '127.0.0.1'
   const normalizedHost = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host
   urlHint = `ws://${normalizedHost}:${ctx.webServer.port ?? 3080}${path}`
-  ctx.logger.info(`[dsh-patrol/browser-bridge] host ready at ${urlHint}; managed browser=${managedBrowser === undefined ? 'disabled' : 'on-demand'}; extension origin pairing=${trustedOrigin === undefined ? 'awaiting first connection' : 'configured'}`)
+  ctx.logger.info(`[dsh-patrol/browser-bridge] host ready at ${urlHint}; managed browser=${managedBrowser === undefined ? 'disabled' : 'on-demand'}; browser visibility=${browserVisible ? 'visible' : 'background'}; extension origin pairing=${trustedOrigin === undefined ? 'awaiting first connection' : 'configured'}`)
   ctx.effect(() => async () => {
     // Cordis awaits async disposers. Keep the bridge alive while a pending
     // managed-browser startup settles, then close the DSH-owned browser before
