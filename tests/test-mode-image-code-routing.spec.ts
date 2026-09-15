@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { PATROL_BEHAVIOR_PROMPT } from '../src/behavior-prompt.ts'
+import { PATROL_SYSTEM_PROMPT } from '../src/prompt.ts'
 import { PATROL_TRANSIENT_INPUT_PROMPT, registerPatrolTransientInputTools } from '../src/transient-input-tools.ts'
 import { PATROL_TEST_MODE_OVERRIDE_PROMPT } from '../src/test-mode.ts'
 import { PatrolStore } from '../src/store.ts'
@@ -146,13 +148,19 @@ describe('TEST MODE image-code routing', () => {
     expect((await store.load('captcha-login')).steps).toEqual([])
   })
 
-  it('keeps all injected TEST MODE guidance aligned on local OCR before model vision', () => {
-    for (const prompt of [PATROL_TRANSIENT_INPUT_PROMPT, PATROL_TEST_MODE_OVERRIDE_PROMPT]) {
+  it('keeps all injected CAPTCHA guidance aligned on local OCR before model vision', () => {
+    for (const prompt of [
+      PATROL_SYSTEM_PROMPT,
+      PATROL_BEHAVIOR_PROMPT,
+      PATROL_TRANSIENT_INPUT_PROMPT,
+      PATROL_TEST_MODE_OVERRIDE_PROMPT,
+    ]) {
       expect(prompt).toContain('patrol_solve_current_image_code')
-      expect(prompt).toContain('browser_detect_auth_challenge')
       expect(prompt).toContain('browser_capture_image_code_visual')
       expect(prompt.indexOf('patrol_solve_current_image_code')).toBeLessThan(prompt.indexOf('browser_capture_image_code_visual'))
     }
+    expect(PATROL_TRANSIENT_INPUT_PROMPT).toContain('browser_detect_auth_challenge')
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toContain('browser_detect_auth_challenge')
     expect(PATROL_TRANSIENT_INPUT_PROMPT).not.toContain('TEST MODE 交互教学使用视觉优先')
     expect(PATROL_TRANSIENT_INPUT_PROMPT).not.toContain('不要先运行本地 ddddocr/Windows OCR 预检')
   })
