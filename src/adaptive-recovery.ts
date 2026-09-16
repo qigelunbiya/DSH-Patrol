@@ -10,6 +10,7 @@ const USERNAME_HINT = /(username|user[-_ ]?name|account|login[-_ ]?name|email|�
 const PASSWORD_HINT = /(password|passwd|pwd|密码)/i
 const SENSITIVE_CODE_HINT = /(captcha|验证码|动态码|otp|one[- ]?time|短信|sms|verification\s*code|code)/i
 const FIELD_EXCLUDE_HINT = /(search|query|filter|captcha|验证码|otp|verification|code|password|passwd|pwd)/i
+const TYPE_TASK_HINT = /(输入|填写|填入|type|enter|fill)/i
 
 export function isSelectorUnavailable(error: string | undefined): boolean {
   return typeof error === 'string'
@@ -33,7 +34,7 @@ export function findAdaptiveSelectorRecovery(
   const elements = snapshotElements(snapshot)
   if (elements.length === 0) return undefined
 
-  const task = matchingChecklistTask(definition, step)
+  const task = checklistTaskForStep(definition, step)
   const hint = [
     step.name,
     step.notes ?? '',
@@ -61,6 +62,33 @@ export function findAdaptiveSelectorRecovery(
   }
 
   return undefined
+}
+
+/**
+ * Resolve the business-checklist instruction for a concrete reusable step.
+ *
+ * Newer definitions may carry a persisted taskHint. Older definitions are
+ * mapped deterministically by action order: the Nth replayed text-entry step
+ * maps to the Nth text-entry item in the ordered checklist. Semantic matching
+ * remains as a fallback for legacy traces whose action counts do not line up.
+ */
+export function checklistTaskForStep(definition: InspectionDefinition, step: ToolStep): string | undefined {
+  const explicit = step.taskHint?.trim()
+  if (explicit) return explicit
+
+  const checklist = definition.metadata.taskChecklist ?? []
+  if (checklist.length === 0) return undefined
+
+  if (isTypingTool(step.tool)) {
+    const typingSteps = definition.steps.filter((candidate): candidate is ToolStep => (
+      candidate.kind === 'tool' && isTypingTool(candidate.tool)
+    ))
+    const stepIndex = typingSteps.findIndex(candidate => candidate.id === step.id)
+    const typingTasks = checklist.filter(item => TYPE_TASK_HINT.test(item))
+    if (stepIndex >= 0 && stepIndex < typingTasks.length) return typingTasks[stepIndex]
+  }
+
+  return semanticChecklistTask(checklist, step)
 }
 
 function uniqueRecovery(
@@ -109,14 +137,19 @@ function snapshotElements(value: JsonValue | undefined): SnapshotElement[] {
   return result
 }
 
-function matchingChecklistTask(definition: InspectionDefinition, step: ToolStep): string | undefined {
-  const checklist = definition.metadata.taskChecklist ?? []
-  if (checklist.length === 0) return undefined
+function semanticChecklistTask(checklist: readonly string[], step: ToolStep): string | undefined {
   const hint = [step.name, typeof step.arguments.selector === 'string' ? step.arguments.selector : ''].join(' ')
   const wanted = PASSWORD_HINT.test(hint) ? PASSWORD_HINT : (USERNAME_HINT.test(hint) ? USERNAME_HINT : undefined)
   if (wanted === undefined) return undefined
   const matches = checklist.filter(item => wanted.test(item) && !SENSITIVE_CODE_HINT.test(item))
   return matches.length === 1 ? matches[0] : undefined
+}
+
+function isTypingTool(tool: string): boolean {
+  return tool === 'browser_type'
+    || tool === 'browser_type_credential'
+    || tool === 'browser_type_transient_ref'
+    || tool === 'browser_type_totp_profile'
 }
 
 function stringValue(value: JsonValue | undefined): string {
