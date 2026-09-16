@@ -209,6 +209,63 @@ export class PatrolRunner {
       }
     }
 
+    if (status === 'passed'
+      && definition.artifacts.some(item => item.toLowerCase() === 'screenshot')
+      && !results.some(result => result.artifacts?.some(artifact => artifact.kind === 'screenshot'))) {
+      const capturedAt = new Date().toISOString()
+      const captured = await this.dispatch('browser_screenshot', {}, exec)
+      if (!captured.ok) {
+        results.push({
+          stepId: 'artifact-final-screenshot',
+          name: 'Final screenshot artifact',
+          kind: 'tool',
+          tool: 'browser_screenshot',
+          status: 'failed',
+          startedAt: capturedAt,
+          finishedAt: new Date().toISOString(),
+          output: captured.text,
+          error: `final screenshot artifact capture failed: ${captured.error ?? 'browser_screenshot failed'}`,
+        })
+        status = 'failed'
+      } else {
+        try {
+          const providerPath = objectString(captured.value, 'path')
+          if (providerPath === undefined) throw new Error('browser_screenshot returned no artifact path')
+          const copied = await this.store.copyArtifact(
+            definition.id,
+            state.runId,
+            providerPath,
+            'final-screenshot',
+            outputWorkspace,
+          )
+          results.push({
+            stepId: 'artifact-final-screenshot',
+            name: 'Final screenshot artifact',
+            kind: 'tool',
+            tool: 'browser_screenshot',
+            status: 'passed',
+            startedAt: capturedAt,
+            finishedAt: new Date().toISOString(),
+            output: 'Captured the final page state automatically because this inspection requires a screenshot artifact.',
+            artifacts: [{ kind: 'screenshot', path: copied }],
+          })
+        } catch (error: unknown) {
+          results.push({
+            stepId: 'artifact-final-screenshot',
+            name: 'Final screenshot artifact',
+            kind: 'tool',
+            tool: 'browser_screenshot',
+            status: 'failed',
+            startedAt: capturedAt,
+            finishedAt: new Date().toISOString(),
+            output: captured.text,
+            error: `final screenshot artifact persistence failed: ${errorMessage(error)}`,
+          })
+          status = 'failed'
+        }
+      }
+    }
+
     const pageSummaryRequested = definition.artifacts.some(item => item.toLowerCase() === 'page-summary')
     const summary = status === 'waiting' || !pageSummaryRequested ? undefined : deterministicPageSummary(results)
     if (status === 'passed') {
