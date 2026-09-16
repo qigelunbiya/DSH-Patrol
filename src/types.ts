@@ -65,6 +65,8 @@ export interface ToolStep {
   artifact?: StepArtifactKind | undefined
   sensitive?: boolean
   notes?: string
+  /** Business-task instruction this reusable step is intended to satisfy. */
+  taskHint?: string
   /** Teaching-only verification metadata. Finalized flows strip this field. */
   teaching?: TeachingVerification
   recordedAt: string
