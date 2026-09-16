@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
@@ -25,7 +25,7 @@ async function setup(execute: (input: { name: string; arguments: unknown }) => P
     rootCallId: 'root',
     signal: new AbortController().signal,
   } as unknown as ToolRunContext
-  return { store, runner, exec }
+  return { root, store, runner, exec }
 }
 
 function definition(steps: InspectionDefinition['steps'], artifacts: InspectionDefinition['artifacts'] = []): InspectionDefinition {
@@ -62,6 +62,76 @@ describe('PatrolRunner integration safety', () => {
     const { report } = await runner.run(def, exec)
     expect(report.status).toBe('failed')
     expect(report.results[0]?.error).toMatch(/no artifact path/i)
+  })
+
+  it('auto-captures a final screenshot when the artifact contract requests one but the Runbook has no screenshot step', async () => {
+    let screenshotCalls = 0
+    let providerPath = ''
+    const fixture = await setup(async input => {
+      if (input.name === 'browser_navigate') {
+        return { isError: false, value: { ok: true }, content: [{ type: 'text', text: 'navigated' }] }
+      }
+      if (input.name === 'browser_screenshot') {
+        screenshotCalls += 1
+        return { isError: false, value: { ok: true, path: providerPath }, content: [{ type: 'text', text: 'captured' }] }
+      }
+      throw new Error(`unexpected tool ${input.name}`)
+    })
+    providerPath = join(fixture.root, 'screenshot-loose.png')
+    await writeFile(providerPath, 'fake png')
+    const def = definition([{ id: 'step-001', kind: 'tool', name: 'navigate', tool: 'browser_navigate', arguments: { url: 'https://example.com' }, recordedAt: at }], ['screenshot'])
+    def.metadata.workspaceRoot = fixture.root
+    ;(fixture.exec as any).agent = { session: { header: { cwd: fixture.root } } }
+
+    const { report } = await fixture.runner.run(def, fixture.exec)
+
+    expect(report.status).toBe('passed')
+    expect(screenshotCalls).toBe(1)
+    expect(report.results.at(-1)).toMatchObject({
+      stepId: 'artifact-final-screenshot',
+      status: 'passed',
+      artifacts: [{ kind: 'screenshot' }],
+    })
+    expect(report.results.at(-1)?.artifacts?.[0]?.path).toContain('patrol-results')
+    await expect(access(providerPath)).rejects.toThrow()
+  })
+
+  it('does not duplicate screenshots when the Runbook already produced the required screenshot artifact', async () => {
+    let screenshotCalls = 0
+    let providerPath = ''
+    const fixture = await setup(async input => {
+      if (input.name !== 'browser_screenshot') throw new Error(`unexpected tool ${input.name}`)
+      screenshotCalls += 1
+      return { isError: false, value: { ok: true, path: providerPath }, content: [{ type: 'text', text: 'captured' }] }
+    })
+    providerPath = join(fixture.root, 'provider.png')
+    await writeFile(providerPath, 'fake png')
+    const def = definition([{ id: 'step-001', kind: 'tool', name: 'shot', tool: 'browser_screenshot', arguments: {}, artifact: 'screenshot', recordedAt: at }], ['screenshot'])
+
+    const { report } = await fixture.runner.run(def, fixture.exec)
+
+    expect(report.status).toBe('passed')
+    expect(screenshotCalls).toBe(1)
+    expect(report.results.map(item => item.stepId)).toEqual(['step-001'])
+  })
+
+  it('reports an explicit final screenshot capture failure instead of a misleading missing-artifact error', async () => {
+    const { runner, exec } = await setup(async input => {
+      if (input.name === 'browser_navigate') {
+        return { isError: false, value: { ok: true }, content: [{ type: 'text', text: 'navigated' }] }
+      }
+      if (input.name === 'browser_screenshot') {
+        return { isError: true, error: new Error('capture backend unavailable'), value: {}, content: [{ type: 'text', text: 'capture failed' }] }
+      }
+      throw new Error(`unexpected tool ${input.name}`)
+    })
+    const def = definition([{ id: 'step-001', kind: 'tool', name: 'navigate', tool: 'browser_navigate', arguments: { url: 'https://example.com' }, recordedAt: at }], ['screenshot'])
+
+    const { report } = await runner.run(def, exec)
+
+    expect(report.status).toBe('failed')
+    expect(report.results.at(-1)?.stepId).toBe('artifact-final-screenshot')
+    expect(report.results.at(-1)?.error).toMatch(/final screenshot artifact capture failed.*capture backend unavailable/i)
   })
 
   it('fails page-summary requirements without a successful page read', async () => {

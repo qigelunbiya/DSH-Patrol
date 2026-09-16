@@ -17,7 +17,9 @@
 // over-specific text locator when the user explicitly asked for a Logo and the
 // atomic resolver found no target. window-visibility adds a host/UI-only command
 // for moving the managed headful Chromium window on/off screen without touching
-// Patrol's recorded browser actions.
+// Patrol's recorded browser actions. runtime-readiness-hardening is deliberately
+// loaded last so single-flow and batch replay share the same bounded navigation
+// and late-DOM readiness semantics after every other interaction layer.
 importScripts('background.js')
 importScripts('window-visibility.js')
 importScripts('semantic-click.js')
@@ -32,3 +34,4 @@ importScripts('interaction-hardening.js')
 importScripts('selector-scope-hardening.js')
 importScripts('modal-target-hardening.js')
 importScripts('semantic-intent-fallback.js')
+importScripts('runtime-readiness-hardening.js')
