@@ -13,7 +13,7 @@ const FIELD_EXCLUDE_HINT = /(search|query|filter|captcha|验证码|otp|verificat
 
 export function isSelectorUnavailable(error: string | undefined): boolean {
   return typeof error === 'string'
-    && /(?:element|selector).*(?:not found|no match)|not found in any accessible frame|could not resolve.*selector/i.test(error)
+    && /(?:element|selector).*(?:not found|no match|did not match|didn't match)|not found in any accessible frame|could not resolve.*selector/i.test(error)
 }
 
 /**
