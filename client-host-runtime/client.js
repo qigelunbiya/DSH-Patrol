@@ -57,12 +57,38 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
     return `运行巡检流程 ${id}${label}。请直接使用 patrol_run_flow 重放已有流程，不要修改、重教或新增流程步骤。执行过程中用简体中文实时说明关键巡检进展、当前页面状态和最终结果。`;
   }
 
-  async function sendFlowReplay(ctx, sessionId, inspectionId, flowName) {
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(String(inspectionId || ''))) throw new Error('巡检流程 ID 无效');
+  function batchReplayPrompt(flows) {
+    const items = (Array.isArray(flows) ? flows : []).map(item => ({
+      id: String(item?.id || '').trim(),
+      name: String(item?.name || item?.id || '').trim(),
+    })).filter(item => /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(item.id));
+    if (items.length < 2) throw new Error('批量巡检至少需要选择两个流程');
+    const ordered = items.map((item, index) => `${index + 1}. @flow:${item.id}${item.name && item.name !== item.id ? `（${item.name}）` : ''}`).join('\n');
+    return `批量巡检以下 ${items.length} 个已有流程，严格按给定顺序串行执行（concurrency=1）：\n${ordered}\n请一次调用 patrol_run_batch，flows=${JSON.stringify(items.map(item => item.id))}，mode=serial。不要修改、重教或新增任何流程步骤；单个流程失败后继续后续流程，遇到 waiting/checkpoint 时暂停整个批次并等待 patrol_resume_batch。执行过程中用简体中文说明当前批次进度和最终汇总。`;
+  }
+
+  async function conversationForSession(ctx, sessionId) {
     const scoped = typeof ctx.sessions.scope === 'function' ? ctx.sessions.scope(sessionId) : undefined;
     const conversation = scoped?.get?.('conversation') ?? scoped?.conversation;
     if (!conversation || typeof conversation.send !== 'function') throw new Error('当前会话尚未提供对话发送服务');
+    return conversation;
+  }
+
+  async function sendFlowReplay(ctx, sessionId, inspectionId, flowName) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(String(inspectionId || ''))) throw new Error('巡检流程 ID 无效');
+    const conversation = await conversationForSession(ctx, sessionId);
     await conversation.send(flowReplayPrompt(inspectionId, flowName));
+  }
+
+  async function sendFlowSelectionReplay(ctx, sessionId, flows) {
+    const items = Array.isArray(flows) ? flows : [];
+    if (items.length === 0) throw new Error('请至少选择一个巡检流程');
+    if (items.length === 1) {
+      await sendFlowReplay(ctx, sessionId, items[0].id, items[0].name);
+      return;
+    }
+    const conversation = await conversationForSession(ctx, sessionId);
+    await conversation.send(batchReplayPrompt(items));
   }
 
   async function readBrowserVisibility() {
@@ -182,18 +208,18 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
     );
   }
 
-  function FlowRunButton({ workspaceRoot, runFlow }) {
+  function FlowRunButton({ workspaceRoot, runFlows }) {
     return React.createElement('button', {
       type: 'button',
       style: { ...BUTTON, height: '28px', padding: '0 9px' },
-      onClick: () => createFlowChooser(workspaceRoot, runFlow),
+      onClick: () => createFlowChooser(workspaceRoot, runFlows),
       'data-dsh-patrol-select-flow': 'header',
     }, '选择流程');
   }
 
-  function PatrolHeaderControls({ workspaceRoot, runFlow }) {
+  function PatrolHeaderControls({ workspaceRoot, runFlows }) {
     return React.createElement('div', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' }, 'data-dsh-patrol-runtime-controls': 'header' },
-      React.createElement(FlowRunButton, { workspaceRoot, runFlow }),
+      React.createElement(FlowRunButton, { workspaceRoot, runFlows }),
       React.createElement(BrowserVisibilityButton),
     );
   }
@@ -203,12 +229,12 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
       name: 'conversation.session.header.actions', id: 'dsh-patrol-runtime-controls', order: 15,
       inject: sessionId => ({
         workspaceRoot: workspaceForSession(ctx, sessionId),
-        runFlow: (inspectionId, flowName) => sendFlowReplay(ctx, sessionId, inspectionId, flowName),
+        runFlows: flows => sendFlowSelectionReplay(ctx, sessionId, flows),
       }),
     }, PatrolHeaderControls));
   }
 
-  function createFlowChooser(workspaceRoot, runFlow) {
+  function createFlowChooser(workspaceRoot, runFlows) {
     const existing = document.querySelector('[data-dsh-patrol-flow-chooser]');
     if (existing instanceof HTMLElement) existing.remove();
 
@@ -220,20 +246,24 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
     panel.setAttribute('role', 'dialog');
     panel.setAttribute('aria-modal', 'true');
     panel.setAttribute('aria-label', '选择巡检流程');
-    Object.assign(panel.style, { width: 'min(960px, calc(100vw - 40px))', maxHeight: 'min(760px, calc(100vh - 40px))', overflow: 'hidden', display: 'grid', gridTemplateRows: 'auto auto minmax(0,1fr) auto', background: 'var(--dsh-color-bg,#fff)', color: 'var(--dsh-color-text,#172033)', border: '1px solid rgba(127,127,127,.24)', borderRadius: '15px', boxShadow: '0 24px 80px rgba(0,0,0,.28)' });
-    panel.innerHTML = '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:18px 20px 12px"><div><div style="font-size:16px;font-weight:720">选择巡检流程</div><div style="font-size:12px;color:#667085;margin-top:5px">先查看流程信息和步骤，再确认执行。</div></div><button type="button" data-close style="height:30px;padding:0 10px;border:1px solid rgba(127,127,127,.24);border-radius:8px;background:transparent;color:inherit;cursor:pointer">关闭</button></div><div data-status role="status" style="font-size:12px;color:#667085;padding:0 20px 12px">正在读取流程…</div><div data-body style="min-height:0;overflow:auto;display:flex;flex-wrap:wrap;align-items:stretch;gap:14px;padding:0 20px 16px"><div data-list style="flex:1 1 260px;min-width:220px;max-height:520px;overflow:auto;border:1px solid rgba(127,127,127,.18);border-radius:12px;background:rgba(127,127,127,.025)"></div><div data-dsh-patrol-flow-details style="flex:2 1 440px;min-width:0;border:1px solid rgba(127,127,127,.18);border-radius:12px;padding:16px;overflow:auto"><div style="display:grid;place-items:center;min-height:220px;color:#667085;font-size:12px;text-align:center">请选择左侧流程查看详情。<br>点击流程不会立即执行。</div></div></div><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-top:1px solid rgba(127,127,127,.18);padding:12px 20px 16px"><div data-selected style="font-size:12px;color:#667085">尚未选择流程</div><div style="display:flex;gap:8px"><button type="button" data-cancel style="height:34px;padding:0 13px;border:1px solid rgba(127,127,127,.24);border-radius:9px;background:transparent;color:inherit;cursor:pointer">取消</button><button type="button" data-dsh-patrol-flow-execute disabled style="height:34px;padding:0 15px;border:1px solid rgba(37,99,235,.45);border-radius:9px;background:#2563eb;color:#fff;cursor:pointer;font-weight:650;opacity:.55">执行选中流程</button></div></div>';
+    Object.assign(panel.style, { width: 'min(1000px, calc(100vw - 40px))', maxHeight: 'min(800px, calc(100vh - 40px))', overflow: 'hidden', display: 'grid', gridTemplateRows: 'auto auto minmax(0,1fr) auto', background: 'var(--dsh-color-bg,#fff)', color: 'var(--dsh-color-text,#172033)', border: '1px solid rgba(127,127,127,.24)', borderRadius: '15px', boxShadow: '0 24px 80px rgba(0,0,0,.28)' });
+    panel.innerHTML = '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:18px 20px 12px"><div><div style="font-size:16px;font-weight:720">选择巡检流程</div><div style="font-size:12px;color:#667085;margin-top:5px">可勾选多个流程批量巡检；点击流程名称只查看详情，不会自动勾选或执行。</div></div><button type="button" data-close style="height:30px;padding:0 10px;border:1px solid rgba(127,127,127,.24);border-radius:8px;background:transparent;color:inherit;cursor:pointer">关闭</button></div><div data-status role="status" style="font-size:12px;color:#667085;padding:0 20px 12px">正在读取流程…</div><div data-selection-body style="min-height:0;overflow:auto;display:flex;flex-wrap:wrap;align-items:stretch;gap:14px;padding:0 20px 16px"><div data-list style="flex:1 1 300px;min-width:250px;max-height:540px;overflow:auto;border:1px solid rgba(127,127,127,.18);border-radius:12px;background:rgba(127,127,127,.025)"></div><div data-dsh-patrol-flow-details style="flex:2 1 460px;min-width:0;border:1px solid rgba(127,127,127,.18);border-radius:12px;padding:16px;overflow:auto"><div style="display:grid;place-items:center;min-height:220px;color:#667085;font-size:12px;text-align:center">点击左侧流程名称查看详情。<br>勾选框用于加入批量巡检。</div></div></div><div data-confirm-body hidden style="min-height:0;overflow:auto;padding:0 20px 16px"></div><div style="display:grid;gap:10px;border-top:1px solid rgba(127,127,127,.18);padding:12px 20px 16px"><div data-selected style="font-size:12px;color:#667085">尚未选择流程</div><div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap"><button type="button" data-cancel style="height:34px;padding:0 13px;border:1px solid rgba(127,127,127,.24);border-radius:9px;background:transparent;color:inherit;cursor:pointer">取消</button><button type="button" data-dsh-patrol-flow-execute disabled style="height:34px;padding:0 15px;border:1px solid rgba(37,99,235,.45);border-radius:9px;background:#2563eb;color:#fff;cursor:pointer;font-weight:650;opacity:.55">执行选中流程</button></div></div>';
     backdrop.appendChild(panel);
     document.body.appendChild(backdrop);
 
     const status = panel.querySelector('[data-status]');
     const list = panel.querySelector('[data-list]');
     const details = panel.querySelector('[data-dsh-patrol-flow-details]');
+    const selectionBody = panel.querySelector('[data-selection-body]');
+    const confirmBody = panel.querySelector('[data-confirm-body]');
     const selected = panel.querySelector('[data-selected]');
     const execute = panel.querySelector('[data-dsh-patrol-flow-execute]');
     const closeButton = panel.querySelector('[data-close]');
     const cancelButton = panel.querySelector('[data-cancel]');
-    const flowButtons = new Map();
-    let selectedFlow = null;
+    const flowRows = new Map();
+    let selectedFlows = [];
+    let previewFlow = null;
+    let confirming = false;
     let busy = false;
 
     const close = () => {
@@ -245,7 +275,6 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
     window.addEventListener('keydown', onKeyDown);
     backdrop.addEventListener('mousedown', event => { if (event.target === backdrop && !busy) close(); });
     closeButton?.addEventListener('click', () => { if (!busy) close(); });
-    cancelButton?.addEventListener('click', () => { if (!busy) close(); });
 
     const addInfo = (owner, label, value) => {
       const card = document.createElement('div');
@@ -314,64 +343,160 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
       details.appendChild(graph);
     };
 
-    const selectFlow = flow => {
-      selectedFlow = flow;
-      for (const [id, button] of flowButtons) {
-        const active = id === flow.id;
-        button.setAttribute('aria-pressed', active ? 'true' : 'false');
-        button.style.background = active ? 'rgba(37,99,235,.08)' : 'transparent';
-        button.style.boxShadow = active ? 'inset 3px 0 0 #2563eb' : 'none';
+    const renderSelectedSummary = () => {
+      if (!(selected instanceof HTMLElement)) return;
+      selected.replaceChildren();
+      if (selectedFlows.length === 0) {
+        selected.textContent = '尚未选择流程';
+        return;
       }
-      if (selected instanceof HTMLElement) selected.textContent = `已选择：${flow.name}`;
-      if (execute instanceof HTMLButtonElement) { execute.disabled = false; execute.style.opacity = '1'; }
+      const heading = document.createElement('div'); heading.textContent = `已选择 ${selectedFlows.length} 个流程 · 执行顺序`; heading.style.cssText = 'font-weight:650;color:inherit;margin-bottom:6px'; selected.appendChild(heading);
+      const wrap = document.createElement('div'); wrap.setAttribute('data-dsh-patrol-selected-order', ''); wrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px';
+      selectedFlows.forEach((flow, index) => {
+        const chip = document.createElement('span'); chip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;border:1px solid rgba(127,127,127,.22);border-radius:8px;padding:3px 5px;color:inherit;background:rgba(127,127,127,.035)';
+        const label = document.createElement('span'); label.textContent = `${index + 1}. ${flow.name}`; label.style.cssText = 'max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'; chip.appendChild(label);
+        const up = document.createElement('button'); up.type = 'button'; up.textContent = '↑'; up.title = '提前执行'; up.disabled = index === 0 || confirming || busy; up.style.cssText = 'border:0;background:transparent;color:inherit;cursor:pointer;padding:0 3px'; up.addEventListener('click', () => moveSelected(flow.id, -1));
+        const down = document.createElement('button'); down.type = 'button'; down.textContent = '↓'; down.title = '延后执行'; down.disabled = index === selectedFlows.length - 1 || confirming || busy; down.style.cssText = up.style.cssText; down.addEventListener('click', () => moveSelected(flow.id, 1));
+        const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = '×'; remove.title = '移出批量巡检'; remove.disabled = confirming || busy; remove.style.cssText = up.style.cssText; remove.addEventListener('click', () => toggleSelected(flow));
+        chip.append(up, down, remove); wrap.appendChild(chip);
+      });
+      selected.appendChild(wrap);
+    };
+
+    const updateActionButton = () => {
+      if (!(execute instanceof HTMLButtonElement)) return;
+      execute.disabled = selectedFlows.length === 0 || busy;
+      execute.style.opacity = execute.disabled ? '.55' : '1';
+      if (busy) execute.textContent = selectedFlows.length > 1 ? '正在启动批量巡检…' : '正在启动…';
+      else if (confirming) execute.textContent = '开始串行巡检';
+      else execute.textContent = selectedFlows.length > 1 ? '下一步：确认批量巡检' : '执行选中流程';
+    };
+
+    const syncRowSelection = () => {
+      const selectedIds = new Set(selectedFlows.map(flow => flow.id));
+      for (const [id, parts] of flowRows) {
+        const checked = selectedIds.has(id);
+        if (parts.checkbox instanceof HTMLInputElement) parts.checkbox.checked = checked;
+        parts.row.style.boxShadow = checked ? 'inset 3px 0 0 rgba(37,99,235,.65)' : 'none';
+      }
+    };
+
+    const moveSelected = (flowId, delta) => {
+      if (confirming || busy) return;
+      const index = selectedFlows.findIndex(flow => flow.id === flowId);
+      const next = index + delta;
+      if (index < 0 || next < 0 || next >= selectedFlows.length) return;
+      const copy = [...selectedFlows];
+      const [item] = copy.splice(index, 1); copy.splice(next, 0, item); selectedFlows = copy;
+      renderSelectedSummary(); updateActionButton();
+    };
+
+    const toggleSelected = flow => {
+      if (confirming || busy) return;
+      const index = selectedFlows.findIndex(item => item.id === flow.id);
+      selectedFlows = index >= 0 ? selectedFlows.filter(item => item.id !== flow.id) : [...selectedFlows, flow];
+      syncRowSelection(); renderSelectedSummary(); updateActionButton();
+    };
+
+    const preview = flow => {
+      previewFlow = flow;
+      for (const [id, parts] of flowRows) parts.row.style.background = id === flow.id ? 'rgba(37,99,235,.07)' : 'transparent';
       renderDetails(flow);
     };
 
-    execute?.addEventListener('click', async () => {
-      if (!selectedFlow || busy) return;
-      busy = true;
-      if (execute instanceof HTMLButtonElement) { execute.disabled = true; execute.style.opacity = '.65'; execute.textContent = '正在启动…'; }
+    const renderConfirmation = () => {
+      if (!(confirmBody instanceof HTMLElement)) return;
+      confirmBody.replaceChildren();
+      const card = document.createElement('div'); card.style.cssText = 'border:1px solid rgba(127,127,127,.18);border-radius:12px;padding:16px';
+      const title = document.createElement('div'); title.textContent = '批量巡检最终确认'; title.style.cssText = 'font-size:16px;font-weight:720';
+      const note = document.createElement('div'); note.textContent = `本次共 ${selectedFlows.length} 个流程，固定串行执行（concurrency=1）。单个流程失败后继续；遇到人工检查点时整个批次暂停。`; note.style.cssText = 'font-size:12px;color:#667085;line-height:1.6;margin-top:6px';
+      card.append(title, note);
+      const listBox = document.createElement('div'); listBox.setAttribute('data-dsh-patrol-batch-confirm-list', ''); listBox.style.cssText = 'display:grid;gap:8px;margin-top:14px';
+      selectedFlows.forEach((flow, index) => {
+        const row = document.createElement('div'); row.style.cssText = 'display:grid;grid-template-columns:34px minmax(0,1fr);gap:10px;border:1px solid rgba(127,127,127,.16);border-radius:10px;padding:10px';
+        const number = document.createElement('div'); number.textContent = String(index + 1); number.style.cssText = 'width:28px;height:28px;border-radius:999px;display:grid;place-items:center;background:rgba(37,99,235,.10);color:#2563eb;font-size:11px;font-weight:700';
+        const body = document.createElement('div');
+        const name = document.createElement('div'); name.textContent = flow.name; name.style.cssText = 'font-size:12px;font-weight:650';
+        const meta = document.createElement('div'); meta.textContent = `${flow.id} · ${Array.isArray(flow.steps) ? flow.steps.length : 0} 步 · ${typeof flow.target?.url === 'string' ? flow.target.url : '未配置目标'}`; meta.style.cssText = 'font-size:10px;color:#667085;margin-top:4px;word-break:break-word';
+        body.append(name, meta); row.append(number, body); listBox.appendChild(row);
+      });
+      card.appendChild(listBox); confirmBody.appendChild(card);
+    };
+
+    const showSelectionStage = () => {
+      confirming = false;
+      if (selectionBody instanceof HTMLElement) selectionBody.hidden = false;
+      if (confirmBody instanceof HTMLElement) confirmBody.hidden = true;
+      if (cancelButton instanceof HTMLButtonElement) cancelButton.textContent = '取消';
+      if (status instanceof HTMLElement) status.textContent = '勾选多个流程可批量串行巡检；点击流程名称只查看详情，不会执行。';
+      renderSelectedSummary(); updateActionButton();
+      if (previewFlow) renderDetails(previewFlow);
+    };
+
+    const showConfirmationStage = () => {
+      confirming = true;
+      if (selectionBody instanceof HTMLElement) selectionBody.hidden = true;
+      if (confirmBody instanceof HTMLElement) confirmBody.hidden = false;
+      if (cancelButton instanceof HTMLButtonElement) cancelButton.textContent = '返回修改';
+      if (status instanceof HTMLElement) status.textContent = '最终确认：将严格按下列顺序串行执行所有已选流程。';
+      renderConfirmation(); renderSelectedSummary(); updateActionButton();
+    };
+
+    const launchSelected = async () => {
+      if (selectedFlows.length === 0 || busy) return;
+      busy = true; updateActionButton();
       if (cancelButton instanceof HTMLButtonElement) cancelButton.disabled = true;
       if (closeButton instanceof HTMLButtonElement) closeButton.disabled = true;
-      if (status instanceof HTMLElement) status.textContent = `正在启动：${selectedFlow.name}…`;
+      if (status instanceof HTMLElement) status.textContent = selectedFlows.length > 1 ? `正在启动批量巡检：${selectedFlows.length} 个流程…` : `正在启动：${selectedFlows[0].name}…`;
       try {
-        if (typeof runFlow !== 'function') throw new Error('当前会话无法执行巡检流程');
-        await runFlow(selectedFlow.id, selectedFlow.name);
+        if (typeof runFlows !== 'function') throw new Error('当前会话无法执行巡检流程');
+        await runFlows(selectedFlows.map(flow => ({ id: flow.id, name: flow.name })));
         close();
       } catch (error) {
         busy = false;
         if (status instanceof HTMLElement) status.textContent = errorMessage(error);
-        if (execute instanceof HTMLButtonElement) { execute.disabled = false; execute.style.opacity = '1'; execute.textContent = '执行选中流程'; }
         if (cancelButton instanceof HTMLButtonElement) cancelButton.disabled = false;
         if (closeButton instanceof HTMLButtonElement) closeButton.disabled = false;
+        updateActionButton();
       }
+    };
+
+    cancelButton?.addEventListener('click', () => {
+      if (busy) return;
+      if (confirming) showSelectionStage(); else close();
+    });
+
+    execute?.addEventListener('click', async () => {
+      if (selectedFlows.length === 0 || busy) return;
+      if (selectedFlows.length > 1 && !confirming) { showConfirmationStage(); return; }
+      await launchSelected();
     });
 
     loadPatrolFlows(workspaceRoot, controller.signal).then(flows => {
       if (!backdrop.isConnected) return;
-      if (status instanceof HTMLElement) status.textContent = flows.length ? '选择左侧流程查看详情；只有点击“执行选中流程”才会开始运行。' : '当前工作区还没有可运行流程。';
+      if (status instanceof HTMLElement) status.textContent = flows.length ? '勾选多个流程可批量串行巡检；点击流程名称只查看详情，不会执行。' : '当前工作区还没有可运行流程。';
       if (!(list instanceof HTMLElement)) return;
       list.replaceChildren();
       for (const flow of flows) {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.setAttribute('data-dsh-patrol-flow-item', flow.id);
-        button.setAttribute('aria-pressed', 'false');
-        button.style.cssText = 'display:block;width:100%;text-align:left;border:0;border-bottom:1px solid rgba(127,127,127,.14);background:transparent;color:inherit;cursor:pointer;padding:11px 12px';
+        const row = document.createElement('div');
+        row.setAttribute('data-dsh-patrol-flow-item', flow.id);
+        row.style.cssText = 'display:flex;align-items:center;gap:9px;border-bottom:1px solid rgba(127,127,127,.14);background:transparent;color:inherit;padding:9px 10px';
+        const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.setAttribute('data-dsh-patrol-flow-select', flow.id); checkbox.title = '加入批量巡检'; checkbox.style.cssText = 'width:16px;height:16px;cursor:pointer;flex:0 0 auto'; checkbox.addEventListener('change', () => toggleSelected(flow));
+        const button = document.createElement('button'); button.type = 'button'; button.setAttribute('aria-label', `查看流程 ${flow.name}`); button.style.cssText = 'display:block;min-width:0;flex:1;text-align:left;border:0;background:transparent;color:inherit;cursor:pointer;padding:2px 0';
         const title = document.createElement('div'); title.textContent = flow.name; title.style.cssText = 'font-size:13px;font-weight:650;line-height:1.35';
         const meta = document.createElement('div'); meta.textContent = `${flow.id} · ${String(flow.status || 'draft').toUpperCase()} · ${Array.isArray(flow.steps) ? flow.steps.length : 0} 步`; meta.style.cssText = 'font-size:10px;color:#667085;margin-top:4px';
-        button.append(title, meta);
-        button.addEventListener('click', () => selectFlow(flow));
-        flowButtons.set(flow.id, button);
-        list.appendChild(button);
+        button.append(title, meta); button.addEventListener('click', () => preview(flow));
+        row.append(checkbox, button); flowRows.set(flow.id, { row, checkbox, button }); list.appendChild(row);
       }
+      if (flows.length > 0) preview(flows[0]);
+      syncRowSelection(); renderSelectedSummary(); updateActionButton();
     }).catch(error => { if (!controller.signal.aborted && backdrop.isConnected && status instanceof HTMLElement) status.textContent = errorMessage(error); });
 
     return close;
   }
 
   function createHeroFlowChooser(ctx, sessionId, workspaceRoot) {
-    return createFlowChooser(workspaceRoot, (inspectionId, flowName) => sendFlowReplay(ctx, sessionId, inspectionId, flowName));
+    return createFlowChooser(workspaceRoot, flows => sendFlowSelectionReplay(ctx, sessionId, flows));
   }
 
   function mountPatrolHeroControls(ctx) {
