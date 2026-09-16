@@ -199,15 +199,19 @@ export function registerPatrolFlowReferenceTools(
         items: { type: 'string' },
         description: 'Ordered flow references. Stable inspectionIds and @flow:<inspectionId> are preferred. Selection order is execution order.',
       },
-      mode: { type: 'string', required: false, description: 'Batch execution mode. V1 supports only serial.' },
+      mode: { type: 'string', description: 'Batch execution mode. V1 supports only serial.' },
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
       if (!Array.isArray(args.flows)) throw new Error('flows must be an array')
+      const flowQueries = args.flows.map((value, index) => {
+        if (typeof value !== 'string') throw new Error(`flows[${index}] must be a string`)
+        return value
+      })
       const mode = String(args.mode ?? 'serial').trim().toLowerCase()
       if (mode !== 'serial') throw new Error('batch patrol V1 supports only mode=serial (concurrency=1)')
       const definitions = await store.list()
-      const resolved = resolveBatchFlowReferences(definitions, args.flows, exec.agent?.session.header.cwd)
+      const resolved = resolveBatchFlowReferences(definitions, flowQueries, exec.agent?.session.header.cwd)
 
       // Full preflight is deliberate: do not start flow #1 if flow #N is
       // missing, ambiguous, empty, or already paused at a checkpoint.
