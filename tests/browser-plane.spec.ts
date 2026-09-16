@@ -54,6 +54,7 @@ describe('browser host/agent plane split', () => {
     expect(fixture.upgrades[0].path).toBe('/patrol-browser-bridge')
     expect(fixture.routes.map(route => route.path)).toEqual([
       '/patrol-browser-bridge/info',
+      '/patrol-browser-bridge/browser-visibility',
       '/patrol-browser-bridge/dashboard/ui',
       '/patrol-browser-bridge/dashboard/catalog',
       '/patrol-browser-bridge/dashboard/run',
@@ -66,7 +67,6 @@ describe('browser host/agent plane split', () => {
       '/patrol-browser-bridge/totp/import',
       '/patrol-browser-bridge/totp/import-image',
       '/patrol-browser-bridge/totp/delete',
-      '/patrol-browser-bridge/browser-visibility',
     ])
     const service = fixture.services.get('patrolBrowserBridge')
     expect(service).toBeDefined()
