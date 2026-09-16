@@ -1,3 +1,4 @@
+import { findUniqueHealingSelector } from './browser.js'
 import type { InspectionDefinition, JsonValue, ToolStep } from './types.js'
 
 export interface AdaptiveSelectorRecovery {
@@ -11,6 +12,9 @@ const PASSWORD_HINT = /(password|passwd|pwd|密码)/i
 const SENSITIVE_CODE_HINT = /(captcha|验证码|动态码|otp|one[- ]?time|短信|sms|verification\s*code|code)/i
 const FIELD_EXCLUDE_HINT = /(search|query|filter|captcha|验证码|otp|verification|code|password|passwd|pwd)/i
 const TYPE_TASK_HINT = /(输入|填写|填入|type|enter|fill)/i
+const CLICK_TASK_HINT = /(点击|点开|打开.*(?:入口|菜单|工单|详情)|click|open .*?(?:menu|item|detail))/i
+const DANGEROUS_CLICK_TASK = /(删除|移除|注销|清空|支付|购买|授权|发送|发布|delete|remove|clear|pay|purchase|authorize|send|publish)/i
+const GENERIC_CLICK_TARGET = /^(?:确定|确认|提交|继续|下一步|打开|点击|ok|confirm|submit|continue|next)$/i
 
 export function isSelectorUnavailable(error: string | undefined): boolean {
   return typeof error === 'string'
@@ -65,12 +69,48 @@ export function findAdaptiveSelectorRecovery(
 }
 
 /**
+ * Low-risk checklist fallback for a stale browser_click selector. This is only
+ * allowed when the checklist names one concrete, non-destructive target and the
+ * CURRENT snapshot exposes exactly one clickable semantic match. No extra menu
+ * traversal or other structural action is invented here.
+ */
+export function findAdaptiveClickRecovery(
+  definition: InspectionDefinition,
+  step: ToolStep,
+  snapshot: JsonValue | undefined,
+): AdaptiveSelectorRecovery | undefined {
+  if (step.tool !== 'browser_click') return undefined
+  const task = checklistTaskForStep(definition, step)
+  if (task === undefined || DANGEROUS_CLICK_TASK.test(task)) return undefined
+  const target = clickTargetFromTask(task)
+  if (target === undefined || GENERIC_CLICK_TARGET.test(target)) return undefined
+
+  const clickable = snapshotElements(snapshot).filter(isClickableSnapshotElement)
+  if (clickable.length === 0) return undefined
+  const candidateSnapshot: JsonValue = {
+    elements: clickable.map(item => ({
+      selector: item.selector,
+      text: item.text,
+      role: item.role,
+      tag: item.tag,
+    })),
+  }
+  const selector = findUniqueHealingSelector(candidateSnapshot, { text: target })
+  if (selector === undefined) return undefined
+  return {
+    selector,
+    reason: `unique clickable target matching checklist instruction ${JSON.stringify(task)}`,
+    task,
+  }
+}
+
+/**
  * Resolve the business-checklist instruction for a concrete reusable step.
  *
  * Newer definitions may carry a persisted taskHint. Older definitions are
- * mapped deterministically by action order: the Nth replayed text-entry step
- * maps to the Nth text-entry item in the ordered checklist. Semantic matching
- * remains as a fallback for legacy traces whose action counts do not line up.
+ * mapped deterministically by action order: the Nth replayed action maps to
+ * the Nth checklist instruction of the same action category. Semantic matching
+ * remains as a fallback for legacy text-entry traces whose counts do not line up.
  */
 export function checklistTaskForStep(definition: InspectionDefinition, step: ToolStep): string | undefined {
   const explicit = step.taskHint?.trim()
@@ -79,13 +119,14 @@ export function checklistTaskForStep(definition: InspectionDefinition, step: Too
   const checklist = definition.metadata.taskChecklist ?? []
   if (checklist.length === 0) return undefined
 
-  if (isTypingTool(step.tool)) {
-    const typingSteps = definition.steps.filter((candidate): candidate is ToolStep => (
-      candidate.kind === 'tool' && isTypingTool(candidate.tool)
+  const action = recoveryActionForTool(step.tool)
+  if (action !== undefined) {
+    const matchingSteps = definition.steps.filter((candidate): candidate is ToolStep => (
+      candidate.kind === 'tool' && recoveryActionForTool(candidate.tool) === action
     ))
-    const stepIndex = typingSteps.findIndex(candidate => candidate.id === step.id)
-    const typingTasks = checklist.filter(item => TYPE_TASK_HINT.test(item))
-    if (stepIndex >= 0 && stepIndex < typingTasks.length) return typingTasks[stepIndex]
+    const stepIndex = matchingSteps.findIndex(candidate => candidate.id === step.id)
+    const matchingTasks = checklist.filter(item => checklistMatchesRecoveryAction(item, action))
+    if (stepIndex >= 0 && stepIndex < matchingTasks.length) return matchingTasks[stepIndex]
   }
 
   return semanticChecklistTask(checklist, step)
@@ -111,6 +152,7 @@ interface SnapshotElement {
   type: string
   name: string
   text: string
+  role: string
   placeholder: string
   ariaLabel: string
 }
@@ -130,11 +172,29 @@ function snapshotElements(value: JsonValue | undefined): SnapshotElement[] {
       type: stringValue(item.type).toLocaleLowerCase('en-US'),
       name: stringValue(item.name),
       text: stringValue(item.text),
+      role: stringValue(item.role).toLocaleLowerCase('en-US'),
       placeholder: stringValue(item.placeholder),
       ariaLabel: stringValue(item.ariaLabel),
     })
   }
   return result
+}
+
+function isClickableSnapshotElement(item: SnapshotElement): boolean {
+  if (item.tag === 'a' || item.tag === 'button') return true
+  if (item.tag === 'input' && ['button', 'submit', 'reset'].includes(item.type)) return true
+  return ['button', 'link', 'menuitem', 'tab', 'treeitem', 'option'].includes(item.role)
+}
+
+function clickTargetFromTask(task: string): string | undefined {
+  const normalized = task
+    .replace(/^\s*(?:\d+[.)、]|[-*•])\s*/, '')
+    .replace(/^\s*(?:点击|点开|打开|进入|选择|click|open|select)\s*/i, '')
+    .replace(/[“”‘’"']/g, '')
+    .trim()
+    .replace(/(?:按钮|链接|菜单|入口|选项|button|link|menu|entry)\s*$/i, '')
+    .trim()
+  return normalized.length >= 2 ? normalized : undefined
 }
 
 function semanticChecklistTask(checklist: readonly string[], step: ToolStep): string | undefined {
@@ -143,6 +203,19 @@ function semanticChecklistTask(checklist: readonly string[], step: ToolStep): st
   if (wanted === undefined) return undefined
   const matches = checklist.filter(item => wanted.test(item) && !SENSITIVE_CODE_HINT.test(item))
   return matches.length === 1 ? matches[0] : undefined
+}
+
+type RecoveryAction = 'type' | 'click'
+
+function recoveryActionForTool(tool: string): RecoveryAction | undefined {
+  if (isTypingTool(tool)) return 'type'
+  if (tool === 'browser_click') return 'click'
+  return undefined
+}
+
+function checklistMatchesRecoveryAction(text: string, action: RecoveryAction): boolean {
+  if (action === 'type') return TYPE_TASK_HINT.test(text)
+  return CLICK_TASK_HINT.test(text)
 }
 
 function isTypingTool(tool: string): boolean {

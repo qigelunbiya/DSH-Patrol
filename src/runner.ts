@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { CallId } from '@deepseek-ai/dsh-llm'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
-import { findAdaptiveSelectorRecovery, isSelectorUnavailable } from './adaptive-recovery.js'
+import { findAdaptiveClickRecovery, findAdaptiveSelectorRecovery, isSelectorUnavailable } from './adaptive-recovery.js'
 import { findUniqueHealingSelector, isPageReadStep, isScreenshotStep, isSafeBrowserTool } from './browser.js'
 import { verifyPostClickExpectation } from './post-click-verification.js'
 import { renderRunReport } from './report.js'
@@ -329,16 +329,40 @@ export class PatrolRunner {
 
     let dispatched = await this.dispatch(step.tool, runtimeArguments, exec)
     let healedSelector: string | undefined
+    let recoverySnapshot: DispatchResult | undefined
 
     if (!dispatched.ok && step.tool === 'browser_click' && step.locator !== undefined) {
-      const snapshot = await this.dispatch('browser_snapshot', {}, exec)
-      if (snapshot.ok) {
-        const candidate = findUniqueHealingSelector(snapshot.value, step.locator)
+      recoverySnapshot = await this.dispatch('browser_snapshot', {}, exec)
+      if (recoverySnapshot.ok) {
+        const candidate = findUniqueHealingSelector(recoverySnapshot.value, step.locator)
         if (candidate !== undefined) {
           const retried = await this.dispatch('browser_click', { ...runtimeArguments, selector: candidate }, exec)
           if (retried.ok) {
             dispatched = retried
             healedSelector = candidate
+          }
+        }
+      }
+    }
+
+    if (!dispatched.ok
+      && step.tool === 'browser_click'
+      && isSelectorUnavailable(dispatched.error)) {
+      recoverySnapshot ??= await this.dispatch('browser_snapshot', {}, exec)
+      if (recoverySnapshot.ok) {
+        const recovery = findAdaptiveClickRecovery(definition, step, recoverySnapshot.value)
+        if (recovery !== undefined) {
+          const retried = await this.dispatch('browser_click', { ...runtimeArguments, selector: recovery.selector }, exec)
+          if (retried.ok) {
+            dispatched = {
+              ...retried,
+              text: [
+                retried.text,
+                `Adaptive replay recovered the current click using ${recovery.reason}.`,
+                recovery.task === undefined ? '' : `Task checklist: ${recovery.task}`,
+              ].filter(Boolean).join('\n'),
+            }
+            healedSelector = recovery.selector
           }
         }
       }
