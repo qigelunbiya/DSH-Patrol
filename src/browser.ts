@@ -140,6 +140,12 @@ export interface SnapshotElement {
   tag?: unknown
 }
 
+/**
+ * Recover a stale click selector from the semantic identity recorded during
+ * teaching. Text is allowed to expand in harmless ways (for example counters
+ * or product branding) but destructive/representational additions are rejected
+ * by semanticTextMatches. Ambiguity always fails closed.
+ */
 export function findUniqueHealingSelector(snapshotValue: unknown, locator: SemanticLocator): string | undefined {
   if (snapshotValue === null || typeof snapshotValue !== 'object') return undefined
   const elements = (snapshotValue as { elements?: unknown }).elements
@@ -152,7 +158,7 @@ export function findUniqueHealingSelector(snapshotValue: unknown, locator: Seman
     if (item === null || typeof item !== 'object') return false
     const element = item as SnapshotElement
     if (typeof element.selector !== 'string' || element.selector.length === 0) return false
-    if (normalized.text !== undefined && String(element.text ?? '').trim() !== normalized.text) return false
+    if (normalized.text !== undefined && !semanticTextMatches(String(element.text ?? ''), normalized.text)) return false
     if (normalized.role !== undefined && String(element.role ?? '').trim().toLowerCase() !== normalized.role) return false
     if (normalized.tag !== undefined && String(element.tag ?? '').trim().toLowerCase() !== normalized.tag) return false
     return true
