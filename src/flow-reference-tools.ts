@@ -11,13 +11,14 @@ const TEXT_OUTPUT = {
 
 export const PATROL_FLOW_REFERENCE_PROMPT = `DSH Patrol existing-flow reference and replay rules（本节覆盖旧的“先 select 再手工 patrol_* 走一遍”的做法）：
 - 流程有两个不同概念：稳定 inspectionId 和用户可见流程名称 name。用户说出流程名称、带前后空格的名称，或使用 @流程名称 时，不得只凭 patrol_list 的文本自行判断；必须调用 patrol_resolve_flow。
+- ChatGPT 输入框中的 Patrol 流程引用会序列化为 @flow:<inspectionId>。它与稳定 inspectionId 完全等价；解析或执行时必须直接使用其中 inspectionId，不要把 flow: 当成流程名称的一部分。
 - patrol_resolve_flow 对 inspectionId 做精确匹配，也会对流程显示名称做 NFKC、首尾空白和连续空白归一化后的精确匹配。只要显示名称精确匹配，就必须回答“找到了”；如果有多个同名流程，必须明确说“找到多个同名流程”并列出 inspectionId，不能说“没有完全匹配”。
 - 用户说“运行/执行/走一遍/巡检/重放”一个已有流程时，直接调用 patrol_run_flow。patrol_run_flow 对 READY 和非空 DRAFT 都是只读重放：会产生新的巡检 run/report，但绝不能向 Runbook 追加步骤。
 - 绝对禁止为了“运行已有 DRAFT 流程”而依次调用 patrol_navigate、patrol_login_state、patrol_screenshot、patrol_read_page、patrol_click、patrol_type_* 等教学/记录工具。这些工具在 DRAFT 上的职责是编辑/教学，会追加步骤；它们不是已有流程的 replay API。
 - patrol_select_flow 只表示选择/查看上下文，不代表开始教学，也不代表执行。用户只是要运行已有流程时不需要先 select；解析后直接 patrol_run_flow。
 - 只有用户明确说“修改流程、继续教学、重教、调整步骤、修复 Runbook”时，才允许对 DRAFT 使用会记录步骤的 patrol_* 动作工具。
 - Dashboard 的“运行”按钮会把稳定 inspectionId 直接提交到对话；收到这类请求后直接 patrol_run_flow，不要再次改写流程。
-- @流程名称 与普通自然语言流程名称遵循相同解析规则。若名称唯一可直接使用；若同名冲突则要求用户选择 inspectionId，除非请求本身已经携带稳定 inspectionId。`
+- @流程名称、@flow:<inspectionId> 与普通自然语言流程名称遵循相同解析规则。若名称唯一可直接使用；若同名冲突则要求用户选择 inspectionId，除非请求本身已经携带稳定 inspectionId。`
 
 export type FlowMatchKind = 'exact-id' | 'exact-name' | 'partial'
 export interface FlowReferenceMatch {
@@ -38,6 +39,7 @@ export function normalizeFlowReference(value: string): string {
     .normalize('NFKC')
     .trim()
     .replace(/^@\s*/, '')
+    .replace(/^flow\s*:\s*/i, '')
     .trim()
     .replace(/\s+/g, ' ')
     .toLocaleLowerCase('en-US')
@@ -81,9 +83,9 @@ export function registerPatrolFlowReferenceTools(
 ): () => void {
   const resolveFlow = defineTool({
     name: 'patrol_resolve_flow',
-    description: 'Resolve an existing Patrol flow deterministically from a stable inspectionId, a human-visible flow name, or @flow-name. Use this instead of interpreting patrol_list text when the user names a flow.',
+    description: 'Resolve an existing Patrol flow deterministically from a stable inspectionId, a human-visible flow name, @flow-name, or native @flow:<inspectionId> reference. Use this instead of interpreting patrol_list text when the user names a flow.',
     parameters: {
-      flow: { type: 'string', required: true, description: 'Stable inspectionId, display name, or @display-name.' },
+      flow: { type: 'string', required: true, description: 'Stable inspectionId, display name, @display-name, or @flow:<inspectionId>.' },
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
@@ -95,9 +97,9 @@ export function registerPatrolFlowReferenceTools(
 
   const runFlow = defineTool({
     name: 'patrol_run_flow',
-    description: 'Run/replay an existing non-empty Patrol flow by id, display name, or @name without teaching or appending steps. READY and DRAFT are both supported; DRAFT is executed as a read-only preview and remains DRAFT.',
+    description: 'Run/replay an existing non-empty Patrol flow by id, display name, @name, or native @flow:<inspectionId> without teaching or appending steps. READY and DRAFT are both supported; DRAFT is executed as a read-only preview and remains DRAFT.',
     parameters: {
-      flow: { type: 'string', required: true, description: 'Stable inspectionId, display name, or @display-name.' },
+      flow: { type: 'string', required: true, description: 'Stable inspectionId, display name, @display-name, or @flow:<inspectionId>.' },
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
@@ -128,7 +130,7 @@ export function registerPatrolFlowReferenceTools(
     name: 'patrol_resume_flow',
     description: 'Resume a waiting run started by patrol_run_flow. Works for READY and DRAFT flows and does not append teaching steps.',
     parameters: {
-      flow: { type: 'string', required: true, description: 'Stable inspectionId, display name, or @display-name.' },
+      flow: { type: 'string', required: true, description: 'Stable inspectionId, display name, @display-name, or @flow:<inspectionId>.' },
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {

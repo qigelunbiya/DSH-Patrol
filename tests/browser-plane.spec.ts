@@ -50,10 +50,11 @@ describe('browser host/agent plane split', () => {
     })
 
     expect(fixture.upgrades).toHaveLength(1)
-    expect(fixture.routes).toHaveLength(13)
+    expect(fixture.routes).toHaveLength(14)
     expect(fixture.upgrades[0].path).toBe('/patrol-browser-bridge')
     expect(fixture.routes.map(route => route.path)).toEqual([
       '/patrol-browser-bridge/info',
+      '/patrol-browser-bridge/browser-visibility',
       '/patrol-browser-bridge/dashboard/ui',
       '/patrol-browser-bridge/dashboard/catalog',
       '/patrol-browser-bridge/dashboard/run',

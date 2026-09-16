@@ -15,8 +15,11 @@
 // ambiguity. modal-target-hardening scopes ordinary snapshots to a real
 // foreground dialog. The final semantic-intent fallback only relaxes an
 // over-specific text locator when the user explicitly asked for a Logo and the
-// atomic resolver found no target.
+// atomic resolver found no target. window-visibility adds a host/UI-only command
+// for moving the managed headful Chromium window on/off screen without touching
+// Patrol's recorded browser actions.
 importScripts('background.js')
+importScripts('window-visibility.js')
 importScripts('semantic-click.js')
 importScripts('semantic-row-context-hardening.js')
 importScripts('title-backed-row-action-hardening.js')

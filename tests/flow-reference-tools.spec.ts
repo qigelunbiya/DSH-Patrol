@@ -31,6 +31,10 @@ describe('flow reference resolver', () => {
     expect(normalizeFlowReference('  @ADBBA   登录巡检  ')).toBe('adbba 登录巡检')
   })
 
+  it('normalizes native @flow:<inspectionId> tokens to the stable id', () => {
+    expect(normalizeFlowReference(' @flow:ADBBA-login-check ')).toBe('adbba-login-check')
+  })
+
   it('finds a flow by its exact display name', () => {
     const result = resolveFlowReference([flow('adbba-login-check', 'ADBBA 登录巡检')], 'ADBBA 登录巡检  ', 'E:\\temp\\test')
     expect(result).toMatchObject({ kind: 'exact-name', definition: { id: 'adbba-login-check' } })
@@ -39,6 +43,11 @@ describe('flow reference resolver', () => {
   it('finds a flow by @display-name', () => {
     const result = resolveFlowReference([flow('adbba-login-check', 'ADBBA 登录巡检')], '@ADBBA 登录巡检')
     expect(result).toMatchObject({ kind: 'exact-name', definition: { id: 'adbba-login-check' } })
+  })
+
+  it('finds a flow by native @flow:<inspectionId>', () => {
+    const result = resolveFlowReference([flow('adbba-login-check', 'ADBBA 登录巡检')], '@flow:adbba-login-check')
+    expect(result).toMatchObject({ kind: 'exact-id', definition: { id: 'adbba-login-check' } })
   })
 
   it('reports duplicate exact display names as ambiguous instead of claiming no exact match', () => {
