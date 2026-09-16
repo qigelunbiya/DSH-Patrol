@@ -183,36 +183,12 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
   }
 
   function FlowRunButton({ workspaceRoot, runFlow }) {
-    const [open, setOpen] = React.useState(false);
-    const [flows, setFlows] = React.useState([]);
-    const [status, setStatus] = React.useState('');
-    const [busy, setBusy] = React.useState(false);
-    React.useEffect(() => {
-      if (!open) return undefined;
-      const controller = new AbortController();
-      setStatus('正在读取流程…');
-      loadPatrolFlows(workspaceRoot, controller.signal)
-        .then(items => { setFlows(items); setStatus(items.length ? '' : '当前工作区还没有可运行流程。'); })
-        .catch(error => { if (!controller.signal.aborted) setStatus(errorMessage(error)); });
-      return () => controller.abort();
-    }, [open, workspaceRoot]);
-    const execute = async flow => {
-      setBusy(true); setStatus('');
-      try { await runFlow(flow.id, flow.name); setOpen(false); }
-      catch (error) { setStatus(errorMessage(error)); }
-      finally { setBusy(false); }
-    };
-    return React.createElement('span', { style: { position: 'relative', display: 'inline-flex' } },
-      React.createElement('button', { type: 'button', style: { ...BUTTON, height: '28px', padding: '0 9px' }, onClick: () => setOpen(value => !value) }, '▶ 运行流程'),
-      open ? React.createElement('div', { style: { position: 'absolute', zIndex: 10020, top: '34px', right: 0, width: '320px', maxHeight: '360px', overflow: 'auto', ...CARD, boxShadow: '0 16px 48px rgba(0,0,0,.18)' } },
-        React.createElement('div', { style: { fontWeight: 700, fontSize: '13px', marginBottom: '8px' } }, '运行已有巡检流程'),
-        status ? React.createElement('div', { style: { color: MUTED, fontSize: '12px', padding: '8px 0' } }, status) : null,
-        flows.map(flow => React.createElement('button', { key: flow.id, type: 'button', disabled: busy, onClick: () => execute(flow), style: { display: 'block', width: '100%', textAlign: 'left', border: 0, borderTop: `1px solid ${BORDER}`, background: 'transparent', color: TEXT, cursor: 'pointer', padding: '9px 3px' } },
-          React.createElement('div', { style: { fontSize: '12px', fontWeight: 650 } }, flow.name),
-          React.createElement('div', { style: { fontSize: '10px', color: MUTED, marginTop: '3px' } }, `${flow.id} · ${String(flow.status || 'draft').toUpperCase()} · ${Array.isArray(flow.steps) ? flow.steps.length : 0} 步`),
-        )),
-      ) : null,
-    );
+    return React.createElement('button', {
+      type: 'button',
+      style: { ...BUTTON, height: '28px', padding: '0 9px' },
+      onClick: () => createFlowChooser(workspaceRoot, runFlow),
+      'data-dsh-patrol-select-flow': 'header',
+    }, '选择流程');
   }
 
   function PatrolHeaderControls({ workspaceRoot, runFlow }) {
@@ -232,35 +208,170 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
     }, PatrolHeaderControls));
   }
 
-  function createHeroFlowChooser(ctx, sessionId, workspaceRoot) {
+  function createFlowChooser(workspaceRoot, runFlow) {
+    const existing = document.querySelector('[data-dsh-patrol-flow-chooser]');
+    if (existing instanceof HTMLElement) existing.remove();
+
+    const controller = new AbortController();
     const backdrop = document.createElement('div');
     backdrop.setAttribute('data-dsh-patrol-flow-chooser', '');
-    Object.assign(backdrop.style, { position: 'fixed', inset: '0', zIndex: '10060', display: 'grid', placeItems: 'center', background: 'rgba(15,23,42,.36)', padding: '20px' });
+    Object.assign(backdrop.style, { position: 'fixed', inset: '0', zIndex: '10060', display: 'grid', placeItems: 'center', background: 'rgba(15,23,42,.40)', padding: '20px' });
     const panel = document.createElement('div');
-    Object.assign(panel.style, { width: 'min(520px, calc(100vw - 40px))', maxHeight: 'min(620px, calc(100vh - 40px))', overflow: 'auto', background: 'var(--dsh-color-bg,#fff)', color: 'var(--dsh-color-text,#172033)', border: '1px solid rgba(127,127,127,.24)', borderRadius: '14px', padding: '16px', boxShadow: '0 24px 80px rgba(0,0,0,.25)' });
-    panel.innerHTML = '<div style="font-size:15px;font-weight:700;margin-bottom:4px">运行已有巡检流程</div><div data-status style="font-size:12px;color:#667085;margin-bottom:10px">正在读取流程…</div><div data-list></div>';
-    backdrop.appendChild(panel); document.body.appendChild(backdrop);
-    backdrop.addEventListener('mousedown', event => { if (event.target === backdrop) backdrop.remove(); });
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
+    panel.setAttribute('aria-label', '选择巡检流程');
+    Object.assign(panel.style, { width: 'min(960px, calc(100vw - 40px))', maxHeight: 'min(760px, calc(100vh - 40px))', overflow: 'hidden', display: 'grid', gridTemplateRows: 'auto auto minmax(0,1fr) auto', background: 'var(--dsh-color-bg,#fff)', color: 'var(--dsh-color-text,#172033)', border: '1px solid rgba(127,127,127,.24)', borderRadius: '15px', boxShadow: '0 24px 80px rgba(0,0,0,.28)' });
+    panel.innerHTML = '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:18px 20px 12px"><div><div style="font-size:16px;font-weight:720">选择巡检流程</div><div style="font-size:12px;color:#667085;margin-top:5px">先查看流程信息和步骤，再确认执行。</div></div><button type="button" data-close style="height:30px;padding:0 10px;border:1px solid rgba(127,127,127,.24);border-radius:8px;background:transparent;color:inherit;cursor:pointer">关闭</button></div><div data-status role="status" style="font-size:12px;color:#667085;padding:0 20px 12px">正在读取流程…</div><div data-body style="min-height:0;overflow:auto;display:flex;flex-wrap:wrap;align-items:stretch;gap:14px;padding:0 20px 16px"><div data-list style="flex:1 1 260px;min-width:220px;max-height:520px;overflow:auto;border:1px solid rgba(127,127,127,.18);border-radius:12px;background:rgba(127,127,127,.025)"></div><div data-dsh-patrol-flow-details style="flex:2 1 440px;min-width:0;border:1px solid rgba(127,127,127,.18);border-radius:12px;padding:16px;overflow:auto"><div style="display:grid;place-items:center;min-height:220px;color:#667085;font-size:12px;text-align:center">请选择左侧流程查看详情。<br>点击流程不会立即执行。</div></div></div><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-top:1px solid rgba(127,127,127,.18);padding:12px 20px 16px"><div data-selected style="font-size:12px;color:#667085">尚未选择流程</div><div style="display:flex;gap:8px"><button type="button" data-cancel style="height:34px;padding:0 13px;border:1px solid rgba(127,127,127,.24);border-radius:9px;background:transparent;color:inherit;cursor:pointer">取消</button><button type="button" data-dsh-patrol-flow-execute disabled style="height:34px;padding:0 15px;border:1px solid rgba(37,99,235,.45);border-radius:9px;background:#2563eb;color:#fff;cursor:pointer;font-weight:650;opacity:.55">执行选中流程</button></div></div>';
+    backdrop.appendChild(panel);
+    document.body.appendChild(backdrop);
+
     const status = panel.querySelector('[data-status]');
     const list = panel.querySelector('[data-list]');
-    loadPatrolFlows(workspaceRoot).then(flows => {
+    const details = panel.querySelector('[data-dsh-patrol-flow-details]');
+    const selected = panel.querySelector('[data-selected]');
+    const execute = panel.querySelector('[data-dsh-patrol-flow-execute]');
+    const closeButton = panel.querySelector('[data-close]');
+    const cancelButton = panel.querySelector('[data-cancel]');
+    const flowButtons = new Map();
+    let selectedFlow = null;
+    let busy = false;
+
+    const close = () => {
+      controller.abort();
+      window.removeEventListener('keydown', onKeyDown);
+      backdrop.remove();
+    };
+    const onKeyDown = event => { if (event.key === 'Escape' && !busy) close(); };
+    window.addEventListener('keydown', onKeyDown);
+    backdrop.addEventListener('mousedown', event => { if (event.target === backdrop && !busy) close(); });
+    closeButton?.addEventListener('click', () => { if (!busy) close(); });
+    cancelButton?.addEventListener('click', () => { if (!busy) close(); });
+
+    const addInfo = (owner, label, value) => {
+      const card = document.createElement('div');
+      card.style.cssText = 'border:1px solid rgba(127,127,127,.16);border-radius:10px;padding:10px 11px;min-width:0';
+      const key = document.createElement('div'); key.textContent = label; key.style.cssText = 'font-size:10px;color:#667085;margin-bottom:4px';
+      const text = document.createElement('div'); text.textContent = value || '未配置'; text.style.cssText = 'font-size:12px;line-height:1.55;word-break:break-word';
+      card.append(key, text); owner.appendChild(card);
+    };
+
+    const renderDetails = flow => {
+      if (!(details instanceof HTMLElement)) return;
+      details.replaceChildren();
+      const steps = Array.isArray(flow.steps) ? flow.steps : [];
+      const title = document.createElement('div'); title.textContent = flow.name; title.style.cssText = 'font-size:17px;font-weight:720;line-height:1.35';
+      const meta = document.createElement('div'); meta.textContent = `${flow.id} · ${String(flow.status || 'draft').toUpperCase()} · ${steps.length} 步`; meta.style.cssText = 'font-size:11px;color:#667085;margin-top:5px';
+      details.append(title, meta);
+      if (typeof flow.description === 'string' && flow.description.trim()) {
+        const description = document.createElement('div'); description.textContent = flow.description.trim(); description.style.cssText = 'font-size:12px;line-height:1.65;margin-top:12px;color:inherit'; details.appendChild(description);
+      }
+
+      const infoGrid = document.createElement('div');
+      infoGrid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-top:14px';
+      addInfo(infoGrid, '目标地址', typeof flow.target?.url === 'string' ? flow.target.url : '未配置');
+      addInfo(infoGrid, '预期结果', typeof flow.expectedResult === 'string' ? flow.expectedResult : '未配置');
+      addInfo(infoGrid, '认证方式', typeof flow.auth?.mode === 'string' ? flow.auth.mode : '未配置');
+      addInfo(infoGrid, '输出产物', Array.isArray(flow.artifacts) && flow.artifacts.length ? flow.artifacts.join('、') : '未配置');
+      details.appendChild(infoGrid);
+
+      const checklist = Array.isArray(flow.metadata?.taskChecklist) ? flow.metadata.taskChecklist.filter(item => typeof item === 'string' && item.trim()) : [];
+      if (checklist.length) {
+        const checklistTitle = document.createElement('div'); checklistTitle.textContent = '任务清单'; checklistTitle.style.cssText = 'font-size:13px;font-weight:680;margin-top:18px;margin-bottom:8px'; details.appendChild(checklistTitle);
+        const checklistBox = document.createElement('div'); checklistBox.style.cssText = 'display:grid;gap:6px;border:1px solid rgba(127,127,127,.16);border-radius:10px;padding:10px 11px';
+        checklist.forEach((item, index) => {
+          const row = document.createElement('div'); row.style.cssText = 'display:flex;gap:8px;font-size:12px;line-height:1.55';
+          const number = document.createElement('span'); number.textContent = `${index + 1}.`; number.style.cssText = 'color:#667085;flex:0 0 auto';
+          const text = document.createElement('span'); text.textContent = item; row.append(number, text); checklistBox.appendChild(row);
+        });
+        details.appendChild(checklistBox);
+      }
+
+      const graphTitle = document.createElement('div'); graphTitle.textContent = '流程图'; graphTitle.style.cssText = 'font-size:13px;font-weight:680;margin-top:18px;margin-bottom:8px'; details.appendChild(graphTitle);
+      const graph = document.createElement('div'); graph.setAttribute('data-dsh-patrol-flow-graph', flow.id); graph.style.cssText = 'display:grid;gap:0';
+      if (steps.length === 0) {
+        const empty = document.createElement('div'); empty.textContent = '这个流程还没有步骤。'; empty.style.cssText = 'font-size:12px;color:#667085;border:1px dashed rgba(127,127,127,.28);border-radius:10px;padding:14px'; graph.appendChild(empty);
+      } else {
+        steps.forEach((step, index) => {
+          const row = document.createElement('div'); row.setAttribute('data-dsh-patrol-flow-step', String(step?.id || index + 1)); row.style.cssText = 'display:grid;grid-template-columns:32px minmax(0,1fr);gap:10px';
+          const rail = document.createElement('div'); rail.style.cssText = 'display:flex;flex-direction:column;align-items:center';
+          const node = document.createElement('div'); node.textContent = String(index + 1); node.style.cssText = 'width:28px;height:28px;border-radius:999px;display:grid;place-items:center;background:rgba(37,99,235,.10);border:1px solid rgba(37,99,235,.28);color:#2563eb;font-size:11px;font-weight:700;flex:0 0 auto'; rail.appendChild(node);
+          if (index < steps.length - 1) { const line = document.createElement('div'); line.style.cssText = 'width:1px;min-height:22px;flex:1;background:rgba(127,127,127,.28);margin:3px 0'; rail.appendChild(line); }
+          const body = document.createElement('div'); body.style.cssText = `padding:4px 0 ${index < steps.length - 1 ? '14px' : '2px'}`;
+          const stepTitle = document.createElement('div'); stepTitle.textContent = String(step?.name || step?.tool || `步骤 ${index + 1}`); stepTitle.style.cssText = 'font-size:12px;font-weight:650;line-height:1.4';
+          const kind = document.createElement('div'); kind.textContent = step?.kind === 'checkpoint' ? `检查点 · ${String(step.reason || 'other')}` : String(step?.tool || '工具步骤'); kind.style.cssText = 'font-size:10px;color:#667085;margin-top:3px;word-break:break-word';
+          body.append(stepTitle, kind);
+          const annotations = [];
+          if (step?.kind === 'checkpoint' && typeof step.prompt === 'string' && step.prompt.trim()) annotations.push(`提示：${step.prompt.trim()}`);
+          if (typeof step?.when?.value === 'string' && step.when.value.trim()) annotations.push(`条件：${step.when.value.trim()}`);
+          if (typeof step?.expectation?.value === 'string' && step.expectation.value.trim()) annotations.push(`验证：${step.expectation.value.trim()}`);
+          if (typeof step?.notes === 'string' && step.notes.trim()) annotations.push(`备注：${step.notes.trim()}`);
+          if (annotations.length) {
+            const note = document.createElement('div'); note.textContent = annotations.join(' · '); note.style.cssText = 'font-size:10px;color:#667085;margin-top:5px;line-height:1.5;word-break:break-word'; body.appendChild(note);
+          }
+          row.append(rail, body); graph.appendChild(row);
+        });
+      }
+      details.appendChild(graph);
+    };
+
+    const selectFlow = flow => {
+      selectedFlow = flow;
+      for (const [id, button] of flowButtons) {
+        const active = id === flow.id;
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
+        button.style.background = active ? 'rgba(37,99,235,.08)' : 'transparent';
+        button.style.boxShadow = active ? 'inset 3px 0 0 #2563eb' : 'none';
+      }
+      if (selected instanceof HTMLElement) selected.textContent = `已选择：${flow.name}`;
+      if (execute instanceof HTMLButtonElement) { execute.disabled = false; execute.style.opacity = '1'; }
+      renderDetails(flow);
+    };
+
+    execute?.addEventListener('click', async () => {
+      if (!selectedFlow || busy) return;
+      busy = true;
+      if (execute instanceof HTMLButtonElement) { execute.disabled = true; execute.style.opacity = '.65'; execute.textContent = '正在启动…'; }
+      if (cancelButton instanceof HTMLButtonElement) cancelButton.disabled = true;
+      if (closeButton instanceof HTMLButtonElement) closeButton.disabled = true;
+      if (status instanceof HTMLElement) status.textContent = `正在启动：${selectedFlow.name}…`;
+      try {
+        if (typeof runFlow !== 'function') throw new Error('当前会话无法执行巡检流程');
+        await runFlow(selectedFlow.id, selectedFlow.name);
+        close();
+      } catch (error) {
+        busy = false;
+        if (status instanceof HTMLElement) status.textContent = errorMessage(error);
+        if (execute instanceof HTMLButtonElement) { execute.disabled = false; execute.style.opacity = '1'; execute.textContent = '执行选中流程'; }
+        if (cancelButton instanceof HTMLButtonElement) cancelButton.disabled = false;
+        if (closeButton instanceof HTMLButtonElement) closeButton.disabled = false;
+      }
+    });
+
+    loadPatrolFlows(workspaceRoot, controller.signal).then(flows => {
       if (!backdrop.isConnected) return;
-      status.textContent = flows.length ? '选择一个流程即可直接开始运行，无需先发送消息。' : '当前工作区还没有可运行流程。';
+      if (status instanceof HTMLElement) status.textContent = flows.length ? '选择左侧流程查看详情；只有点击“执行选中流程”才会开始运行。' : '当前工作区还没有可运行流程。';
+      if (!(list instanceof HTMLElement)) return;
+      list.replaceChildren();
       for (const flow of flows) {
         const button = document.createElement('button');
         button.type = 'button';
-        button.style.cssText = 'display:block;width:100%;text-align:left;border:0;border-top:1px solid rgba(127,127,127,.18);background:transparent;color:inherit;cursor:pointer;padding:10px 3px';
-        const title = document.createElement('div'); title.textContent = flow.name; title.style.cssText = 'font-size:13px;font-weight:650';
-        const meta = document.createElement('div'); meta.textContent = `${flow.id} · ${String(flow.status || 'draft').toUpperCase()} · ${Array.isArray(flow.steps) ? flow.steps.length : 0} 步`; meta.style.cssText = 'font-size:10px;color:#667085;margin-top:3px';
+        button.setAttribute('data-dsh-patrol-flow-item', flow.id);
+        button.setAttribute('aria-pressed', 'false');
+        button.style.cssText = 'display:block;width:100%;text-align:left;border:0;border-bottom:1px solid rgba(127,127,127,.14);background:transparent;color:inherit;cursor:pointer;padding:11px 12px';
+        const title = document.createElement('div'); title.textContent = flow.name; title.style.cssText = 'font-size:13px;font-weight:650;line-height:1.35';
+        const meta = document.createElement('div'); meta.textContent = `${flow.id} · ${String(flow.status || 'draft').toUpperCase()} · ${Array.isArray(flow.steps) ? flow.steps.length : 0} 步`; meta.style.cssText = 'font-size:10px;color:#667085;margin-top:4px';
         button.append(title, meta);
-        button.addEventListener('click', async () => {
-          button.disabled = true; status.textContent = '正在启动流程…';
-          try { await sendFlowReplay(ctx, sessionId, flow.id, flow.name); backdrop.remove(); }
-          catch (error) { button.disabled = false; status.textContent = errorMessage(error); }
-        });
+        button.addEventListener('click', () => selectFlow(flow));
+        flowButtons.set(flow.id, button);
         list.appendChild(button);
       }
-    }).catch(error => { if (backdrop.isConnected) status.textContent = errorMessage(error); });
+    }).catch(error => { if (!controller.signal.aborted && backdrop.isConnected && status instanceof HTMLElement) status.textContent = errorMessage(error); });
+
+    return close;
+  }
+
+  function createHeroFlowChooser(ctx, sessionId, workspaceRoot) {
+    return createFlowChooser(workspaceRoot, (inspectionId, flowName) => sendFlowReplay(ctx, sessionId, inspectionId, flowName));
   }
 
   function mountPatrolHeroControls(ctx) {
@@ -286,7 +397,7 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
       const wrapper = document.createElement('span');
       wrapper.setAttribute('data-dsh-patrol-hero-controls', '');
       wrapper.style.cssText = 'display:inline-flex;align-items:center;gap:6px;margin-left:4px';
-      const run = document.createElement('button'); run.type = 'button'; run.textContent = '▶ 运行流程'; run.style.cssText = 'height:28px;padding:0 9px;border:1px solid rgba(127,127,127,.24);border-radius:8px;background:transparent;color:inherit;cursor:pointer;font-size:12px';
+      const run = document.createElement('button'); run.type = 'button'; run.textContent = '选择流程'; run.setAttribute('data-dsh-patrol-select-flow', 'hero'); run.style.cssText = 'height:28px;padding:0 9px;border:1px solid rgba(127,127,127,.24);border-radius:8px;background:transparent;color:inherit;cursor:pointer;font-size:12px';
       run.addEventListener('click', () => createHeroFlowChooser(ctx, sessionId, workspaceForSession(ctx, sessionId)));
       const browser = document.createElement('button'); browser.type = 'button'; browser.textContent = '浏览器设置'; browser.style.cssText = run.style.cssText;
       browser.addEventListener('click', async () => {
