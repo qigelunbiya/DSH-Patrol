@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { CallId } from '@deepseek-ai/dsh-llm'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
+import { findAdaptiveSelectorRecovery, isSelectorUnavailable } from './adaptive-recovery.js'
 import { findUniqueHealingSelector, isPageReadStep, isScreenshotStep, isSafeBrowserTool } from './browser.js'
 import { verifyPostClickExpectation } from './post-click-verification.js'
 import { renderRunReport } from './report.js'
@@ -133,8 +134,6 @@ export class PatrolRunner {
     const workspaceRoot = exec.agent?.session.header.cwd
     if (workspaceRoot === undefined || workspaceRoot === definition.metadata.workspaceRoot) return
     definition.metadata.workspaceRoot = workspaceRoot
-    // workspaceRoot is execution metadata, not a semantic Runbook edit. Keep
-    // updatedAt unchanged so pending resume/validation invariants remain intact.
     await this.store.save(definition)
   }
 
@@ -272,6 +271,11 @@ export class PatrolRunner {
     const pageSummaryRequested = definition.artifacts.some(item => item.toLowerCase() === 'page-summary')
     const summary = status === 'waiting' || !pageSummaryRequested ? undefined : deterministicPageSummary(results)
     if (status === 'passed') {
+      for (const result of results) {
+        if (result.healedSelector !== undefined) {
+          pushWarning(warnings, `Runbook step ${result.stepId} (${result.name}) recovered selector drift with ${result.healedSelector}; this healing candidate was used for this run only and was not persisted.`)
+        }
+      }
       for (const warning of requiredArtifactWarnings(definition, results, summary)) pushWarning(warnings, warning)
     }
     if (status !== 'waiting') await this.store.clearResume(definition.id)
@@ -335,6 +339,29 @@ export class PatrolRunner {
           if (retried.ok) {
             dispatched = retried
             healedSelector = candidate
+          }
+        }
+      }
+    }
+
+    if (!dispatched.ok
+      && isSelectorUnavailable(dispatched.error)
+      && ['browser_type', 'browser_type_credential'].includes(step.tool)) {
+      const snapshot = await this.dispatch('browser_snapshot', {}, exec)
+      if (snapshot.ok) {
+        const recovery = findAdaptiveSelectorRecovery(definition, step, snapshot.value)
+        if (recovery !== undefined) {
+          const retried = await this.dispatch(step.tool, { ...runtimeArguments, selector: recovery.selector }, exec)
+          if (retried.ok) {
+            dispatched = {
+              ...retried,
+              text: [
+                retried.text,
+                `Adaptive replay recovered the current task using ${recovery.reason}.`,
+                recovery.task === undefined ? '' : `Task checklist: ${recovery.task}`,
+              ].filter(Boolean).join('\n'),
+            }
+            healedSelector = recovery.selector
           }
         }
       }
