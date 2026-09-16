@@ -10,6 +10,7 @@ import {
 } from '../src/observation-tools.js'
 import type { PatrolObservationGate } from '../src/observation-guard.js'
 import type { PatrolRunner } from '../src/runner.js'
+import type { PatrolStore } from '../src/store.js'
 
 describe('bootstrap current-page observation', () => {
   it('recognizes an initial active tab whose URL is unavailable', () => {
@@ -49,6 +50,12 @@ describe('current-page observation evidence fallback', () => {
     expect(value.image).toBeUndefined()
     expect(harness.readImageCalls).toBe(0)
     expect(value.ocrText).toContain('LOGIN')
+    expect(value.path).toBe('C:\\workspace\\patrol-results\\demo\\teaching\\screenshots\\current.png')
+    expect(harness.organized).toEqual([{
+      inspectionId: 'demo',
+      sourcePath: 'C:\\workspace\\current.png',
+      workspaceRoot: 'C:\\workspace',
+    }])
     expect(harness.observed).toHaveLength(1)
   })
 
@@ -121,6 +128,7 @@ function setupObservationHarness(options: {
 }) {
   const definitions: any[] = []
   const observed: Array<{ inspectionId: string; rootCallId: unknown }> = []
+  const organized: Array<{ inspectionId: string; sourcePath: string; workspaceRoot: string }> = []
   let readImageCalls = 0
 
   const ctx = {
@@ -156,6 +164,13 @@ function setupObservationHarness(options: {
       },
     },
   } as unknown as Context
+
+  const store = {
+    async organizeTeachingScreenshot(inspectionId: string, sourcePath: string, workspaceRoot: string) {
+      organized.push({ inspectionId, sourcePath, workspaceRoot })
+      return `C:\\workspace\\patrol-results\\${inspectionId}\\teaching\\screenshots\\current.png`
+    },
+  } as unknown as PatrolStore
 
   const runner = {
     async dispatch(tool: string) {
@@ -205,7 +220,7 @@ function setupObservationHarness(options: {
     guard() { return undefined },
   } as unknown as PatrolObservationGate
 
-  registerPatrolObservationTools(ctx, runner, gate)
+  registerPatrolObservationTools(ctx, store, runner, gate)
   const tool = definitions.find(definition => definition.name === 'patrol_observe')
   if (!tool) throw new Error('patrol_observe was not registered')
 
@@ -224,6 +239,7 @@ function setupObservationHarness(options: {
     tool,
     exec,
     observed,
+    organized,
     get readImageCalls() { return readImageCalls },
   }
 }
