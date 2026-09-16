@@ -15,6 +15,10 @@ const dashboardRuntimePath = resolve(root, 'browser-bridge-runtime', 'dashboard-
 const dashboardRuntime = readFileSync(dashboardRuntimePath, 'utf8')
 const dashboardClientPath = resolve(root, 'browser-bridge-runtime', 'dashboard-client.js')
 const dashboardClient = readFileSync(dashboardClientPath, 'utf8')
+const dashboardRecordsPath = resolve(root, 'browser-bridge-runtime', 'dashboard-records-client.js')
+const dashboardRecords = readFileSync(dashboardRecordsPath, 'utf8')
+const dashboardBatchPath = resolve(root, 'browser-bridge-runtime', 'dashboard-batch-records.js')
+const dashboardBatch = readFileSync(dashboardBatchPath, 'utf8')
 const bridgeHost = readFileSync(resolve(root, 'browser-bridge-runtime', 'index.js'), 'utf8')
 const store = readFileSync(resolve(root, 'src', 'store.ts'), 'utf8')
 const installer = readFileSync(resolve(root, 'scripts', 'install-local.ps1'), 'utf8')
@@ -146,10 +150,13 @@ for (const marker of [
 
 for (const marker of [
   "import { registerPatrolDashboardRoutes as registerBoundedDashboardRoutes } from './dashboard-fast.js'",
+  "import { registerPatrolDashboardBatchRoutes } from './dashboard-batch-records.js'",
   "url.searchParams.get('asset') === 'client'",
+  "url.searchParams.get('asset') === 'records'",
+  "const mode = url.searchParams.get('mode') === 'records' ? 'records' : 'flows'",
   "'content-type': 'text/javascript; charset=utf-8'",
   "script-src 'self'",
-  'function dashboardShell(prefix)',
+  "function dashboardShell(prefix, mode = 'flows')",
 ]) {
   if (!dashboardRuntime.includes(marker)) throw new Error(`dashboard shell runtime is missing marker: ${marker}`)
 }
@@ -164,6 +171,31 @@ for (const marker of [
   "root?.addEventListener('click'",
 ]) {
   if (!dashboardClient.includes(marker)) throw new Error(`dashboard browser client is missing marker: ${marker}`)
+}
+
+for (const marker of [
+  'export function registerPatrolDashboardBatchRoutes(ctx, basePath, config = {})',
+  "path: `${prefix}/batches`",
+  "path: `${prefix}/batch`",
+  'export async function listBatchRecords(storageRoot, workspace)',
+  'export async function loadBatchDetail(storageRoot, workspace, batchRunId)',
+  "recordType: 'batch'",
+  "join(storageRoot, 'batches', batchRunId, 'state.json')",
+]) {
+  if (!dashboardBatch.includes(marker)) throw new Error(`batch dashboard data runtime is missing marker: ${marker}`)
+}
+
+for (const marker of [
+  'function topLevelRecords()',
+  "recordType: 'single'",
+  "record.recordType === 'batch'",
+  'function renderBatchDetail()',
+  'function renderBatchOverview(batch)',
+  'data-batch-child-run',
+  '<option value="batch">批量巡检</option>',
+  "get(`/batch?workspace=${encodeURIComponent(WORKSPACE)}&batchRunId=${encodeURIComponent(batchRunId)}`",
+]) {
+  if (!dashboardRecords.includes(marker)) throw new Error(`batch records client is missing marker: ${marker}`)
 }
 
 if (!bridgeHost.includes("import { registerPatrolDashboardRoutes } from './dashboard-runtime.js'")) {
@@ -199,7 +231,15 @@ for (const forbidden of [
   if (client.includes(forbidden)) throw new Error(`client bundle contains forbidden compatibility/security marker: ${forbidden}`)
 }
 
-for (const file of [resolve(carrierRoot, 'index.js'), clientPath, dashboardPath, dashboardRuntimePath, dashboardClientPath]) {
+for (const file of [
+  resolve(carrierRoot, 'index.js'),
+  clientPath,
+  dashboardPath,
+  dashboardRuntimePath,
+  dashboardClientPath,
+  dashboardRecordsPath,
+  dashboardBatchPath,
+]) {
   const syntax = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' })
   if (syntax.status !== 0) {
     throw new Error(`Patrol web runtime syntax check failed for ${file}:\n${syntax.stderr || syntax.stdout}`)
