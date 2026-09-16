@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { afterEach, describe, expect, it } from 'vitest'
-import { PatrolRunner } from '../src/runner.ts'
+import { canReuseAuthenticatedSession, PatrolRunner } from '../src/runner.ts'
 import { PatrolStore } from '../src/store.ts'
 import type { InspectionDefinition } from '../src/types.ts'
 
@@ -52,7 +52,7 @@ function definition(steps: InspectionDefinition['steps'], artifacts: InspectionD
 const at = '2026-01-01T00:00:00.000Z'
 
 describe('PatrolRunner integration safety', () => {
-  it('fails a screenshot step when the provider returns no path', async () => {
+  it('fails an explicit screenshot step when the provider returns no path', async () => {
     const { runner, exec } = await setup(async () => ({
       isError: false,
       value: { ok: true },
@@ -86,6 +86,7 @@ describe('PatrolRunner integration safety', () => {
     const { report } = await fixture.runner.run(def, fixture.exec)
 
     expect(report.status).toBe('passed')
+    expect(report.warnings).toBeUndefined()
     expect(screenshotCalls).toBe(1)
     expect(report.results.at(-1)).toMatchObject({
       stepId: 'artifact-final-screenshot',
@@ -115,7 +116,7 @@ describe('PatrolRunner integration safety', () => {
     expect(report.results.map(item => item.stepId)).toEqual(['step-001'])
   })
 
-  it('reports an explicit final screenshot capture failure instead of a misleading missing-artifact error', async () => {
+  it('keeps a successful business replay passed when automatic final screenshot capture fails', async () => {
     const { runner, exec } = await setup(async input => {
       if (input.name === 'browser_navigate') {
         return { isError: false, value: { ok: true }, content: [{ type: 'text', text: 'navigated' }] }
@@ -129,12 +130,13 @@ describe('PatrolRunner integration safety', () => {
 
     const { report } = await runner.run(def, exec)
 
-    expect(report.status).toBe('failed')
+    expect(report.status).toBe('passed')
     expect(report.results.at(-1)?.stepId).toBe('artifact-final-screenshot')
-    expect(report.results.at(-1)?.error).toMatch(/final screenshot artifact capture failed.*capture backend unavailable/i)
+    expect(report.results.at(-1)?.status).toBe('skipped')
+    expect(report.warnings?.join('\n')).toMatch(/final screenshot artifact capture failed.*capture backend unavailable/i)
   })
 
-  it('fails page-summary requirements without a successful page read', async () => {
+  it('treats missing page-summary evidence as a warning instead of a business replay failure', async () => {
     const { runner, exec } = await setup(async () => ({
       isError: false,
       value: { ok: true, connected: true },
@@ -142,8 +144,95 @@ describe('PatrolRunner integration safety', () => {
     }))
     const def = definition([{ id: 'step-001', kind: 'tool', name: 'navigate', tool: 'browser_navigate', arguments: { url: 'https://example.com' }, recordedAt: at }], ['page-summary'])
     const { report } = await runner.run(def, exec)
-    expect(report.status).toBe('failed')
-    expect(report.results.at(-1)?.error).toMatch(/page-summary/i)
+    expect(report.status).toBe('passed')
+    expect(report.warnings?.join('\n')).toMatch(/page-summary/i)
+  })
+
+  it('treats missing page-text evidence as a warning instead of a business replay failure', async () => {
+    const { runner, exec } = await setup(async () => ({
+      isError: false,
+      value: { ok: true },
+      content: [{ type: 'text', text: 'navigated' }],
+    }))
+    const def = definition([{ id: 'step-001', kind: 'tool', name: 'navigate', tool: 'browser_navigate', arguments: { url: 'https://example.com' }, recordedAt: at }], ['page-text'])
+    const { report } = await runner.run(def, exec)
+    expect(report.status).toBe('passed')
+    expect(report.warnings?.join('\n')).toMatch(/page-text/i)
+  })
+
+  it('only reuses an authenticated browser session inside the current flow site scope', () => {
+    const def = definition([
+      { id: 'step-001', kind: 'tool', name: 'navigate app', tool: 'browser_navigate', arguments: { url: 'https://example.com/login' }, recordedAt: at },
+      { id: 'step-002', kind: 'tool', name: 'navigate sso', tool: 'browser_navigate', arguments: { url: 'https://sso.example.com/start' }, recordedAt: at },
+    ])
+    expect(canReuseAuthenticatedSession(def, 'https://example.com/workbench')).toBe(true)
+    expect(canReuseAuthenticatedSession(def, 'https://sso.example.com/callback')).toBe(true)
+    expect(canReuseAuthenticatedSession(def, 'https://other.example.com/dashboard')).toBe(false)
+    expect(canReuseAuthenticatedSession(def, 'chrome://newtab/')).toBe(false)
+  })
+
+  it('does not skip a login step merely because a different Patrol site is authenticated', async () => {
+    const calls: string[] = []
+    const { runner, exec } = await setup(async input => {
+      calls.push(input.name)
+      if (input.name === 'browser_login_state') {
+        return {
+          isError: false,
+          value: { ok: true, state: 'authenticated', url: 'https://other.example.com/dashboard' },
+          content: [{ type: 'text', text: 'authenticated elsewhere' }],
+        }
+      }
+      if (input.name === 'browser_type') {
+        return {
+          isError: false,
+          value: { ok: true, selector: '#username' },
+          content: [{ type: 'text', text: 'typed' }],
+        }
+      }
+      throw new Error(`unexpected tool ${input.name}`)
+    })
+    const def = definition([{
+      id: 'step-001',
+      kind: 'tool',
+      name: '输入用户名',
+      tool: 'browser_type',
+      arguments: { selector: '#username', text: 'public-user' },
+      recordedAt: at,
+    }])
+
+    const { report } = await runner.run(def, exec)
+
+    expect(report.status).toBe('passed')
+    expect(calls).toEqual(['browser_login_state', 'browser_type'])
+  })
+
+  it('reuses a login step when authenticated evidence belongs to the same flow site scope', async () => {
+    const calls: string[] = []
+    const { runner, exec } = await setup(async input => {
+      calls.push(input.name)
+      if (input.name === 'browser_login_state') {
+        return {
+          isError: false,
+          value: { ok: true, state: 'authenticated', url: 'https://example.com/workbench' },
+          content: [{ type: 'text', text: 'authenticated here' }],
+        }
+      }
+      throw new Error(`unexpected tool ${input.name}`)
+    })
+    const def = definition([{
+      id: 'step-001',
+      kind: 'tool',
+      name: '输入用户名',
+      tool: 'browser_type',
+      arguments: { selector: '#username', text: 'public-user' },
+      recordedAt: at,
+    }])
+
+    const { report } = await runner.run(def, exec)
+
+    expect(report.status).toBe('passed')
+    expect(calls).toEqual(['browser_login_state'])
+    expect(report.results[0]?.output).toMatch(/within this flow's known site scope/i)
   })
 
   it('verifies a replayed click against the resulting page instead of the browser_click acknowledgement', async () => {

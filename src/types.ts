@@ -157,6 +157,8 @@ export interface RunReport {
   expectedResult: string
   results: StepRunResult[]
   summary?: string
+  /** Non-fatal evidence/quality issues. Business execution may still be passed. */
+  warnings?: string[]
   /** Harness session workspace where user-visible reports/artifacts were exported. */
   outputWorkspace?: string
 }

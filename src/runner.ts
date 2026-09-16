@@ -144,6 +144,7 @@ export class PatrolRunner {
     state: ResumeState,
   ): Promise<{ report: RunReport; paths: SavedRunPaths }> {
     const results = [...state.results]
+    const warnings: string[] = []
     let status: RunReport['status'] = 'passed'
     const outputWorkspace = exec.agent?.session.header.cwd ?? definition.metadata.workspaceRoot
 
@@ -215,18 +216,19 @@ export class PatrolRunner {
       const capturedAt = new Date().toISOString()
       const captured = await this.dispatch('browser_screenshot', {}, exec)
       if (!captured.ok) {
+        const warning = `final screenshot artifact capture failed: ${captured.error ?? 'browser_screenshot failed'}`
+        pushWarning(warnings, warning)
         results.push({
           stepId: 'artifact-final-screenshot',
           name: 'Final screenshot artifact',
           kind: 'tool',
           tool: 'browser_screenshot',
-          status: 'failed',
+          status: 'skipped',
           startedAt: capturedAt,
           finishedAt: new Date().toISOString(),
           output: captured.text,
-          error: `final screenshot artifact capture failed: ${captured.error ?? 'browser_screenshot failed'}`,
+          error: warning,
         })
-        status = 'failed'
       } else {
         try {
           const providerPath = objectString(captured.value, 'path')
@@ -250,18 +252,19 @@ export class PatrolRunner {
             artifacts: [{ kind: 'screenshot', path: copied }],
           })
         } catch (error: unknown) {
+          const warning = `final screenshot artifact persistence failed: ${errorMessage(error)}`
+          pushWarning(warnings, warning)
           results.push({
             stepId: 'artifact-final-screenshot',
             name: 'Final screenshot artifact',
             kind: 'tool',
             tool: 'browser_screenshot',
-            status: 'failed',
+            status: 'skipped',
             startedAt: capturedAt,
             finishedAt: new Date().toISOString(),
             output: captured.text,
-            error: `final screenshot artifact persistence failed: ${errorMessage(error)}`,
+            error: warning,
           })
-          status = 'failed'
         }
       }
     }
@@ -269,21 +272,7 @@ export class PatrolRunner {
     const pageSummaryRequested = definition.artifacts.some(item => item.toLowerCase() === 'page-summary')
     const summary = status === 'waiting' || !pageSummaryRequested ? undefined : deterministicPageSummary(results)
     if (status === 'passed') {
-      const artifactError = requiredArtifactError(definition, results, summary)
-      if (artifactError !== undefined) {
-        const checkedAt = new Date().toISOString()
-        results.push({
-          stepId: 'artifact-check',
-          name: 'Required artifact check',
-          kind: 'tool',
-          tool: 'patrol-artifact-check',
-          status: 'failed',
-          startedAt: checkedAt,
-          finishedAt: checkedAt,
-          error: artifactError,
-        })
-        status = 'failed'
-      }
+      for (const warning of requiredArtifactWarnings(definition, results, summary)) pushWarning(warnings, warning)
     }
     if (status !== 'waiting') await this.store.clearResume(definition.id)
     const report: RunReport = {
@@ -297,6 +286,7 @@ export class PatrolRunner {
       expectedResult: definition.expectedResult,
       results,
       ...(summary === undefined ? {} : { summary }),
+      ...(warnings.length === 0 ? {} : { warnings }),
       ...(outputWorkspace === undefined ? {} : { outputWorkspace }),
     }
     const markdown = renderRunReport(report, this.options.reportMaxChars)
@@ -319,7 +309,7 @@ export class PatrolRunner {
       return failedResult(step, startedAt, errorMessage(error))
     }
 
-    const reusedSession = await this.reuseAuthenticatedSession(step, exec)
+    const reusedSession = await this.reuseAuthenticatedSession(definition, step, exec)
     if (reusedSession !== undefined) {
       return {
         stepId: step.id,
@@ -426,13 +416,18 @@ export class PatrolRunner {
     }
   }
 
-  private async reuseAuthenticatedSession(step: ToolStep, exec: ToolRunContext): Promise<string | undefined> {
+  private async reuseAuthenticatedSession(
+    definition: InspectionDefinition,
+    step: ToolStep,
+    exec: ToolRunContext,
+  ): Promise<string | undefined> {
     if (!looksLikeLoginStep(step)) return undefined
     const tabId = typeof step.arguments.tabId === 'number' ? step.arguments.tabId : undefined
     const state = await this.dispatch('browser_login_state', tabId === undefined ? {} : { tabId }, exec)
     if (!state.ok || objectString(state.value, 'state') !== 'authenticated') return undefined
-    const url = objectString(state.value, 'url') ?? '(current application page)'
-    return `Existing authenticated managed-browser session detected at ${url}. Reused the persistent Patrol browser profile and skipped this redundant login step; no cookie value was exposed or rewritten.`
+    const url = objectString(state.value, 'url')
+    if (url === undefined || !canReuseAuthenticatedSession(definition, url)) return undefined
+    return `Existing authenticated managed-browser session detected at ${url} within this flow's known site scope. Reused the persistent Patrol browser profile and skipped this redundant login step; no cookie value was exposed or rewritten.`
   }
 }
 
@@ -463,6 +458,35 @@ function looksLikeLoginStep(step: ToolStep): boolean {
     step.locator?.tag ?? '',
   ].join(' ')
   return /(login|log[-_ ]?in|sign[-_ ]?in|signin|password|passwd|pwd|username|user[-_ ]?name|登录|登陆|用户名|密码)/i.test(hint)
+}
+
+export function canReuseAuthenticatedSession(definition: InspectionDefinition, currentUrl: string): boolean {
+  const currentOrigin = httpOrigin(currentUrl)
+  if (currentOrigin === undefined) return false
+  return knownFlowOrigins(definition).has(currentOrigin)
+}
+
+export function knownFlowOrigins(definition: InspectionDefinition): Set<string> {
+  const origins = new Set<string>()
+  const targetOrigin = httpOrigin(definition.target.url)
+  if (targetOrigin !== undefined) origins.add(targetOrigin)
+  for (const step of definition.steps) {
+    if (step.kind !== 'tool' || step.tool !== 'browser_navigate') continue
+    const url = typeof step.arguments.url === 'string' ? step.arguments.url : undefined
+    const origin = url === undefined ? undefined : httpOrigin(url)
+    if (origin !== undefined) origins.add(origin)
+  }
+  return origins
+}
+
+function httpOrigin(value: string): string | undefined {
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined
+    return url.origin.toLocaleLowerCase('en-US')
+  } catch {
+    return undefined
+  }
 }
 
 function collectCredentialPlaceholders(value: JsonValue, refs: string[]): void {
@@ -561,17 +585,27 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-function requiredArtifactError(definition: InspectionDefinition, results: readonly StepRunResult[], summary: string | undefined): string | undefined {
+function pushWarning(warnings: string[], warning: string): void {
+  const redacted = redactLikelySecrets(warning)
+  if (!warnings.includes(redacted)) warnings.push(redacted)
+}
+
+export function requiredArtifactWarnings(
+  definition: InspectionDefinition,
+  results: readonly StepRunResult[],
+  summary: string | undefined,
+): string[] {
   const requested = new Set(definition.artifacts.map(item => item.toLowerCase()))
   const artifacts = results.flatMap(result => result.artifacts ?? [])
+  const warnings: string[] = []
   if (requested.has('screenshot') && !artifacts.some(artifact => artifact.kind === 'screenshot')) {
-    return 'inspection requested a screenshot, but no screenshot artifact was produced'
+    warnings.push('inspection requested a screenshot, but no screenshot artifact was produced')
   }
   if (requested.has('page-text') && !artifacts.some(artifact => artifact.kind === 'page-text')) {
-    return 'inspection requested page-text, but no page-text artifact was produced'
+    warnings.push('inspection requested page-text, but no page-text artifact was produced')
   }
   if (requested.has('page-summary') && summary === undefined) {
-    return 'inspection requested page-summary, but no successful browser_read_page output was available to summarize'
+    warnings.push('inspection requested page-summary, but no successful browser_read_page output was available to summarize')
   }
-  return undefined
+  return warnings
 }

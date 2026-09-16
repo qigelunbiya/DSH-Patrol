@@ -12,7 +12,13 @@ export function renderRunReport(report: RunReport, maxChars: number): string {
     `- 结束：${plainLine(report.finishedAt)}`,
     `- 预期结果：${plainLine(report.expectedResult)}`,
   ]
+  if (report.warnings !== undefined && report.warnings.length > 0) lines.push(`- 非致命警告：**${report.warnings.length}**`)
   if (report.outputWorkspace !== undefined) lines.push(`- 用户可见输出工作区：${inlineCode(report.outputWorkspace)}`)
+
+  if (report.warnings !== undefined && report.warnings.length > 0) {
+    lines.push('', '## 非致命警告', '')
+    for (const warning of report.warnings) lines.push(`- ${plainLine(redactLikelySecrets(warning))}`)
+  }
 
   if (report.summary !== undefined && report.summary.trim() !== '') {
     lines.push('', '## 页面摘要', '', fencedText(redactLikelySecrets(report.summary)), '')
@@ -44,11 +50,16 @@ export function summarizeReport(report: RunReport): string {
   const failed = report.results.filter(item => item.status === 'failed').length
   const waiting = report.results.filter(item => item.status === 'waiting').length
   const skipped = report.results.filter(item => item.status === 'skipped').length
-  const base = `run ${report.runId}: ${report.status}; passed=${passed}, failed=${failed}, waiting=${waiting}, skipped=${skipped}`
+  const warningCount = report.warnings?.length ?? 0
+  const base = `run ${report.runId}: ${report.status}; passed=${passed}, failed=${failed}, waiting=${waiting}, skipped=${skipped}, warnings=${warningCount}`
   const firstFailed = report.results.find(item => item.status === 'failed')
-  if (firstFailed === undefined) return base
-  const error = clipInline(redactLikelySecrets(firstFailed.error ?? '(no explicit error text)'), 240)
-  return `${base}; firstFailure=${firstFailed.stepId} (${firstFailed.tool ?? firstFailed.kind}): ${error}. Preserve earlier passed steps; repair this stable step instead of restarting the Runbook.`
+  if (firstFailed !== undefined) {
+    const error = clipInline(redactLikelySecrets(firstFailed.error ?? '(no explicit error text)'), 240)
+    return `${base}; firstFailure=${firstFailed.stepId} (${firstFailed.tool ?? firstFailed.kind}): ${error}. Preserve earlier passed steps; repair this stable step instead of restarting the Runbook.`
+  }
+  const firstWarning = report.warnings?.[0]
+  if (firstWarning !== undefined) return `${base}; firstWarning=${clipInline(redactLikelySecrets(firstWarning), 240)}. Business execution passed; treat this as evidence/quality degradation, not a failed replay.`
+  return base
 }
 
 function clipInline(text: string, maxChars: number): string {
