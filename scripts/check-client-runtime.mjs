@@ -33,8 +33,12 @@ if (carrierPackage.dsh?.client?.platform !== 'web') {
   throw new Error('client host package must declare dsh.client.platform=web')
 }
 const clientInject = carrierPackage.dsh.client.inject ?? []
-if (JSON.stringify(clientInject) !== JSON.stringify(['@deepseek-ai/dsh-client-ui-conversation'])) {
-  throw new Error('client host dsh.client.inject must stay on the cross-version conversation package edge only')
+const expectedClientInject = [
+  '@deepseek-ai/dsh-client-ui-conversation',
+  '@deepseek-ai/dsh-client-ui-input-trigger',
+]
+if (JSON.stringify(clientInject) !== JSON.stringify(expectedClientInject)) {
+  throw new Error('client host dsh.client.inject must stay on the cross-version conversation + input-trigger package edges only')
 }
 for (const versionSpecificDependency of [
   '@deepseek-ai/dsh-api-session-controller',
@@ -81,8 +85,16 @@ if (!uninstaller.includes('pnpm remove dsh-patrol-client-host')) {
 
 for (const marker of [
   "window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host'",
-  "exports.inject = ['slots', 'sessions'];",
+  "exports.inject = ['slots', 'sessions', 'inputTriggers'];",
   "const DASHBOARD_UI = '/patrol-browser-bridge/dashboard/ui';",
+  "const FLOW_CATALOG_API = '/patrol-browser-bridge/dashboard/catalog';",
+  "const BROWSER_VISIBILITY_API = '/patrol-browser-bridge/browser-visibility';",
+  'function registerPatrolFlowReferenceSource(ctx)',
+  'return `@flow:${value.id}`;',
+  "name: 'conversation.session.header.actions', id: 'dsh-patrol-runtime-controls'",
+  'function mountPatrolHeroControls(ctx)',
+  "run.textContent = '▶ 运行流程'",
+  "browser.textContent = '浏览器设置'",
   'function canSubmitDraft(inputActions)',
   'function DashboardFrame({ useSession, workspaceRoot, mode, inputActions })',
   'if (!canSubmitDraft(inputActions))',
@@ -153,12 +165,19 @@ if (!bridgeHost.includes("import { registerPatrolDashboardRoutes } from './dashb
 if (!bridgeHost.includes('registerPatrolDashboardRoutes(ctx, path, config)')) {
   throw new Error('browser bridge host must mount the Patrol dashboard routes')
 }
+if (!bridgeHost.includes("import { defaultPatrolLaunchBrowser } from './background-browser-launch.js'")) {
+  throw new Error('browser bridge host must launch managed Chromium through the visibility-aware launcher')
+}
+if (!bridgeHost.includes('registerBrowserVisibilityRoutes(ctx, path')) {
+  throw new Error('browser bridge host must mount persisted browser visibility controls')
+}
 for (const marker of [
   "join(internal.directory, 'summary.json')",
   "join(dirname(visible.json), 'summary.json')",
   'function runIndexSummary(report: RunReport)',
+  'async organizeTeachingScreenshot(inspectionId: string, sourcePath: string, workspaceRoot: string)',
 ]) {
-  if (!store.includes(marker)) throw new Error(`PatrolStore is missing lightweight run-index marker: ${marker}`)
+  if (!store.includes(marker)) throw new Error(`PatrolStore is missing workspace-output marker: ${marker}`)
 }
 
 for (const forbidden of [
