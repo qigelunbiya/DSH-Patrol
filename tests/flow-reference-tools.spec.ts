@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeFlowReference, resolveFlowReference } from '../src/flow-reference-tools.js'
+import { normalizeFlowReference, resolveBatchFlowReferences, resolveFlowReference } from '../src/flow-reference-tools.js'
 import type { InspectionDefinition } from '../src/types.js'
 
 function flow(id: string, name: string, updatedAt = '2026-09-04T00:00:00.000Z', workspaceRoot = 'E:\\temp\\test'): InspectionDefinition {
@@ -67,5 +67,31 @@ describe('flow reference resolver', () => {
       flow('local', 'ADBBA 登录巡检', '2026-09-04T00:00:00.000Z', 'E:\\temp\\test'),
     ], 'ADBBA 登录巡检', 'E:\\temp\\test')
     expect(result).toMatchObject({ kind: 'exact-name', definition: { id: 'local' } })
+  })
+})
+
+describe('batch flow resolver', () => {
+  const flows = [
+    flow('alpha', 'Alpha 巡检'),
+    flow('beta', 'Beta 巡检'),
+    flow('gamma', 'Gamma 巡检'),
+  ]
+
+  it('preserves user selection order and resolves native @flow references', () => {
+    const result = resolveBatchFlowReferences(flows, ['@flow:gamma', 'alpha', 'Beta 巡检'])
+    expect(result.map(item => item.definition.id)).toEqual(['gamma', 'alpha', 'beta'])
+  })
+
+  it('rejects duplicate resolved flows instead of running one flow twice accidentally', () => {
+    expect(() => resolveBatchFlowReferences(flows, ['alpha', '@flow:alpha'])).toThrow(/duplicate flow alpha/)
+  })
+
+  it('preflights all references before execution and reports missing flows', () => {
+    expect(() => resolveBatchFlowReferences(flows, ['alpha', 'does-not-exist', 'beta'])).toThrow(/no Patrol flow matched/)
+  })
+
+  it('rejects empty reusable flows during batch preflight', () => {
+    const empty = { ...flow('empty', 'Empty'), steps: [] }
+    expect(() => resolveBatchFlowReferences([...flows, empty], ['alpha', 'empty'])).toThrow(/has no reusable steps/)
   })
 })
