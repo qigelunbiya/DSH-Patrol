@@ -10,6 +10,8 @@
 
 const INTERACTION_TOP_FRAME_PREFIX = 'top-frame::'
 const INTERACTION_FRAME_PREFIX = 'frame-url('
+const INTERACTION_SCREENSHOT_READY_TIMEOUT_MS = 3000
+const INTERACTION_SCREENSHOT_READY_POLL_MS = 100
 const interactionPreviousSendDomCommand = sendDomCommand
 const interactionPreviousHandleCommand = handleCommand
 
@@ -82,7 +84,7 @@ async function interactionActivateTab(args) {
 
 async function interactionScreenshot(args) {
   const tabId = await resolveTabId(args.tabId)
-  const tab = await chrome.tabs.get(tabId)
+  const tab = await interactionWaitForCapturableTab(tabId)
   if (tab.windowId === undefined) throw new Error('target tab has no window')
 
   // captureVisibleTab captures the active tab of the specified window; the
@@ -92,6 +94,28 @@ async function interactionScreenshot(args) {
   const format = args.format === 'jpeg' ? 'jpeg' : 'png'
   const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format })
   return { ok: true, dataUrl, bytes: Math.floor(dataUrl.length * 0.75) }
+}
+
+async function interactionWaitForCapturableTab(tabId) {
+  const deadline = Date.now() + INTERACTION_SCREENSHOT_READY_TIMEOUT_MS
+  let tab = await chrome.tabs.get(tabId)
+  while (!interactionTabIsCapturable(tab) && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, INTERACTION_SCREENSHOT_READY_POLL_MS))
+    tab = await chrome.tabs.get(tabId)
+  }
+  if (!interactionTabIsCapturable(tab)) {
+    const url = typeof tab?.url === 'string' ? tab.url : ''
+    const status = typeof tab?.status === 'string' ? tab.status : 'unknown'
+    throw new Error(`target tab is not ready for screenshot: url=${JSON.stringify(url)} status=${status}`)
+  }
+  return tab
+}
+
+function interactionTabIsCapturable(tab) {
+  if (!tab || typeof tab !== 'object') return false
+  const url = typeof tab.url === 'string' ? tab.url.trim() : ''
+  if (!/^https?:\/\//i.test(url)) return false
+  return tab.status !== 'loading'
 }
 
 async function interactionSelect(args) {
