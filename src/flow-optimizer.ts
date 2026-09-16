@@ -129,6 +129,7 @@ export function compactTeachingFlow(definition: InspectionDefinition): FlowCompa
   ))
 
   rewriteSteps(definition, kept, false)
+  bindChecklistTasks(definition)
   updateStructuralFlowHealth(definition)
   return {
     removedSteps: original.length - definition.steps.length,
@@ -227,30 +228,65 @@ function checklistCoverageWarnings(definition: InspectionDefinition, steps: read
   return warnings
 }
 
+export function bindChecklistTasks(definition: InspectionDefinition): void {
+  const checklist = definition.metadata.taskChecklist ?? []
+  if (checklist.length === 0) return
+
+  const tasksByAction = Object.fromEntries(
+    (['navigate', 'click', 'type', 'read', 'screenshot'] as ChecklistAction[]).map(action => [
+      action,
+      checklist.filter(item => checklistMatchesAction(item, action)),
+    ]),
+  ) as Record<ChecklistAction, string[]>
+  const cursors: Record<ChecklistAction, number> = { navigate: 0, click: 0, type: 0, read: 0, screenshot: 0 }
+
+  definition.steps = definition.steps.map(step => {
+    if (step.kind !== 'tool') return step
+    const action = flowActionForStep(step)
+    if (action === undefined) return step
+    const task = tasksByAction[action][cursors[action]]
+    cursors[action] += 1
+    if (step.taskHint !== undefined || task === undefined) return step
+    return { ...step, taskHint: task }
+  })
+}
+
 function checklistActionCounts(checklist: readonly string[]): Record<ChecklistAction, number> {
   const counts: Record<ChecklistAction, number> = { navigate: 0, click: 0, type: 0, read: 0, screenshot: 0 }
   for (const raw of checklist) {
     const text = String(raw || '')
-    if (/(访问|导航|navigate|visit|go to)/i.test(text)) counts.navigate += 1
-    if (/(点击|点开|打开.*(?:入口|菜单|工单|详情)|click|open .*?(?:menu|item|detail))/i.test(text)) counts.click += 1
-    if (/(输入|填写|填入|type|enter|fill)/i.test(text)) counts.type += 1
-    if (/(读取|整理|查看.*(?:信息|列表|内容)|read|summar|inspect.*(?:list|content|info))/i.test(text)) counts.read += 1
-    if (/(截图|screenshot|capture)/i.test(text)) counts.screenshot += 1
+    for (const action of Object.keys(counts) as ChecklistAction[]) {
+      if (checklistMatchesAction(text, action)) counts[action] += 1
+    }
   }
   return counts
+}
+
+function checklistMatchesAction(text: string, action: ChecklistAction): boolean {
+  if (action === 'navigate') return /(访问|导航|navigate|visit|go to)/i.test(text)
+  if (action === 'click') return /(点击|点开|打开.*(?:入口|菜单|工单|详情)|click|open .*?(?:menu|item|detail))/i.test(text)
+  if (action === 'type') return /(输入|填写|填入|type|enter|fill)/i.test(text)
+  if (action === 'read') return /(读取|整理|查看.*(?:信息|列表|内容)|read|summar|inspect.*(?:list|content|info))/i.test(text)
+  return /(截图|screenshot|capture)/i.test(text)
 }
 
 function flowActionCounts(steps: readonly InspectionStep[]): Record<ChecklistAction, number> {
   const counts: Record<ChecklistAction, number> = { navigate: 0, click: 0, type: 0, read: 0, screenshot: 0 }
   for (const step of steps) {
     if (step.kind !== 'tool') continue
-    if (step.tool === 'browser_navigate') counts.navigate += 1
-    else if (step.tool === 'browser_click' || step.tool === 'browser_press' || step.tool === 'browser_select') counts.click += 1
-    else if (isTypingTool(step.tool)) counts.type += 1
-    else if (step.tool === 'browser_read_page') counts.read += 1
-    else if (step.tool === 'browser_screenshot') counts.screenshot += 1
+    const action = flowActionForStep(step)
+    if (action !== undefined) counts[action] += 1
   }
   return counts
+}
+
+function flowActionForStep(step: ToolStep): ChecklistAction | undefined {
+  if (step.tool === 'browser_navigate') return 'navigate'
+  if (step.tool === 'browser_click' || step.tool === 'browser_press' || step.tool === 'browser_select') return 'click'
+  if (isTypingTool(step.tool)) return 'type'
+  if (step.tool === 'browser_read_page') return 'read'
+  if (step.tool === 'browser_screenshot') return 'screenshot'
+  return undefined
 }
 
 function actionLabel(key: ChecklistAction): string {
