@@ -37,6 +37,9 @@ describe('Patrol browser visibility preference', () => {
 
   it('treats a corrupt preference as non-fatal and falls back to the launch policy', () => {
     const path = preferencePath()
+    // Let the production writer create the nested preference directory first,
+    // then corrupt only the JSON payload under test.
+    writeBrowserVisibility(true, path)
     writeFileSync(path, '{not-json', { encoding: 'utf8' })
     expect(readBrowserVisibility(path, { DSH_PATROL_BROWSER_BACKGROUND: '1' })).toBe(false)
   })
