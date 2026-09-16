@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises'
+import { runInNewContext } from 'node:vm'
 import { fileURLToPath } from 'node:url'
-import vm from 'node:vm'
 import { describe, expect, it } from 'vitest'
 
 const hardeningPath = fileURLToPath(new URL('../browser-extension/runtime-readiness-hardening.js', import.meta.url))
@@ -19,7 +19,7 @@ async function loadHardening(overrides: Record<string, unknown> = {}) {
     console,
     ...overrides,
   }
-  vm.runInNewContext(source, sandbox, { filename: 'runtime-readiness-hardening.js' })
+  runInNewContext(source, sandbox, { filename: 'runtime-readiness-hardening.js' })
   return sandbox
 }
 
