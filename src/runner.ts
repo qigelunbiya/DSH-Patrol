@@ -7,7 +7,7 @@ import { findUniqueHealingSelector, isPageReadStep, isScreenshotStep, isSafeBrow
 import { verifyPostClickExpectation } from './post-click-verification.js'
 import { renderRunReport } from './report.js'
 import { credentialReferenceName, redactLikelySecrets, untrustedPageData } from './security.js'
-import { findAdaptiveClickPathPlan, findChecklistClickTargetForTask } from './structural-recovery.js'
+import { findAdaptiveClickPathPlan, findChecklistClickTargetForTask, resolveRecordedClickTask } from './structural-recovery.js'
 import type {
   CheckpointStep,
   InspectionDefinition,
@@ -442,7 +442,10 @@ export class PatrolRunner {
       && isSelectorUnavailable(dispatched.error)) {
       recoverySnapshot ??= await this.dispatch('browser_snapshot', {}, exec)
       if (recoverySnapshot.ok) {
-        const recovery = findAdaptiveClickRecovery(definition, step, recoverySnapshot.value)
+        const recordedTask = resolveRecordedClickTask(definition, step)
+        const recovery = recordedTask === undefined
+          ? findAdaptiveClickRecovery(definition, step, recoverySnapshot.value)
+          : findChecklistClickTargetForTask(definition, step, recordedTask, recoverySnapshot.value)
         if (recovery !== undefined) {
           const retried = await this.dispatch('browser_click', { ...runtimeArguments, selector: recovery.selector }, exec)
           if (retried.ok) {
