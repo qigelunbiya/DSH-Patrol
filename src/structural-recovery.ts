@@ -7,7 +7,7 @@ export interface AdaptiveClickPathPlan {
   currentTask: string
 }
 
-const CLICK_TASK_HINT = /(点击|点开|打开|进入|选择|click|open|select)/i
+const CLICK_TASK_HINT = /(点击|点开|打开|进入|click|open)/i
 const STRUCTURAL_DISALLOWED_TASK = /(验证码|captcha|otp|动态码|短信|verification|登录|登陆|sign[- ]?in|login|确定|确认|提交|保存|发送|发布|支付|购买|授权|删除|移除|注销|清空|confirm|submit|save|send|publish|pay|purchase|authorize|delete|remove|clear)/i
 const MAX_INSERTED_CLICK_TASKS = 2
 
