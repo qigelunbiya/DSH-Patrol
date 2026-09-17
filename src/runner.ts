@@ -3,7 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { CallId } from '@deepseek-ai/dsh-llm'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { findAdaptiveClickRecovery, findAdaptiveSelectorRecovery, isSelectorUnavailable } from './adaptive-recovery.js'
-import { findUniqueHealingSelector, isPageReadStep, isScreenshotStep, isSafeBrowserTool } from './browser.js'
+import { findUniqueHealingSelector, isPageReadStep, isScreenshotStep, isSafeBrowserTool, isSelectorBoundToCurrentSnapshot } from './browser.js'
 import { verifyPostClickExpectation } from './post-click-verification.js'
 import { renderRunReport } from './report.js'
 import { credentialReferenceName, redactLikelySecrets, untrustedPageData } from './security.js'
@@ -33,6 +33,8 @@ export interface DispatchResult {
 export interface PatrolRunnerOptions {
   reportMaxChars: number
 }
+
+const STRUCTURAL_RECOVERY_SETTLE_DELAYS_MS = [0, 150, 350, 700] as const
 
 export class PatrolRunner {
   private readonly authorizedParents = new Map<ToolRunContext['token'], number>()
@@ -331,17 +333,47 @@ export class PatrolRunner {
       }
     }
 
-    let dispatched = await this.dispatch(step.tool, runtimeArguments, exec)
     let healedSelector: string | undefined
     let recoverySnapshot: DispatchResult | undefined
     let structuralRecoveryAdvanced = false
 
+    // An old selector can remain syntactically valid while now pointing at a
+    // different control. For clicks that have an explicit post-click business
+    // expectation, verify the CURRENT selector's semantic identity before any
+    // mutation. If it drifted, heal to one unique semantic candidate; otherwise
+    // fail closed rather than clicking a known-wrong element and trying to undo
+    // the side effect later.
+    if (step.tool === 'browser_click' && step.expectation !== undefined && step.locator !== undefined) {
+      const requestedSelector = typeof runtimeArguments.selector === 'string' ? runtimeArguments.selector : undefined
+      if (requestedSelector !== undefined) {
+        recoverySnapshot = await this.dispatch('browser_snapshot', recoveryObservationArguments(runtimeArguments), exec)
+        if (recoverySnapshot.ok) {
+          const observedSelector = snapshotSelectorForRequested(recoverySnapshot.value, requestedSelector)
+          if (observedSelector !== undefined
+            && !isSelectorBoundToCurrentSnapshot(recoverySnapshot.value, observedSelector, step.locator)) {
+            const candidate = findUniqueHealingSelector(recoverySnapshot.value, step.locator)
+            if (candidate === undefined) {
+              return failedResult(
+                step,
+                startedAt,
+                `Refused to click ${requestedSelector}: the CURRENT snapshot shows that selector now belongs to a different semantic element, and no unique safe replacement matches the recorded locator.`,
+              )
+            }
+            runtimeArguments = { ...runtimeArguments, selector: candidate }
+            healedSelector = candidate
+          }
+        }
+      }
+    }
+
+    let dispatched = await this.dispatch(step.tool, runtimeArguments, exec)
+
     if (!dispatched.ok && step.tool === 'browser_click' && step.locator !== undefined) {
-      recoverySnapshot = await this.dispatch('browser_snapshot', {}, exec)
+      recoverySnapshot = await this.dispatch('browser_snapshot', recoveryObservationArguments(runtimeArguments), exec)
       if (recoverySnapshot.ok) {
         const candidate = findUniqueHealingSelector(recoverySnapshot.value, step.locator)
         if (candidate !== undefined) {
-          const retried = await this.dispatch('browser_click', { ...runtimeArguments, selector: candidate }, exec)
+          const retried = await this.dispatch('browser_click', recoveryClickArguments(runtimeArguments, candidate), exec)
           if (retried.ok) {
             dispatched = retried
             healedSelector = candidate
@@ -353,24 +385,33 @@ export class PatrolRunner {
     if (!dispatched.ok
       && step.tool === 'browser_click'
       && isSelectorUnavailable(dispatched.error)) {
-      recoverySnapshot ??= await this.dispatch('browser_snapshot', {}, exec)
+      recoverySnapshot ??= await this.dispatch('browser_snapshot', recoveryObservationArguments(runtimeArguments), exec)
       if (recoverySnapshot.ok) {
         const plan = findAdaptiveClickPathPlan(definition, step)
         if (plan !== undefined) {
-          let currentSnapshot = recoverySnapshot
+          let currentSnapshot: DispatchResult | undefined = recoverySnapshot
           const recoveredPath: string[] = []
           let structuralError: string | undefined
 
           for (const task of plan.missingTasks) {
-            const target = findChecklistClickTargetForTask(definition, step, task, currentSnapshot.value)
-            if (target === undefined) {
-              structuralError = `CURRENT page did not expose one unique safe clickable target for missing checklist task ${JSON.stringify(task)}`
+            const observed = await observeChecklistClickTargetWithSettle(
+              (tool, args) => this.dispatch(tool, args, exec),
+              definition,
+              step,
+              task,
+              currentSnapshot,
+              runtimeArguments,
+            )
+            currentSnapshot = observed.snapshot
+            if (observed.target === undefined) {
+              structuralError = observed.error
+                ?? `CURRENT page did not expose one unique safe clickable target for missing checklist task ${JSON.stringify(task)}`
               break
             }
 
             const clicked = await this.dispatch(
               'browser_click',
-              recoveryClickArguments(runtimeArguments, target.selector),
+              recoveryClickArguments(runtimeArguments, observed.target.selector),
               exec,
             )
             if (!clicked.ok) {
@@ -379,27 +420,27 @@ export class PatrolRunner {
             }
 
             structuralRecoveryAdvanced = true
-            recoveredPath.push(`${task} -> ${target.selector}`)
-            currentSnapshot = await this.dispatch('browser_snapshot', {}, exec)
-            if (!currentSnapshot.ok) {
-              structuralError = `could not inspect CURRENT page after recovering checklist task ${JSON.stringify(task)}: ${currentSnapshot.error ?? currentSnapshot.text ?? 'browser_snapshot failed'}`
-              break
-            }
+            recoveredPath.push(`${task} -> ${observed.target.selector}`)
+            currentSnapshot = undefined
           }
 
           if (structuralError === undefined) {
-            const currentTarget = findChecklistClickTargetForTask(
+            const observed = await observeChecklistClickTargetWithSettle(
+              (tool, args) => this.dispatch(tool, args, exec),
               definition,
               step,
               plan.currentTask,
-              currentSnapshot.value,
+              currentSnapshot,
+              runtimeArguments,
             )
-            if (currentTarget === undefined) {
-              structuralError = `recovered intermediate checklist tasks, but CURRENT page still did not expose one unique safe target for the recorded task ${JSON.stringify(plan.currentTask)}`
+            currentSnapshot = observed.snapshot
+            if (observed.target === undefined) {
+              structuralError = observed.error
+                ?? `recovered intermediate checklist tasks, but CURRENT page still did not expose one unique safe target for the recorded task ${JSON.stringify(plan.currentTask)}`
             } else {
               const retried = await this.dispatch(
                 'browser_click',
-                recoveryClickArguments(runtimeArguments, currentTarget.selector),
+                recoveryClickArguments(runtimeArguments, observed.target.selector),
                 exec,
               )
               if (retried.ok) {
@@ -409,11 +450,11 @@ export class PatrolRunner {
                     retried.text,
                     'Adaptive replay inserted bounded checklist path before the current Runbook click.',
                     `Recovered path: ${recoveredPath.join(' ; ')}`,
-                    `Current task: ${plan.currentTask} -> ${currentTarget.selector}`,
+                    `Current task: ${plan.currentTask} -> ${observed.target.selector}`,
                     'The inserted path was run-local and was not persisted to the Runbook.',
                   ].filter(Boolean).join('\n'),
                 }
-                healedSelector = currentTarget.selector
+                healedSelector = observed.target.selector
                 recoverySnapshot = currentSnapshot
               } else {
                 structuralError = `CURRENT target for ${JSON.stringify(plan.currentTask)} was found after path recovery, but the click failed: ${retried.error ?? retried.text ?? 'browser_click failed'}`
@@ -440,14 +481,14 @@ export class PatrolRunner {
       && !structuralRecoveryAdvanced
       && step.tool === 'browser_click'
       && isSelectorUnavailable(dispatched.error)) {
-      recoverySnapshot ??= await this.dispatch('browser_snapshot', {}, exec)
+      recoverySnapshot ??= await this.dispatch('browser_snapshot', recoveryObservationArguments(runtimeArguments), exec)
       if (recoverySnapshot.ok) {
         const recordedTask = resolveRecordedClickTask(definition, step)
         const recovery = recordedTask === undefined
           ? findAdaptiveClickRecovery(definition, step, recoverySnapshot.value)
           : findChecklistClickTargetForTask(definition, step, recordedTask, recoverySnapshot.value)
         if (recovery !== undefined) {
-          const retried = await this.dispatch('browser_click', { ...runtimeArguments, selector: recovery.selector }, exec)
+          const retried = await this.dispatch('browser_click', recoveryClickArguments(runtimeArguments, recovery.selector), exec)
           if (retried.ok) {
             dispatched = {
               ...retried,
@@ -466,7 +507,7 @@ export class PatrolRunner {
     if (!dispatched.ok
       && isSelectorUnavailable(dispatched.error)
       && ['browser_type', 'browser_type_credential'].includes(step.tool)) {
-      const snapshot = await this.dispatch('browser_snapshot', {}, exec)
+      const snapshot = await this.dispatch('browser_snapshot', recoveryObservationArguments(runtimeArguments), exec)
       if (snapshot.ok) {
         const recovery = findAdaptiveSelectorRecovery(definition, step, snapshot.value)
         if (recovery !== undefined) {
@@ -577,6 +618,41 @@ export class PatrolRunner {
   }
 }
 
+async function observeChecklistClickTargetWithSettle(
+  dispatch: (tool: string, args: JsonObject) => Promise<DispatchResult>,
+  definition: InspectionDefinition,
+  step: ToolStep,
+  task: string,
+  initialSnapshot: DispatchResult | undefined,
+  runtimeArguments: JsonObject,
+) {
+  let snapshot = initialSnapshot
+  let lastError: string | undefined
+  const observationArgs = recoveryObservationArguments(runtimeArguments)
+
+  for (let index = 0; index < STRUCTURAL_RECOVERY_SETTLE_DELAYS_MS.length; index += 1) {
+    const delayMs = STRUCTURAL_RECOVERY_SETTLE_DELAYS_MS[index] ?? 0
+    if (index === 0) {
+      snapshot ??= await dispatch('browser_snapshot', observationArgs)
+    } else {
+      const waited = await dispatch('browser_wait', { ...observationArgs, timeoutMs: delayMs })
+      if (!waited.ok) lastError = waited.error ?? waited.text ?? `browser_wait failed after ${delayMs}ms`
+      snapshot = await dispatch('browser_snapshot', observationArgs)
+    }
+
+    if (!snapshot.ok) {
+      lastError = snapshot.error ?? snapshot.text ?? 'browser_snapshot failed'
+      continue
+    }
+
+    const target = findChecklistClickTargetForTask(definition, step, task, snapshot.value)
+    if (target !== undefined) return { target, snapshot, attempts: index + 1 }
+    lastError = `CURRENT page did not expose one unique safe clickable target for checklist task ${JSON.stringify(task)} after ${index + 1} bounded observation${index === 0 ? '' : 's'}`
+  }
+
+  return { snapshot, attempts: STRUCTURAL_RECOVERY_SETTLE_DELAYS_MS.length, error: lastError }
+}
+
 function prepareRuntimeArguments(step: ToolStep): JsonObject {
   if (step.tool !== 'browser_type_credential') {
     const refs: string[] = []
@@ -597,6 +673,32 @@ function prepareRuntimeArguments(step: ToolStep): JsonObject {
 function recoveryClickArguments(original: JsonObject, selector: string): JsonObject {
   const tabId = typeof original.tabId === 'number' ? original.tabId : undefined
   return tabId === undefined ? { selector } : { selector, tabId }
+}
+
+function recoveryObservationArguments(original: JsonObject): JsonObject {
+  const tabId = typeof original.tabId === 'number' ? original.tabId : undefined
+  return tabId === undefined ? {} : { tabId }
+}
+
+function snapshotSelectorForRequested(value: JsonValue | undefined, requested: string): string | undefined {
+  if (value === undefined || value === null || Array.isArray(value) || typeof value !== 'object') return undefined
+  const elements = value.elements
+  if (!Array.isArray(elements)) return undefined
+  const matches: string[] = []
+  for (const item of elements) {
+    if (item === null || Array.isArray(item) || typeof item !== 'object') continue
+    const selector = item.selector
+    if (typeof selector === 'string' && selectorEquivalentForSnapshot(selector, requested)) matches.push(selector)
+  }
+  return matches.length === 1 ? matches[0] : undefined
+}
+
+function selectorEquivalentForSnapshot(observed: string, requested: string): boolean {
+  if (observed === requested) return true
+  if (!requested.startsWith('top-frame::') && !requested.startsWith('frame-url(')) {
+    return observed === `top-frame::${requested}`
+  }
+  return false
 }
 
 function looksLikeLoginStep(step: ToolStep): boolean {

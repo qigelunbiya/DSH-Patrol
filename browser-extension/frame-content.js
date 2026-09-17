@@ -50,6 +50,7 @@ function frameSnapshot(args) {
         || element.innerText
         || element.textContent
         || element.getAttribute('aria-label')
+        || element.getAttribute('placeholder')
         || '',
         240,
       ),

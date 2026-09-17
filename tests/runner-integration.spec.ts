@@ -239,6 +239,18 @@ describe('PatrolRunner integration safety', () => {
     const calls: string[] = []
     const { runner, exec } = await setup(async input => {
       calls.push(input.name)
+      if (input.name === 'browser_snapshot') {
+        return {
+          isError: false,
+          value: {
+            ok: true,
+            elements: [
+              { tag: 'a', role: 'link', text: '我的工作台', selector: 'top-frame::#workbench' },
+            ],
+          },
+          content: [{ type: 'text', text: 'snapshot' }],
+        }
+      }
       if (input.name === 'browser_click') {
         return {
           isError: false,
@@ -269,7 +281,7 @@ describe('PatrolRunner integration safety', () => {
 
     const { report } = await runner.run(def, exec)
     expect(report.status).toBe('passed')
-    expect(calls).toEqual(['browser_click', 'browser_read_page'])
+    expect(calls).toEqual(['browser_snapshot', 'browser_click', 'browser_read_page'])
   })
 
   it('refuses to resume a runbook edited after the checkpoint', async () => {
