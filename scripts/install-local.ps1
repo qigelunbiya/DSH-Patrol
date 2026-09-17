@@ -112,6 +112,44 @@ function Install-HarnessClientHostCompatMirror {
     return $target
 }
 
+function Remove-LegacyGlobalPatrolRows {
+    param([Parameter(Mandatory = $true)][string]$PatchPath)
+
+    if (-not (Test-Path -LiteralPath $PatchPath)) { return }
+    $lines = [System.IO.File]::ReadAllLines($PatchPath)
+    $result = New-Object System.Collections.Generic.List[string]
+    $skip = $false
+    $skipIndent = -1
+    $removed = 0
+
+    foreach ($line in $lines) {
+        if (-not $skip) {
+            $match = [regex]::Match($line, '^(\s*)-\s*id:\s*dsh-patrol\s*$')
+            if ($match.Success) {
+                $skip = $true
+                $skipIndent = $match.Groups[1].Value.Length
+                $removed += 1
+                continue
+            }
+            $result.Add($line)
+            continue
+        }
+
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        $indent = $line.Length - $line.TrimStart().Length
+        if ($indent -le $skipIndent) {
+            $skip = $false
+            $skipIndent = -1
+            $result.Add($line)
+        }
+    }
+
+    if ($removed -gt 0) {
+        Write-Utf8NoBom -Path $PatchPath -Content (($result -join "`r`n").TrimEnd() + "`r`n")
+        Write-Host "Removed $removed legacy global dsh-patrol profile row(s); the Patrol preset is now the single orchestration owner." -ForegroundColor Yellow
+    }
+}
+
 function Install-ManagedHostBridgePatch {
     param(
         [Parameter(Mandatory = $true)][string]$PatchPath,
@@ -318,6 +356,7 @@ Copy-Item -LiteralPath $CleanupSource -Destination $CleanupTarget -Force
 $CleanupUri = (New-Object System.Uri((Resolve-Path $CleanupTarget))).AbsoluteUri
 
 $WebPatch = Join-Path $ProfileDir "cordis.patch.yml"
+Remove-LegacyGlobalPatrolRows -PatchPath $WebPatch
 Install-ManagedHostBridgePatch -PatchPath $WebPatch -BridgeHostUri $BridgeHostIndex -ScreenshotDir $PatrolScreenshotDir
 Install-ManagedCleanupPatch -PatchPath $WebPatch -CleanupUri $CleanupUri -ProfileName $Profile
 
@@ -328,7 +367,7 @@ if (Test-Path $WebPatch) {
     }
     $oldGlobal = Select-String -Path $WebPatch -Pattern "^\s*-?\s*id:\s*dsh-patrol\s*$|DSH-Patrol/lib/index" -Quiet
     if ($oldGlobal) {
-        Write-Warning "The profile patch still appears to contain an old global DSH Patrol row: $WebPatch. Remove that old row so Patrol orchestration is available only in the dedicated Patrol preset."
+        throw "Legacy global DSH Patrol row is still present after cleanup: $WebPatch"
     }
 }
 

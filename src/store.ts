@@ -104,12 +104,31 @@ export class PatrolStore {
   }
 
   /**
-   * Persist an explicit Runbook edit. Plain PatrolStore has no teaching
-   * lifecycle, so this is equivalent to save(). PatrolLifecycleStore overrides
-   * it to bypass teaching-run bookkeeping and final compaction.
+   * Persist an explicit Runbook edit as an exact graph write. This path is
+   * deliberately independent from save() so subclasses cannot accidentally
+   * reinterpret an edit as interactive teaching. The canonical file is
+   * byte-verified before workspace mirrors are refreshed.
    */
   async saveRunbookEdit(definition: InspectionDefinition): Promise<void> {
-    await this.save(definition)
+    assertInspectionDefinition(definition)
+    await this.assertChecklistBeforeStepAppend(definition)
+    const path = this.inspectionPath(definition.id)
+    const content = `${JSON.stringify(definition, null, 2)}\n`
+    const delays = [0, 25, 75, 150]
+    let lastObserved = ''
+    for (const delay of delays) {
+      if (delay > 0) await new Promise<void>(resolve => setTimeout(resolve, delay))
+      await atomicWrite(path, content)
+      lastObserved = await readFile(path, 'utf8')
+      if (lastObserved === content) {
+        const workspaceRoot = definition.metadata.workspaceRoot
+        if (workspaceRoot !== undefined && workspaceRoot.trim() !== '') {
+          await this.saveWorkspaceRunbook(definition, workspaceRoot)
+        }
+        return
+      }
+    }
+    throw new Error(`explicit Runbook persistence was overwritten before verification: ${path}; expectedBytes=${Buffer.byteLength(content, 'utf8')}; observedBytes=${Buffer.byteLength(lastObserved, 'utf8')}`)
   }
 
   private async assertChecklistBeforeStepAppend(definition: InspectionDefinition): Promise<void> {

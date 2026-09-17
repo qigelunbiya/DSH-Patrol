@@ -1032,21 +1032,12 @@ async function insertStructuralToolStep(store: PatrolStore, input: StructuralToo
 
   // Never trust an in-memory mutation as proof that the Runbook changed. Reload
   // from storage and verify both the step payload and its requested adjacency.
-  const persisted = await store.load(definition.id)
+  const persisted = await recoverStructuralInsertPersistence(store, definition.id, inserted, before, after)
   const persistedIndex = persisted.steps.findIndex(step => step.id === inserted.id)
-  if (persistedIndex < 0) throw new Error(`structural edit persistence check failed: inserted step ${inserted.id} was not found after reload`)
+  if (persistedIndex < 0) {
+    throw new Error(`structural edit persistence recovery failed: inserted step ${inserted.id} is still absent; storage=${store.root}`)
+  }
   const persistedStep = persisted.steps[persistedIndex]
-  if (persistedStep?.kind !== 'tool'
-    || persistedStep.tool !== inserted.tool
-    || JSON.stringify(persistedStep.arguments) !== JSON.stringify(inserted.arguments)) {
-    throw new Error(`structural edit persistence check failed: inserted step ${inserted.id} changed after reload`)
-  }
-  if (after !== undefined && persisted.steps[persistedIndex - 1]?.id !== after) {
-    throw new Error(`structural edit persistence check failed: ${inserted.id} is not immediately after ${after}`)
-  }
-  if (before !== undefined && persisted.steps[persistedIndex + 1]?.id !== before) {
-    throw new Error(`structural edit persistence check failed: ${inserted.id} is not immediately before ${before}`)
-  }
 
   const previous = structuralStepLabel(persisted.steps[persistedIndex - 1])
   const current = structuralStepLabel(persistedStep)
@@ -1057,6 +1048,58 @@ async function insertStructuralToolStep(store: PatrolStore, input: StructuralToo
     'Persistence check: PASSED (Runbook reloaded from storage).',
     'Make all requested structural edits first; then call patrol_show once to verify the complete saved graph before patrol_validate.',
   ].join('\n')
+}
+
+async function recoverStructuralInsertPersistence(
+  store: PatrolStore,
+  inspectionId: string,
+  inserted: ToolStep,
+  before: string | undefined,
+  after: string | undefined,
+): Promise<InspectionDefinition> {
+  const anchorId = before ?? after!
+  let persisted = await store.load(inspectionId)
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const persistedIndex = persisted.steps.findIndex(step => step.id === inserted.id)
+    const persistedStep = persisted.steps[persistedIndex]
+    const payloadMatches = persistedStep?.kind === 'tool'
+      && persistedStep.tool === inserted.tool
+      && persistedStep.name === inserted.name
+      && persistedStep.artifact === inserted.artifact
+      && JSON.stringify(persistedStep.arguments) === JSON.stringify(inserted.arguments)
+    const adjacencyMatches = persistedIndex >= 0
+      && (after === undefined || persisted.steps[persistedIndex - 1]?.id === after)
+      && (before === undefined || persisted.steps[persistedIndex + 1]?.id === before)
+    if (payloadMatches && adjacencyMatches) return persisted
+    if (attempt === 2) break
+
+    if (persisted.status !== 'draft') {
+      throw new Error(`structural edit lost a write and ${persisted.id} is no longer DRAFT; refusing automatic recovery`)
+    }
+    const anchorIndex = persisted.steps.findIndex(step => step.id === anchorId)
+    if (anchorIndex < 0) {
+      throw new Error(`structural edit lost a write and anchor step ${anchorId} no longer exists`)
+    }
+
+    // Remove a partial/colliding copy before reapplying. If the same id now
+    // belongs to another payload, allocate a fresh stable id from the latest
+    // graph rather than overwriting that step.
+    if (persistedIndex >= 0) {
+      if (payloadMatches) persisted.steps.splice(persistedIndex, 1)
+      else inserted.id = nextStepId(persisted)
+    }
+    inserted.recordedAt = new Date().toISOString()
+    const refreshedAnchorIndex = persisted.steps.findIndex(step => step.id === anchorId)
+    const insertIndex = before !== undefined ? refreshedAnchorIndex : refreshedAnchorIndex + 1
+    persisted.steps.splice(insertIndex, 0, { ...inserted })
+    assertConditionOrder(persisted)
+    markEdited(persisted)
+    await persistRunbookEdit(store, persisted)
+    persisted = await store.load(persisted.id)
+  }
+
+  const ids = persisted.steps.map(step => step.id).join(',')
+  throw new Error(`structural edit persistence check failed after 3 verified writes: inserted step ${inserted.id} was not stable after reload; storage=${store.root}; savedIds=[${ids}]`)
 }
 
 function structuralStepLabel(step: InspectionDefinition['steps'][number] | undefined): string {

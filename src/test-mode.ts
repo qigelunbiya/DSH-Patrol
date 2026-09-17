@@ -47,7 +47,8 @@ export const PATROL_TEST_MODE_OVERRIDE_PROMPT = `DSH Patrol TEST MODE 调试规�
 - NORMAL MODE / 无人值守 replay 继续使用 Runbook 中的动态 browser_detect_auth_challenge 本地 solver；TEST MODE 通过 patrol_solve_current_image_code 复用同一条稳定本地 OCR 路径，只是在本地 OCR 明确失败后额外允许模型视觉后备。
 - 动态口令/TOTP 使用 patrol_list_totp_profiles + patrol_type_totp_profile；有匹配 profile 时不要先留空提交，也不要让用户重复提供动态码。
 - 密码、token、TOTP 等敏感值仍只能走专用敏感输入工具，绝不写入 Runbook 明文、notes、报告或用户可见总结。即使 TEST MODE 允许部分低层页面操作，browser_type / browser_type_credential 等敏感输入仍不得作为绕过安全工具的后备。
-- 用户纠正已有流程时先 patrol_show 映射 stepId，能原位 reteach 就原位 reteach；确认旧步骤不应存在时才 remove。只有确实缺新动作时才新增，并立即移动到正确位置。不得把纠正继续追加到流程尾部形成第二套路径。
-- 修改后必须完整 patrol_validate；需要人工 OTP/checkpoint 时再 resume_validation。只有完整通过后才确认编辑。
+- 用户纠正已有流程时先 patrol_show 映射 stepId。等待、截图、读取页面、已知 URL 导航这类不依赖 CURRENT 页面证据的新增动作属于纯 Runbook 结构编辑：必须优先 patrol_insert_wait_step / patrol_insert_screenshot_step / patrol_insert_read_page_step / patrol_insert_navigate_step；已有 wait/screenshot/read/navigate 仅改参数时必须用 patrol_update_*。只有 selector/点击目标本身需要重新学习时才进入 reteach/现场教学。不得把纠正继续追加到流程尾部形成第二套路径。
+- 结构编辑期间禁止用 patrol_wait、patrol_screenshot、patrol_read_page、patrol_click、patrol_click_target 去“曲线追加”步骤，也禁止用 patrol_rewrite_flow_path 代替普通新增/参数修改。若 patrol_insert_* / patrol_update_* 报持久化问题，以 patrol_show 的保存图为事实，继续修结构；不要操作 CURRENT 页面碰运气。
+- 一轮结构修改完成后只调用一次 patrol_show 核对 step 顺序/tool/关键参数；保存图未满足用户要求时禁止 patrol_validate。只有保存图正确后才完整 patrol_validate；需要人工 OTP/checkpoint 时再 resume_validation。只有完整通过后才确认编辑。
 - 教学完成后先 patrol_finalize_flow，只保留 taskChecklist 的最终成功路线，再确认流程。诊断探针、失败点击、重复输入、恢复试错不能固化进 Runbook。
 - 如需确认模式调用 patrol_runtime_mode；TEST MODE 应报告 operational-click-fallbacks。需要恢复严格边界时设置 DSH_PATROL_CAPTCHA_MODE=normal 后彻底重启 Harness。`

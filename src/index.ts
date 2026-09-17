@@ -80,7 +80,7 @@ export const inject = ['tools', 'userQuestions']
 const DEFAULT_STORAGE_PATH = resolve(process.cwd(), '.dsh-patrol')
 const DEFAULT_MAX_STEPS = 200
 const DEFAULT_REPORT_MAX_CHARS = 30_000
-const TEST_MODE_BUILD_MARKER = 'test-bypass-v7-operational-click-fallbacks'
+const TEST_MODE_BUILD_MARKER = 'test-bypass-v8-structural-edit-persistence'
 const TEST_MODE_DIRECT_BROWSER_ALLOWED = new Set([
   'browser_status',
   'browser_list_tabs',

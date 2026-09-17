@@ -207,6 +207,38 @@ describe('editable Patrol runbooks', () => {
     expect(dispatchCalls()).toBe(0)
   })
 
+  it('recovers an additive structural edit when the first verified save is clobbered by a stale writer', async () => {
+    const { store, tool, exec } = await setup()
+    const definition = readyDefinition()
+    definition.status = 'draft'
+    await store.create(definition)
+
+    const stale = await store.load('editable-login')
+    const original = store.saveRunbookEdit.bind(store)
+    let clobberOnce = true
+    store.saveRunbookEdit = async next => {
+      await original(next)
+      if (clobberOnce && next.steps.length > stale.steps.length) {
+        clobberOnce = false
+        await store.save(stale)
+      }
+    }
+
+    const result = await tool('patrol_insert_wait_step').execute({
+      inspectionId: 'editable-login',
+      stepName: '等待工单列表加载',
+      timeoutMs: 3000,
+      afterStepId: 'step-001',
+    }, exec)
+
+    expect(result).toContain('Persistence check: PASSED')
+    expect(clobberOnce).toBe(false)
+    const updated = await store.load('editable-login')
+    expect(updated.steps.some(step => step.kind === 'tool'
+      && step.tool === 'browser_wait'
+      && step.arguments.timeoutMs === 3000)).toBe(true)
+  })
+
   it('inserts page reads with flat parameters and keeps the advanced generic insert as a compatibility fallback', async () => {
     const { store, tool, exec, dispatchCalls } = await setup()
     const definition = readyDefinition()

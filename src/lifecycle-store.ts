@@ -119,7 +119,7 @@ export class PatrolLifecycleStore extends PatrolStore {
     // teaching compaction/renumbering. Validation still runs separately with
     // purpose=validation.
     this.activeTeachingRuns.delete(definition.id)
-    await super.save(definition)
+    await super.saveRunbookEdit(definition)
   }
 
   async recordTeachingStepResult(

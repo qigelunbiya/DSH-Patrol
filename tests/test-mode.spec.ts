@@ -39,6 +39,9 @@ describe('Patrol test-mode guard policy', () => {
 
   it('uses Patrol local OCR before model vision and keeps test-mode click fallbacks operational', () => {
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/image-code.*不再视觉优先/s)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toContain('patrol_insert_wait_step')
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/结构编辑期间禁止用 patrol_wait.*patrol_screenshot/s)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/保存图未满足用户要求时禁止 patrol_validate/s)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/第一次识别必须先调用 patrol_solve_current_image_code/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/browser_detect_auth_challenge 本地 OCR solver/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/禁止一上来直接调用 browser_capture_image_code_visual/)
