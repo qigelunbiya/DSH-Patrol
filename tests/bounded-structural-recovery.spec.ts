@@ -259,6 +259,63 @@ describe('bounded checklist structural recovery', () => {
     ])
   })
 
+  it('waits in bounded stages when a recovered click needs time before the next task appears', async () => {
+    let phase = 0
+    let postRecoverySnapshots = 0
+    const calls: Array<{ name: string; arguments: any }> = []
+    const { runner, exec } = await runnerFixture(async input => {
+      calls.push(input)
+      if (input.name === 'browser_click' && input.arguments.selector === '#ops') {
+        return { isError: false, value: { ok: true }, content: [{ type: 'text', text: 'opened operations' }] }
+      }
+      if (input.name === 'browser_click' && input.arguments.selector === '#old-rdp') {
+        return {
+          isError: true,
+          error: new Error('element not found in any accessible frame: #old-rdp'),
+          value: {},
+          content: [{ type: 'text', text: 'stale RDP selector' }],
+        }
+      }
+      if (input.name === 'browser_snapshot') {
+        if (phase === 0) {
+          return {
+            isError: false,
+            value: { ok: true, elements: [{ tag: 'a', role: 'link', text: '主机运维', selector: '#host-ops' }] },
+            content: [{ type: 'text', text: 'host operations target' }],
+          }
+        }
+        postRecoverySnapshots += 1
+        return {
+          isError: false,
+          value: postRecoverySnapshots === 1
+            ? { ok: true, elements: [{ tag: 'div', role: 'button', text: '正在加载', selector: '#loading' }] }
+            : { ok: true, elements: [{ tag: 'button', role: 'button', text: 'RDP', selector: '#rdp-new' }] },
+          content: [{ type: 'text', text: 'post recovery snapshot' }],
+        }
+      }
+      if (input.name === 'browser_click' && input.arguments.selector === '#host-ops') {
+        phase = 1
+        return { isError: false, value: { ok: true }, content: [{ type: 'text', text: 'opened host operations' }] }
+      }
+      if (input.name === 'browser_wait') {
+        return { isError: false, value: { ok: true, timeoutMs: input.arguments.timeoutMs }, content: [{ type: 'text', text: 'waited' }] }
+      }
+      if (input.name === 'browser_click' && input.arguments.selector === '#rdp-new') {
+        return { isError: false, value: { ok: true }, content: [{ type: 'text', text: 'opened RDP' }] }
+      }
+      if (input.name === 'browser_read_page') {
+        return { isError: false, value: { ok: true, text: 'RDP 页面' }, content: [{ type: 'text', text: 'RDP 页面' }] }
+      }
+      throw new Error(`unexpected tool ${input.name}`)
+    })
+
+    const { report } = await runner.run(oneGapDefinition(), exec)
+
+    expect(report.status).toBe('passed')
+    expect(calls.map(call => `${call.name}:${String(call.arguments.timeoutMs ?? call.arguments.selector ?? '')}`)).toContain('browser_wait:150')
+    expect(postRecoverySnapshots).toBe(2)
+  })
+
   it('fails closed after a partially recovered path instead of guessing the remaining route', async () => {
     let phase = 0
     const calls: Array<{ name: string; arguments: any }> = []
@@ -302,6 +359,13 @@ describe('bounded checklist structural recovery', () => {
           content: [{ type: 'text', text: 'opened system management' }],
         }
       }
+      if (input.name === 'browser_wait') {
+        return {
+          isError: false,
+          value: { ok: true, timeoutMs: input.arguments.timeoutMs },
+          content: [{ type: 'text', text: 'waited for bounded settle' }],
+        }
+      }
       throw new Error(`unexpected tool ${input.name}`)
     })
 
@@ -317,11 +381,17 @@ describe('bounded checklist structural recovery', () => {
     expect(report.status).toBe('failed')
     expect(report.results[1]?.error).toMatch(/stopped fail-closed/i)
     expect(report.results[1]?.output).toContain('点击系统管理 -> #system')
-    expect(calls.map(call => `${call.name}:${String(call.arguments.selector ?? '')}`)).toEqual([
+    expect(calls.map(call => `${call.name}:${String(call.arguments.timeoutMs ?? call.arguments.selector ?? '')}`)).toEqual([
       'browser_click:#ops',
       'browser_click:#old-rdp',
       'browser_snapshot:',
       'browser_click:#system',
+      'browser_snapshot:',
+      'browser_wait:150',
+      'browser_snapshot:',
+      'browser_wait:350',
+      'browser_snapshot:',
+      'browser_wait:700',
       'browser_snapshot:',
     ])
   })
