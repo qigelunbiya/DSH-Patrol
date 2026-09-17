@@ -57,7 +57,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       await assertNoPendingRun(store, args.inspectionId)
       const definition = await store.load(args.inspectionId)
       if (definition.status === 'draft') {
-        return `Inspection ${definition.id} is already DRAFT. Edit/re-teach the affected steps, then run patrol_validate before patrol_confirm_edit.`
+        return `Inspection ${definition.id} is already DRAFT. For additive Runbook-only changes, use the dedicated patrol_insert_* structural tools without touching the CURRENT browser; use patrol_reteach_* only when a live selector/action must actually be relearned. Verify the saved graph with patrol_show, then run patrol_validate before patrol_confirm_edit.`
       }
       markEdited(definition)
       await store.save(definition)
@@ -116,9 +116,199 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
     },
   })
 
+  const insertWaitStep = defineTool({
+    name: 'patrol_insert_wait_step',
+    description: 'Structurally insert a browser wait into an existing DRAFT Runbook with flat parameters, WITHOUT executing the CURRENT browser page. Prefer this over patrol_insert_browser_step for requests such as "after step X wait 5 seconds".',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+      stepName: { type: 'string', required: true },
+      timeoutMs: { type: 'integer', required: true },
+      selector: { type: 'string' },
+      condition: { type: 'string', enum: ['visible', 'gone'] },
+      tabId: { type: 'integer' },
+      beforeStepId: { type: 'string' },
+      afterStepId: { type: 'string' },
+      notes: { type: 'string' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args) {
+      if (!Number.isInteger(args.timeoutMs) || args.timeoutMs < 0) throw new Error('timeoutMs must be a non-negative integer')
+      if (args.condition !== undefined && args.selector === undefined) throw new Error('condition requires selector')
+      const browserArgs: JsonObject = { timeoutMs: args.timeoutMs }
+      if (args.selector !== undefined) browserArgs.selector = args.selector
+      if (args.condition !== undefined) browserArgs.condition = args.condition
+      if (args.tabId !== undefined) browserArgs.tabId = args.tabId
+      return await insertStructuralToolStep(store, {
+        inspectionId: args.inspectionId,
+        beforeStepId: args.beforeStepId,
+        afterStepId: args.afterStepId,
+        step: {
+          kind: 'tool',
+          name: args.stepName,
+          tool: 'browser_wait',
+          arguments: browserArgs,
+          ...(args.notes === undefined ? {} : { notes: args.notes }),
+        },
+      })
+    },
+  })
+
+  const insertScreenshotStep = defineTool({
+    name: 'patrol_insert_screenshot_step',
+    description: 'Structurally insert a screenshot artifact step into an existing DRAFT Runbook with flat parameters, WITHOUT executing the CURRENT browser page.',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+      stepName: { type: 'string', required: true },
+      format: { type: 'string', enum: ['png', 'jpeg'] },
+      tabId: { type: 'integer' },
+      beforeStepId: { type: 'string' },
+      afterStepId: { type: 'string' },
+      notes: { type: 'string' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args) {
+      const browserArgs: JsonObject = {}
+      if (args.format !== undefined) browserArgs.format = args.format
+      if (args.tabId !== undefined) browserArgs.tabId = args.tabId
+      return await insertStructuralToolStep(store, {
+        inspectionId: args.inspectionId,
+        beforeStepId: args.beforeStepId,
+        afterStepId: args.afterStepId,
+        step: {
+          kind: 'tool',
+          name: args.stepName,
+          tool: 'browser_screenshot',
+          arguments: browserArgs,
+          artifact: 'screenshot',
+          ...(args.notes === undefined ? {} : { notes: args.notes }),
+        },
+      })
+    },
+  })
+
+  const insertReadPageStep = defineTool({
+    name: 'patrol_insert_read_page_step',
+    description: 'Structurally insert a page-read step into an existing DRAFT Runbook with flat parameters, WITHOUT executing the CURRENT browser page. capturePageText defaults to true.',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+      stepName: { type: 'string', required: true },
+      selector: { type: 'string' },
+      maxChars: { type: 'integer' },
+      tabId: { type: 'integer' },
+      capturePageText: { type: 'boolean' },
+      beforeStepId: { type: 'string' },
+      afterStepId: { type: 'string' },
+      notes: { type: 'string' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args) {
+      if (args.maxChars !== undefined && (!Number.isInteger(args.maxChars) || args.maxChars <= 0)) {
+        throw new Error('maxChars must be a positive integer')
+      }
+      const browserArgs: JsonObject = {}
+      if (args.selector !== undefined) browserArgs.selector = args.selector
+      if (args.maxChars !== undefined) browserArgs.maxChars = args.maxChars
+      if (args.tabId !== undefined) browserArgs.tabId = args.tabId
+      return await insertStructuralToolStep(store, {
+        inspectionId: args.inspectionId,
+        beforeStepId: args.beforeStepId,
+        afterStepId: args.afterStepId,
+        step: {
+          kind: 'tool',
+          name: args.stepName,
+          tool: 'browser_read_page',
+          arguments: browserArgs,
+          ...(args.capturePageText === false ? {} : { artifact: 'page-text' as const }),
+          ...(args.notes === undefined ? {} : { notes: args.notes }),
+        },
+      })
+    },
+  })
+
+  const insertNavigateStep = defineTool({
+    name: 'patrol_insert_navigate_step',
+    description: 'Structurally insert a known navigation step into an existing DRAFT Runbook with flat parameters, WITHOUT navigating the CURRENT browser page.',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+      stepName: { type: 'string', required: true },
+      url: { type: 'string', required: true },
+      tabId: { type: 'integer' },
+      newTab: { type: 'boolean' },
+      beforeStepId: { type: 'string' },
+      afterStepId: { type: 'string' },
+      notes: { type: 'string' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args) {
+      assertHttpUrl(args.url)
+      const browserArgs: JsonObject = { url: args.url, action: 'navigate' }
+      if (args.tabId !== undefined) browserArgs.tabId = args.tabId
+      if (args.newTab !== undefined) browserArgs.newTab = args.newTab
+      return await insertStructuralToolStep(store, {
+        inspectionId: args.inspectionId,
+        beforeStepId: args.beforeStepId,
+        afterStepId: args.afterStepId,
+        step: {
+          kind: 'tool',
+          name: args.stepName,
+          tool: 'browser_navigate',
+          arguments: browserArgs,
+          ...(args.notes === undefined ? {} : { notes: args.notes }),
+        },
+      })
+    },
+  })
+
+  const insertClickStep = defineTool({
+    name: 'patrol_insert_click_step',
+    description: 'Structurally insert a click step into an existing DRAFT Runbook WITHOUT executing the CURRENT browser page. Use only when the selector/semantic locator is already known from the saved Runbook or fresh CURRENT evidence; never guess a selector. Otherwise use patrol_reteach_browser_step or live teaching.',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+      stepName: { type: 'string', required: true },
+      selector: { type: 'string', required: true },
+      tabId: { type: 'integer' },
+      expectedText: { type: 'string' },
+      expectationMode: { type: 'string', enum: ['contains', 'not-contains'] },
+      caseSensitive: { type: 'boolean' },
+      conditionSourceStepId: { type: 'string' },
+      conditionExpectedText: { type: 'string' },
+      conditionMode: { type: 'string', enum: ['contains', 'not-contains'] },
+      locatorText: { type: 'string' },
+      locatorRole: { type: 'string' },
+      locatorTag: { type: 'string' },
+      beforeStepId: { type: 'string' },
+      afterStepId: { type: 'string' },
+      notes: { type: 'string' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args) {
+      if (!String(args.selector ?? '').trim()) throw new Error('selector is required')
+      if (args.expectedText !== undefined) assertSafePersistentText(args.expectedText, 'expectedText')
+      if (args.conditionExpectedText !== undefined) assertSafePersistentText(args.conditionExpectedText, 'conditionExpectedText')
+      if (args.locatorText !== undefined) assertSafePersistentText(args.locatorText, 'locatorText')
+      const browserArgs: JsonObject = { selector: args.selector }
+      if (args.tabId !== undefined) browserArgs.tabId = args.tabId
+      return await insertStructuralToolStep(store, {
+        inspectionId: args.inspectionId,
+        beforeStepId: args.beforeStepId,
+        afterStepId: args.afterStepId,
+        step: {
+          kind: 'tool',
+          name: args.stepName,
+          tool: 'browser_click',
+          arguments: browserArgs,
+          ...updatedExpectation(undefined, args),
+          ...updatedCondition(undefined, args),
+          ...updatedLocator(undefined, args),
+          ...(args.notes === undefined ? {} : { notes: args.notes }),
+        },
+      })
+    },
+  })
+
   const insertBrowserStep = defineTool({
     name: 'patrol_insert_browser_step',
-    description: 'Structurally insert one new non-typing browser step into an existing DRAFT Runbook before/after a stable step id WITHOUT executing the current browser page. Use this when the user explicitly asks to add a wait, screenshot, click, read, navigation, or other browser step to an existing flow. Validate the finished edit with patrol_validate; do not use patrol_wait/patrol_screenshot merely to append an edit.',
+    description: 'Advanced structural-edit fallback for a non-typing browser step. This API requires a nested JSON arguments object; prefer patrol_insert_wait_step, patrol_insert_screenshot_step, patrol_insert_read_page_step, patrol_insert_navigate_step, or patrol_insert_click_step whenever one matches the requested change. It never executes the CURRENT browser page.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
@@ -140,50 +330,33 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
     },
     output: TEXT_OUTPUT,
     async execute(args) {
-      await assertNoPendingRun(store, args.inspectionId)
-      const definition = await loadDraft(store, args.inspectionId)
-      assertSafePersistentText(args.stepName, 'stepName')
       if (args.expectedText !== undefined) assertSafePersistentText(args.expectedText, 'expectedText')
       if (args.conditionExpectedText !== undefined) assertSafePersistentText(args.conditionExpectedText, 'conditionExpectedText')
       if (args.locatorText !== undefined) assertSafePersistentText(args.locatorText, 'locatorText')
-      if (args.notes !== undefined) assertSafePersistentText(args.notes, 'step notes')
-
-      const before = typeof args.beforeStepId === 'string' && args.beforeStepId.trim() !== '' ? args.beforeStepId.trim() : undefined
-      const after = typeof args.afterStepId === 'string' && args.afterStepId.trim() !== '' ? args.afterStepId.trim() : undefined
-      if ((before === undefined) === (after === undefined)) {
-        throw new Error('patrol_insert_browser_step requires exactly one of beforeStepId or afterStepId')
-      }
-      const anchorId = before ?? after!
-      const anchorIndex = definition.steps.findIndex(step => step.id === anchorId)
-      if (anchorIndex < 0) throw new Error(`anchor step ${anchorId} not found`)
-
       const action = args.action as BrowserAction
       const tool = browserToolForAction(action)
       const jsonArguments = asJsonObject(args.arguments as JsonValue)
-      assertSafeForStorage(jsonArguments)
-      const inserted: ToolStep = {
-        id: nextStepId(definition),
-        kind: 'tool',
-        name: args.stepName,
-        tool,
-        arguments: jsonArguments,
-        ...updatedExpectation(undefined, args),
-        ...updatedCondition(undefined, args),
-        ...updatedLocator(undefined, args),
-        ...(tool === 'browser_screenshot'
-          ? { artifact: 'screenshot' as const }
-          : tool === 'browser_read_page' && args.capturePageText !== false
-            ? { artifact: 'page-text' as const }
-            : {}),
-        ...(args.notes === undefined ? {} : { notes: args.notes }),
-        recordedAt: new Date().toISOString(),
-      }
-      const insertIndex = before !== undefined ? anchorIndex : anchorIndex + 1
-      definition.steps.splice(insertIndex, 0, inserted)
-      assertConditionOrder(definition)
-      markEdited(definition)
-      await store.save(definition)
-      return `Inserted ${inserted.id} (${action} -> ${tool}) ${before !== undefined ? `before ${before}` : `after ${after}`} without executing the CURRENT browser page. The Runbook remains DRAFT; make all requested structural edits first, then call patrol_validate once for end-to-end validation.`
+      const artifact = tool === 'browser_screenshot'
+        ? 'screenshot' as const
+        : tool === 'browser_read_page' && args.capturePageText !== false
+          ? 'page-text' as const
+          : undefined
+      return await insertStructuralToolStep(store, {
+        inspectionId: args.inspectionId,
+        beforeStepId: args.beforeStepId,
+        afterStepId: args.afterStepId,
+        step: {
+          kind: 'tool',
+          name: args.stepName,
+          tool,
+          arguments: jsonArguments,
+          ...updatedExpectation(undefined, args),
+          ...updatedCondition(undefined, args),
+          ...updatedLocator(undefined, args),
+          ...(artifact === undefined ? {} : { artifact }),
+          ...(args.notes === undefined ? {} : { notes: args.notes }),
+        },
+      })
     },
   })
 
@@ -518,6 +691,11 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
   return [
     beginEdit,
     updateInspection,
+    insertWaitStep,
+    insertScreenshotStep,
+    insertReadPageStep,
+    insertNavigateStep,
+    insertClickStep,
     insertBrowserStep,
     reteachBrowserStep,
     reteachText,
@@ -610,6 +788,78 @@ function assertValidatedAfterEdit(definition: InspectionDefinition): void {
   if (!Number.isFinite(validated) || !Number.isFinite(updated) || validated < updated) {
     throw new Error('edited runbook changed after its last successful validation; run patrol_validate again')
   }
+}
+
+interface StructuralToolInsertInput {
+  inspectionId: string
+  beforeStepId?: string | undefined
+  afterStepId?: string | undefined
+  step: Omit<ToolStep, 'id' | 'recordedAt'>
+}
+
+async function insertStructuralToolStep(store: PatrolStore, input: StructuralToolInsertInput): Promise<string> {
+  await assertNoPendingRun(store, input.inspectionId)
+  const definition = await loadDraft(store, input.inspectionId)
+  assertSafePersistentText(input.step.name, 'stepName')
+  if (input.step.notes !== undefined) assertSafePersistentText(input.step.notes, 'step notes')
+  assertSafeForStorage(input.step.arguments)
+
+  const before = typeof input.beforeStepId === 'string' && input.beforeStepId.trim() !== '' ? input.beforeStepId.trim() : undefined
+  const after = typeof input.afterStepId === 'string' && input.afterStepId.trim() !== '' ? input.afterStepId.trim() : undefined
+  if ((before === undefined) === (after === undefined)) {
+    throw new Error('structural insert requires exactly one of beforeStepId or afterStepId')
+  }
+  const anchorId = before ?? after!
+  const anchorIndex = definition.steps.findIndex(step => step.id === anchorId)
+  if (anchorIndex < 0) throw new Error(`anchor step ${anchorId} not found`)
+
+  const inserted: ToolStep = {
+    id: nextStepId(definition),
+    ...input.step,
+    recordedAt: new Date().toISOString(),
+  }
+  const insertIndex = before !== undefined ? anchorIndex : anchorIndex + 1
+  definition.steps.splice(insertIndex, 0, inserted)
+  assertConditionOrder(definition)
+  markEdited(definition)
+  await store.save(definition)
+
+  // Never trust an in-memory mutation as proof that the Runbook changed. Reload
+  // from storage and verify both the step payload and its requested adjacency.
+  const persisted = await store.load(definition.id)
+  const persistedIndex = persisted.steps.findIndex(step => step.id === inserted.id)
+  if (persistedIndex < 0) throw new Error(`structural edit persistence check failed: inserted step ${inserted.id} was not found after reload`)
+  const persistedStep = persisted.steps[persistedIndex]
+  if (persistedStep?.kind !== 'tool'
+    || persistedStep.tool !== inserted.tool
+    || JSON.stringify(persistedStep.arguments) !== JSON.stringify(inserted.arguments)) {
+    throw new Error(`structural edit persistence check failed: inserted step ${inserted.id} changed after reload`)
+  }
+  if (after !== undefined && persisted.steps[persistedIndex - 1]?.id !== after) {
+    throw new Error(`structural edit persistence check failed: ${inserted.id} is not immediately after ${after}`)
+  }
+  if (before !== undefined && persisted.steps[persistedIndex + 1]?.id !== before) {
+    throw new Error(`structural edit persistence check failed: ${inserted.id} is not immediately before ${before}`)
+  }
+
+  const previous = structuralStepLabel(persisted.steps[persistedIndex - 1])
+  const current = structuralStepLabel(persistedStep)
+  const next = structuralStepLabel(persisted.steps[persistedIndex + 1])
+  return [
+    `Structural edit persisted: ${inserted.id} (${inserted.tool}) ${before !== undefined ? `before ${before}` : `after ${after}`}.`,
+    `Saved order: ${previous} -> ${current} -> ${next}`,
+    'Persistence check: PASSED (Runbook reloaded from storage).',
+    'Make all requested structural edits first; then call patrol_show once to verify the complete saved graph before patrol_validate.',
+  ].join('\n')
+}
+
+function structuralStepLabel(step: InspectionDefinition['steps'][number] | undefined): string {
+  if (step === undefined) return '(boundary)'
+  if (step.kind === 'checkpoint') return `${step.id}:${step.name}[checkpoint]`
+  const waitMs = step.tool === 'browser_wait' && typeof step.arguments.timeoutMs === 'number'
+    ? ` ${step.arguments.timeoutMs}ms`
+    : ''
+  return `${step.id}:${step.name}[${step.tool}${waitMs}]`
 }
 
 function updatedExpectation(current: TextExpectation | undefined, args: {

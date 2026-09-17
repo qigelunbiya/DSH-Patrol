@@ -39,6 +39,18 @@ describe('current Patrol behavior prompt', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_validate/s)
   })
 
+  it('separates structural Runbook edits from live browser teaching and requires saved-graph verification', () => {
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/“结构编辑”和“网页教学”必须分离/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_insert_wait_step/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_insert_screenshot_step/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_insert_read_page_step/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/禁止用 patrol_wait、patrol_screenshot、patrol_read_page、patrol_click_target/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/必须只调用一次 patrol_show/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/browser_wait\.timeoutMs=5000/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/绝不能用“可能是缓存”解释/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/保存图已核对.*patrol_validate 通过/s)
+  })
+
   it('prevents repeated conversational loops after the same patrol failure', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/同一目标.*同类失败/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/最多重试一次/s)

@@ -177,31 +177,63 @@ describe('editable Patrol runbooks', () => {
     expect(definition.schedule?.enabled).toBe(true)
   })
 
-  it('inserts wait and screenshot steps structurally without executing the current page', async () => {
+  it('inserts wait and screenshot steps with flat structural tools, reloads persistence, and never executes the current page', async () => {
     const { store, tool, exec, dispatchCalls } = await setup()
     const definition = readyDefinition()
     definition.status = 'draft'
     await store.create(definition)
 
-    await tool('patrol_insert_browser_step').execute({
+    const waitResult = await tool('patrol_insert_wait_step').execute({
       inspectionId: 'editable-login',
       stepName: '等待 5 秒',
-      action: 'wait',
-      arguments: { timeoutMs: 5000 },
+      timeoutMs: 5000,
       afterStepId: 'step-003',
     }, exec)
-    await tool('patrol_insert_browser_step').execute({
+    expect(waitResult).toContain('Persistence check: PASSED')
+    expect(waitResult).toContain('browser_wait 5000ms')
+
+    const screenshotResult = await tool('patrol_insert_screenshot_step').execute({
       inspectionId: 'editable-login',
       stepName: '打开工单后截图',
-      action: 'screenshot',
-      arguments: {},
       afterStepId: 'step-004',
     }, exec)
+    expect(screenshotResult).toContain('Persistence check: PASSED')
 
     const updated = await store.load('editable-login')
     expect(updated.steps.map(step => step.id)).toEqual(['step-001', 'step-002', 'step-003', 'step-004', 'step-005'])
     expect(updated.steps[3]).toMatchObject({ id: 'step-004', tool: 'browser_wait', arguments: { timeoutMs: 5000 } })
     expect(updated.steps[4]).toMatchObject({ id: 'step-005', tool: 'browser_screenshot', artifact: 'screenshot' })
+    expect(dispatchCalls()).toBe(0)
+  })
+
+  it('inserts page reads with flat parameters and keeps the advanced generic insert as a compatibility fallback', async () => {
+    const { store, tool, exec, dispatchCalls } = await setup()
+    const definition = readyDefinition()
+    definition.status = 'draft'
+    await store.create(definition)
+
+    await tool('patrol_insert_read_page_step').execute({
+      inspectionId: 'editable-login',
+      stepName: '读取工单信息',
+      maxChars: 12000,
+      afterStepId: 'step-003',
+    }, exec)
+    await tool('patrol_insert_browser_step').execute({
+      inspectionId: 'editable-login',
+      stepName: '兼容等待',
+      action: 'wait',
+      arguments: { timeoutMs: 1000 },
+      afterStepId: 'step-004',
+    }, exec)
+
+    const updated = await store.load('editable-login')
+    expect(updated.steps[3]).toMatchObject({
+      id: 'step-004',
+      tool: 'browser_read_page',
+      arguments: { maxChars: 12000 },
+      artifact: 'page-text',
+    })
+    expect(updated.steps[4]).toMatchObject({ id: 'step-005', tool: 'browser_wait', arguments: { timeoutMs: 1000 } })
     expect(dispatchCalls()).toBe(0)
   })
 
