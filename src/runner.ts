@@ -7,6 +7,7 @@ import { findUniqueHealingSelector, isPageReadStep, isScreenshotStep, isSafeBrow
 import { verifyPostClickExpectation } from './post-click-verification.js'
 import { renderRunReport } from './report.js'
 import { credentialReferenceName, redactLikelySecrets, untrustedPageData } from './security.js'
+import { findAdaptiveClickPathPlan, findChecklistClickTargetForTask, resolveRecordedClickTask } from './structural-recovery.js'
 import type {
   CheckpointStep,
   InspectionDefinition,
@@ -275,6 +276,9 @@ export class PatrolRunner {
         if (result.healedSelector !== undefined) {
           pushWarning(warnings, `Runbook step ${result.stepId} (${result.name}) recovered selector drift with ${result.healedSelector}; this healing candidate was used for this run only and was not persisted.`)
         }
+        if (result.output?.includes('Adaptive replay inserted bounded checklist path')) {
+          pushWarning(warnings, `Runbook step ${result.stepId} (${result.name}) inserted a bounded checklist recovery path for missing intermediate click tasks; this path was used for this run only and was not persisted.`)
+        }
       }
       for (const warning of requiredArtifactWarnings(definition, results, summary)) pushWarning(warnings, warning)
     }
@@ -330,6 +334,7 @@ export class PatrolRunner {
     let dispatched = await this.dispatch(step.tool, runtimeArguments, exec)
     let healedSelector: string | undefined
     let recoverySnapshot: DispatchResult | undefined
+    let structuralRecoveryAdvanced = false
 
     if (!dispatched.ok && step.tool === 'browser_click' && step.locator !== undefined) {
       recoverySnapshot = await this.dispatch('browser_snapshot', {}, exec)
@@ -350,7 +355,97 @@ export class PatrolRunner {
       && isSelectorUnavailable(dispatched.error)) {
       recoverySnapshot ??= await this.dispatch('browser_snapshot', {}, exec)
       if (recoverySnapshot.ok) {
-        const recovery = findAdaptiveClickRecovery(definition, step, recoverySnapshot.value)
+        const plan = findAdaptiveClickPathPlan(definition, step)
+        if (plan !== undefined) {
+          let currentSnapshot = recoverySnapshot
+          const recoveredPath: string[] = []
+          let structuralError: string | undefined
+
+          for (const task of plan.missingTasks) {
+            const target = findChecklistClickTargetForTask(definition, step, task, currentSnapshot.value)
+            if (target === undefined) {
+              structuralError = `CURRENT page did not expose one unique safe clickable target for missing checklist task ${JSON.stringify(task)}`
+              break
+            }
+
+            const clicked = await this.dispatch(
+              'browser_click',
+              recoveryClickArguments(runtimeArguments, target.selector),
+              exec,
+            )
+            if (!clicked.ok) {
+              structuralError = `click for missing checklist task ${JSON.stringify(task)} failed: ${clicked.error ?? clicked.text ?? 'browser_click failed'}`
+              break
+            }
+
+            structuralRecoveryAdvanced = true
+            recoveredPath.push(`${task} -> ${target.selector}`)
+            currentSnapshot = await this.dispatch('browser_snapshot', {}, exec)
+            if (!currentSnapshot.ok) {
+              structuralError = `could not inspect CURRENT page after recovering checklist task ${JSON.stringify(task)}: ${currentSnapshot.error ?? currentSnapshot.text ?? 'browser_snapshot failed'}`
+              break
+            }
+          }
+
+          if (structuralError === undefined) {
+            const currentTarget = findChecklistClickTargetForTask(
+              definition,
+              step,
+              plan.currentTask,
+              currentSnapshot.value,
+            )
+            if (currentTarget === undefined) {
+              structuralError = `recovered intermediate checklist tasks, but CURRENT page still did not expose one unique safe target for the recorded task ${JSON.stringify(plan.currentTask)}`
+            } else {
+              const retried = await this.dispatch(
+                'browser_click',
+                recoveryClickArguments(runtimeArguments, currentTarget.selector),
+                exec,
+              )
+              if (retried.ok) {
+                dispatched = {
+                  ...retried,
+                  text: [
+                    retried.text,
+                    'Adaptive replay inserted bounded checklist path before the current Runbook click.',
+                    `Recovered path: ${recoveredPath.join(' ; ')}`,
+                    `Current task: ${plan.currentTask} -> ${currentTarget.selector}`,
+                    'The inserted path was run-local and was not persisted to the Runbook.',
+                  ].filter(Boolean).join('\n'),
+                }
+                healedSelector = currentTarget.selector
+                recoverySnapshot = currentSnapshot
+              } else {
+                structuralError = `CURRENT target for ${JSON.stringify(plan.currentTask)} was found after path recovery, but the click failed: ${retried.error ?? retried.text ?? 'browser_click failed'}`
+              }
+            }
+          }
+
+          if (!dispatched.ok && structuralRecoveryAdvanced && structuralError !== undefined) {
+            dispatched = {
+              ok: false,
+              text: [
+                dispatched.text,
+                recoveredPath.length === 0 ? '' : `Adaptive replay recovered path prefix: ${recoveredPath.join(' ; ')}`,
+                structuralError,
+              ].filter(Boolean).join('\n'),
+              error: `Adaptive checklist path recovery stopped fail-closed after advancing the CURRENT page: ${structuralError}`,
+            }
+          }
+        }
+      }
+    }
+
+    if (!dispatched.ok
+      && !structuralRecoveryAdvanced
+      && step.tool === 'browser_click'
+      && isSelectorUnavailable(dispatched.error)) {
+      recoverySnapshot ??= await this.dispatch('browser_snapshot', {}, exec)
+      if (recoverySnapshot.ok) {
+        const recordedTask = resolveRecordedClickTask(definition, step)
+        const recovery = recordedTask === undefined
+          ? findAdaptiveClickRecovery(definition, step, recoverySnapshot.value)
+          : findChecklistClickTargetForTask(definition, step, recordedTask, recoverySnapshot.value)
         if (recovery !== undefined) {
           const retried = await this.dispatch('browser_click', { ...runtimeArguments, selector: recovery.selector }, exec)
           if (retried.ok) {
@@ -497,6 +592,11 @@ function prepareRuntimeArguments(step: ToolStep): JsonObject {
   const ref = credentialReferenceName(raw) ?? (/^[A-Za-z_][A-Za-z0-9_]*$/.test(raw) ? raw : undefined)
   if (ref === undefined) throw new Error('browser_type_credential credentialRef must be ${credential:REF} or a valid Harness credential reference name')
   return Object.fromEntries(Object.entries(step.arguments).filter(([key]) => key !== 'text').map(([key, value]) => [key, key === 'credentialRef' ? ref : value])) as JsonObject
+}
+
+function recoveryClickArguments(original: JsonObject, selector: string): JsonObject {
+  const tabId = typeof original.tabId === 'number' ? original.tabId : undefined
+  return tabId === undefined ? { selector } : { selector, tabId }
 }
 
 function looksLikeLoginStep(step: ToolStep): boolean {
