@@ -684,10 +684,12 @@ function snapshotSelectorForRequested(value: JsonValue | undefined, requested: s
   if (value === undefined || value === null || Array.isArray(value) || typeof value !== 'object') return undefined
   const elements = value.elements
   if (!Array.isArray(elements)) return undefined
-  const matches = elements
-    .filter(item => item !== null && !Array.isArray(item) && typeof item === 'object')
-    .map(item => typeof item.selector === 'string' ? item.selector : undefined)
-    .filter((selector): selector is string => selector !== undefined && selectorEquivalentForSnapshot(selector, requested))
+  const matches: string[] = []
+  for (const item of elements) {
+    if (item === null || Array.isArray(item) || typeof item !== 'object') continue
+    const selector = item.selector
+    if (typeof selector === 'string' && selectorEquivalentForSnapshot(selector, requested)) matches.push(selector)
+  }
   return matches.length === 1 ? matches[0] : undefined
 }
 
