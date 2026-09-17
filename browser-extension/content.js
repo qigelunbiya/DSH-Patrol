@@ -40,7 +40,7 @@ function snapshot(args) {
     return clean({
       tag: element.tagName.toLowerCase(),
       role: semanticRole(element),
-      text: compactText(element.innerText || element.textContent || element.getAttribute('aria-label') || element.getAttribute('title') || '', 240),
+      text: compactText(element.innerText || element.textContent || element.getAttribute('aria-label') || element.getAttribute('placeholder') || element.getAttribute('title') || '', 240),
       selector: stableSelector(element),
       type: input?.type || undefined,
       name: input?.name || undefined,
