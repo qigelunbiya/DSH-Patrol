@@ -12,8 +12,8 @@ const PASSWORD_HINT = /(password|passwd|pwd|密码)/i
 const SENSITIVE_CODE_HINT = /(captcha|验证码|动态码|otp|one[- ]?time|短信|sms|verification\s*code|code)/i
 const FIELD_EXCLUDE_HINT = /(search|query|filter|captcha|验证码|otp|verification|code|password|passwd|pwd)/i
 const TYPE_TASK_HINT = /(输入|填写|填入|type|enter|fill)/i
-const CLICK_TASK_HINT = /(点击|点开|打开.*(?:入口|菜单|工单|详情)|click|open .*?(?:menu|item|detail))/i
-const DANGEROUS_CLICK_TASK = /(删除|移除|注销|清空|支付|购买|授权|发送|发布|delete|remove|clear|pay|purchase|authorize|send|publish)/i
+const CLICK_TASK_HINT = /(点击|点开|进入|打开.*(?:入口|菜单|工单|详情)|click|open .*?(?:menu|item|detail))/i
+const DANGEROUS_CLICK_TASK = /(确定|确认|提交|保存|删除|移除|注销|清空|支付|购买|授权|发送|发布|confirm|submit|save|delete|remove|clear|pay|purchase|authorize|send|publish)/i
 const GENERIC_CLICK_TARGET = /^(?:确定|确认|提交|继续|下一步|打开|点击|ok|confirm|submit|continue|next)$/i
 
 export function isSelectorUnavailable(error: string | undefined): boolean {
