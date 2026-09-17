@@ -51,6 +51,15 @@ describe('current Patrol behavior prompt', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/保存图已核对.*patrol_validate 通过/s)
   })
 
+  it('uses structural update tools for parameter-only edits without live browser teaching', () => {
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_update_wait_step/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_update_screenshot_step/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_update_read_page_step/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_update_navigate_step/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/保持原 step id 和顺序/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/不得为了把 5 秒改成 10 秒.*patrol_reteach_browser_step/s)
+  })
+
   it('prevents repeated conversational loops after the same patrol failure', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/同一目标.*同类失败/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/最多重试一次/s)

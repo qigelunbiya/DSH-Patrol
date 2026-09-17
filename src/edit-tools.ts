@@ -57,7 +57,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       await assertNoPendingRun(store, args.inspectionId)
       const definition = await store.load(args.inspectionId)
       if (definition.status === 'draft') {
-        return `Inspection ${definition.id} is already DRAFT. For additive Runbook-only changes, use the dedicated patrol_insert_* structural tools without touching the CURRENT browser; use patrol_reteach_* only when a live selector/action must actually be relearned. Verify the saved graph with patrol_show, then run patrol_validate before patrol_confirm_edit.`
+        return `Inspection ${definition.id} is already DRAFT. For additive Runbook-only changes, use the dedicated patrol_insert_* structural tools; for parameter-only changes to existing wait/screenshot/read/navigate steps, use patrol_update_* structural tools. Neither path should touch the CURRENT browser. Use patrol_reteach_* only when a live selector/action must actually be relearned. Verify the saved graph with patrol_show, then run patrol_validate before patrol_confirm_edit.`
       }
       markEdited(definition)
       await store.save(definition)
@@ -112,7 +112,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       }
       markEdited(definition)
       await store.save(definition)
-      return `Updated inspection ${definition.id}. It is DRAFT and must be end-to-end validated before confirmation.${args.targetUrl === undefined ? '' : ' Re-teach the navigate step too if its stored URL must change.'}`
+      return `Updated inspection ${definition.id}. It is DRAFT and must be end-to-end validated before confirmation.${args.targetUrl === undefined ? '' : ' If a stored browser_navigate step should use the same new URL, update that step structurally with patrol_update_navigate_step; only re-teach when live navigation semantics actually changed.'}`
     },
   })
 
@@ -241,6 +241,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
     output: TEXT_OUTPUT,
     async execute(args) {
       assertHttpUrl(args.url)
+      if (args.newTab === true) throw new Error('stored browser_navigate steps must reuse the active tab; newTab=true is not replay-stable')
       const browserArgs: JsonObject = { url: args.url, action: 'navigate' }
       if (args.tabId !== undefined) browserArgs.tabId = args.tabId
       if (args.newTab !== undefined) browserArgs.newTab = args.newTab
@@ -356,6 +357,204 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
           ...(artifact === undefined ? {} : { artifact }),
           ...(args.notes === undefined ? {} : { notes: args.notes }),
         },
+      })
+    },
+  })
+
+  const updateWaitStep = defineTool({
+    name: 'patrol_update_wait_step',
+    description: 'Structurally update an existing browser_wait step in a DRAFT Runbook with flat parameters while preserving its stable step id and position. This does NOT execute the CURRENT browser page.',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+      stepId: { type: 'string', required: true },
+      timeoutMs: { type: 'integer' },
+      selector: { type: 'string' },
+      clearSelector: { type: 'boolean' },
+      condition: { type: 'string', enum: ['visible', 'gone'] },
+      clearCondition: { type: 'boolean' },
+      tabId: { type: 'integer' },
+      clearTabId: { type: 'boolean' },
+      stepName: { type: 'string' },
+      notes: { type: 'string' },
+      clearNotes: { type: 'boolean' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args) {
+      if (args.timeoutMs !== undefined && (!Number.isInteger(args.timeoutMs) || args.timeoutMs < 0)) throw new Error('timeoutMs must be a non-negative integer')
+      if (args.selector !== undefined && args.clearSelector === true) throw new Error('selector and clearSelector cannot both be supplied')
+      if (args.condition !== undefined && args.clearCondition === true) throw new Error('condition and clearCondition cannot both be supplied')
+      if (args.tabId !== undefined && args.clearTabId === true) throw new Error('tabId and clearTabId cannot both be supplied')
+      if (args.notes !== undefined && args.clearNotes === true) throw new Error('notes and clearNotes cannot both be supplied')
+      if (args.clearSelector === true && args.condition !== undefined) throw new Error('condition cannot be supplied while clearing selector')
+      if (args.timeoutMs === undefined && args.selector === undefined && args.clearSelector !== true
+        && args.condition === undefined && args.clearCondition !== true
+        && args.tabId === undefined && args.clearTabId !== true
+        && args.stepName === undefined && args.notes === undefined && args.clearNotes !== true) {
+        throw new Error('at least one wait-step field must be changed')
+      }
+      const argumentPatch: JsonObject = {}
+      if (args.timeoutMs !== undefined) argumentPatch.timeoutMs = args.timeoutMs
+      if (args.selector !== undefined) argumentPatch.selector = args.selector
+      if (args.condition !== undefined) argumentPatch.condition = args.condition
+      if (args.tabId !== undefined) argumentPatch.tabId = args.tabId
+      const clearArgumentKeys: string[] = []
+      if (args.clearSelector === true) clearArgumentKeys.push('selector', 'condition')
+      else if (args.clearCondition === true) clearArgumentKeys.push('condition')
+      if (args.clearTabId === true) clearArgumentKeys.push('tabId')
+      return await updateStructuralToolStep(store, {
+        inspectionId: args.inspectionId,
+        stepId: args.stepId,
+        expectedTool: 'browser_wait',
+        argumentPatch,
+        clearArgumentKeys,
+        ...(args.stepName === undefined ? {} : { stepName: args.stepName }),
+        ...(args.notes === undefined ? {} : { notes: args.notes }),
+        ...(args.clearNotes === true ? { clearNotes: true } : {}),
+      })
+    },
+  })
+
+  const updateScreenshotStep = defineTool({
+    name: 'patrol_update_screenshot_step',
+    description: 'Structurally update an existing browser_screenshot step in a DRAFT Runbook without taking a screenshot now. The step id and position are preserved.',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+      stepId: { type: 'string', required: true },
+      format: { type: 'string', enum: ['png', 'jpeg'] },
+      clearFormat: { type: 'boolean' },
+      tabId: { type: 'integer' },
+      clearTabId: { type: 'boolean' },
+      stepName: { type: 'string' },
+      notes: { type: 'string' },
+      clearNotes: { type: 'boolean' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args) {
+      if (args.format !== undefined && args.clearFormat === true) throw new Error('format and clearFormat cannot both be supplied')
+      if (args.tabId !== undefined && args.clearTabId === true) throw new Error('tabId and clearTabId cannot both be supplied')
+      if (args.notes !== undefined && args.clearNotes === true) throw new Error('notes and clearNotes cannot both be supplied')
+      if (args.format === undefined && args.clearFormat !== true
+        && args.tabId === undefined && args.clearTabId !== true
+        && args.stepName === undefined && args.notes === undefined && args.clearNotes !== true) {
+        throw new Error('at least one screenshot-step field must be changed')
+      }
+      const argumentPatch: JsonObject = {}
+      if (args.format !== undefined) argumentPatch.format = args.format
+      if (args.tabId !== undefined) argumentPatch.tabId = args.tabId
+      const clearArgumentKeys: string[] = []
+      if (args.clearFormat === true) clearArgumentKeys.push('format')
+      if (args.clearTabId === true) clearArgumentKeys.push('tabId')
+      return await updateStructuralToolStep(store, {
+        inspectionId: args.inspectionId,
+        stepId: args.stepId,
+        expectedTool: 'browser_screenshot',
+        argumentPatch,
+        clearArgumentKeys,
+        artifact: 'screenshot',
+        ...(args.stepName === undefined ? {} : { stepName: args.stepName }),
+        ...(args.notes === undefined ? {} : { notes: args.notes }),
+        ...(args.clearNotes === true ? { clearNotes: true } : {}),
+      })
+    },
+  })
+
+  const updateReadPageStep = defineTool({
+    name: 'patrol_update_read_page_step',
+    description: 'Structurally update an existing browser_read_page step in a DRAFT Runbook without reading the CURRENT page. Unspecified browser arguments are preserved.',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+      stepId: { type: 'string', required: true },
+      selector: { type: 'string' },
+      clearSelector: { type: 'boolean' },
+      maxChars: { type: 'integer' },
+      clearMaxChars: { type: 'boolean' },
+      tabId: { type: 'integer' },
+      clearTabId: { type: 'boolean' },
+      capturePageText: { type: 'boolean' },
+      stepName: { type: 'string' },
+      notes: { type: 'string' },
+      clearNotes: { type: 'boolean' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args) {
+      if (args.maxChars !== undefined && (!Number.isInteger(args.maxChars) || args.maxChars <= 0)) throw new Error('maxChars must be a positive integer')
+      if (args.selector !== undefined && args.clearSelector === true) throw new Error('selector and clearSelector cannot both be supplied')
+      if (args.maxChars !== undefined && args.clearMaxChars === true) throw new Error('maxChars and clearMaxChars cannot both be supplied')
+      if (args.tabId !== undefined && args.clearTabId === true) throw new Error('tabId and clearTabId cannot both be supplied')
+      if (args.notes !== undefined && args.clearNotes === true) throw new Error('notes and clearNotes cannot both be supplied')
+      if (args.selector === undefined && args.clearSelector !== true
+        && args.maxChars === undefined && args.clearMaxChars !== true
+        && args.tabId === undefined && args.clearTabId !== true
+        && args.capturePageText === undefined
+        && args.stepName === undefined && args.notes === undefined && args.clearNotes !== true) {
+        throw new Error('at least one read-page field must be changed')
+      }
+      const argumentPatch: JsonObject = {}
+      if (args.selector !== undefined) argumentPatch.selector = args.selector
+      if (args.maxChars !== undefined) argumentPatch.maxChars = args.maxChars
+      if (args.tabId !== undefined) argumentPatch.tabId = args.tabId
+      const clearArgumentKeys: string[] = []
+      if (args.clearSelector === true) clearArgumentKeys.push('selector')
+      if (args.clearMaxChars === true) clearArgumentKeys.push('maxChars')
+      if (args.clearTabId === true) clearArgumentKeys.push('tabId')
+      return await updateStructuralToolStep(store, {
+        inspectionId: args.inspectionId,
+        stepId: args.stepId,
+        expectedTool: 'browser_read_page',
+        argumentPatch,
+        clearArgumentKeys,
+        ...(args.capturePageText === undefined ? {} : { artifact: args.capturePageText ? 'page-text' : null }),
+        ...(args.stepName === undefined ? {} : { stepName: args.stepName }),
+        ...(args.notes === undefined ? {} : { notes: args.notes }),
+        ...(args.clearNotes === true ? { clearNotes: true } : {}),
+      })
+    },
+  })
+
+  const updateNavigateStep = defineTool({
+    name: 'patrol_update_navigate_step',
+    description: 'Structurally update an existing browser_navigate step in a DRAFT Runbook without navigating the CURRENT browser. Use this for known URL/tab/new-tab parameter changes; re-teach only when live navigation semantics must be rediscovered.',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+      stepId: { type: 'string', required: true },
+      url: { type: 'string' },
+      tabId: { type: 'integer' },
+      clearTabId: { type: 'boolean' },
+      newTab: { type: 'boolean' },
+      clearNewTab: { type: 'boolean' },
+      stepName: { type: 'string' },
+      notes: { type: 'string' },
+      clearNotes: { type: 'boolean' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args) {
+      if (args.url !== undefined) assertHttpUrl(args.url)
+      if (args.newTab === true) throw new Error('stored browser_navigate steps must reuse the active tab; newTab=true is not replay-stable')
+      if (args.tabId !== undefined && args.clearTabId === true) throw new Error('tabId and clearTabId cannot both be supplied')
+      if (args.newTab !== undefined && args.clearNewTab === true) throw new Error('newTab and clearNewTab cannot both be supplied')
+      if (args.notes !== undefined && args.clearNotes === true) throw new Error('notes and clearNotes cannot both be supplied')
+      if (args.url === undefined
+        && args.tabId === undefined && args.clearTabId !== true
+        && args.newTab === undefined && args.clearNewTab !== true
+        && args.stepName === undefined && args.notes === undefined && args.clearNotes !== true) {
+        throw new Error('at least one navigate-step field must be changed')
+      }
+      const argumentPatch: JsonObject = {}
+      if (args.url !== undefined) argumentPatch.url = args.url
+      if (args.tabId !== undefined) argumentPatch.tabId = args.tabId
+      if (args.newTab !== undefined) argumentPatch.newTab = args.newTab
+      const clearArgumentKeys: string[] = []
+      if (args.clearTabId === true) clearArgumentKeys.push('tabId')
+      if (args.clearNewTab === true) clearArgumentKeys.push('newTab')
+      return await updateStructuralToolStep(store, {
+        inspectionId: args.inspectionId,
+        stepId: args.stepId,
+        expectedTool: 'browser_navigate',
+        argumentPatch,
+        clearArgumentKeys,
+        ...(args.stepName === undefined ? {} : { stepName: args.stepName }),
+        ...(args.notes === undefined ? {} : { notes: args.notes }),
+        ...(args.clearNotes === true ? { clearNotes: true } : {}),
       })
     },
   })
@@ -697,6 +896,10 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
     insertNavigateStep,
     insertClickStep,
     insertBrowserStep,
+    updateWaitStep,
+    updateScreenshotStep,
+    updateReadPageStep,
+    updateNavigateStep,
     reteachBrowserStep,
     reteachText,
     reteachCredential,
@@ -860,6 +1063,76 @@ function structuralStepLabel(step: InspectionDefinition['steps'][number] | undef
     ? ` ${step.arguments.timeoutMs}ms`
     : ''
   return `${step.id}:${step.name}[${step.tool}${waitMs}]`
+}
+
+interface StructuralToolUpdateInput {
+  inspectionId: string
+  stepId: string
+  expectedTool: string
+  argumentPatch?: JsonObject | undefined
+  clearArgumentKeys?: string[] | undefined
+  stepName?: string | undefined
+  artifact?: ToolStep['artifact'] | null | undefined
+  notes?: string | undefined
+  clearNotes?: boolean | undefined
+}
+
+async function updateStructuralToolStep(store: PatrolStore, input: StructuralToolUpdateInput): Promise<string> {
+  await assertNoPendingRun(store, input.inspectionId)
+  const definition = await loadDraft(store, input.inspectionId)
+  const current = requireToolStep(definition, input.stepId)
+  if (current.tool !== input.expectedTool) {
+    throw new Error(`${input.stepId} is ${current.tool}; ${input.expectedTool} is required for this structural update`)
+  }
+  const originalIndex = definition.steps.findIndex(step => step.id === current.id)
+  if (originalIndex < 0) throw new Error(`step ${current.id} not found`)
+
+  const name = input.stepName ?? current.name
+  assertSafePersistentText(name, 'stepName')
+  if (input.notes !== undefined) assertSafePersistentText(input.notes, 'step notes')
+  const arguments_1: JsonObject = { ...current.arguments, ...(input.argumentPatch ?? {}) }
+  for (const key of input.clearArgumentKeys ?? []) delete arguments_1[key]
+  assertSafeForStorage(arguments_1)
+
+  const replacement: ToolStep = {
+    ...current,
+    name,
+    arguments: arguments_1,
+    ...updatedNotes(current.notes, input.notes, input.clearNotes),
+    recordedAt: new Date().toISOString(),
+  }
+  if (input.artifact === null) delete replacement.artifact
+  else if (input.artifact !== undefined) replacement.artifact = input.artifact
+
+  replaceStep(definition, current.id, replacement)
+  assertConditionOrder(definition)
+  markEdited(definition)
+  await store.save(definition)
+
+  const persisted = await store.load(definition.id)
+  const persistedIndex = persisted.steps.findIndex(step => step.id === replacement.id)
+  if (persistedIndex !== originalIndex) {
+    throw new Error(`structural update persistence check failed: ${replacement.id} moved from index ${originalIndex} to ${persistedIndex}`)
+  }
+  const persistedStep = persisted.steps[persistedIndex]
+  if (persistedStep?.kind !== 'tool'
+    || persistedStep.tool !== replacement.tool
+    || persistedStep.name !== replacement.name
+    || persistedStep.artifact !== replacement.artifact
+    || JSON.stringify(persistedStep.arguments) !== JSON.stringify(replacement.arguments)) {
+    throw new Error(`structural update persistence check failed: ${replacement.id} did not reload with the requested saved payload`)
+  }
+
+  const previous = structuralStepLabel(persisted.steps[persistedIndex - 1])
+  const currentLabel = structuralStepLabel(persistedStep)
+  const next = structuralStepLabel(persisted.steps[persistedIndex + 1])
+  return [
+    `Structural step update persisted: ${replacement.id} (${replacement.tool}); stable id and position preserved.`,
+    `Saved order: ${previous} -> ${currentLabel} -> ${next}`,
+    `Saved arguments: ${JSON.stringify(replacement.arguments)}`,
+    'Persistence check: PASSED (Runbook reloaded from storage).',
+    'Make all requested structural edits first; then call patrol_show once to verify the complete saved graph before patrol_validate.',
+  ].join('\n')
 }
 
 function updatedExpectation(current: TextExpectation | undefined, args: {

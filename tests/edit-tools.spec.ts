@@ -237,6 +237,113 @@ describe('editable Patrol runbooks', () => {
     expect(dispatchCalls()).toBe(0)
   })
 
+  it('updates structural wait, screenshot, read-page, and navigate parameters without executing the current page', async () => {
+    const { store, tool, exec, dispatchCalls } = await setup()
+    const definition = readyDefinition()
+    definition.status = 'draft'
+    await store.create(definition)
+
+    await tool('patrol_insert_wait_step').execute({
+      inspectionId: 'editable-login',
+      stepName: '等待 5 秒',
+      timeoutMs: 5000,
+      afterStepId: 'step-003',
+    }, exec)
+    await tool('patrol_insert_screenshot_step').execute({
+      inspectionId: 'editable-login',
+      stepName: '截图',
+      afterStepId: 'step-004',
+    }, exec)
+    await tool('patrol_insert_read_page_step').execute({
+      inspectionId: 'editable-login',
+      stepName: '读取页面',
+      maxChars: 6000,
+      afterStepId: 'step-005',
+    }, exec)
+    await tool('patrol_insert_navigate_step').execute({
+      inspectionId: 'editable-login',
+      stepName: '打开目标页',
+      url: 'https://example.com/old',
+      afterStepId: 'step-006',
+    }, exec)
+
+    const waitResult = await tool('patrol_update_wait_step').execute({
+      inspectionId: 'editable-login',
+      stepId: 'step-004',
+      timeoutMs: 10000,
+      selector: '#ready',
+      condition: 'visible',
+      stepName: '等待页面稳定',
+    }, exec)
+    expect(waitResult).toContain('stable id and position preserved')
+    expect(waitResult).toContain('Persistence check: PASSED')
+
+    await tool('patrol_update_screenshot_step').execute({
+      inspectionId: 'editable-login',
+      stepId: 'step-005',
+      format: 'jpeg',
+      stepName: '稳定后截图',
+    }, exec)
+    await tool('patrol_update_read_page_step').execute({
+      inspectionId: 'editable-login',
+      stepId: 'step-006',
+      maxChars: 12000,
+      capturePageText: false,
+    }, exec)
+    await tool('patrol_update_navigate_step').execute({
+      inspectionId: 'editable-login',
+      stepId: 'step-007',
+      url: 'https://example.com/new',
+      newTab: false,
+    }, exec)
+    await expect(tool('patrol_update_navigate_step').execute({
+      inspectionId: 'editable-login',
+      stepId: 'step-007',
+      newTab: true,
+    }, exec)).rejects.toThrow(/active tab.*not replay-stable/i)
+
+    const updated = await store.load('editable-login')
+    expect(updated.steps.map(step => step.id)).toEqual(['step-001', 'step-002', 'step-003', 'step-004', 'step-005', 'step-006', 'step-007'])
+    expect(updated.steps[3]).toMatchObject({
+      id: 'step-004',
+      name: '等待页面稳定',
+      tool: 'browser_wait',
+      arguments: { timeoutMs: 10000, selector: '#ready', condition: 'visible' },
+    })
+    expect(updated.steps[4]).toMatchObject({
+      id: 'step-005',
+      name: '稳定后截图',
+      tool: 'browser_screenshot',
+      arguments: { format: 'jpeg' },
+      artifact: 'screenshot',
+    })
+    expect(updated.steps[5]).toMatchObject({
+      id: 'step-006',
+      tool: 'browser_read_page',
+      arguments: { maxChars: 12000 },
+    })
+    expect(updated.steps[5]?.kind === 'tool' ? updated.steps[5].artifact : undefined).toBeUndefined()
+    expect(updated.steps[6]).toMatchObject({
+      id: 'step-007',
+      tool: 'browser_navigate',
+      arguments: { url: 'https://example.com/new', action: 'navigate', newTab: false },
+    })
+    expect(dispatchCalls()).toBe(0)
+  })
+
+  it('refuses a structural updater when the saved step tool does not match', async () => {
+    const { store, tool, exec } = await setup()
+    const definition = readyDefinition()
+    definition.status = 'draft'
+    await store.create(definition)
+
+    await expect(tool('patrol_update_wait_step').execute({
+      inspectionId: 'editable-login',
+      stepId: 'step-002',
+      timeoutMs: 5000,
+    }, exec)).rejects.toThrow(/browser_wait is required/i)
+  })
+
   it('refuses to confirm an edited runbook before full validation', async () => {
     const { store, tool, exec } = await setup()
     await store.create(readyDefinition())
