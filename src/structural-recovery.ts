@@ -55,6 +55,26 @@ export function findAdaptiveClickPathPlan(
 }
 
 /**
+ * Resolve the checklist task represented by an existing recorded click.
+ *
+ * A taskHint created by action-order binding is useful but not infallible when
+ * an intermediate click was absent from the Runbook. A strong semantic match
+ * from the recorded locator/name may therefore move the step forward to the
+ * later checklist task it actually represents. This keeps ordinary stale-click
+ * fallback from accidentally treating the missing task as the current step.
+ */
+export function resolveRecordedClickTask(
+  definition: InspectionDefinition,
+  step: ToolStep,
+): string | undefined {
+  if (step.tool !== 'browser_click') return undefined
+  const checklist = definition.metadata.taskChecklist ?? []
+  const clickTasks = checklist.filter(item => CLICK_TASK_HINT.test(item))
+  const index = resolveClickTaskIndex(definition, step, clickTasks)
+  return index < 0 ? undefined : clickTasks[index]
+}
+
+/**
  * Reuse the existing fail-closed click-target matcher for one checklist task.
  * The synthetic taskHint changes only the business instruction supplied to the
  * matcher; it does not mutate the stored Runbook step.
