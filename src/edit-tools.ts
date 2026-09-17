@@ -57,10 +57,13 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       await assertNoPendingRun(store, args.inspectionId)
       const definition = await store.load(args.inspectionId)
       if (definition.status === 'draft') {
-        return `Inspection ${definition.id} is already DRAFT. For additive Runbook-only changes, use the dedicated patrol_insert_* structural tools; for parameter-only changes to existing wait/screenshot/read/navigate steps, use patrol_update_* structural tools. Neither path should touch the CURRENT browser. Use patrol_reteach_* only when a live selector/action must actually be relearned. Verify the saved graph with patrol_show, then run patrol_validate before patrol_confirm_edit.`
+        // Enter explicit edit persistence even when the flow is already DRAFT.
+        // This clears any stale interactive-teaching lifecycle in production.
+        await persistRunbookEdit(store, definition)
+        return `Inspection ${definition.id} is already DRAFT and is now isolated for explicit Runbook editing. For additive Runbook-only changes, use the dedicated patrol_insert_* structural tools; for parameter-only changes to existing wait/screenshot/read/navigate steps, use patrol_update_* structural tools. Neither path should touch the CURRENT browser. Use patrol_reteach_* only when a live selector/action must actually be relearned. Verify the saved graph with patrol_show, then run patrol_validate before patrol_confirm_edit.`
       }
       markEdited(definition)
-      await store.save(definition)
+      await persistRunbookEdit(store, definition)
       return `Inspection ${definition.id} is now DRAFT for editing. Stored schedule: ${scheduleText(definition)}. Scheduled execution is paused until the runbook is validated and confirmed again.`
     },
   })
@@ -111,7 +114,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
         definition.auth.notes = args.authNotes
       }
       markEdited(definition)
-      await store.save(definition)
+      await persistRunbookEdit(store, definition)
       return `Updated inspection ${definition.id}. It is DRAFT and must be end-to-end validated before confirmation.${args.targetUrl === undefined ? '' : ' If a stored browser_navigate step should use the same new URL, update that step structurally with patrol_update_navigate_step; only re-teach when live navigation semantics actually changed.'}`
     },
   })
@@ -620,7 +623,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       }
       replaceStep(definition, current.id, replacement)
       markEdited(definition)
-      await store.save(definition)
+      await persistRunbookEdit(store, definition)
       const output = tool === 'browser_read_page' || tool === 'browser_snapshot'
         ? untrustedPageData(dispatched.text)
         : dispatched.text
@@ -668,7 +671,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       }
       replaceStep(definition, current.id, replacement)
       markEdited(definition)
-      await store.save(definition)
+      await persistRunbookEdit(store, definition)
       return `Re-taught ${current.id} public text input. The runbook remains DRAFT until patrol_validate passes and the user confirms it.`
     },
   })
@@ -717,7 +720,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       }
       replaceStep(definition, current.id, replacement)
       markEdited(definition)
-      await store.save(definition)
+      await persistRunbookEdit(store, definition)
       return `Re-taught ${current.id} with credential reference ${args.credentialRef}. No credential value was stored in the runbook. Full validation is required.`
     },
   })
@@ -759,7 +762,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       }
       replaceStep(definition, current.id, replacement)
       markEdited(definition)
-      await store.save(definition)
+      await persistRunbookEdit(store, definition)
       return `Updated checkpoint ${current.id}. Full DRAFT validation is required before the runbook can return to READY.`
     },
   })
@@ -797,7 +800,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       definition.steps = definition.steps.filter(step => !removing.has(step.id))
       assertConditionOrder(definition)
       markEdited(definition)
-      await store.save(definition)
+      await persistRunbookEdit(store, definition)
       return `Removed obsolete step(s) ${stepIds.join(', ')} in place. Surviving step ids were preserved; ${definition.steps.length} step(s) remain. Full patrol_validate is required.`
     },
   })
@@ -835,7 +838,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       definition.steps.splice(insertIndex, 0, moving)
       assertConditionOrder(definition)
       markEdited(definition)
-      await store.save(definition)
+      await persistRunbookEdit(store, definition)
       return `Moved ${stepId} ${before !== undefined ? `before ${before}` : `after ${after}`}. The correction is now located inside the intended flow instead of being left at the tail. Full patrol_validate is required.`
     },
   })
@@ -882,7 +885,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       assertValidatedAfterEdit(definition)
       assertRequiredArtifactsRepresented(definition)
       definition.status = 'ready'
-      await store.save(definition)
+      await persistRunbookEdit(store, definition)
       return `Edited runbook ${definition.id} is READY again with ${definition.steps.length} steps. Stored schedule resumes automatically if it is enabled: ${scheduleText(definition)}.`
     },
   })
@@ -980,7 +983,7 @@ async function markValidated(store: PatrolStore, definition: InspectionDefinitio
     throw new Error('runbook changed while validation was running; validation result cannot be attached to the edited definition')
   }
   latest.metadata.validatedAt = new Date().toISOString()
-  await store.save(latest)
+  await persistRunbookEdit(store, latest)
 }
 
 function assertValidatedAfterEdit(definition: InspectionDefinition): void {
@@ -1025,7 +1028,7 @@ async function insertStructuralToolStep(store: PatrolStore, input: StructuralToo
   definition.steps.splice(insertIndex, 0, inserted)
   assertConditionOrder(definition)
   markEdited(definition)
-  await store.save(definition)
+  await persistRunbookEdit(store, definition)
 
   // Never trust an in-memory mutation as proof that the Runbook changed. Reload
   // from storage and verify both the step payload and its requested adjacency.
@@ -1107,7 +1110,7 @@ async function updateStructuralToolStep(store: PatrolStore, input: StructuralToo
   replaceStep(definition, current.id, replacement)
   assertConditionOrder(definition)
   markEdited(definition)
-  await store.save(definition)
+  await persistRunbookEdit(store, definition)
 
   const persisted = await store.load(definition.id)
   const persistedIndex = persisted.steps.findIndex(step => step.id === replacement.id)
@@ -1257,4 +1260,15 @@ function assertHttpUrl(value: string): void {
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('inspection target URL must use http or https')
   if (parsed.username !== '' || parsed.password !== '') throw new Error('inspection target URL must not embed credentials')
+}
+
+async function persistRunbookEdit(store: PatrolStore, definition: InspectionDefinition): Promise<void> {
+  const candidate = store as PatrolStore & {
+    saveRunbookEdit?: (definition: InspectionDefinition) => Promise<void>
+  }
+  if (typeof candidate.saveRunbookEdit === 'function') {
+    await candidate.saveRunbookEdit(definition)
+    return
+  }
+  await store.save(definition)
 }

@@ -490,7 +490,7 @@ function createDefinitions(ctx: Context, store: PatrolStore, runner: PatrolRunne
       if (references.length > 0) throw new Error(`cannot delete ${args.stepId}; referenced by ${references.map(step => step.id).join(', ')}`)
       definition.steps.splice(index, 1)
       markEdited(definition)
-      await store.save(definition)
+      await persistRunbookEdit(store, definition)
       return `Deleted ${args.stepId}. Runbook is now DRAFT and must be re-taught/confirmed.`
     },
   })
@@ -518,7 +518,7 @@ function createDefinitions(ctx: Context, store: PatrolStore, runner: PatrolRunne
       }
       step.arguments = { ...step.arguments, selector: args.selector }
       markEdited(definition)
-      await store.save(definition)
+      await persistRunbookEdit(store, definition)
       return `Updated selector for ${args.stepId}. Runbook is DRAFT until validated and confirmed again.`
     },
   })
@@ -734,4 +734,15 @@ function runResultText(definition: InspectionDefinition, report: Awaited<ReturnT
   if (waiting !== undefined) lines.push(`Checkpoint waiting: ${waiting.output ?? waiting.name}\nAfter completing it, call patrol_resume with inspectionId=${definition.id}.`)
   if (report.summary !== undefined) lines.push(`Page summary:\n${report.summary}`)
   return lines.join('\n')
+}
+
+async function persistRunbookEdit(store: PatrolStore, definition: InspectionDefinition): Promise<void> {
+  const candidate = store as PatrolStore & {
+    saveRunbookEdit?: (definition: InspectionDefinition) => Promise<void>
+  }
+  if (typeof candidate.saveRunbookEdit === 'function') {
+    await candidate.saveRunbookEdit(definition)
+    return
+  }
+  await store.save(definition)
 }

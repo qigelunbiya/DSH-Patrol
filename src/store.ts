@@ -103,6 +103,15 @@ export class PatrolStore {
     }
   }
 
+  /**
+   * Persist an explicit Runbook edit. Plain PatrolStore has no teaching
+   * lifecycle, so this is equivalent to save(). PatrolLifecycleStore overrides
+   * it to bypass teaching-run bookkeeping and final compaction.
+   */
+  async saveRunbookEdit(definition: InspectionDefinition): Promise<void> {
+    await this.save(definition)
+  }
+
   private async assertChecklistBeforeStepAppend(definition: InspectionDefinition): Promise<void> {
     if ((definition.metadata.taskChecklist?.length ?? 0) > 0) return
     let previousStepCount: number | undefined

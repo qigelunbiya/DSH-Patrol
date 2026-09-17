@@ -49,6 +49,10 @@ describe('current Patrol behavior prompt', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/browser_wait\.timeoutMs=5000/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/绝不能用“可能是缓存”解释/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/保存图已核对.*patrol_validate 通过/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/正式巡检完成后.*持久化 Runbook 做结构编辑/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_insert_.*持久化失败.*禁止退化/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/禁止用 patrol_rewrite_flow_path 代替纯新增\/参数修改/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/保存图尚未匹配用户要求时调用 patrol_validate/s)
   })
 
   it('uses structural update tools for parameter-only edits without live browser teaching', () => {

@@ -2,7 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { selectSuccessfulTeachingPath } from './flow-optimizer.js'
 import { PatrolStore } from './store.js'
-import type { RunReport } from './types.js'
+import type { InspectionDefinition, RunReport } from './types.js'
 import { assertInspectionId } from './validation.js'
 
 const TEXT_OUTPUT = {
@@ -118,7 +118,7 @@ export function registerPatrolFlowTools(ctx: Context, store: PatrolStore): () =>
       }
       const result = selectSuccessfulTeachingPath(definition, args.keptStepIds)
       definition.metadata.updatedAt = new Date().toISOString()
-      await store.save(definition)
+      await persistRunbookEdit(store, definition)
       return [
         `Rewrote corrected path for ${definition.id}: ${result.originalSteps} steps -> ${result.finalSteps} reusable steps.`,
         `Removed ${result.removedSteps} appended retry/probe step(s); restored ${result.autoKeptDependencies} required dependency/artifact step(s).`,
@@ -130,4 +130,15 @@ export function registerPatrolFlowTools(ctx: Context, store: PatrolStore): () =>
 
   const disposers = [selectFlow, finalizeFlow, rewriteFlowPath].map(tool => ctx.tools.register(tool))
   return () => { for (const dispose of disposers) dispose() }
+}
+
+async function persistRunbookEdit(store: PatrolStore, definition: InspectionDefinition): Promise<void> {
+  const candidate = store as PatrolStore & {
+    saveRunbookEdit?: (definition: InspectionDefinition) => Promise<void>
+  }
+  if (typeof candidate.saveRunbookEdit === 'function') {
+    await candidate.saveRunbookEdit(definition)
+    return
+  }
+  await store.save(definition)
 }

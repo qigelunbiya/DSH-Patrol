@@ -5,6 +5,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { afterEach, describe, expect, it } from 'vitest'
 import { registerPatrolEditTools } from '../src/edit-tools.ts'
+import { PatrolLifecycleStore } from '../src/lifecycle-store.ts'
 import { PatrolRunner } from '../src/runner.ts'
 import { PatrolStore } from '../src/store.ts'
 import type { InspectionDefinition } from '../src/types.ts'
@@ -14,10 +15,10 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
-async function setup() {
+async function setup(options: { lifecycle?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-edit-'))
   roots.push(root)
-  const store = new PatrolStore(root)
+  const store = options.lifecycle === true ? new PatrolLifecycleStore(root) : new PatrolStore(root)
   await store.init()
   const definitions: any[] = []
   const ctx = {
@@ -328,6 +329,53 @@ describe('editable Patrol runbooks', () => {
       tool: 'browser_navigate',
       arguments: { url: 'https://example.com/new', action: 'navigate', newTab: false },
     })
+    expect(dispatchCalls()).toBe(0)
+  })
+
+  it('isolates explicit edits from the production teaching lifecycle and preserves the saved graph through confirmation', async () => {
+    const { store, tool, exec, dispatchCalls } = await setup({ lifecycle: true })
+    const definition = readyDefinition()
+    definition.status = 'draft'
+    definition.artifacts = ['screenshot']
+    definition.metadata.workspaceRoot = roots[roots.length - 1]
+    await store.create(definition)
+    if (!(store instanceof PatrolLifecycleStore)) throw new Error('expected lifecycle store')
+
+    // Reproduce production state: an older DRAFT may already have an active
+    // interactive-teaching lifecycle when the user asks to optimize it.
+    await store.beginTeachingRun('editable-login', definition.metadata.workspaceRoot)
+    await tool('patrol_begin_edit').execute({ inspectionId: 'editable-login' }, exec)
+
+    const waitResult = await tool('patrol_insert_wait_step').execute({
+      inspectionId: 'editable-login',
+      stepName: '等待列表加载',
+      timeoutMs: 3000,
+      afterStepId: 'step-001',
+    }, exec)
+    expect(waitResult).toContain('Persistence check: PASSED')
+
+    const screenshotResult = await tool('patrol_insert_screenshot_step').execute({
+      inspectionId: 'editable-login',
+      stepName: '加载后截图',
+      format: 'png',
+      afterStepId: 'step-004',
+    }, exec)
+    expect(screenshotResult).toContain('Persistence check: PASSED')
+
+    let updated = await store.load('editable-login')
+    const expectedIds = ['step-001', 'step-004', 'step-005', 'step-002', 'step-003']
+    expect(updated.steps.map(step => step.id)).toEqual(expectedIds)
+    expect(updated.steps[1]).toMatchObject({ id: 'step-004', tool: 'browser_wait', arguments: { timeoutMs: 3000 } })
+    expect(updated.steps[2]).toMatchObject({ id: 'step-005', tool: 'browser_screenshot', artifact: 'screenshot' })
+
+    await tool('patrol_validate').execute({ inspectionId: 'editable-login' }, exec)
+    await tool('patrol_confirm_edit').execute({ inspectionId: 'editable-login', confirmed: true }, exec)
+
+    updated = await store.load('editable-login')
+    expect(updated.status).toBe('ready')
+    expect(updated.steps.map(step => step.id)).toEqual(expectedIds)
+    expect(updated.steps[1]).toMatchObject({ id: 'step-004', tool: 'browser_wait', arguments: { timeoutMs: 3000 } })
+    expect(updated.steps[2]).toMatchObject({ id: 'step-005', tool: 'browser_screenshot', artifact: 'screenshot' })
     expect(dispatchCalls()).toBe(0)
   })
 

@@ -112,6 +112,16 @@ export class PatrolLifecycleStore extends PatrolStore {
     }
   }
 
+  override async saveRunbookEdit(definition: InspectionDefinition): Promise<void> {
+    // Explicit edit-tools operations are not a teaching session. Drop any stale
+    // in-memory teaching lifecycle for this flow and persist the exact graph via
+    // PatrolStore so DRAFT edits and DRAFT -> READY confirmation cannot trigger
+    // teaching compaction/renumbering. Validation still runs separately with
+    // purpose=validation.
+    this.activeTeachingRuns.delete(definition.id)
+    await super.save(definition)
+  }
+
   async recordTeachingStepResult(
     inspectionId: string,
     stepId: string,
