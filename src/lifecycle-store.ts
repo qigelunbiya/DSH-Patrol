@@ -179,10 +179,12 @@ export class PatrolLifecycleStore extends PatrolStore {
       // reasonably interpreted that combination as a failed completed run.
       finishedAt: '',
       status: 'waiting',
+      purpose: 'teaching',
       expectedResult: definition.expectedResult,
       results,
       summary,
       ...(active.workspaceRoot === undefined ? {} : { outputWorkspace: active.workspaceRoot }),
+      ...((definition.metadata.taskChecklist?.length ?? 0) === 0 ? {} : { taskChecklist: [...definition.metadata.taskChecklist!] }),
     }
 
     // Pending teaching runs are written only to the internal Patrol history on
@@ -223,12 +225,14 @@ function createTeachingReport(
     startedAt,
     finishedAt,
     status: 'passed',
+    purpose: 'teaching',
     expectedResult: definition.expectedResult,
     results,
     summary: pageSummary ?? (compaction.removedSteps > 0
       ? `交互教学巡检已完成；从 ${compaction.originalSteps} 个教学步骤中移除 ${compaction.removedSteps} 个试探/诊断步骤，固化为 ${compaction.finalSteps} 个可复用步骤。`
       : `交互教学巡检已完成并固化为 ${compaction.finalSteps} 个可复用步骤。`),
     ...(outputWorkspace === undefined ? {} : { outputWorkspace }),
+    ...((definition.metadata.taskChecklist?.length ?? 0) === 0 ? {} : { taskChecklist: [...definition.metadata.taskChecklist!] }),
   }
 }
 

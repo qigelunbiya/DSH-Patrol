@@ -16,6 +16,7 @@ import type {
   ResumeState,
   RunArtifact,
   RunReport,
+  RunPurpose,
   SavedRunPaths,
   StepRunResult,
   TextExpectation,
@@ -32,6 +33,10 @@ export interface DispatchResult {
 
 export interface PatrolRunnerOptions {
   reportMaxChars: number
+}
+
+export interface PatrolRunOptions {
+  purpose?: RunPurpose
 }
 
 const STRUCTURAL_RECOVERY_SETTLE_DELAYS_MS = [0, 150, 350, 700] as const
@@ -101,7 +106,7 @@ export class PatrolRunner {
     else this.authorizedParents.set(token, count - 1)
   }
 
-  async run(definition: InspectionDefinition, exec: ToolRunContext): Promise<{ report: RunReport; paths: SavedRunPaths }> {
+  async run(definition: InspectionDefinition, exec: ToolRunContext, runOptions: PatrolRunOptions = {}): Promise<{ report: RunReport; paths: SavedRunPaths }> {
     const pending = await this.store.loadResume(definition.id)
     if (pending !== undefined) {
       throw new Error(`inspection ${definition.id} has a pending checkpoint in run ${pending.runId}; use patrol_resume instead of starting a second run`)
@@ -115,12 +120,13 @@ export class PatrolRunner {
       runId,
       startedAt,
       definitionUpdatedAt: definition.metadata.updatedAt,
+      purpose: runOptions.purpose ?? 'patrol',
       nextStepIndex: 0,
       results: [],
     })
   }
 
-  async resume(definition: InspectionDefinition, exec: ToolRunContext): Promise<{ report: RunReport; paths: SavedRunPaths }> {
+  async resume(definition: InspectionDefinition, exec: ToolRunContext, runOptions: PatrolRunOptions = {}): Promise<{ report: RunReport; paths: SavedRunPaths }> {
     const state = await this.store.loadResume(definition.id)
     if (state === undefined) throw new Error(`inspection ${definition.id} has no pending checkpoint`)
     if (state.definitionUpdatedAt !== definition.metadata.updatedAt) {
@@ -130,7 +136,7 @@ export class PatrolRunner {
     const results = state.results.map(result => result.status === 'waiting'
       ? { ...result, status: 'passed' as const, finishedAt: new Date().toISOString(), output: 'Checkpoint completed by the user before resume.' }
       : result)
-    return await this.executeFrom(definition, exec, { ...state, results })
+    return await this.executeFrom(definition, exec, { ...state, purpose: runOptions.purpose ?? state.purpose ?? 'patrol', results })
   }
 
   private async rememberInteractiveWorkspace(definition: InspectionDefinition, exec: ToolRunContext): Promise<void> {
@@ -198,6 +204,7 @@ export class PatrolRunner {
           runId: state.runId,
           startedAt: state.startedAt,
           definitionUpdatedAt: state.definitionUpdatedAt,
+          purpose: state.purpose ?? 'patrol',
           nextStepIndex: index + 1,
           results,
         })
@@ -293,11 +300,13 @@ export class PatrolRunner {
       startedAt: state.startedAt,
       finishedAt: new Date().toISOString(),
       status,
+      purpose: state.purpose ?? 'patrol',
       expectedResult: definition.expectedResult,
       results,
       ...(summary === undefined ? {} : { summary }),
       ...(warnings.length === 0 ? {} : { warnings }),
       ...(outputWorkspace === undefined ? {} : { outputWorkspace }),
+      ...((definition.metadata.taskChecklist?.length ?? 0) === 0 ? {} : { taskChecklist: [...definition.metadata.taskChecklist!] }),
     }
     const markdown = renderRunReport(report, this.options.reportMaxChars)
     const paths = await this.store.saveRun(report, markdown, outputWorkspace)
@@ -608,7 +617,7 @@ export class PatrolRunner {
     step: ToolStep,
     exec: ToolRunContext,
   ): Promise<string | undefined> {
-    if (!looksLikeLoginStep(step)) return undefined
+    if (!looksLikeLoginStep(definition, step)) return undefined
     const tabId = typeof step.arguments.tabId === 'number' ? step.arguments.tabId : undefined
     const state = await this.dispatch('browser_login_state', tabId === undefined ? {} : { tabId }, exec)
     if (!state.ok || objectString(state.value, 'state') !== 'authenticated') return undefined
@@ -702,16 +711,35 @@ function selectorEquivalentForSnapshot(observed: string, requested: string): boo
   return false
 }
 
-function looksLikeLoginStep(step: ToolStep): boolean {
-  if (!['browser_type', 'browser_type_credential', 'browser_click'].includes(step.tool)) return false
-  const hint = [
+export function looksLikeLoginStep(definition: InspectionDefinition, step: ToolStep): boolean {
+  if (!['browser_type', 'browser_type_credential', 'browser_type_transient_ref', 'browser_type_totp_profile', 'browser_click'].includes(step.tool)) return false
+  const primaryLogin = /(login|log[-_ ]?in|sign[-_ ]?in|signin|password|passwd|pwd|username|user[-_ ]?name|登录|登陆|用户名|密码)/i
+  const hint = loginStepHint(step)
+  if (primaryLogin.test(hint)) return true
+
+  if (!['browser_type_transient_ref', 'browser_type_totp_profile'].includes(step.tool)
+    || !/(otp|one[-_ ]?time|verification|verify[-_ ]?code|register[-_ ]?code|sms|验证码|短信|动态(?:口令|码|验证码))/i.test(hint)) {
+    return false
+  }
+
+  const index = definition.steps.findIndex(item => item.id === step.id)
+  if (index < 0) return false
+  const nearby = definition.steps
+    .slice(Math.max(0, index - 4), Math.min(definition.steps.length, index + 4))
+    .filter((item): item is ToolStep => item.kind === 'tool')
+    .map(loginStepHint)
+    .join(' ')
+  return primaryLogin.test(nearby)
+}
+
+function loginStepHint(step: ToolStep): string {
+  return [
     step.name,
     typeof step.arguments.selector === 'string' ? step.arguments.selector : '',
     step.locator?.text ?? '',
     step.locator?.role ?? '',
     step.locator?.tag ?? '',
   ].join(' ')
-  return /(login|log[-_ ]?in|sign[-_ ]?in|signin|password|passwd|pwd|username|user[-_ ]?name|登录|登陆|用户名|密码)/i.test(hint)
 }
 
 export function canReuseAuthenticatedSession(definition: InspectionDefinition, currentUrl: string): boolean {

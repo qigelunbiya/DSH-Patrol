@@ -33,6 +33,9 @@ describe('Patrol records dashboard batch grouping', () => {
     expect(source).toContain('function detailContent(report, definition, artifacts)')
     expect(source).toContain('function artifactsView(artifacts)')
     expect(source).toContain('function logsView(report, definition)')
+    expect(source).toContain("['checklist', '任务清单']")
+    expect(source).toContain('function checklistView(report, definition)')
+    expect(source).toContain('report.taskChecklist')
   })
   it('closes an artifact preview from the document-level modal handler', () => {
     expect(source).toContain(`target?.closest('[data-action="close-modal"]')`)

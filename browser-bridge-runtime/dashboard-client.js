@@ -156,6 +156,7 @@
         ${meta('最近运行', latest ? fmt(latest.startedAt) : '尚未运行')}
       </div>
     </section>
+    <section class="card panel"><h3 class="section-title">任务清单</h3>${taskChecklistView(definition)}</section>
     <div class="detail-grid">
       <section class="card panel"><h3 class="section-title">流程图</h3><div class="steps">${diagram(definition.steps || [])}</div></section>
       <section class="card panel"><h3 class="section-title">流程信息</h3>
@@ -173,6 +174,12 @@
 
   function info(label, value) {
     return `<div class="info-row"><div class="tiny muted">${esc(label)}</div><div class="info-value">${esc(value)}</div></div>`
+  }
+
+  function taskChecklistView(definition) {
+    const items = Array.isArray(definition?.metadata?.taskChecklist) ? definition.metadata.taskChecklist : []
+    if (!items.length) return '<div class="muted empty-inline">这个流程还没有保存任务清单。</div>'
+    return `<ol style="margin:0;padding-left:24px;display:grid;gap:8px">${items.map(item => `<li>${esc(item)}</li>`).join('')}</ol>`
   }
 
   function diagram(steps) {

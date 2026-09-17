@@ -116,6 +116,77 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
     },
   })
 
+  const insertBrowserStep = defineTool({
+    name: 'patrol_insert_browser_step',
+    description: 'Structurally insert one new non-typing browser step into an existing DRAFT Runbook before/after a stable step id WITHOUT executing the current browser page. Use this when the user explicitly asks to add a wait, screenshot, click, read, navigation, or other browser step to an existing flow. Validate the finished edit with patrol_validate; do not use patrol_wait/patrol_screenshot merely to append an edit.',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+      stepName: { type: 'string', required: true },
+      action: { type: 'string', required: true, enum: [...BROWSER_ACTIONS] },
+      arguments: { type: 'json', required: true },
+      beforeStepId: { type: 'string' },
+      afterStepId: { type: 'string' },
+      expectedText: { type: 'string' },
+      expectationMode: { type: 'string', enum: ['contains', 'not-contains'] },
+      caseSensitive: { type: 'boolean' },
+      conditionSourceStepId: { type: 'string' },
+      conditionExpectedText: { type: 'string' },
+      conditionMode: { type: 'string', enum: ['contains', 'not-contains'] },
+      locatorText: { type: 'string' },
+      locatorRole: { type: 'string' },
+      locatorTag: { type: 'string' },
+      capturePageText: { type: 'boolean' },
+      notes: { type: 'string' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args) {
+      await assertNoPendingRun(store, args.inspectionId)
+      const definition = await loadDraft(store, args.inspectionId)
+      assertSafePersistentText(args.stepName, 'stepName')
+      if (args.expectedText !== undefined) assertSafePersistentText(args.expectedText, 'expectedText')
+      if (args.conditionExpectedText !== undefined) assertSafePersistentText(args.conditionExpectedText, 'conditionExpectedText')
+      if (args.locatorText !== undefined) assertSafePersistentText(args.locatorText, 'locatorText')
+      if (args.notes !== undefined) assertSafePersistentText(args.notes, 'step notes')
+
+      const before = typeof args.beforeStepId === 'string' && args.beforeStepId.trim() !== '' ? args.beforeStepId.trim() : undefined
+      const after = typeof args.afterStepId === 'string' && args.afterStepId.trim() !== '' ? args.afterStepId.trim() : undefined
+      if ((before === undefined) === (after === undefined)) {
+        throw new Error('patrol_insert_browser_step requires exactly one of beforeStepId or afterStepId')
+      }
+      const anchorId = before ?? after!
+      const anchorIndex = definition.steps.findIndex(step => step.id === anchorId)
+      if (anchorIndex < 0) throw new Error(`anchor step ${anchorId} not found`)
+
+      const action = args.action as BrowserAction
+      const tool = browserToolForAction(action)
+      const jsonArguments = asJsonObject(args.arguments as JsonValue)
+      assertSafeForStorage(jsonArguments)
+      const inserted: ToolStep = {
+        id: nextStepId(definition),
+        kind: 'tool',
+        name: args.stepName,
+        tool,
+        arguments: jsonArguments,
+        ...updatedExpectation(undefined, args),
+        ...updatedCondition(undefined, args),
+        ...updatedLocator(undefined, args),
+        ...(tool === 'browser_screenshot'
+          ? { artifact: 'screenshot' as const }
+          : tool === 'browser_read_page' && args.capturePageText !== false
+            ? { artifact: 'page-text' as const }
+            : {}),
+        ...(args.notes === undefined ? {} : { notes: args.notes }),
+        recordedAt: new Date().toISOString(),
+      }
+      const insertIndex = before !== undefined ? anchorIndex : anchorIndex + 1
+      definition.steps.splice(insertIndex, 0, inserted)
+      assertConditionOrder(definition)
+      markEdited(definition)
+      await store.save(definition)
+      return `Inserted ${inserted.id} (${action} -> ${tool}) ${before !== undefined ? `before ${before}` : `after ${after}`} without executing the CURRENT browser page. The Runbook remains DRAFT; make all requested structural edits first, then call patrol_validate once for end-to-end validation.`
+    },
+  })
+
   const reteachBrowserStep = defineTool({
     name: 'patrol_reteach_browser_step',
     description: 'Re-execute and replace one existing non-typing browser step while preserving its stable step id. Use after patrol_begin_edit when a site changes.',
@@ -405,7 +476,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
     async execute(args, exec) {
       await assertNoPendingRun(store, args.inspectionId)
       const definition = await loadDraft(store, args.inspectionId)
-      const { report, paths } = await runner.run(definition, exec)
+      const { report, paths } = await runner.run(definition, exec, { purpose: 'validation' })
       if (report.status === 'passed') await markValidated(store, definition)
       return validationResultText(definition, report, paths, 'patrol_resume_validation')
     },
@@ -418,7 +489,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
     output: TEXT_OUTPUT,
     async execute(args, exec) {
       const definition = await loadDraft(store, args.inspectionId)
-      const { report, paths } = await runner.resume(definition, exec)
+      const { report, paths } = await runner.resume(definition, exec, { purpose: 'validation' })
       if (report.status === 'passed') await markValidated(store, definition)
       return validationResultText(definition, report, paths, 'patrol_resume_validation')
     },
@@ -447,6 +518,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
   return [
     beginEdit,
     updateInspection,
+    insertBrowserStep,
     reteachBrowserStep,
     reteachText,
     reteachCredential,
@@ -488,6 +560,15 @@ function replaceStep(definition: InspectionDefinition, stepId: string, replaceme
   const index = definition.steps.findIndex(item => item.id === stepId)
   if (index < 0) throw new Error(`step ${stepId} not found`)
   definition.steps[index] = replacement
+}
+
+function nextStepId(definition: InspectionDefinition): string {
+  let max = 0
+  for (const step of definition.steps) {
+    const match = /^step-(\d+)$/.exec(step.id)
+    if (match !== null) max = Math.max(max, Number.parseInt(match[1] ?? '0', 10))
+  }
+  return `step-${String(max + 1).padStart(3, '0')}`
 }
 
 function assertConditionOrder(definition: InspectionDefinition): void {
@@ -623,7 +704,7 @@ function validationResultText(
   resumeTool: string,
 ): string {
   const lines = [
-    `DRAFT validation: ${summarizeReport(report)}`,
+    `DRAFT validation (internal edit check; excluded from formal patrol records): ${summarizeReport(report)}`,
     `Run ID: ${report.runId}`,
     `Markdown report: ${paths.markdown}`,
     `JSON report: ${paths.json}`,

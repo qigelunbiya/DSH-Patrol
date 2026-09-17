@@ -279,7 +279,7 @@
       <p>${esc(report.summary || '本次子巡检已完成，详细信息见下方。')}</p>
       <div class="tiny muted hero-time">${fmt(report.startedAt)} · ${dur(report.startedAt, report.finishedAt)}</div>
     </section>
-    <div class="tabs">${[['overview', '概述'], ['steps', '步骤'], ['artifacts', '产物'], ['logs', '日志']].map(([id, label]) => `<button class="tab ${detailTab === id ? 'active' : ''}" data-detail-tab="${id}">${label}</button>`).join('')}</div>
+    <div class="tabs">${[['overview', '概述'], ['steps', '步骤'], ['artifacts', '产物'], ['logs', '日志'], ['checklist', '任务清单']].map(([id, label]) => `<button class="tab ${detailTab === id ? 'active' : ''}" data-detail-tab="${id}">${label}</button>`).join('')}</div>
     ${detailContent(report, definition, artifacts)}`
   }
 
@@ -310,7 +310,7 @@
       <div>${pill(report.status)} <span class="chip">单次巡检</span></div><h2>${esc(report.inspectionName || definition.name)}</h2><p>${esc(report.summary || '本次巡检已完成，详细信息见下方。')}</p>
       <div class="tiny muted hero-time">${fmt(report.startedAt)} · ${dur(report.startedAt, report.finishedAt)}</div>
     </section>
-    <div class="tabs">${[['overview', '概述'], ['steps', '步骤'], ['artifacts', '产物'], ['logs', '日志']].map(([id, label]) => `<button class="tab ${detailTab === id ? 'active' : ''}" data-detail-tab="${id}">${label}</button>`).join('')}</div>
+    <div class="tabs">${[['overview', '概述'], ['steps', '步骤'], ['artifacts', '产物'], ['logs', '日志'], ['checklist', '任务清单']].map(([id, label]) => `<button class="tab ${detailTab === id ? 'active' : ''}" data-detail-tab="${id}">${label}</button>`).join('')}</div>
     ${detailContent(report, definition, artifacts)}`
   }
 
@@ -318,9 +318,18 @@
     if (detailTab === 'steps') return stepsView(report)
     if (detailTab === 'artifacts') return artifactsView(artifacts)
     if (detailTab === 'logs') return logsView(report, definition)
+    if (detailTab === 'checklist') return checklistView(report, definition)
     const rows = report.results || []
     const passed = rows.filter(item => item.status === 'passed').length
     return `<div class="detail-grid"><section class="card panel"><h3 class="section-title">本次巡检概述</h3><div class="overview-text">${esc(report.summary || '没有额外摘要。')}</div><div class="muted overview-progress">步骤完成 ${passed}/${rows.length}</div></section><section class="card panel"><h3 class="section-title">关键信息</h3>${info('目标地址', definition.target?.url || '—')}${info('预期结果', report.expectedResult || definition.expectedResult || '—')}${info('开始时间', fmt(report.startedAt))}${info('结束时间', fmt(report.finishedAt))}${info('产物数量', String(artifacts.length))}</section></div>`
+  }
+
+  function checklistView(report, definition) {
+    const items = Array.isArray(report?.taskChecklist) && report.taskChecklist.length
+      ? report.taskChecklist
+      : Array.isArray(definition?.metadata?.taskChecklist) ? definition.metadata.taskChecklist : []
+    if (!items.length) return empty('暂无任务清单', '这个流程没有保存可核对的任务清单。')
+    return `<section class="card panel"><h3 class="section-title">任务清单</h3><div class="muted" style="margin-bottom:12px">用于核对本次巡检应完成的业务动作；历史记录优先使用巡检开始时保存的清单快照。</div><ol style="margin:0;padding-left:24px;display:grid;gap:10px">${items.map(item => `<li>${esc(item)}</li>`).join('')}</ol></section>`
   }
 
   function stepsView(report) {

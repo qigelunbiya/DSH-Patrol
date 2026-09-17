@@ -37,8 +37,10 @@ async function setup() {
     },
   } as unknown as Context
 
+  let dispatchCalls = 0
   const runner = {
     async dispatch() {
+      dispatchCalls += 1
       return { ok: true, text: 'ok', value: { ok: true } }
     },
     async run(definition: InspectionDefinition) {
@@ -77,7 +79,7 @@ async function setup() {
     rootCallId: 'root',
     signal: new AbortController().signal,
   } as unknown as ToolRunContext
-  return { store, tool, exec }
+  return { store, tool, exec, dispatchCalls: () => dispatchCalls }
 }
 
 function readyDefinition(): InspectionDefinition {
@@ -130,6 +132,7 @@ function readyDefinition(): InspectionDefinition {
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
       validatedAt: '2026-01-01T00:00:00.000Z',
+      taskChecklist: ['username', 'password', 'verification'],
     },
   }
 }
@@ -172,6 +175,34 @@ describe('editable Patrol runbooks', () => {
     definition = await store.load('editable-login')
     expect(definition.status).toBe('ready')
     expect(definition.schedule?.enabled).toBe(true)
+  })
+
+  it('inserts wait and screenshot steps structurally without executing the current page', async () => {
+    const { store, tool, exec, dispatchCalls } = await setup()
+    const definition = readyDefinition()
+    definition.status = 'draft'
+    await store.create(definition)
+
+    await tool('patrol_insert_browser_step').execute({
+      inspectionId: 'editable-login',
+      stepName: '等待 5 秒',
+      action: 'wait',
+      arguments: { timeoutMs: 5000 },
+      afterStepId: 'step-003',
+    }, exec)
+    await tool('patrol_insert_browser_step').execute({
+      inspectionId: 'editable-login',
+      stepName: '打开工单后截图',
+      action: 'screenshot',
+      arguments: {},
+      afterStepId: 'step-004',
+    }, exec)
+
+    const updated = await store.load('editable-login')
+    expect(updated.steps.map(step => step.id)).toEqual(['step-001', 'step-002', 'step-003', 'step-004', 'step-005'])
+    expect(updated.steps[3]).toMatchObject({ id: 'step-004', tool: 'browser_wait', arguments: { timeoutMs: 5000 } })
+    expect(updated.steps[4]).toMatchObject({ id: 'step-005', tool: 'browser_screenshot', artifact: 'screenshot' })
+    expect(dispatchCalls()).toBe(0)
   })
 
   it('refuses to confirm an edited runbook before full validation', async () => {

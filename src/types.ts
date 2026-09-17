@@ -4,6 +4,7 @@ export interface JsonObject { [key: string]: JsonValue }
 
 export type InspectionSchemaVersion = '0.1' | '0.2'
 export type InspectionStatus = 'draft' | 'ready'
+export type RunPurpose = 'patrol' | 'validation' | 'teaching'
 export type AuthMode = 'none' | 'existing-session' | 'manual-checkpoint' | 'secret-ref'
 export type ExpectationMode = 'contains' | 'not-contains'
 
@@ -156,6 +157,8 @@ export interface RunReport {
   startedAt: string
   finishedAt: string
   status: 'passed' | 'failed' | 'waiting'
+  /** Formal patrols are shown in Patrol Records; validation/teaching runs are internal edit diagnostics. */
+  purpose?: RunPurpose
   expectedResult: string
   results: StepRunResult[]
   summary?: string
@@ -163,6 +166,8 @@ export interface RunReport {
   warnings?: string[]
   /** Harness session workspace where user-visible reports/artifacts were exported. */
   outputWorkspace?: string
+  /** Snapshot of the user-facing business checklist at run time for historical review. */
+  taskChecklist?: string[]
 }
 
 export interface ResumeState {
@@ -171,6 +176,7 @@ export interface ResumeState {
   runId: string
   startedAt: string
   definitionUpdatedAt: string
+  purpose?: RunPurpose
   nextStepIndex: number
   results: StepRunResult[]
 }

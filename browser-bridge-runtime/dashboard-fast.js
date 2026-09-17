@@ -194,13 +194,21 @@ async function listRunSummaries(storageRoot, definition) {
     .filter(entry => entry.isDirectory() && ID.test(entry.name))
     .map(entry => entry.name)
     .sort((a, b) => b.localeCompare(a))
-  const total = ids.length
+  const scannedTotal = ids.length
   const selected = ids.slice(0, MAX_RUNS_PER_INSPECTION)
   const rows = await mapLimit(selected, CATALOG_CONCURRENCY, async runId => {
     try { return await loadRunSummary(storageRoot, definition, runId) } catch { return null }
   })
-  const summaries = rows.filter(Boolean).sort((a, b) => String(b.startedAt || b.runId).localeCompare(String(a.startedAt || a.runId)))
-  return { summaries, total, truncated: total > selected.length }
+  const summaries = rows
+    .filter(Boolean)
+    .filter(isFormalPatrolSummary)
+    .sort((a, b) => String(b.startedAt || b.runId).localeCompare(String(a.startedAt || a.runId)))
+  return { summaries, total: summaries.length, truncated: scannedTotal > selected.length }
+}
+
+function isFormalPatrolSummary(value) {
+  const purpose = typeof value?.purpose === 'string' ? value.purpose : 'patrol'
+  return purpose === 'patrol' && !String(value?.runId || '').startsWith('teaching-')
 }
 
 async function loadRunSummary(storageRoot, definition, runId) {
@@ -244,6 +252,7 @@ async function loadRunSummary(storageRoot, definition, runId) {
     inspectionId,
     inspectionName: definition.name || inspectionId,
     status: 'waiting',
+    purpose: 'patrol',
     startedAt: runIdTimestamp(runId),
     finishedAt: '',
     summary: '历史巡检记录缺少可读取的轻量索引，点击后可尝试读取完整详情。',
@@ -280,6 +289,7 @@ function enrichSummary(value, definition, source) {
       failedSteps,
       waitingSteps,
     }),
+    purpose: typeof value.purpose === 'string' ? value.purpose : 'patrol',
     startedAt: value.startedAt || '',
     finishedAt: value.finishedAt || '',
     summary: value.summary || '巡检已完成，打开详情查看步骤结果。',
@@ -328,6 +338,7 @@ function summarizeRun(report, definition, source = 'json') {
       failedSteps,
       waitingSteps,
     }),
+    purpose: typeof report.purpose === 'string' ? report.purpose : 'patrol',
     startedAt: report.startedAt || '',
     finishedAt: report.finishedAt || '',
     summary: report.summary || summarizeResults(results),
@@ -363,6 +374,7 @@ export function parseLegacyMarkdownSummary(markdown, definition, runId) {
     inspectionId,
     inspectionName: unescapeMarkdownHeading(heading),
     status: ['passed', 'failed', 'waiting'].includes(status) ? status : 'waiting',
+    purpose: 'patrol',
     startedAt,
     finishedAt,
     summary,

@@ -51,10 +51,8 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
   }
 
   function flowReplayPrompt(inspectionId, flowName) {
-    const id = String(inspectionId || '').trim();
-    const name = String(flowName || id).trim();
-    const label = name && name !== id ? `（${name}）` : '';
-    return `运行巡检流程 ${id}${label}。请直接使用 patrol_run_flow 重放已有流程，不要修改、重教或新增流程步骤。执行过程中用简体中文实时说明关键巡检进展、当前页面状态和最终结果。`;
+    const value = flowReferenceValue({ id: inspectionId, name: flowName || inspectionId });
+    return `运行巡检流程 ${flowMentionToken(value)}。请直接使用 patrol_run_flow 重放已有流程，不要修改、重教或新增流程步骤。执行过程中用简体中文实时说明关键巡检进展、当前页面状态和最终结果。`;
   }
 
   function batchReplayPrompt(flows) {
@@ -63,24 +61,73 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
       name: String(item?.name || item?.id || '').trim(),
     })).filter(item => /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(item.id));
     if (items.length < 2) throw new Error('批量巡检至少需要选择两个流程');
-    const ordered = items.map((item, index) => {
-      const label = item.name && item.name !== item.id ? `${item.name}（${item.id}）` : item.id;
-      return `${index + 1}. ${label}`;
-    }).join('\n');
+    const ordered = items.map((item, index) => `${index + 1}. ${flowMentionToken(flowReferenceValue(item))}`).join('\n');
     return `批量巡检 ${items.length} 个已有流程（串行，concurrency=1）。\n\n执行顺序：\n${ordered}\n\n执行要求：\n- 一次调用 patrol_run_batch，flows=${JSON.stringify(items.map(item => item.id))}，mode=serial。\n- 严格按上述顺序执行，不修改、重教或新增任何流程步骤。\n- 单个流程失败后继续后续流程；遇到 waiting/checkpoint 时暂停整个批次并等待 patrol_resume_batch。\n- 用简体中文说明批次进度；最终汇总必须明确列出失败、等待、跳过步骤和非致命警告（例如截图产物未能生成），不要把带警告的通过结果概括成“全部正常”。`;
   }
 
+  function sessionScope(ctx, sessionId) {
+    return typeof ctx.sessions.scope === 'function' ? ctx.sessions.scope(sessionId) : undefined;
+  }
+
   async function conversationForSession(ctx, sessionId) {
-    const scoped = typeof ctx.sessions.scope === 'function' ? ctx.sessions.scope(sessionId) : undefined;
+    const scoped = sessionScope(ctx, sessionId);
     const conversation = scoped?.get?.('conversation') ?? scoped?.conversation;
     if (!conversation || typeof conversation.send !== 'function') throw new Error('当前会话尚未提供对话发送服务');
     return conversation;
   }
 
+  function flowReferenceInsert(flow) {
+    const value = flowReferenceValue(flow);
+    return {
+      source: FLOW_REFERENCE_SOURCE,
+      ref: JSON.stringify(value),
+      label: `流程 · ${value.name}`,
+      appearance: 'file',
+      clipboardText: flowMentionToken(value),
+    };
+  }
+
+  async function submitReplayPrompt(ctx, sessionId, prompt, flows) {
+    const scoped = sessionScope(ctx, sessionId);
+    const conversation = await conversationForSession(ctx, sessionId);
+    const input = scoped && typeof conversation.input?.for === 'function' ? conversation.input.for(scoped) : undefined;
+    const nativeInputReady = input
+      && typeof input.setDraft === 'function'
+      && typeof input.insertReference === 'function'
+      && typeof input.submit === 'function'
+      && typeof input.state?.getSnapshot === 'function';
+    if (!nativeInputReady) {
+      await conversation.send(prompt);
+      return;
+    }
+
+    try {
+      input.setDraft(prompt);
+      for (const flow of flows) {
+        const reference = flowReferenceInsert(flow);
+        const snapshot = input.state.getSnapshot();
+        const draft = String(snapshot?.draft || '');
+        const start = draft.indexOf(reference.clipboardText);
+        if (start < 0) throw new Error(`native flow reference token missing: ${reference.clipboardText}`);
+        const inserted = input.insertReference(reference, {
+          start,
+          end: start + reference.clipboardText.length,
+          draftRev: snapshot.draftRev,
+        });
+        if (!inserted) throw new Error(`native flow reference insertion failed: ${reference.clipboardText}`);
+      }
+      input.submit();
+    } catch (error) {
+      try { input.setDraft(''); } catch {}
+      console.warn('[dsh-patrol] native flow reference submit unavailable; falling back to text prompt:', error);
+      await conversation.send(prompt);
+    }
+  }
+
   async function sendFlowReplay(ctx, sessionId, inspectionId, flowName) {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(String(inspectionId || ''))) throw new Error('巡检流程 ID 无效');
-    const conversation = await conversationForSession(ctx, sessionId);
-    await conversation.send(flowReplayPrompt(inspectionId, flowName));
+    const flow = { id: String(inspectionId || '').trim(), name: String(flowName || inspectionId).trim() };
+    await submitReplayPrompt(ctx, sessionId, flowReplayPrompt(flow.id, flow.name), [flow]);
   }
 
   async function sendFlowSelectionReplay(ctx, sessionId, flows) {
@@ -90,8 +137,7 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
       await sendFlowReplay(ctx, sessionId, items[0].id, items[0].name);
       return;
     }
-    const conversation = await conversationForSession(ctx, sessionId);
-    await conversation.send(batchReplayPrompt(items));
+    await submitReplayPrompt(ctx, sessionId, batchReplayPrompt(items), items);
   }
 
   async function readBrowserVisibility() {

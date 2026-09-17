@@ -155,6 +155,40 @@ describe('fast Patrol dashboard catalog', () => {
     })
   })
 
+  it('excludes validation and teaching diagnostics from formal patrol records', async () => {
+    const value = await fixture()
+    for (const [runId, purpose] of [
+      ['2026-09-02T10-00-00-000Z-formal', 'patrol'],
+      ['2026-09-02T10-01-00-000Z-validation', 'validation'],
+      ['teaching-20260902100200000', 'teaching'],
+    ]) {
+      const runRoot = join(value.storageRoot, 'runs', value.inspectionId, runId)
+      await mkdir(runRoot, { recursive: true })
+      await writeFile(join(runRoot, 'summary.json'), JSON.stringify({
+        schemaVersion: 1,
+        runId,
+        inspectionId: value.inspectionId,
+        inspectionName: 'Fast flow',
+        status: 'passed',
+        purpose,
+        startedAt: '2026-09-02T10:00:00.000Z',
+        finishedAt: '2026-09-02T10:00:01.000Z',
+        expectedResult: 'dashboard',
+        summary: purpose,
+        stepCount: 1,
+        passedSteps: 1,
+        failedSteps: 0,
+        waitingSteps: 0,
+        artifactCount: 2,
+      }))
+    }
+
+    const catalog = await buildPatrolDashboardCatalog(value.storageRoot, value.workspace)
+    expect(catalog.runs).toHaveLength(1)
+    expect(catalog.runs[0]).toMatchObject({ runId: '2026-09-02T10-00-00-000Z-formal', purpose: 'patrol' })
+    expect(catalog.inspections[0]?.runCount).toBe(1)
+  })
+
   it('parses the bounded markdown report format used by historical runs', async () => {
     const value = await fixture()
     const runId = '2026-09-02T08-00-00-000Z-cafebabe'

@@ -316,6 +316,7 @@ function runIndexSummary(report: RunReport): Record<string, unknown> {
     inspectionId: report.inspectionId,
     inspectionName: report.inspectionName,
     status: report.status,
+    purpose: report.purpose ?? 'patrol',
     startedAt: report.startedAt,
     finishedAt: report.finishedAt,
     expectedResult: report.expectedResult,
