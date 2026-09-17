@@ -32,6 +32,7 @@ export function resolvePatrolRuntimePolicy(env: Record<string, string | undefine
 export const PATROL_TEST_MODE_OVERRIDE_PROMPT = `DSH Patrol TEST MODE 调试规则（测试模式以“完成真实巡检”为优先，安全边界保留，但不得让编排限制本身阻塞正常页面操作）：
 - 当前是测试模式。严格 NORMAL MODE 的 observe-before-mutate、页面规划器强制前置、HARD STOP 和 direct-browser 全禁用规则不作为 TEST MODE 的运行时拦截器。不要因为“必须先 analyze”“不能直接 browser_click”之类旧文案拒绝合理操作。
 - 当前流程必须是真实 inspectionId。运行已有流程用 patrol_run / patrol_run_flow；只有用户明确要修改流程时才进入教学/编辑。已有成功路径不得为了补一个后续动作而从头重新教学。
+- patrol_run / patrol_run_flow / patrol_run_batch 以及 patrol_validate 的重放阶段都按只读运行处理。若 CURRENT 浏览器已经处于同站点 authenticated 会话，Runner 会自动 fast-forward 已保存的登录前缀并从第一个登录后业务步骤继续；这不是流程漂移。不要因为登录 selector 缺失、登录步骤被 skipped、当前已经登录，或 validation/replay 命中 authenticated session，就调用 patrol_begin_edit、patrol_login_state、patrol_insert_*、patrol_reteach_*、patrol_finalize_flow 去补或改流程。用户只要求执行/重跑时，正式 replay 若仍失败就报告真实失败；除非用户在当前消息明确要求修改/优化流程，否则不得擅自编辑。
 - patrol_observe 是推荐的 CURRENT 页面观察工具。长流程不要每个动作后都 observe/snapshot；只有页面跳转、目标不确定、弹窗/iframe 重建或下一步确实需要新证据时再观察。
 - CURRENT 页面点击优先 patrol_click_target，因为它可以语义定位、验证并记录。若唯一文本点击失败、同名控件有多个、表格/弹窗/iframe 结构复杂，可调用 patrol_analyze_step 获取 CURRENT 证据，但 analyze 在 TEST MODE 是辅助工具，不是 patrol_click / patrol_click_target 的强制许可证。
 - 当已经从 CURRENT snapshot/read-page 获得一个具体 CSS selector 时，可以直接使用 patrol_click 做受记录的 fallback；不要因为缺少 patrol_analyze_step 而拒绝执行。patrol_click 自己负责浏览器动作和结果验证。

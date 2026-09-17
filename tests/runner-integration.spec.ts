@@ -235,6 +235,51 @@ describe('PatrolRunner integration safety', () => {
     expect(report.results[0]?.output).toMatch(/within this flow's known site scope/i)
   })
 
+  it('fast-forwards an authenticated login prefix using pre-navigation evidence and continues business replay', async () => {
+    const calls: string[] = []
+    const { runner, exec } = await setup(async input => {
+      calls.push(input.name)
+      if (input.name === 'browser_login_state') {
+        return {
+          isError: false,
+          value: { ok: true, state: 'authenticated', url: 'https://example.com/workbench' },
+          content: [{ type: 'text', text: 'authenticated before replay navigation' }],
+        }
+      }
+      if (input.name === 'browser_navigate') {
+        return { isError: false, value: { ok: true, url: 'https://example.com' }, content: [{ type: 'text', text: 'navigated' }] }
+      }
+      if (input.name === 'browser_click') {
+        return { isError: false, value: { ok: true, selector: '#workbench' }, content: [{ type: 'text', text: 'clicked workbench' }] }
+      }
+      throw new Error(`unexpected tool ${input.name}`)
+    })
+    const def = definition([
+      { id: 'step-001', kind: 'tool', name: '访问目标 URL', tool: 'browser_navigate', arguments: { url: 'https://example.com' }, recordedAt: at },
+      { id: 'step-002', kind: 'tool', name: '点击 Logo', tool: 'browser_click', arguments: { selector: 'a.portal-logo' }, recordedAt: at },
+      { id: 'step-003', kind: 'tool', name: '输入用户名', tool: 'browser_type', arguments: { selector: '#username', text: 'public-user' }, recordedAt: at },
+      { id: 'step-004', kind: 'tool', name: '输入密码', tool: 'browser_type_transient_ref', arguments: { selector: '#password', transientRef: 'PATROL_SECRET_X' }, sensitive: true, recordedAt: at },
+      { id: 'step-005', kind: 'tool', name: '输入短信验证码 123', tool: 'browser_type_transient_ref', arguments: { selector: '#register-code', transientRef: 'PATROL_SECRET_Y' }, sensitive: true, recordedAt: at },
+      { id: 'step-006', kind: 'tool', name: '点击登录', tool: 'browser_click', arguments: { selector: '#sign_in' }, recordedAt: at },
+      { id: 'step-007', kind: 'tool', name: '点击我的工作台', tool: 'browser_click', arguments: { selector: '#workbench' }, recordedAt: at },
+    ])
+
+    const { report } = await runner.run(def, exec)
+
+    expect(report.status).toBe('passed')
+    expect(calls).toEqual(['browser_login_state', 'browser_navigate', 'browser_click'])
+    expect(report.results.map(item => [item.stepId, item.status])).toEqual([
+      ['step-001', 'passed'],
+      ['step-002', 'skipped'],
+      ['step-003', 'skipped'],
+      ['step-004', 'skipped'],
+      ['step-005', 'skipped'],
+      ['step-006', 'skipped'],
+      ['step-007', 'passed'],
+    ])
+    expect(report.results[1]?.output).toMatch(/before replay navigation.*without editing the Runbook/i)
+  })
+
   it('verifies a replayed click against the resulting page instead of the browser_click acknowledgement', async () => {
     const calls: string[] = []
     const { runner, exec } = await setup(async input => {

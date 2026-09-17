@@ -9,7 +9,7 @@ describe('TEST MODE operational click fallbacks', () => {
     expect(strictBlock).toContain('planningGuard(execution)')
     expect(source.indexOf('planningGuard(execution)')).toBeGreaterThan(source.indexOf('if (runtimePolicy.installGuards)'))
     expect(source).toContain("build=${TEST_MODE_BUILD_MARKER}")
-    expect(source).toContain("test-bypass-v8-structural-edit-persistence")
+    expect(source).toContain("test-bypass-v9-authenticated-prefix-fast-forward")
   })
 
   it('allows non-secret low-level interaction fallbacks in TEST MODE', () => {

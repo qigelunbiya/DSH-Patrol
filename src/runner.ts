@@ -155,11 +155,25 @@ export class PatrolRunner {
     const warnings: string[] = []
     let status: RunReport['status'] = 'passed'
     const outputWorkspace = exec.agent?.session.header.cwd ?? definition.metadata.workspaceRoot
+    const preflightAuthenticatedReuse = await this.preflightAuthenticatedSessionReuse(definition, exec, state.nextStepIndex)
 
     for (let index = state.nextStepIndex; index < definition.steps.length; index += 1) {
       const step = definition.steps[index]
       if (step === undefined) break
       const stepStartedAt = new Date().toISOString()
+
+      if (preflightAuthenticatedReuse?.stepIds.has(step.id)) {
+        results.push({
+          stepId: step.id,
+          name: step.name,
+          kind: step.kind,
+          status: 'skipped',
+          startedAt: stepStartedAt,
+          finishedAt: new Date().toISOString(),
+          output: `Existing authenticated managed-browser session was detected at ${preflightAuthenticatedReuse.url} before replay navigation. Fast-forwarded stored login-prefix step ${step.id} without editing the Runbook; replay continues at the first post-login business step.`,
+        })
+        continue
+      }
 
       if (step.when !== undefined && !conditionMatches(results, step.when)) {
         results.push({
@@ -321,13 +335,6 @@ export class PatrolRunner {
     startedAt: string,
     outputWorkspace: string | undefined,
   ): Promise<StepRunResult> {
-    let runtimeArguments: JsonObject
-    try {
-      runtimeArguments = prepareRuntimeArguments(step)
-    } catch (error: unknown) {
-      return failedResult(step, startedAt, errorMessage(error))
-    }
-
     const reusedSession = await this.reuseAuthenticatedSession(definition, step, exec)
     if (reusedSession !== undefined) {
       return {
@@ -335,11 +342,18 @@ export class PatrolRunner {
         name: step.name,
         kind: 'tool',
         tool: step.tool,
-        status: 'passed',
+        status: 'skipped',
         startedAt,
         finishedAt: new Date().toISOString(),
         output: reusedSession,
       }
+    }
+
+    let runtimeArguments: JsonObject
+    try {
+      runtimeArguments = prepareRuntimeArguments(step)
+    } catch (error: unknown) {
+      return failedResult(step, startedAt, errorMessage(error))
     }
 
     let healedSelector: string | undefined
@@ -612,18 +626,48 @@ export class PatrolRunner {
     }
   }
 
+  private async preflightAuthenticatedSessionReuse(
+    definition: InspectionDefinition,
+    exec: ToolRunContext,
+    nextStepIndex: number,
+  ): Promise<{ url: string; stepIds: Set<string> } | undefined> {
+    const range = authenticatedLoginPrefixRange(definition)
+    if (range === undefined || range.end < nextStepIndex) return undefined
+
+    // Only probe before replay starts when a stored navigation precedes the
+    // login block. That navigation can move an already-authenticated tab back
+    // to a neutral/login entry page and erase the positive evidence that was
+    // visible at run start. Flows that start directly at a login field keep the
+    // existing per-step probe below.
+    const hasNavigationBeforeLogin = definition.steps
+      .slice(0, range.start)
+      .some(item => item.kind === 'tool' && item.tool === 'browser_navigate')
+    if (!hasNavigationBeforeLogin) return undefined
+
+    const state = await this.dispatch('browser_login_state', {}, exec)
+    if (!state.ok || objectString(state.value, 'state') !== 'authenticated') return undefined
+    const url = objectString(state.value, 'url')
+    if (url === undefined || !canReuseAuthenticatedSession(definition, url)) return undefined
+
+    const start = Math.max(range.start, nextStepIndex)
+    const stepIds = new Set(definition.steps.slice(start, range.end + 1).map(item => item.id))
+    return stepIds.size === 0 ? undefined : { url, stepIds }
+  }
+
   private async reuseAuthenticatedSession(
     definition: InspectionDefinition,
     step: ToolStep,
     exec: ToolRunContext,
   ): Promise<string | undefined> {
-    if (!looksLikeLoginStep(definition, step)) return undefined
+    const range = authenticatedLoginPrefixRange(definition)
+    const index = definition.steps.findIndex(item => item.id === step.id)
+    if (range === undefined || index < range.start || index > range.end) return undefined
     const tabId = typeof step.arguments.tabId === 'number' ? step.arguments.tabId : undefined
     const state = await this.dispatch('browser_login_state', tabId === undefined ? {} : { tabId }, exec)
     if (!state.ok || objectString(state.value, 'state') !== 'authenticated') return undefined
     const url = objectString(state.value, 'url')
     if (url === undefined || !canReuseAuthenticatedSession(definition, url)) return undefined
-    return `Existing authenticated managed-browser session detected at ${url} within this flow's known site scope. Reused the persistent Patrol browser profile and skipped this redundant login step; no cookie value was exposed or rewritten.`
+    return `Existing authenticated managed-browser session detected at ${url} within this flow's known site scope. Skipped stored login-prefix step ${step.id} without editing the Runbook; replay continues from the first post-login business step. No cookie value was exposed or rewritten.`
   }
 }
 
@@ -709,6 +753,56 @@ function selectorEquivalentForSnapshot(observed: string, requested: string): boo
     return observed === `top-frame::${requested}`
   }
   return false
+}
+
+export function authenticatedLoginPrefixRange(definition: InspectionDefinition): { start: number; end: number } | undefined {
+  const scanLimit = Math.min(definition.steps.length, 12)
+  let first = -1
+  for (let index = 0; index < scanLimit; index += 1) {
+    if (isLoginPrefixMarker(definition, index)) {
+      first = index
+      break
+    }
+  }
+  if (first < 0) return undefined
+
+  let start = first
+  while (start > 0) {
+    const previous = definition.steps[start - 1]
+    if (previous === undefined || previous.kind !== 'tool' || previous.tool === 'browser_navigate') break
+    if (!['browser_click', 'browser_wait', 'browser_snapshot', 'browser_read_page', 'browser_screenshot'].includes(previous.tool)) break
+    start -= 1
+  }
+
+  let end = first
+  const endLimit = Math.min(definition.steps.length, first + 10)
+  for (let index = first + 1; index < endLimit; index += 1) {
+    if (isLoginPrefixMarker(definition, index)) {
+      end = index
+      continue
+    }
+    if (isLoginPrefixBridge(definition.steps[index])) {
+      end = index
+      continue
+    }
+    break
+  }
+  return { start, end }
+}
+
+function isLoginPrefixMarker(definition: InspectionDefinition, index: number): boolean {
+  const step = definition.steps[index]
+  if (step === undefined) return false
+  if (step.kind === 'checkpoint') return step.reason === 'login' || step.reason === 'otp'
+  return looksLikeLoginStep(definition, step)
+}
+
+function isLoginPrefixBridge(step: InspectionDefinition['steps'][number] | undefined): boolean {
+  if (step === undefined) return false
+  if (step.kind === 'checkpoint') return step.reason === 'login' || step.reason === 'otp'
+  if (!['browser_wait', 'browser_snapshot', 'browser_read_page', 'browser_screenshot', 'browser_detect_auth_challenge'].includes(step.tool)) return false
+  const hint = `${step.tool} ${loginStepHint(step)}`
+  return /(login|log[-_ ]?in|sign[-_ ]?in|signin|password|passwd|pwd|username|user[-_ ]?name|otp|one[-_ ]?time|verification|verify[-_ ]?code|register[-_ ]?code|sms|captcha|登录|登陆|用户名|密码|验证码|短信|动态(?:口令|码|验证码))/i.test(hint)
 }
 
 export function looksLikeLoginStep(definition: InspectionDefinition, step: ToolStep): boolean {
