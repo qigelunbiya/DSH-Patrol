@@ -211,7 +211,7 @@ function snapshotMainWorld(args = {}) {
     const inputActionText = input !== null && ['button', 'submit', 'reset'].includes(String(input.type || '').toLowerCase())
       ? compact(input.value, 120)
       : ''
-    const text = compact(element.innerText || element.textContent || element.getAttribute('aria-label') || element.getAttribute('title') || inputActionText || '', 240)
+    const text = compact(element.innerText || element.textContent || element.getAttribute('aria-label') || element.getAttribute('placeholder') || element.getAttribute('title') || inputActionText || '', 240)
     return Object.fromEntries(Object.entries({
       tag: element.tagName.toLowerCase(),
       role: role(element),
