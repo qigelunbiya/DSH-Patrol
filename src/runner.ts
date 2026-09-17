@@ -687,7 +687,8 @@ function snapshotSelectorForRequested(value: JsonValue | undefined, requested: s
   const matches: string[] = []
   for (const item of elements) {
     if (item === null || Array.isArray(item) || typeof item !== 'object') continue
-    const selector = item.selector
+    const object = item as JsonObject
+    const selector = object.selector
     if (typeof selector === 'string' && selectorEquivalentForSnapshot(selector, requested)) matches.push(selector)
   }
   return matches.length === 1 ? matches[0] : undefined
