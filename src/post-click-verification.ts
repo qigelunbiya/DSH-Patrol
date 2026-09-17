@@ -21,7 +21,10 @@ export interface PostClickVerificationResult {
   error?: string
 }
 
-const DEFAULT_RETRY_DELAYS_MS = [0, 140, 320, 700] as const
+// Successful clicks on legacy portals and SPAs can return well before the
+// destination iframe/menu has settled. Keep this bounded, but give slower
+// transitions one additional observation window before declaring failure.
+const DEFAULT_RETRY_DELAYS_MS = [0, 150, 350, 700, 1200] as const
 
 /**
  * A click can destroy the content-script context that executed it, or it can
