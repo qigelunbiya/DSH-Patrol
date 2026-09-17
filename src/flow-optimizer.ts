@@ -264,7 +264,7 @@ function checklistActionCounts(checklist: readonly string[]): Record<ChecklistAc
 
 function checklistMatchesAction(text: string, action: ChecklistAction): boolean {
   if (action === 'navigate') return /(访问|导航|navigate|visit|go to)/i.test(text)
-  if (action === 'click') return /(点击|点开|打开.*(?:入口|菜单|工单|详情)|click|open .*?(?:menu|item|detail))/i.test(text)
+  if (action === 'click') return /(点击|点开|进入|选择|打开.*(?:入口|菜单|工单|详情)|click|select|open .*?(?:menu|item|detail))/i.test(text)
   if (action === 'type') return /(输入|填写|填入|type|enter|fill)/i.test(text)
   if (action === 'read') return /(读取|整理|查看.*(?:信息|列表|内容)|read|summar|inspect.*(?:list|content|info))/i.test(text)
   return /(截图|screenshot|capture)/i.test(text)
