@@ -50,6 +50,12 @@ describe('Patrol flow selection client surface', () => {
     expect(clientSource).toContain('if (items.length === 1) {')
     expect(clientSource).toContain('await sendFlowReplay(ctx, sessionId, items[0].id, items[0].name);')
     expect(clientSource).toContain('await conversation.send(batchReplayPrompt(items));')
-    expect(clientSource).toContain('请一次调用 patrol_run_batch')
+    expect(clientSource).toContain('一次调用 patrol_run_batch')
   })
+  it('renders batch execution requests as clean plain text instead of native flow mentions', () => {
+    expect(clientSource).toContain('批量巡检 ${items.length} 个已有流程（串行，concurrency=1）。')
+    expect(clientSource).toContain('最终汇总必须明确列出失败、等待、跳过步骤和非致命警告')
+    expect(clientSource).not.toContain('`${index + 1}. @flow:${item.id}')
+  })
+
 })

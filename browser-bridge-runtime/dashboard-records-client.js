@@ -419,7 +419,10 @@
 
   document.addEventListener('click', event => {
     const modal = document.getElementById('artifact-modal')
-    if (modal && event.target === modal) modal.remove()
+    if (!modal) return
+    const target = event.target instanceof Element ? event.target : null
+    if (target?.closest('[data-action="close-modal"]')) { modal.remove(); return }
+    if (event.target === modal) modal.remove()
   })
 
   void boot()

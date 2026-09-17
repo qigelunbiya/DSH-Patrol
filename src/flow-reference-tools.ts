@@ -18,6 +18,7 @@ export const PATROL_FLOW_REFERENCE_PROMPT = `DSH Patrol existing-flow reference 
 - patrol_resolve_flow 对 inspectionId 做精确匹配，也会对流程显示名称做 NFKC、首尾空白和连续空白归一化后的精确匹配。只要显示名称精确匹配，就必须回答“找到了”；如果有多个同名流程，必须明确说“找到多个同名流程”并列出 inspectionId，不能说“没有完全匹配”。
 - 用户说“运行/执行/走一遍/巡检/重放”一个已有流程时，直接调用 patrol_run_flow。patrol_run_flow 对 READY 和非空 DRAFT 都是只读重放：会产生新的巡检 run/report，但绝不能向 Runbook 追加步骤。
 - 用户明确要求批量巡检、串行巡检，或一次请求中要求执行多个已有流程时，必须一次调用 patrol_run_batch，并按用户给出的顺序传入 flows。不要让模型自行连续调用多个 patrol_run_flow。批量 V1 固定串行（concurrency=1），单个流程失败后继续后续流程；遇到 waiting/checkpoint 时暂停整个批次并用 patrol_resume_batch 继续。
+- patrol_run_flow / patrol_run_batch 的业务状态即使是 passed，也可能包含 skipped 步骤或 warnings（例如最终截图产物抓取失败）。最终答复必须显式说明这些非致命问题，不能只根据 passed 状态概括为“全部正常”或“全部通过且无异常”。
 - 多个 @flow:<inspectionId> 可以作为 patrol_run_batch 的 flows。UI 多选同样会提交稳定 inspectionId，因此批量执行前必须先完整解析并预检全部流程，任何缺失/歧义/空流程都必须在第一个流程启动前报错。
 - 绝对禁止为了“运行已有 DRAFT 流程”而依次调用 patrol_navigate、patrol_login_state、patrol_screenshot、patrol_read_page、patrol_click、patrol_type_* 等教学/记录工具。这些工具在 DRAFT 上的职责是编辑/教学，会追加步骤；它们不是已有流程的 replay API。
 - patrol_select_flow 只表示选择/查看上下文，不代表开始教学，也不代表执行。用户只是要运行已有流程时不需要先 select；解析后直接 patrol_run_flow 或 patrol_run_batch。
@@ -53,6 +54,12 @@ interface BatchItemResult {
   report?: string
   json?: string
   error?: string
+  skippedSteps?: Array<{
+    stepId: string
+    name: string
+    reason?: string
+  }>
+  warnings?: string[]
 }
 
 interface BatchState {
@@ -359,6 +366,16 @@ async function continueSerialBatch(
     }
 
     if (report === undefined || paths === undefined) throw new Error(`batch ${state.batchRunId} lost run result for ${snapshot.id}`)
+    const skippedSteps = report.results
+      .filter(result => result.status === 'skipped')
+      .map(result => {
+        const reason = result.error ?? result.output
+        return {
+          stepId: result.stepId,
+          name: result.name,
+          ...(reason === undefined ? {} : { reason }),
+        }
+      })
     const item: BatchItemResult = {
       order: index + 1,
       flowId: snapshot.id,
@@ -367,6 +384,8 @@ async function continueSerialBatch(
       runId: report.runId,
       report: paths.markdown,
       json: paths.json,
+      ...(skippedSteps.length === 0 ? {} : { skippedSteps }),
+      ...(report.warnings === undefined || report.warnings.length === 0 ? {} : { warnings: [...report.warnings] }),
     }
     upsertBatchResult(state, item)
 
@@ -500,6 +519,15 @@ function renderBatchMarkdown(state: BatchState): string {
     if (result?.runId) lines.push(`   - runId: \`${result.runId}\``)
     if (result?.report) lines.push(`   - report: \`${result.report}\``)
     if (result?.error) lines.push(`   - error: ${result.error}`)
+    const skippedReasons = new Set<string>()
+    if ((result?.skippedSteps?.length ?? 0) > 0) lines.push(`   - 跳过步骤: ${result?.skippedSteps?.length ?? 0}`)
+    for (const step of result?.skippedSteps ?? []) {
+      if (step.reason !== undefined) skippedReasons.add(step.reason)
+      lines.push(`     - ${step.name} (\`${step.stepId}\`)${step.reason === undefined ? '' : `: ${step.reason}`}`)
+    }
+    for (const warning of result?.warnings ?? []) {
+      if (!skippedReasons.has(warning)) lines.push(`   - 警告: ${warning}`)
+    }
   }
   lines.push('')
   if (state.status === 'waiting') {
@@ -518,11 +546,23 @@ function renderBatchResult(
   const lines = [
     `Batch patrol ${state.batchRunId}: mode=serial; concurrency=1; status=${state.status}`,
     `flows=${state.flows.length}; passed=${passed}; failed=${failed}; waiting=${waiting}`,
-    ...state.flows.map((flow, index) => {
+    ...state.flows.flatMap((flow, index) => {
       const result = state.results.find(item => item.order === index + 1)
       const status = result?.status ?? 'pending'
       const detail = result?.runId ? ` runId=${result.runId}` : (result?.error ? ` error=${result.error}` : '')
-      return `${index + 1}. ${flow.id} (${flow.name}) => ${status}${detail}`
+      const skippedCount = result?.skippedSteps?.length ?? 0
+      const warningCount = result?.warnings?.length ?? 0
+      const headline = `${index + 1}. ${flow.id} (${flow.name}) => ${status}${detail}${skippedCount > 0 ? ` skipped=${skippedCount}` : ''}${warningCount > 0 ? ` warnings=${warningCount}` : ''}`
+      const notices = [headline]
+      const skippedReasons = new Set<string>()
+      for (const step of result?.skippedSteps ?? []) {
+        if (step.reason !== undefined) skippedReasons.add(step.reason)
+        notices.push(`   skippedStep=${step.stepId} (${step.name})${step.reason === undefined ? '' : `: ${step.reason}`}`)
+      }
+      for (const warning of result?.warnings ?? []) {
+        if (!skippedReasons.has(warning)) notices.push(`   warning=${warning}`)
+      }
+      return notices
     }),
     `batchReport=${paths.markdown}`,
     `batchJson=${paths.json}`,
@@ -612,12 +652,24 @@ function renderRunResult(
   const passed = report.results.filter(item => item.status === 'passed').length
   const failed = report.results.filter(item => item.status === 'failed').length
   const waiting = report.results.filter(item => item.status === 'waiting').length
+  const skipped = report.results.filter(item => item.status === 'skipped')
+  const skippedReasons = new Set<string>()
+  const skippedLines = skipped.map(item => {
+    const reason = item.error ?? item.output
+    if (reason !== undefined) skippedReasons.add(reason)
+    return `skippedStep=${item.stepId} (${item.name})${reason === undefined ? '' : `: ${reason}`}`
+  })
+  const warningLines = (report.warnings ?? [])
+    .filter(warning => !skippedReasons.has(warning))
+    .map(warning => `warning=${warning}`)
   return [
     `Executed existing flow ${definition.id} (${definition.name}) without changing its ${definition.steps.length} Runbook steps.`,
     `flowStatus=${definition.status}${definition.status === 'draft' ? ' (read-only preview)' : ''}`,
     `runId=${report.runId}`,
     `runStatus=${report.status}`,
-    `steps=${passed} passed, ${failed} failed, ${waiting} waiting, ${report.results.length} total`,
+    `steps=${passed} passed, ${failed} failed, ${waiting} waiting, ${skipped.length} skipped, ${report.results.length} total`,
+    ...skippedLines,
+    ...warningLines,
     `report=${paths.markdown}`,
     `json=${paths.json}`,
   ].join('\n')

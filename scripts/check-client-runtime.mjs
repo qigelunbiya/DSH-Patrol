@@ -102,7 +102,7 @@ for (const marker of [
   'data-dsh-patrol-batch-confirm-list',
   'async function sendFlowSelectionReplay(ctx, sessionId, flows)',
   'await runFlows(selectedFlows.map(flow => ({ id: flow.id, name: flow.name })));',
-  '请一次调用 patrol_run_batch',
+  '一次调用 patrol_run_batch',
   'function mountPatrolHeroControls(ctx)',
   "run.textContent = '选择流程'",
   "browser.textContent = '浏览器设置'",

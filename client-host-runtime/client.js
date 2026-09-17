@@ -63,8 +63,11 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
       name: String(item?.name || item?.id || '').trim(),
     })).filter(item => /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(item.id));
     if (items.length < 2) throw new Error('批量巡检至少需要选择两个流程');
-    const ordered = items.map((item, index) => `${index + 1}. @flow:${item.id}${item.name && item.name !== item.id ? `（${item.name}）` : ''}`).join('\n');
-    return `批量巡检以下 ${items.length} 个已有流程，严格按给定顺序串行执行（concurrency=1）：\n${ordered}\n请一次调用 patrol_run_batch，flows=${JSON.stringify(items.map(item => item.id))}，mode=serial。不要修改、重教或新增任何流程步骤；单个流程失败后继续后续流程，遇到 waiting/checkpoint 时暂停整个批次并等待 patrol_resume_batch。执行过程中用简体中文说明当前批次进度和最终汇总。`;
+    const ordered = items.map((item, index) => {
+      const label = item.name && item.name !== item.id ? `${item.name}（${item.id}）` : item.id;
+      return `${index + 1}. ${label}`;
+    }).join('\n');
+    return `批量巡检 ${items.length} 个已有流程（串行，concurrency=1）。\n\n执行顺序：\n${ordered}\n\n执行要求：\n- 一次调用 patrol_run_batch，flows=${JSON.stringify(items.map(item => item.id))}，mode=serial。\n- 严格按上述顺序执行，不修改、重教或新增任何流程步骤。\n- 单个流程失败后继续后续流程；遇到 waiting/checkpoint 时暂停整个批次并等待 patrol_resume_batch。\n- 用简体中文说明批次进度；最终汇总必须明确列出失败、等待、跳过步骤和非致命警告（例如截图产物未能生成），不要把带警告的通过结果概括成“全部正常”。`;
   }
 
   async function conversationForSession(ctx, sessionId) {
