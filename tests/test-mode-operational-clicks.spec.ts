@@ -9,7 +9,7 @@ describe('TEST MODE operational click fallbacks', () => {
     expect(strictBlock).toContain('planningGuard(execution)')
     expect(source.indexOf('planningGuard(execution)')).toBeGreaterThan(source.indexOf('if (runtimePolicy.installGuards)'))
     expect(source).toContain("build=${TEST_MODE_BUILD_MARKER}")
-    expect(source).toContain("test-bypass-v7-operational-click-fallbacks")
+    expect(source).toContain("test-bypass-v8-structural-edit-persistence")
   })
 
   it('allows non-secret low-level interaction fallbacks in TEST MODE', () => {
@@ -28,5 +28,7 @@ describe('TEST MODE operational click fallbacks', () => {
     expect(allowed).not.toContain("'browser_type'")
     expect(allowed).not.toContain("'browser_type_credential'")
     expect(allowed).not.toContain("'browser_type_transient_ref'")
+    expect(allowed).not.toContain("'browser_type_totp_profile'")
+    expect(source).toContain('runner.browserGuard(execution.name, execution.parent)')
   })
 })
