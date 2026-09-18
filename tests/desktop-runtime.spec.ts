@@ -202,6 +202,16 @@ describe('Desktop Automation runtime foundation', () => {
     await expect(driver.clickOcrText({ text: '测试联系人' })).rejects.toThrow(/ambiguous \(2 matches\)/i)
   })
 
+  it('resolves friendly installed app names without application-specific hardcoding', () => {
+    const source = readFileSync(join(process.cwd(), 'desktop-runtime', 'windows-desktop.ps1'), 'utf8')
+    expect(source).toContain('function Resolve-AppLaunchSpec')
+    expect(source).toContain('Get-Command -Name $name -CommandType Application')
+    expect(source).toContain('App Paths')
+    expect(source).toContain('Get-StartApps')
+    expect(source).toContain("throw 'launch-app requires file or app'")
+    expect(source).not.toMatch(/WeChat|微信|WPS|百度网盘/)
+  })
+
   it('keeps the Windows PowerShell 5.1 backend ASCII-only so BOM-less checkout encoding cannot corrupt parser tokens', () => {
     const source = readFileSync(join(process.cwd(), 'desktop-runtime', 'windows-desktop.ps1'), 'utf8')
     expect(/[^\x00-\x7F]/.test(source)).toBe(false)
