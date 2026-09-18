@@ -37,6 +37,7 @@ export function registerPatrolDesktopActionTools(
       stepName: { type: 'string', required: true },
       action: { type: 'string', required: true, enum: [...DESKTOP_ACTIONS] },
       file: { type: 'string' },
+      app: { type: 'string' },
       arguments: { type: 'array', items: { type: 'string' } },
       workingDirectory: { type: 'string' },
       path: { type: 'string' },
@@ -183,7 +184,7 @@ function desktopArguments(action: DesktopAction, args: Record<string, unknown>, 
 
   switch (action) {
     case 'launch-app':
-      add('file', args.file); add('arguments', args.arguments); add('workingDirectory', args.workingDirectory); break
+      add('file', args.file); add('app', args.app); add('arguments', args.arguments); add('workingDirectory', args.workingDirectory); break
     case 'open-path':
       add('path', args.path); break
     case 'activate-window':
@@ -266,7 +267,9 @@ function validateRequiredDesktopArguments(action: DesktopAction, args: JsonObjec
     if (value < min || value > max) throw new Error(`${action} ${key} must be between ${min} and ${max}`)
   }
   switch (action) {
-    case 'launch-app': requireText('file'); break
+    case 'launch-app':
+      if (![args.file, args.app].some(value => typeof value === 'string' && value.trim() !== '')) throw new Error('launch-app requires file or app')
+      break
     case 'open-path':
     case 'delete-path': requireText('path'); break
     case 'click-target':
