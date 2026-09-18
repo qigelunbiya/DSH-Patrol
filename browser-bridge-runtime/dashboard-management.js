@@ -209,7 +209,9 @@ function renderRunbookMarkdown(definition) {
     '',
     `- Inspection ID: \`${definition.id}\``,
     `- Status: \`${definition.status}\``,
-    `- Target: ${definition?.target?.url || ''}`,
+    `- Target: ${definition?.target?.type === 'desktop'
+      ? `desktop:${definition?.target?.app || '应用'}`
+      : (definition?.target?.url || '')}`,
     `- Expected result: ${definition.expectedResult || ''}`,
     `- Auth mode: \`${definition?.auth?.mode || 'none'}\``,
     `- Updated: ${definition?.metadata?.updatedAt || ''}`,
