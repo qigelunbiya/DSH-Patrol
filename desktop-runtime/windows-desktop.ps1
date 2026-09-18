@@ -320,7 +320,7 @@ function Capture-Screenshot($args) {
     $graphics.Dispose()
     $bitmap.Dispose()
   }
-  return [ordered]@{ ok=$true; path=$path; width=[int]$width; height=[int]$height }
+  return [ordered]@{ ok=$true; path=$path; x=[int]$x; y=[int]$y; width=[int]$width; height=[int]$height }
 }
 
 $args = Decode-Payload $Payload
