@@ -32,9 +32,10 @@ describe('Patrol page understanding planner', () => {
 
   it('prefers a unique exact title-backed tree target over nested same-text wrappers', () => {
     const plans = analyzePageEvidence('点击主机下的未分组', '未分组', '', [
-      { tag: 'span', role: 'button', text: '未分组', selector: 'top-frame::span[title="未分组"]' },
-      { tag: 'span', role: 'button', text: '未分组', selector: 'top-frame::div:nth-of-type(2) > span:nth-of-type(2)' },
-      { tag: 'div', role: 'button', text: '主机 未分组', selector: 'top-frame::.ant-tree-list-holder-inner' },
+      { tag: 'span', role: '', text: '未分组', selector: 'top-frame::span[title="未分组"]' },
+      { tag: 'span', role: '', text: '未分组', selector: 'top-frame::div:nth-of-type(2) > span:nth-of-type(2)' },
+      { tag: 'div', role: '', text: '主机 未分组', selector: 'top-frame::.ant-tree-list-holder-inner' },
+      { tag: 'span', role: '', text: '工单运维', selector: 'top-frame::span[title="工单运维"]' },
     ])
     expect(plans[0]).toMatchObject({
       kind: 'semantic',
@@ -90,6 +91,42 @@ describe('Patrol page understanding planner', () => {
       name: 'patrol_click',
       arguments: { inspectionId: 'demo', stepName: '尝试未分组菜单项', selector: '.ant-tree-node-content-wrapper' },
     })).toMatch(/HARD STOP/)
+  })
+
+  it('rejects unsupported selector dialects without consuming the final recovery budget', () => {
+    const guard = createPatrolPlanningGuard()
+    expect(guard({
+      name: 'patrol_click_target',
+      arguments: { inspectionId: 'demo', stepName: '点击主机下的未分组', locatorText: '未分组' },
+    })).toBeUndefined()
+    expect(guard({
+      name: 'patrol_analyze_step',
+      arguments: { inspectionId: 'demo', task: '点击主机下的未分组', locatorText: '未分组' },
+    })).toBeUndefined()
+    expect(guard({
+      name: 'patrol_click',
+      arguments: { inspectionId: 'demo', stepName: '点击未分组', selector: 'span:contains("未分组")' },
+    })).toMatch(/只接受 CSS|不计入.*策略预算/)
+    expect(guard({
+      name: 'patrol_click',
+      arguments: { inspectionId: 'demo', stepName: '点击未分组', selector: 'span[title="未分组"]' },
+    })).toBeUndefined()
+    expect(guard({
+      name: 'patrol_click',
+      arguments: { inspectionId: 'demo', stepName: '点击未分组', selector: '.ant-tree-node-content-wrapper' },
+    })).toMatch(/HARD STOP/)
+  })
+
+  it('also blocks raw browser selector dialects before dispatch', () => {
+    const guard = createPatrolPlanningGuard()
+    expect(guard({
+      name: 'browser_click',
+      arguments: { selector: '//span[text()="未分组"]' },
+    })).toMatch(/只接受 CSS/)
+    expect(guard({
+      name: 'browser_read_page',
+      arguments: { selector: 'div:has-text(未分组)' },
+    })).toMatch(/只接受 CSS/)
   })
 
   it('counts a raw selector recovery as the second and final strategy', () => {

@@ -78,6 +78,11 @@ function snapshotTitleActionCollect() {
   const unique = selector => {
     try { return document.querySelectorAll(selector).length === 1 } catch { return false }
   }
+  const treeActionTarget = element => {
+    if (!(element instanceof Element)) return null
+    const target = element.closest?.('.ant-tree-node-content-wrapper,[role="treeitem"]')
+    return target instanceof Element && visible(target) ? target : null
+  }
   const pathSelector = element => {
     if (element.id) return `#${cssEscape(element.id)}`
     const title = element.getAttribute('title')
@@ -125,7 +130,9 @@ function snapshotTitleActionCollect() {
       const title = compact(element.getAttribute('title'), 160)
       if (!title || title.length > 80) return false
       const style = getComputedStyle(element)
-      return style.cursor === 'pointer' || /\[[^\]]{1,24}\]|\b[A-Z]{2,8}\b|登录|访问|打开|连接|进入|查看|详情|配置|下载|确定|提交/i.test(title)
+      return style.cursor === 'pointer'
+        || /\[[^\]]{1,24}\]|\b[A-Z]{2,8}\b|登录|访问|打开|连接|进入|查看|详情|配置|下载|确定|提交/i.test(title)
+        || treeActionTarget(element) !== null
     })
     .slice(0, 40)
 
@@ -139,7 +146,7 @@ function snapshotTitleActionCollect() {
         text: compact(element.getAttribute('title') || element.innerText || element.textContent || '', 160),
         selector: pathSelector(element),
         context: compact(row?.innerText || row?.textContent || '', 260),
-        evidence: 'title-backed-custom-action',
+        evidence: treeActionTarget(element) === null ? 'title-backed-custom-action' : 'title-backed-tree-action',
       }
     }),
   }

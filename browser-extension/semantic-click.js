@@ -161,6 +161,12 @@ async function semanticClickPageCommand(mode, spec) {
     return path.join(' > ')
   }
   const fingerprint = element => `${stableSelector(element)}|${normalize(actionText(element))}|${normalize(roleOf(element))}|${element.tagName.toLowerCase()}`
+  const physicalClickTarget = element => {
+    const title = compact(element.getAttribute?.('title') || '')
+    if (!title) return element
+    const treeWrapper = element.closest?.('.ant-tree-node-content-wrapper,[role="treeitem"]')
+    return treeWrapper instanceof Element && visible(treeWrapper) ? treeWrapper : element
+  }
   const modalSelectors = ['[role="dialog"][aria-modal="true"]', '.ant-modal-content', '.el-dialog', '.ivu-modal-content', '.arco-modal', '.semi-modal']
   const modal = modalSelectors.flatMap(selector => [...document.querySelectorAll(selector)]).find(visible)
   const root = modal || document
@@ -261,23 +267,26 @@ async function semanticClickPageCommand(mode, spec) {
     // the newly resolved target remains uniquely best.
   }
   const element = chosen.element
-  element.scrollIntoView?.({ block: 'center', inline: 'center', behavior: 'instant' })
+  const clickTarget = physicalClickTarget(element)
+  clickTarget.scrollIntoView?.({ block: 'center', inline: 'center', behavior: 'instant' })
   const frame = () => new Promise(resolve => requestAnimationFrame(resolve))
-  const before = element.getBoundingClientRect()
+  const before = clickTarget.getBoundingClientRect()
   await frame(); await frame()
-  if (!element.isConnected) throw new Error('semantic target detached before click')
-  const after = element.getBoundingClientRect()
+  if (!element.isConnected || !clickTarget.isConnected) throw new Error('semantic target detached before click')
+  const after = clickTarget.getBoundingClientRect()
   if (Math.abs(before.left - after.left) > 1 || Math.abs(before.top - after.top) > 1 || Math.abs(before.width - after.width) > 1 || Math.abs(before.height - after.height) > 1) throw new Error('semantic target is not stable yet')
   const x = Math.max(after.left + 1, Math.min(after.left + after.width / 2, after.right - 1))
   const y = Math.max(after.top + 1, Math.min(after.top + after.height / 2, after.bottom - 1))
   const hit = document.elementFromPoint(x, y)
-  if (hit && hit !== element && !element.contains(hit)) throw new Error(`semantic target is intercepted by <${hit.tagName.toLowerCase()}>`)
-  element.focus?.({ preventScroll: true })
+  if (hit && hit !== clickTarget && !clickTarget.contains(hit)) throw new Error(`semantic target is intercepted by <${hit.tagName.toLowerCase()}>`)
+  clickTarget.focus?.({ preventScroll: true })
   if (typeof PointerEvent !== 'undefined') {
-    for (const type of ['pointerover', 'pointermove', 'pointerdown', 'pointerup']) element.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0 }))
+    for (const type of ['pointerover', 'pointermove', 'pointerdown', 'pointerup']) clickTarget.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0 }))
   }
-  for (const type of ['mouseover', 'mousemove', 'mousedown', 'mouseup']) element.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0 }))
-  if (typeof element.click === 'function') element.click()
-  else element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0 }))
+  for (const type of ['mouseover', 'mousemove', 'mousedown', 'mouseup']) clickTarget.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0 }))
+  if (typeof clickTarget.click === 'function') clickTarget.click()
+  else clickTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0 }))
+  // Persist the stable semantic leaf selector, not the generic wrapper. Replay
+  // promotes only this titled Ant-tree descendant back to its clickable wrapper.
   return { ok: true, selector: stableSelector(element), text: chosen.text, role: chosen.role, tag: chosen.tag }
 }

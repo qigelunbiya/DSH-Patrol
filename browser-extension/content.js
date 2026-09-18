@@ -361,7 +361,15 @@ function isVisible(element) {
   return true
 }
 
+function effectiveClickTarget(element) {
+  const title = compactText(element.getAttribute?.('title') || '', 160)
+  if (!title) return element
+  const treeWrapper = element.closest?.('.ant-tree-node-content-wrapper,[role="treeitem"]')
+  return treeWrapper instanceof Element && isVisible(treeWrapper) ? treeWrapper : element
+}
+
 function dispatchRealisticClick(element) {
+  element = effectiveClickTarget(element)
   const rect = element.getBoundingClientRect()
   const x = Math.max(rect.left + 1, Math.min(rect.left + rect.width / 2, rect.right - 1))
   const y = Math.max(rect.top + 1, Math.min(rect.top + rect.height / 2, rect.bottom - 1))

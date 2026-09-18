@@ -12,6 +12,10 @@ const TEXT_OUTPUT = {
 
 const STATE_TTL_MS = 3 * 60_000
 const CLICK_TOOLS = new Set(['patrol_click', 'patrol_click_target'])
+const CSS_SELECTOR_TOOLS = new Set([
+  'patrol_click', 'patrol_click_target',
+  'browser_click', 'browser_count', 'browser_snapshot', 'browser_read_page', 'browser_wait',
+])
 const PHASE_PROGRESS_TOOLS = new Set([
   'patrol_navigate', 'patrol_type', 'patrol_type_text', 'patrol_type_transient',
   'patrol_type_credential', 'patrol_type_totp_profile', 'patrol_select', 'patrol_press',
@@ -57,6 +61,7 @@ export const PATROL_PAGE_UNDERSTANDING_PROMPT = `DSH Patrol 页面理解与执�
 - taskChecklist 只描述业务动作；真正执行页面动作前，要根据 CURRENT DOM/iframe/modal/structured table 判断该业务动作对应的真实前端结构，不要把用户文字直接翻译成 nth-of-type 后盲点。
 - 唯一且明显的文本目标可直接 patrol_click_target。第一次定位失败、出现 ambiguous、同名控件有多个、目标位于表格行/弹窗/iframe 时，必须先 patrol_analyze_step，再执行一次有新证据支持的恢复方案；同一业务点击总共最多两种策略，第二种仍失败就停止并报告具体阻塞。
 - patrol_analyze_step 永远不写 Runbook。它优先把“行身份 + 行内动作”绑定，例如“目标地址 + RDP”，避免只按 [RDP] 命中多行。不要把分析器给出的 selector 再扩写成更长的 nth-of-type，也不要在分析失败后继续 browser_count/snapshot/read_page 猜选择器。
+- selector 参数只接受当前浏览器 querySelector 层支持的 CSS。严禁使用 jQuery/Playwright/XPath 方言：:contains(...)、:has-text(...)、text=...、//...、.//...、xpath=...。title-backed 树节点优先使用 CURRENT snapshot/analyze 给出的 [title="..."] 稳定 CSS；不要把“第 N 个搜索结果”误写成全局 :nth-of-type(N)。非法 selector 会在执行前被拒绝且不消耗点击策略预算。
 - 业务点击优先 patrol_click_target；它会在一次调用内完成语义定位、唯一 selector fallback、结果验证与成功记录。若物理点击已发生但结果未验证，必须先刷新 CURRENT 证据并 analyze，最多再恢复一次；两次物理点击均未验证就停止，避免重复提交。定位阶段同样受两策略上限约束，ambiguous/not-found 不能无限重试。
 - 运行时若返回“策略预算已耗尽/HARD STOP”，必须立即结束这个点击的 selector 探索；禁止继续 patrol_analyze_step、patrol_click、patrol_click_target 或低层 browser_count 去换一种说法重复同一件事。只用一条自然语言说明缺少什么证据。HARD STOP 后必须直接结束当前 assistant turn，不得继续生成“让我再尝试/换一个 selector/从截图看”等计划段落。
 - 不要为每个内部工具调用向用户重复“我再观察一下/我再试一下/让我换个选择器”。只有需要用户输入/确认、遇到不可恢复阻塞、或任务最终完成时才发自然语言说明。任何没有新工具结果或新页面证据支持的 selector 推测最多写一次；禁止在同一回复里复述相同句式、相同 DOM 猜测或相同“尝试更具体 selector”计划。
@@ -69,8 +74,10 @@ export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = 
   const states = new Map<string, PlanningGuardState>()
   return (execution: any): string | undefined => {
     const name = String(execution?.name ?? '')
-    if (!name.startsWith('patrol_')) return undefined
     const args = isRecord(execution?.arguments) ? execution.arguments : {}
+    const selectorIssue = unsupportedSelectorSyntax(name, args)
+    if (selectorIssue !== undefined) return selectorIssue
+    if (!name.startsWith('patrol_')) return undefined
     const inspectionId = cleanString(args.inspectionId)
     if (!inspectionId) return undefined
 
@@ -133,6 +140,22 @@ export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = 
     state.analyzed = false
     return undefined
   }
+}
+
+function unsupportedSelectorSyntax(name: string, args: Record<string, unknown>): string | undefined {
+  if (!CSS_SELECTOR_TOOLS.has(name)) return undefined
+  const selector = cleanString(args.selector)
+  if (!selector) return undefined
+  const unsupported = /:(?:contains|has-text)\s*\(/i.test(selector)
+    || /^text\s*=/i.test(selector)
+    || /^(?:xpath\s*=|\/\/|\.\/\/)/i.test(selector)
+  if (!unsupported) return undefined
+  return [
+    'DSH Patrol selector 语法保护：本次调用未执行。',
+    `当前浏览器 selector 层只接受 CSS，拒绝不支持的 selector ${JSON.stringify(selector)}。`,
+    '不要使用 :contains(...), :has-text(...), text=..., XPath //..././/...；请使用 CURRENT snapshot/analyze 返回的 CSS（例如唯一的 [title="..."]）。',
+    '该非法 selector 不计入业务点击的两次策略预算。',
+  ].join(' ')
 }
 
 function alignBusinessState(state: PlanningGuardState, key: string): void {

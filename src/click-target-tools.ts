@@ -23,7 +23,7 @@ const TEXT_OUTPUT = {
   render: (_args: unknown, value: string) => [{ type: 'text' as const, text: value }],
 }
 
-const AUTO_VERIFY_DELAYS_MS = [0, 160, 360, 760] as const
+const AUTO_VERIFY_DELAYS_MS = [0, 200, 500, 1000, 2000] as const
 
 interface PageState {
   url: string

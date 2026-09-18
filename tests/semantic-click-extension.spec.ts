@@ -49,6 +49,17 @@ describe('atomic semantic click extension layer', () => {
     expect(source).toContain("'[title]'")
     expect(source).toContain("'aria-label', 'title'")
     expect(source).toContain('titleText === wantedText')
+    expect(source).toContain('const physicalClickTarget = element =>')
+    expect(source).toContain("element.closest?.('.ant-tree-node-content-wrapper,[role=\"treeitem\"]')")
+    expect(source).toContain('const clickTarget = physicalClickTarget(element)')
+  })
+
+  it('replays a persisted titled Ant-tree leaf through its clickable wrapper without broad ancestor promotion', () => {
+    const source = readFileSync(join(root, 'browser-extension', 'content.js'), 'utf8')
+    expect(source).toContain('function effectiveClickTarget(element)')
+    expect(source).toContain("element.closest?.('.ant-tree-node-content-wrapper,[role=\"treeitem\"]')")
+    expect(source).toContain('if (!title) return element')
+    expect(source).toContain('element = effectiveClickTarget(element)')
   })
 
   it('can discover a plain image or SVG logo even when it has no link/button wrapper', () => {
