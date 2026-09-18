@@ -34,6 +34,15 @@
 
   const pill = status => `<span class="pill ${esc(status)}">${({ passed: '通过', failed: '失败', waiting: '等待中' })[status] || esc(status || '未知')}</span>`
   const host = value => { try { return new URL(value).host } catch { return value || '—' } }
+  const targetLabel = definition => {
+    const target = definition?.target
+    if (target?.type === 'desktop') {
+      const process = target.processName ? ` · ${target.processName}` : ''
+      return `桌面应用：${target.app || '—'}${process}`
+    }
+    return target?.url || '—'
+  }
+  const targetLabelName = definition => definition?.target?.type === 'desktop' ? '目标应用' : '目标地址'
 
   function empty(title, subtitle) {
     return `<div class="card empty"><div class="empty-title">${esc(title)}</div><div class="muted empty-sub">${esc(subtitle || '')}</div></div>`

@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const source = readFileSync(join(process.cwd(), 'browser-bridge-runtime', 'dashboard-management-client.js'), 'utf8')
+const dashboardSource = readFileSync(join(process.cwd(), 'browser-bridge-runtime', 'dashboard-client.js'), 'utf8')
 
 describe('dashboard flow-management client', () => {
   it('keeps MutationObserver patches idempotent and yields to the event loop', () => {
@@ -22,6 +23,18 @@ describe('dashboard flow-management client', () => {
     expect(source).toContain('JSON.stringify(item.definition, null, 2)')
     expect(source).toContain('复制 JSON')
     expect(source).toContain('patrol-flow-json-code')
+  })
+
+  it('keeps management buttons aligned and gives every card a stable full-row run action', () => {
+    expect(source).toContain('grid-template-columns:repeat(4,minmax(0,1fr))')
+    expect(source).toContain('.flow-manage-actions .mini-btn.run{grid-column:1/-1')
+    expect(source).not.toContain('.mini-btn.run{margin-left:auto}')
+  })
+
+  it('shows desktop checklist nodes as a visual fallback for legacy zero-step desktop flows', () => {
+    expect(dashboardSource).toContain('function diagram(definition)')
+    expect(dashboardSource).toContain("definition?.target?.type === 'desktop' && checklist.length")
+    expect(dashboardSource).toContain('桌面巡检任务 · 待录制执行参数')
   })
 
   it('shows exact per-step command arguments below the visual flow node', () => {

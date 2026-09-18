@@ -29,6 +29,9 @@ describe('Patrol records dashboard batch grouping', () => {
   })
 
   it('keeps single-run detail behavior available', () => {
+    expect(source).toContain('const targetLabel = definition =>')
+    expect(source).toContain('const targetLabelName = definition =>')
+    expect(source).toContain("definition?.target?.type === 'desktop' ? '目标应用' : '目标地址'")
     expect(source).toContain('function renderRunDetail()')
     expect(source).toContain('function detailContent(report, definition, artifacts)')
     expect(source).toContain('function artifactsView(artifacts)')

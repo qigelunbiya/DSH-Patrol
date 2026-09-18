@@ -244,10 +244,10 @@
     const style = document.createElement('style')
     style.id = 'patrol-flow-management-style'
     style.textContent = `
-      .flow-manage-actions{display:flex;gap:6px;margin:2px 0 10px;position:relative;z-index:2;flex-wrap:wrap}
-      .mini-btn{border:1px solid #e5e9f0;background:#fff;border-radius:8px;padding:5px 9px;font-size:11px;color:#475467;cursor:pointer}
+      .flow-manage-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:2px 0 10px;position:relative;z-index:2}
+      .mini-btn{border:1px solid #e5e9f0;background:#fff;border-radius:8px;padding:5px 7px;font-size:11px;color:#475467;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;white-space:nowrap}
       .mini-btn:hover{border-color:#b9c6da;background:#f8fafc}
-      .mini-btn.run{margin-left:auto}.mini-btn.run,.run-btn{color:#1d4ed8!important;border-color:#bfd0f6!important;background:#f7faff!important}
+      .flow-manage-actions .mini-btn.run{grid-column:1/-1;margin-left:0;width:100%}.mini-btn.run,.run-btn{color:#1d4ed8!important;border-color:#bfd0f6!important;background:#f7faff!important}
       .mini-btn.run:hover,.run-btn:hover{background:#eff6ff!important;border-color:#93b4ef!important}
       .mini-btn.danger,.danger-btn{color:#c43225!important;border-color:#f0c7c3!important}
       .mini-btn.danger:hover,.danger-btn:hover{background:#fef3f2!important}

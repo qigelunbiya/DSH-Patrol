@@ -174,7 +174,7 @@
     </section>
     <section class="card panel"><h3 class="section-title">任务清单</h3>${taskChecklistView(definition)}</section>
     <div class="detail-grid">
-      <section class="card panel"><h3 class="section-title">流程图</h3><div class="steps">${diagram(definition.steps || [])}</div></section>
+      <section class="card panel"><h3 class="section-title">流程图</h3><div class="steps">${diagram(definition)}</div></section>
       <section class="card panel"><h3 class="section-title">流程信息</h3>
         ${info('产物类型', (definition.artifacts || []).join('、') || '未指定')}
         ${info('计划任务', definition.schedule?.enabled ? (definition.schedule.cron || '已启用') : '未启用')}
@@ -198,18 +198,30 @@
     return `<ol style="margin:0;padding-left:24px;display:grid;gap:8px">${items.map(item => `<li>${esc(item)}</li>`).join('')}</ol>`
   }
 
-  function diagram(steps) {
-    if (!steps.length) return empty('暂无步骤', '该流程还没有可复用步骤。')
-    return steps.map((step, index) => `<div class="step">
-      <div class="num">${index + 1}</div>
-      <details class="node">
-        <summary><div class="node-head"><div><div class="node-name">${esc(step.name || step.id)}</div><div class="tiny muted node-tool">${esc(step.kind === 'checkpoint' ? '人工确认' : step.tool || '自动步骤')}</div></div><span class="chip">${step.kind === 'checkpoint' ? '检查点' : '自动执行'}</span></div></summary>
-        ${step.notes ? `<div class="muted node-note">${esc(step.notes)}</div>` : ''}
-        ${step.expectation ? `<span class="chip">校验 ${esc(step.expectation.mode)}</span>` : ''}
-        ${step.when ? '<span class="chip">条件分支</span>' : ''}
-        ${step.artifact ? `<span class="chip">产物 ${esc(step.artifact)}</span>` : ''}
-      </details>
-    </div>`).join('')
+  function diagram(definition) {
+    const steps = Array.isArray(definition?.steps) ? definition.steps : []
+    if (steps.length) {
+      return steps.map((step, index) => `<div class="step">
+        <div class="num">${index + 1}</div>
+        <details class="node">
+          <summary><div class="node-head"><div><div class="node-name">${esc(step.name || step.id)}</div><div class="tiny muted node-tool">${esc(step.kind === 'checkpoint' ? '人工确认' : step.tool || '自动步骤')}</div></div><span class="chip">${step.kind === 'checkpoint' ? '检查点' : '自动执行'}</span></div></summary>
+          ${step.notes ? `<div class="muted node-note">${esc(step.notes)}</div>` : ''}
+          ${step.expectation ? `<span class="chip">校验 ${esc(step.expectation.mode)}</span>` : ''}
+          ${step.when ? '<span class="chip">条件分支</span>' : ''}
+          ${step.artifact ? `<span class="chip">产物 ${esc(step.artifact)}</span>` : ''}
+        </details>
+      </div>`).join('')
+    }
+    const checklist = Array.isArray(definition?.metadata?.taskChecklist) ? definition.metadata.taskChecklist : []
+    if (definition?.target?.type === 'desktop' && checklist.length) {
+      return checklist.map((item, index) => `<div class="step checklist-step">
+        <div class="num">${index + 1}</div>
+        <div class="node">
+          <div class="node-head"><div><div class="node-name">${esc(item)}</div><div class="tiny muted node-tool">桌面巡检任务 · 待录制执行参数</div></div><span class="chip">任务清单</span></div>
+        </div>
+      </div>`).join('')
+    }
+    return empty('暂无步骤', '该流程还没有可复用步骤。')
   }
 
   function recentRuns(item) {

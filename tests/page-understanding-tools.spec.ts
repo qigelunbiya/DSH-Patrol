@@ -30,16 +30,16 @@ describe('Patrol page understanding planner', () => {
     expect(plans[0]).toMatchObject({ kind: 'semantic', selector: 'top-frame::#workbench', locatorText: '我的工作台' })
   })
 
-  it('prefers a unique exact title-backed tree target over nested same-text wrappers', () => {
+  it('uses Ant-tree hierarchy to disambiguate same-text 未分组 nodes', () => {
     const plans = analyzePageEvidence('点击主机下的未分组', '未分组', '', [
-      { tag: 'span', role: '', text: '未分组', selector: 'top-frame::span[title="未分组"]' },
-      { tag: 'span', role: '', text: '未分组', selector: 'top-frame::div:nth-of-type(2) > span:nth-of-type(2)' },
-      { tag: 'div', role: '', text: '主机 未分组', selector: 'top-frame::.ant-tree-list-holder-inner' },
-      { tag: 'span', role: '', text: '工单运维', selector: 'top-frame::span[title="工单运维"]' },
+      { tag: 'span', role: '', text: '未分组', selector: 'top-frame::div.host-tree span[title="未分组"]', context: '主机 > 未分组', evidence: 'title-backed-tree-action' },
+      { tag: 'span', role: '', text: '未分组', selector: 'top-frame::div.database-tree span[title="未分组"]', context: '数据库 > 未分组', evidence: 'title-backed-tree-action' },
+      { tag: 'span', role: '', text: '未分组', selector: 'top-frame::div.app-tree span[title="未分组"]', context: '应用 > 未分组', evidence: 'title-backed-tree-action' },
+      { tag: 'span', role: '', text: '工单运维', selector: 'top-frame::span[title="工单运维"]', context: '工单运维', evidence: 'title-backed-tree-action' },
     ])
     expect(plans[0]).toMatchObject({
       kind: 'semantic',
-      selector: 'top-frame::span[title="未分组"]',
+      selector: 'top-frame::div.host-tree span[title="未分组"]',
       locatorText: '未分组',
     })
   })

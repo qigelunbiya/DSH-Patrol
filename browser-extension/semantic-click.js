@@ -185,8 +185,45 @@ async function semanticClickPageCommand(mode, spec) {
   const selectorHint = String(spec.selectorHint || '').replace(/^top-frame::/, '').replace(/^frame-url\([^)]*\)::/, '')
   const ipTokens = String(spec.task || '').match(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g) || []
   const actionTokens = String(spec.task || '').match(/\b(?:RDP|SSH|VNC|SFTP|FTP|HTTP|HTTPS)\b/gi) || []
+  const taskContextTokens = String(spec.task || '')
+    .replace(/(?:下面的|下的|中的|里的|之下)/g, ' ')
+    .replace(/[>→/\\|,:：，。()（）\[\]\-]+/g, ' ')
+    .split(/\s+/)
+    .map(token => token.replace(/^(?:请)?(?:点击|点一下|打开|选择|进入|查看|访问|展开)+/g, '').replace(/(?:节点|菜单项|菜单|选项)$/g, '').trim())
+    .filter(token => token.length >= 2 && token.length <= 30)
   const wantsLogo = /logo|徽标|标志/i.test(String(spec.task || ''))
   const wantsMenu = /菜单|侧栏|汉堡|导航/i.test(String(spec.task || ''))
+  const treeNodeLabel = node => compact(node?.querySelector?.('[title]')?.getAttribute?.('title') || node?.querySelector?.('.ant-tree-title')?.innerText || node?.innerText || node?.textContent || '')
+  const treeNodeDepth = node => {
+    const ariaLevel = Number(node?.getAttribute?.('aria-level'))
+    if (Number.isFinite(ariaLevel) && ariaLevel > 0) return ariaLevel - 1
+    const indent = node?.querySelector?.(':scope > .ant-tree-indent')
+    return indent instanceof Element ? indent.children.length : 0
+  }
+  const treeContext = element => {
+    const node = element.closest?.('.ant-tree-treenode,[role="treeitem"]')
+    if (!(node instanceof Element)) return ''
+    const tree = node.closest?.('.ant-tree,[role="tree"]') || node.parentElement
+    if (!(tree instanceof Element)) return treeNodeLabel(node)
+    const nodes = [...tree.querySelectorAll('.ant-tree-treenode,[role="treeitem"]')].filter(visible)
+    const index = nodes.indexOf(node)
+    const path = [treeNodeLabel(node)].filter(Boolean)
+    let wantedDepth = treeNodeDepth(node)
+    for (let cursor = index - 1; cursor >= 0 && wantedDepth > 0; cursor -= 1) {
+      const candidate = nodes[cursor]
+      const depth = treeNodeDepth(candidate)
+      if (depth < wantedDepth) {
+        const label = treeNodeLabel(candidate)
+        if (label) path.unshift(label)
+        wantedDepth = depth
+      }
+    }
+    if (path.length === 1 && index > 0) {
+      const previous = treeNodeLabel(nodes[index - 1])
+      if (previous && previous !== path[0]) path.unshift(previous)
+    }
+    return compact(path.join(' > '))
+  }
 
   const scored = candidates.map(element => {
     const text = actionText(element)
@@ -234,9 +271,12 @@ async function semanticClickPageCommand(mode, spec) {
       ].join(' ')
       if (/menu|sidebar|hamburger|nav|侧栏|菜单|导航/i.test(menuEvidence)) score += 120
     }
-    const context = compact(element.closest?.('tr,li,form,nav,[role="dialog"],.ant-modal-content,.el-dialog')?.innerText || '')
+    const treePath = treeContext(element)
+    const context = compact(treePath || element.closest?.('tr,li,form,nav,[role="dialog"],.ant-modal-content,.el-dialog,.ant-tree,[role="tree"]')?.innerText || '')
     for (const token of ipTokens) if (context.includes(token)) score += 90
     for (const token of actionTokens) if (normalize(text).includes(normalize(token)) || normalize(context).includes(normalize(token))) score += 35
+    for (const token of taskContextTokens) if (normalize(context).includes(normalize(token))) score += 24
+    if (treePath) score += 12
     if (!wantedText && !wantsLogo && task && normalize(`${text} ${context}`).includes(task)) score += 20
     return { element, text, role, tag, score, context }
   }).filter(Boolean).filter(item => item.score > 0)

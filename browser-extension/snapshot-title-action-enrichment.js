@@ -83,6 +83,45 @@ function snapshotTitleActionCollect() {
     const target = element.closest?.('.ant-tree-node-content-wrapper,[role="treeitem"]')
     return target instanceof Element && visible(target) ? target : null
   }
+  const treeNodeLabel = node => compact(
+    node?.querySelector?.('[title]')?.getAttribute?.('title')
+      || node?.querySelector?.('.ant-tree-title')?.innerText
+      || node?.innerText
+      || node?.textContent
+      || '',
+    100,
+  )
+  const treeNodeDepth = node => {
+    if (!(node instanceof Element)) return 0
+    const ariaLevel = Number(node.getAttribute('aria-level'))
+    if (Number.isFinite(ariaLevel) && ariaLevel > 0) return ariaLevel - 1
+    const indent = node.querySelector(':scope > .ant-tree-indent')
+    return indent instanceof Element ? indent.children.length : 0
+  }
+  const treeContext = element => {
+    const node = element.closest?.('.ant-tree-treenode,[role="treeitem"]')
+    if (!(node instanceof Element)) return ''
+    const tree = node.closest?.('.ant-tree,[role="tree"]') || node.parentElement
+    if (!(tree instanceof Element)) return treeNodeLabel(node)
+    const nodes = [...tree.querySelectorAll('.ant-tree-treenode,[role="treeitem"]')].filter(visible)
+    const index = nodes.indexOf(node)
+    const path = [treeNodeLabel(node)].filter(Boolean)
+    let wantedDepth = treeNodeDepth(node)
+    for (let cursor = index - 1; cursor >= 0 && wantedDepth > 0; cursor -= 1) {
+      const candidate = nodes[cursor]
+      const depth = treeNodeDepth(candidate)
+      if (depth < wantedDepth) {
+        const label = treeNodeLabel(candidate)
+        if (label) path.unshift(label)
+        wantedDepth = depth
+      }
+    }
+    if (path.length === 1 && index > 0) {
+      const previous = treeNodeLabel(nodes[index - 1])
+      if (previous && previous !== path[0]) path.unshift(previous)
+    }
+    return compact(path.join(' > ') || tree.innerText || tree.textContent || '', 260)
+  }
   const pathSelector = element => {
     if (element.id) return `#${cssEscape(element.id)}`
     const title = element.getAttribute('title')
@@ -145,7 +184,7 @@ function snapshotTitleActionCollect() {
         ...(explicitRole ? { role: explicitRole } : {}),
         text: compact(element.getAttribute('title') || element.innerText || element.textContent || '', 160),
         selector: pathSelector(element),
-        context: compact(row?.innerText || row?.textContent || '', 260),
+        context: compact(row?.innerText || row?.textContent || treeContext(element), 260),
         evidence: treeActionTarget(element) === null ? 'title-backed-custom-action' : 'title-backed-tree-action',
       }
     }),
