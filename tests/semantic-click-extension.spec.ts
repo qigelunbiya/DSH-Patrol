@@ -41,6 +41,16 @@ describe('atomic semantic click extension layer', () => {
     expect(source).toContain('context.includes(token)')
   })
 
+  it('can resolve title-backed custom tree nodes such as Ant Design tree labels', () => {
+    const source = readFileSync(join(root, 'browser-extension', 'semantic-click.js'), 'utf8')
+
+    expect(source).toContain("'[role="treeitem"]'")
+    expect(source).toContain("'.ant-tree-node-content-wrapper'")
+    expect(source).toContain("'[title]'")
+    expect(source).toContain("'aria-label', 'title'")
+    expect(source).toContain('titleText === wantedText')
+  })
+
   it('can discover a plain image or SVG logo even when it has no link/button wrapper', () => {
     const source = readFileSync(join(root, 'browser-extension', 'semantic-click.js'), 'utf8')
 
