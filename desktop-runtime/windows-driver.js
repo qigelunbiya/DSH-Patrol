@@ -193,6 +193,116 @@ export class WindowsDesktopDriver {
     }
   }
 
+  async waitForTarget(args = {}, exec) {
+    const source = args.source === 'uia' || args.source === 'ocr' ? args.source : 'auto'
+    const timeoutMs = boundedInteger(args.timeoutMs, 10000, 100, 120000)
+    const pollMs = boundedInteger(args.pollMs, 300, 100, 5000)
+    const requireUnique = args.requireUnique !== false
+    const text = String(args.text ?? '').trim()
+    const hasUiaSelector = ['name', 'automationId', 'controlType', 'className']
+      .some(key => typeof args[key] === 'string' && args[key].trim() !== '')
+    if (!hasUiaSelector && !text) {
+      throw new Error('desktop_wait_for_target requires text or a UI Automation selector')
+    }
+    if (source === 'ocr' && !text) {
+      throw new Error('desktop_wait_for_target source=ocr requires text')
+    }
+
+    const windowArgs = Object.fromEntries(
+      ['processName', 'title', 'titleContains']
+        .filter(key => typeof args[key] === 'string' && args[key].trim() !== '')
+        .map(key => [key, args[key]]),
+    )
+    const startedAt = Date.now()
+    const waitCaptureName = typeof args.fileName === 'string' && args.fileName.trim() !== ''
+      ? args.fileName
+      : `desktop-wait-${randomUUID().slice(0, 8)}`
+    let attempts = 0
+    let lastUiaCount = 0
+    let lastOcrCount = 0
+    let lastError = ''
+
+    while (true) {
+      attempts += 1
+
+      if (Object.keys(windowArgs).length > 0) {
+        try {
+          await this.run('activate-window', windowArgs, exec)
+        } catch (error) {
+          lastError = `window activation: ${String(error?.message ?? error)}`
+        }
+      }
+
+      if (source !== 'ocr') {
+        try {
+          const snapshot = await this.run('snapshot', {
+            ...windowArgs,
+            maxElements: boundedInteger(args.maxElements, 500, 1, 1000),
+            includeOffscreen: false,
+          }, exec)
+          const uiArgs = {
+            ...args,
+            ...(typeof args.name === 'string' && args.name.trim() !== '' ? {} : text ? { name: text } : {}),
+          }
+          const matches = findUiaTargetMatches(snapshot.elements, uiArgs)
+          lastUiaCount = matches.length
+          if (matches.length > 0 && (!requireUnique || matches.length === 1)) {
+            return {
+              ok: true,
+              method: 'uia',
+              attempts,
+              elapsedMs: Date.now() - startedAt,
+              matchCount: matches.length,
+              target: matches[0],
+              window: snapshot.window,
+            }
+          }
+        } catch (error) {
+          lastError = `UIA: ${String(error?.message ?? error)}`
+        }
+      }
+
+      if (source !== 'uia' && text) {
+        try {
+          const ocr = await this.ocr({ ...args, fileName: waitCaptureName }, exec)
+          const matches = findOcrTextMatches(ocr.lines, {
+            text,
+            match: args.match,
+            caseSensitive: args.caseSensitive,
+          })
+          lastOcrCount = matches.length
+          if (matches.length > 0 && (!requireUnique || matches.length === 1)) {
+            return {
+              ok: true,
+              method: 'ocr',
+              attempts,
+              elapsedMs: Date.now() - startedAt,
+              matchCount: matches.length,
+              target: matches[0],
+              screenshotPath: ocr.screenshotPath,
+              screenshotBounds: ocr.screenshotBounds,
+              languagesTried: ocr.languagesTried,
+            }
+          }
+        } catch (error) {
+          lastError = `OCR: ${String(error?.message ?? error)}`
+        }
+      }
+
+      const elapsedMs = Date.now() - startedAt
+      if (elapsedMs >= timeoutMs) {
+        const uniqueness = requireUnique ? 'exactly one matching target' : 'at least one matching target'
+        const evidence = [
+          source === 'ocr' ? '' : `uiaMatches=${lastUiaCount}`,
+          source === 'uia' ? '' : `ocrMatches=${lastOcrCount}`,
+          lastError,
+        ].filter(Boolean).join('; ')
+        throw new Error(`desktop_wait_for_target timed out after ${elapsedMs}ms waiting for ${uniqueness}; ${evidence || 'no matching CURRENT evidence'}`)
+      }
+      await waitWithSignal(Math.min(pollMs, timeoutMs - elapsedMs), exec?.signal)
+    }
+  }
+
   async listGuides(exec) {
     const roots = guideRoots(exec)
     const names = new Set()
@@ -330,6 +440,68 @@ export function normalizeOcrObservations(observations, shot, maxLines = 240) {
     }
   }
   return out
+}
+
+export function findUiaTargetMatches(elements, args = {}) {
+  const rows = Array.isArray(elements) ? elements : []
+  const match = args.match === 'contains' ? 'contains' : 'exact'
+  const caseSensitive = args.caseSensitive === true
+  const requestedName = String(args.name ?? '').trim()
+  const requestedAutomationId = String(args.automationId ?? '').trim()
+  const requestedControlType = String(args.controlType ?? '').trim()
+  const requestedClassName = String(args.className ?? '').trim()
+  const normalize = value => caseSensitive ? String(value ?? '') : String(value ?? '').toLocaleLowerCase()
+  const compare = (actual, expected, mode = 'exact') => {
+    if (!expected) return true
+    const left = normalize(actual)
+    const right = normalize(expected)
+    return mode === 'contains' ? left.includes(right) : left === right
+  }
+  return rows.filter(row =>
+    compare(row?.name, requestedName, match)
+    && compare(row?.automationId, requestedAutomationId)
+    && compare(row?.controlType, requestedControlType)
+    && compare(row?.className, requestedClassName))
+}
+
+export function findOcrTextMatches(lines, args = {}) {
+  const rows = Array.isArray(lines) ? lines : []
+  const text = String(args.text ?? '').trim()
+  if (!text) return []
+  const match = args.match === 'contains' ? 'contains' : 'exact'
+  const caseSensitive = args.caseSensitive === true
+  const normalize = value => caseSensitive ? String(value ?? '') : String(value ?? '').toLocaleLowerCase()
+  const needle = normalize(text)
+  return rows.filter(line => {
+    const haystack = normalize(line?.text)
+    return match === 'contains' ? haystack.includes(needle) : haystack === needle
+  })
+}
+
+function boundedInteger(value, fallback, min, max) {
+  const numeric = Number(value)
+  if (!Number.isInteger(numeric)) return fallback
+  return Math.min(max, Math.max(min, numeric))
+}
+
+async function waitWithSignal(milliseconds, signal) {
+  if (milliseconds <= 0) return
+  if (signal?.aborted) throw signal.reason ?? new Error('desktop wait aborted')
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup()
+      resolve()
+    }, milliseconds)
+    const onAbort = () => {
+      cleanup()
+      reject(signal.reason ?? new Error('desktop wait aborted'))
+    }
+    const cleanup = () => {
+      clearTimeout(timer)
+      signal?.removeEventListener?.('abort', onAbort)
+    }
+    signal?.addEventListener?.('abort', onAbort, { once: true })
+  })
 }
 
 function screenshotBounds(shot) {

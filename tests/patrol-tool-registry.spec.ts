@@ -26,6 +26,7 @@ const REGISTERED_TOOL_SOURCES = [
   'src/handoff-tools.ts',
   'src/edit-tools.ts',
   'src/recovery-tools.ts',
+  'src/desktop-action-tools.ts',
   'src/workspace-tools.ts',
   'src/excel-tools-v5.ts',
   'src/scheduler.ts',

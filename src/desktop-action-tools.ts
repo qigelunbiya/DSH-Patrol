@@ -51,6 +51,10 @@ export function registerPatrolDesktopActionTools(
       className: { type: 'string' },
       match: { type: 'string', enum: ['exact', 'contains'] },
       caseSensitive: { type: 'boolean' },
+      requireUnique: { type: 'boolean' },
+      source: { type: 'string', enum: ['auto', 'uia', 'ocr'] },
+      timeoutMs: { type: 'integer' },
+      pollMs: { type: 'integer' },
       index: { type: 'integer' },
       x: { type: 'integer' },
       y: { type: 'integer' },
@@ -67,7 +71,7 @@ export function registerPatrolDesktopActionTools(
       milliseconds: { type: 'integer' },
       scope: { type: 'string', enum: ['active-window', 'screen'] },
       fileName: { type: 'string' },
-      languages: { type: 'array', items: { type: 'string' }, description: 'Optional OCR language passes for action=ocr.' },
+      languages: { type: 'array', items: { type: 'string' }, description: 'Optional OCR language passes for action=ocr, click-ocr-text, or wait-for-target.' },
       paths: { type: 'array', items: { type: 'string' } },
       storedPaths: {
         type: 'array',
@@ -204,6 +208,11 @@ function desktopArguments(action: DesktopAction, args: Record<string, unknown>, 
       add('key', args.key); break
     case 'wait':
       add('milliseconds', args.milliseconds); break
+    case 'wait-for-target':
+      add('source', args.source); add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
+      add('name', args.name); add('automationId', args.automationId); add('controlType', args.controlType); add('className', args.className)
+      add('text', args.text); add('match', args.match); add('caseSensitive', args.caseSensitive); add('requireUnique', args.requireUnique)
+      add('scope', args.scope); add('languages', args.languages); add('maxElements', args.maxElements); add('timeoutMs', args.timeoutMs); add('pollMs', args.pollMs); break
     case 'screenshot':
       add('scope', args.scope); add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
       add('fileName', args.fileName); break
@@ -233,6 +242,11 @@ function validateRequiredDesktopArguments(action: DesktopAction, args: JsonObjec
   const requireNumber = (key: string) => {
     if (typeof args[key] !== 'number' || !Number.isInteger(args[key] as number)) throw new Error(`${action} requires integer ${key}`)
   }
+  const requireRange = (key: string, min: number, max: number) => {
+    requireNumber(key)
+    const value = args[key] as number
+    if (value < min || value > max) throw new Error(`${action} ${key} must be between ${min} and ${max}`)
+  }
   switch (action) {
     case 'launch-app': requireText('file'); break
     case 'open-path':
@@ -253,6 +267,16 @@ function validateRequiredDesktopArguments(action: DesktopAction, args: JsonObjec
     case 'hotkey': requireText('combo'); break
     case 'press': requireText('key'); break
     case 'wait': requireNumber('milliseconds'); break
+    case 'wait-for-target':
+      if (![args.name, args.automationId, args.controlType, args.className, args.text]
+        .some(value => typeof value === 'string' && value.trim() !== '')) {
+        throw new Error('wait-for-target requires text or a UI Automation selector')
+      }
+      if (args.source === 'ocr') requireText('text')
+      if (args.timeoutMs !== undefined) requireRange('timeoutMs', 100, 120000)
+      if (args.pollMs !== undefined) requireRange('pollMs', 100, 5000)
+      if (args.maxElements !== undefined) requireRange('maxElements', 1, 1000)
+      break
     case 'set-clipboard-files':
       if (!Array.isArray(args.paths) || args.paths.length === 0) throw new Error('set-clipboard-files requires paths')
       break

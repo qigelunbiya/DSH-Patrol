@@ -99,6 +99,54 @@ describe('native desktop inspection targets', () => {
     })).toThrow(/name, automationId, controlType, or className/i)
   })
 
+  it('validates replayable semantic desktop waits without historical coordinates', () => {
+    const base = {
+      schemaVersion: '0.2' as const,
+      id: 'wechat-wait-target',
+      name: '等待微信目标',
+      description: 'semantic desktop wait',
+      status: 'draft' as const,
+      target: { type: 'desktop' as const, app: '微信', processName: 'WeChat' },
+      expectedResult: '联系人出现',
+      artifacts: [],
+      auth: { mode: 'none' as const },
+      schedule: null,
+      metadata: { createdAt: '2026-09-18T03:00:00.000Z', updatedAt: '2026-09-18T03:00:00.000Z' },
+    }
+
+    expect(() => assertInspectionDefinition({
+      ...base,
+      steps: [{
+        id: 'step-001',
+        kind: 'tool',
+        name: '等待联系人出现',
+        tool: 'desktop_wait_for_target',
+        arguments: {
+          source: 'auto',
+          text: '测试联系人',
+          match: 'exact',
+          requireUnique: true,
+          processName: 'WeChat',
+          timeoutMs: 10000,
+          pollMs: 300,
+        },
+        recordedAt: '2026-09-18T03:00:00.000Z',
+      }],
+    })).not.toThrow()
+
+    expect(() => assertInspectionDefinition({
+      ...base,
+      steps: [{
+        id: 'step-001',
+        kind: 'tool',
+        name: '错误等待',
+        tool: 'desktop_wait_for_target',
+        arguments: { source: 'ocr', text: '测试联系人', timeoutMs: 50 },
+        recordedAt: '2026-09-18T03:00:00.000Z',
+      }],
+    })).toThrow(/timeoutMs must be between 100 and 120000/i)
+  })
+
   it('creates a desktop-only draft without inventing targetUrl', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-desktop-target-'))
     roots.push(root)
