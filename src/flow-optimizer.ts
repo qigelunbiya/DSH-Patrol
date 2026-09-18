@@ -414,9 +414,14 @@ function isSupersededTypingStep(all: readonly InspectionStep[], index: number, s
   if (!identity) return false
   for (let cursor = index + 1; cursor < all.length; cursor += 1) {
     const next = all[cursor]!
+    if (next.kind === 'tool' && isTypingTool(next.tool)) {
+      if (typingTargetIdentity(next) === identity) return true
+      // A targeted desktop input to a different control establishes its own
+      // focus boundary. Do not collapse an earlier input across that action.
+      if (next.tool === 'desktop_type_target') return false
+      continue
+    }
     if (isInteractionBoundary(next)) return false
-    if (next.kind !== 'tool' || !isTypingTool(next.tool)) continue
-    if (typingTargetIdentity(next) === identity) return true
   }
   return false
 }
