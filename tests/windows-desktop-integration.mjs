@@ -10,6 +10,8 @@ if (process.platform !== 'win32') {
 
 const TITLE = 'DSH Patrol Desktop Smoke'
 const TEXT = 'DSH Patrol UIA integration'
+const HOTKEY_TEXT = 'window-targeted input'
+const PASTE_SUFFIX = ' + paste'
 const fixture = fileURLToPath(new URL('./windows-desktop-fixture.ps1', import.meta.url))
 const powershell = process.env.DSH_PATROL_POWERSHELL || 'powershell.exe'
 const child = spawn(powershell, [
@@ -77,6 +79,71 @@ try {
     throw new Error(`value-aware semantic wait failed: ${JSON.stringify(ready)}`)
   }
 
+  const selected = await driver.run('hotkey', {
+    title: TITLE,
+    combo: 'Ctrl+A',
+  })
+  if (selected.window?.title !== TITLE) {
+    throw new Error(`targeted hotkey did not activate fixture window: ${JSON.stringify(selected)}`)
+  }
+
+  const relativeTyped = await driver.run('type-text', {
+    title: TITLE,
+    text: HOTKEY_TEXT,
+    clear: false,
+  })
+  if (relativeTyped.window?.title !== TITLE || relativeTyped.chars !== HOTKEY_TEXT.length) {
+    throw new Error(`targeted type-text did not report fixture window: ${JSON.stringify(relativeTyped)}`)
+  }
+  await driver.waitForTarget({
+    source: 'uia',
+    title: TITLE,
+    ...selector,
+    value: HOTKEY_TEXT,
+    match: 'exact',
+    requireUnique: true,
+    timeoutMs: 5000,
+    pollMs: 200,
+  })
+
+  await driver.run('set-clipboard-text', { text: PASTE_SUFFIX })
+  const pasted = await driver.run('paste', { title: TITLE })
+  if (pasted.window?.title !== TITLE) {
+    throw new Error(`targeted paste did not activate fixture window: ${JSON.stringify(pasted)}`)
+  }
+  const pastedText = `${HOTKEY_TEXT}${PASTE_SUFFIX}`
+  await driver.waitForTarget({
+    source: 'uia',
+    title: TITLE,
+    ...selector,
+    value: pastedText,
+    match: 'exact',
+    requireUnique: true,
+    timeoutMs: 5000,
+    pollMs: 200,
+  })
+
+  const pressed = await driver.run('press', { title: TITLE, key: 'Enter' })
+  if (pressed.window?.title !== TITLE) {
+    throw new Error(`targeted key press did not activate fixture window: ${JSON.stringify(pressed)}`)
+  }
+  await driver.waitForTarget({
+    source: 'uia',
+    title: TITLE,
+    name: `applied:${pastedText}`,
+    match: 'exact',
+    requireUnique: true,
+    timeoutMs: 5000,
+    pollMs: 200,
+  })
+
+  await driver.run('type-target', {
+    title: TITLE,
+    ...selector,
+    text: TEXT,
+    clear: true,
+  })
+
   const clicked = await driver.run('click-target', {
     title: TITLE,
     name: 'Apply Smoke',
@@ -109,6 +176,12 @@ try {
     semanticWait: ready.method,
     clickMethod: clicked.method,
     postClickWait: applied.method,
+    targetedKeyboard: {
+      hotkeyWindow: selected.window?.title,
+      typeTextWindow: relativeTyped.window?.title,
+      pasteWindow: pasted.window?.title,
+      pressWindow: pressed.window?.title,
+    },
     screenshot: { width: shot.width, height: shot.height },
   }, null, 2))
 } finally {

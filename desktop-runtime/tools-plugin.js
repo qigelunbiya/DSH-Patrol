@@ -148,10 +148,10 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_type_text',
-      description: 'Type text into the focused desktop control using clipboard paste. Optional clear=true sends Ctrl+A first.',
-      parameters: { text: reqStr, clear: bool },
+      description: 'Type text into the focused desktop control using clipboard paste. Optional processName/title/titleContains activates the intended top-level window first; clear=true sends Ctrl+A before paste. Prefer desktop_type_target when the input control itself can be identified.',
+      parameters: { text: reqStr, clear: bool, processName: str, title: str, titleContains: str },
       output: jsonOutput('Desktop text typed'),
-      execute: async (args, exec) => await driver.run('type-text', { text: args.text, clear: args.clear ?? false }, exec),
+      execute: async (args, exec) => await driver.run('type-text', compact({ text: args.text, clear: args.clear ?? false, processName: args.processName, title: args.title, titleContains: args.titleContains }), exec),
     }),
     defineTool({
       name: 'desktop_type_target',
@@ -174,17 +174,17 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_hotkey',
-      description: 'Send a desktop keyboard shortcut such as Ctrl+F, Ctrl+S, Ctrl+Shift+S, Alt+F4. Supports Ctrl/Alt/Shift modifiers.',
-      parameters: { combo: reqStr },
+      description: 'Send a desktop keyboard shortcut such as Ctrl+F or Ctrl+S. Optional processName/title/titleContains activates the intended top-level window immediately before the shortcut, which is recommended for replayable Runbooks.',
+      parameters: { combo: reqStr, processName: str, title: str, titleContains: str },
       output: jsonOutput('Desktop hotkey sent'),
-      execute: async (args, exec) => await driver.run('hotkey', { combo: args.combo }, exec),
+      execute: async (args, exec) => await driver.run('hotkey', compact({ combo: args.combo, processName: args.processName, title: args.title, titleContains: args.titleContains }), exec),
     }),
     defineTool({
       name: 'desktop_press',
-      description: 'Press one desktop key such as Enter, Esc, Tab, Delete, arrows, or F1-F12.',
-      parameters: { key: reqStr },
+      description: 'Press one desktop key such as Enter, Esc, Tab, Delete, arrows, or F1-F12. Optional processName/title/titleContains activates the intended top-level window immediately before the key press.',
+      parameters: { key: reqStr, processName: str, title: str, titleContains: str },
       output: jsonOutput('Desktop key pressed'),
-      execute: async (args, exec) => await driver.run('press', { key: args.key }, exec),
+      execute: async (args, exec) => await driver.run('press', compact({ key: args.key, processName: args.processName, title: args.title, titleContains: args.titleContains }), exec),
     }),
     defineTool({
       name: 'desktop_wait',
@@ -262,10 +262,10 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_paste',
-      description: 'Send Ctrl+V to the active desktop application.',
-      parameters: {},
+      description: 'Send Ctrl+V to a desktop application. Optional processName/title/titleContains activates the intended top-level window immediately before paste; use these selectors in replayable cross-application flows.',
+      parameters: { processName: str, title: str, titleContains: str },
       output: jsonOutput('Desktop paste sent'),
-      execute: async (_args, exec) => await driver.run('paste', {}, exec),
+      execute: async (args, exec) => await driver.run('paste', compact(args), exec),
     }),
     defineTool({
       name: 'desktop_close_window',

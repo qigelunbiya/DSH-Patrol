@@ -70,6 +70,20 @@ patrol_desktop_action
 
 raw `desktop_*` 成功只代表 CURRENT 操作成功，并不等于该动作已经进入 Runbook。
 
+### 键盘焦点与跨应用切换
+
+`desktop_hotkey`、`desktop_press`、`desktop_type_text`、`desktop_paste` 都允许附带稳定的顶层窗口 selector：
+
+```text
+processName
+title
+titleContains
+```
+
+当这些 selector 存在时，Desktop Runtime 会在发送键盘输入/粘贴前重新解析并激活目标窗口，并在结果中返回实际 window 记录。跨应用 Runbook 应优先这样保存，避免“浏览器 → 微信 → WPS”切换后把 Ctrl+V、Enter 或快捷键发送给错误窗口。
+
+如果输入框本身可以被 UI Automation 唯一定位，继续优先 `desktop_type_target`；window-targeted `desktop_type_text` 只是比纯粹依赖当前前台焦点更安全的后备。
+
 ### 语义等待
 
 当下一状态有明确控件或文字时，优先：

@@ -211,6 +211,64 @@ describe('recordable desktop actions', () => {
     })
   })
 
+  it('persists stable target-window selectors for focus-relative keyboard and paste actions', async () => {
+    const { store, action, exec, dispatched } = await setup()
+
+    await action.execute({
+      inspectionId: 'wechat-semantic-wait',
+      stepName: '打开微信搜索',
+      action: 'hotkey',
+      processName: 'WeChat',
+      titleContains: '微信',
+      combo: 'Ctrl+F',
+    }, exec)
+    await action.execute({
+      inspectionId: 'wechat-semantic-wait',
+      stepName: '输入搜索词',
+      action: 'type-text',
+      processName: 'WeChat',
+      titleContains: '微信',
+      text: '测试联系人',
+      clear: true,
+    }, exec)
+    await action.execute({
+      inspectionId: 'wechat-semantic-wait',
+      stepName: '粘贴剪贴板',
+      action: 'paste',
+      processName: 'WeChat',
+      titleContains: '微信',
+    }, exec)
+    await action.execute({
+      inspectionId: 'wechat-semantic-wait',
+      stepName: '确认发送',
+      action: 'press',
+      processName: 'WeChat',
+      titleContains: '微信',
+      key: 'Enter',
+    }, exec)
+
+    expect(dispatched.map(item => item.tool)).toEqual([
+      'desktop_hotkey',
+      'desktop_type_text',
+      'desktop_paste',
+      'desktop_press',
+    ])
+    for (const item of dispatched) {
+      expect(item.args).toMatchObject({
+        processName: 'WeChat',
+        titleContains: '微信',
+      })
+    }
+
+    const saved = await store.load('wechat-semantic-wait')
+    expect(saved.steps.map(step => step.kind === 'tool' ? [step.tool, step.arguments] : [])).toEqual([
+      ['desktop_hotkey', { processName: 'WeChat', titleContains: '微信', combo: 'Ctrl+F' }],
+      ['desktop_type_text', { processName: 'WeChat', titleContains: '微信', text: '测试联系人', clear: true }],
+      ['desktop_paste', { processName: 'WeChat', titleContains: '微信' }],
+      ['desktop_press', { processName: 'WeChat', titleContains: '微信', key: 'Enter' }],
+    ])
+  })
+
   it('rejects invalid wait bounds before dispatching or recording', async () => {
     const { store, action, exec, dispatched } = await setup()
 

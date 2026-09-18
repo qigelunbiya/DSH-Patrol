@@ -289,6 +289,19 @@ function Focus-Target($target) {
   }
 }
 
+function Activate-RequestedWindow($request) {
+  $hasSelector = @('processId','hwnd','processName','title','titleContains') | Where-Object {
+    $value = Get-Prop $request $_ $null
+    if ($null -eq $value) { return $false }
+    if ($value -is [string]) { return -not [string]::IsNullOrWhiteSpace([string]$value) }
+    return $true
+  }
+  if ($hasSelector.Count -eq 0) { return $null }
+  $process = Resolve-Window $request $false
+  Activate-Window $process
+  return Window-Record $process
+}
+
 function Send-Key([string]$key) {
   $map = @{
     'ENTER'='{ENTER}'; 'RETURN'='{ENTER}'; 'ESC'='{ESC}'; 'ESCAPE'='{ESC}';
@@ -417,12 +430,13 @@ try {
       [ordered]@{ok=$true;fromX=$fromX;fromY=$fromY;toX=$toX;toY=$toY}
     }
     'type-text' {
+      $window = Activate-RequestedWindow $request
       $text = [string](Get-Prop $request 'text' '')
       $clear = [bool](Get-Prop $request 'clear' $false)
       if ($clear) { [System.Windows.Forms.SendKeys]::SendWait('^a'); Start-Sleep -Milliseconds 40 }
       [System.Windows.Forms.Clipboard]::SetText($text)
       [System.Windows.Forms.SendKeys]::SendWait('^v')
-      [ordered]@{ ok=$true; chars=$text.Length }
+      [ordered]@{ ok=$true; chars=$text.Length; window=$window }
     }
     'type-target' {
       $text = [string](Get-Prop $request 'text' '')
@@ -445,16 +459,18 @@ try {
     }
 
     'hotkey' {
+      $window = Activate-RequestedWindow $request
       $combo=[string](Get-Prop $request 'combo' '')
       if ([string]::IsNullOrWhiteSpace($combo)) { throw 'hotkey requires combo' }
       Send-Hotkey $combo
-      [ordered]@{ok=$true;combo=$combo}
+      [ordered]@{ok=$true;combo=$combo;window=$window}
     }
     'press' {
+      $window = Activate-RequestedWindow $request
       $key=[string](Get-Prop $request 'key' '')
       if ([string]::IsNullOrWhiteSpace($key)) { throw 'press requires key' }
       Send-Key $key
-      [ordered]@{ok=$true;key=$key}
+      [ordered]@{ok=$true;key=$key;window=$window}
     }
     'wait' {
       $milliseconds=[int](Get-Prop $request 'milliseconds' 500)
@@ -483,8 +499,9 @@ try {
       [ordered]@{ok=$true;count=$collection.Count;paths=@($collection)}
     }
     'paste' {
+      $window = Activate-RequestedWindow $request
       [System.Windows.Forms.SendKeys]::SendWait('^v')
-      [ordered]@{ok=$true}
+      [ordered]@{ok=$true;window=$window}
     }
     'close-window' {
       $p=Resolve-Window $request $false

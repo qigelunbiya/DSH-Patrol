@@ -202,14 +202,17 @@ function desktopArguments(action: DesktopAction, args: Record<string, unknown>, 
     case 'drag':
       add('fromX', args.fromX); add('fromY', args.fromY); add('toX', args.toX); add('toY', args.toY); add('durationMs', args.durationMs); break
     case 'type-text':
+      add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
       add('text', args.text); add('clear', args.clear); break
     case 'type-target':
       add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
       add('name', args.name); add('automationId', args.automationId); add('controlType', args.controlType); add('className', args.className)
       add('match', args.match); add('index', args.index); add('text', args.text); add('clear', args.clear); break
     case 'hotkey':
+      add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
       add('combo', args.combo); break
     case 'press':
+      add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
       add('key', args.key); break
     case 'wait':
       add('milliseconds', args.milliseconds); break
@@ -229,7 +232,7 @@ function desktopArguments(action: DesktopAction, args: Record<string, unknown>, 
     case 'set-clipboard-files':
       add('paths', persisted && Array.isArray(args.storedPaths) ? args.storedPaths : args.paths); break
     case 'paste':
-      break
+      add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains); break
     case 'close-window':
       add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains); break
     case 'delete-path':

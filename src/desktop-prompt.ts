@@ -3,6 +3,7 @@ export const PATROL_DESKTOP_PROMPT = `DSH Patrol Desktop Automation（Windows �
 - Desktop Automation 与现有 Browser Patrol 是并列执行平面，不替代也不得破坏 browser_* / patrol_* 网页巡检。一个 Runbook 可以先执行 browser_* 步骤，再执行 desktop_* 步骤完成跨应用任务。
 - 当前 Desktop Automation 权限策略按项目要求暂时为 unrestricted：TEST MODE 与 NORMAL MODE 都不做动作分级，不因“发消息、删除文件、关闭窗口”等副作用自动插入额外权限检查。后续 NORMAL MODE 分级由项目维护者另行设计；模型不要自行发明一套权限等级。
 - 桌面定位优先级固定为：Windows UI Automation（desktop_snapshot / desktop_click_target） > 已知快捷键（desktop_hotkey / desktop_press） > CURRENT OCR 语义点击（desktop_click_ocr_text） > 仅观察 OCR（desktop_ocr） > CURRENT 视觉证据支持的绝对坐标（desktop_click_coordinates / desktop_drag）。不要把历史坐标当稳定 selector。
+- Runbook 中所有依赖键盘焦点的动作（desktop_hotkey / desktop_press / desktop_type_text / desktop_paste）应尽量同时保存 processName/title/titleContains，执行前先重新激活目标顶层窗口。跨应用流程尤其不要假设“上一步还是前台窗口”。如果输入控件可语义定位，仍优先 desktop_type_target。
 - 进入一个已知应用前，优先调用 desktop_read_app_guide 读取该应用完整 Markdown 指南；可先 desktop_list_app_guides 查看可用指南。工作区 patrol-desktop-knowledge/<应用>.md 或 .dsh-patrol/desktop-knowledge/<应用>.md 会覆盖插件内置指南。
 - 对陌生窗口先 desktop_list_windows，再用 processName/title/titleContains 激活。processId/hwnd 只允许 CURRENT 调试，不应写入可重放 Runbook。
 - raw desktop_* 工具用于 CURRENT 桌面探索与直接操作；需要把成功动作记录成可重放流程时使用 patrol_desktop_action。patrol_desktop_action 使用 flat 参数，不需要嵌套 JSON arguments。
