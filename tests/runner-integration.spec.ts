@@ -329,6 +329,76 @@ describe('PatrolRunner integration safety', () => {
     expect(calls).toEqual(['browser_snapshot', 'browser_click', 'browser_read_page'])
   })
 
+  it('waits for page/bridge settling and recovers a stale business click from the human checklist', async () => {
+    const calls: string[] = []
+    let snapshots = 0
+    const { runner, exec } = await setup(async input => {
+      calls.push(input.name)
+      if (input.name === 'browser_click') {
+        const selector = (input.arguments as any)?.selector
+        if (selector === 'top-frame::a.todo-menu') {
+          return {
+            isError: false,
+            value: { ok: true, selector },
+            content: [{ type: 'text', text: 'clicked recovered todo menu' }],
+          }
+        }
+        return {
+          isError: true,
+          error: new Error('element not found in any eligible frame: div:nth-of-type(2) > li:nth-of-type(6) > a'),
+          value: { ok: false },
+          content: [{ type: 'text', text: 'stale selector' }],
+        }
+      }
+      if (input.name === 'browser_snapshot') {
+        snapshots += 1
+        if (snapshots === 1) {
+          return {
+            isError: true,
+            error: new Error('frame-aware page bridge unavailable in tab 1'),
+            value: { ok: false },
+            content: [{ type: 'text', text: 'bridge unavailable' }],
+          }
+        }
+        return {
+          isError: false,
+          value: {
+            ok: true,
+            elements: [
+              { tag: 'a', role: 'link', text: '待办待阅工单', selector: 'top-frame::a.todo-menu' },
+            ],
+          },
+          content: [{ type: 'text', text: 'todo menu ready' }],
+        }
+      }
+      if (input.name === 'browser_wait') {
+        return {
+          isError: false,
+          value: { ok: true },
+          content: [{ type: 'text', text: 'settled' }],
+        }
+      }
+      throw new Error(`unexpected tool ${input.name}`)
+    })
+
+    const def = definition([{
+      id: 'step-001',
+      kind: 'tool',
+      name: '点击待办待阅工单',
+      tool: 'browser_click',
+      arguments: { selector: 'div:nth-of-type(2) > li:nth-of-type(6) > a' },
+      recordedAt: at,
+    }])
+    def.metadata.taskChecklist = ['点击待办待阅工单']
+
+    const { report } = await runner.run(def, exec)
+
+    expect(report.status).toBe('passed')
+    expect(calls).toEqual(['browser_click', 'browser_snapshot', 'browser_wait', 'browser_snapshot', 'browser_click'])
+    expect(report.results[0]?.output).toMatch(/bounded observation/i)
+    expect(report.results[0]?.output).toContain('待办待阅工单')
+  })
+
   it('refuses to resume a runbook edited after the checkpoint', async () => {
     const { store, runner, exec } = await setup(async () => ({
       isError: false,
