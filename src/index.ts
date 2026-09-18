@@ -292,16 +292,14 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       text: PATROL_FLOW_REFERENCE_PROMPT,
     }), 'dsh-patrol: deterministic flow reference and existing-flow replay prompt')
 
-    // NORMAL MODE receives the strict planner contract. TEST MODE gets the
-    // lighter operational policy from PATROL_TEST_MODE_OVERRIDE_PROMPT so old
-    // HARD STOP wording cannot make the model stop a valid patrol by itself.
-    if (runtimePolicy.installGuards) {
-      ctx.effect(() => systemPrompt.section({
-        name: 'agent:dsh-patrol-page-understanding',
-        order: 1120,
-        text: PATROL_PAGE_UNDERSTANDING_PROMPT,
-      }), 'dsh-patrol: strict current-page understanding and bounded plan execution prompt')
-    }
+    // The page-understanding contract includes the selector-loop budget and
+    // anti-repetition rules. It applies in TEST MODE too; TEST still keeps its
+    // direct low-level browser fallbacks, but it must not spin on selector prose.
+    ctx.effect(() => systemPrompt.section({
+      name: 'agent:dsh-patrol-page-understanding',
+      order: 1120,
+      text: PATROL_PAGE_UNDERSTANDING_PROMPT,
+    }), 'dsh-patrol: current-page understanding and bounded plan execution prompt')
 
     if (runtimePolicy.injectStrictWorkflowPrompt) {
       ctx.effect(() => systemPrompt.section({
