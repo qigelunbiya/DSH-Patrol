@@ -8,6 +8,12 @@ const STEP_ID = /^step-\d{3,}$/
 const CHALLENGE_KINDS = ['otp', 'captcha', 'slider', 'approval', 'unknown'] as const
 const CHALLENGE_SUBTYPES = ['otp', 'image-code', 'click-sequence', 'third-party', 'generic-captcha', 'slider', 'slider-puzzle', 'rotate', 'approval', 'unknown'] as const
 const CHALLENGE_STRATEGIES = ['windows-system-ocr', 'ddddocr-click-sequence-demo', 'ddddocr-slider-demo', 'manual-click-sequence', 'manual-slider', 'manual-third-party', 'manual-otp', 'manual-approval', 'manual-review'] as const
+const FOCUS_RELATIVE_DESKTOP_TOOLS = new Set([
+  'desktop_type_text',
+  'desktop_hotkey',
+  'desktop_press',
+  'desktop_paste',
+])
 
 export function assertInspectionId(id: string): void {
   if (!INSPECTION_ID.test(id)) {
@@ -119,6 +125,14 @@ export function assertInspectionDefinition(value: unknown): asserts value is Ins
     }
     seen.add(rawStep.id)
   }
+
+  const targetHasDesktopWindowDefault = targetRecord.type === 'desktop'
+    && (typeof targetRecord.processName === 'string' || typeof targetRecord.titleContains === 'string')
+  for (const rawStep of candidate.steps) {
+    if (rawStep.kind !== 'tool' || !FOCUS_RELATIVE_DESKTOP_TOOLS.has(rawStep.tool)) continue
+    if (targetHasDesktopWindowDefault || hasStableDesktopWindowSelector(rawStep.arguments)) continue
+    throw new Error(`step ${rawStep.id} ${rawStep.tool} requires processName/title/titleContains for replay-safe desktop focus; desktop-only flows may instead define processName/titleContains on inspection.target`)
+  }
 }
 
 function assertChallengeProfiles(value: unknown): void {
@@ -228,6 +242,11 @@ function assertToolArgumentPolicy(stepId: string, tool: string, args: JsonObject
   }
 }
 
+function hasStableDesktopWindowSelector(args: JsonObject): boolean {
+  return ['processName', 'title', 'titleContains'].some(key =>
+    typeof args[key] === 'string' && String(args[key]).trim().length > 0)
+}
+
 function assertDesktopToolArgumentPolicy(stepId: string, tool: string, args: JsonObject): void {
   if ('hwnd' in args || 'processId' in args) {
     throw new Error(`step ${stepId} may not persist ephemeral desktop hwnd/processId values; use processName/title/titleContains`)
@@ -275,6 +294,14 @@ function assertDesktopToolArgumentPolicy(stepId: string, tool: string, args: Jso
       throw new Error(`step ${stepId} desktop_type_target requires name, automationId, controlType, or className`)
     }
   }
+  if (tool === 'desktop_paste_target' || tool === 'desktop_press_target') {
+    if (tool === 'desktop_press_target') requireString('key')
+    const selectors = [args.name, args.automationId, args.controlType, args.className]
+    if (selectors.every(value => typeof value !== 'string' || value.trim() === '')) {
+      throw new Error(`step ${stepId} ${tool} requires name, automationId, controlType, or className`)
+    }
+  }
+
   if (tool === 'desktop_hotkey') requireString('combo')
   if (tool === 'desktop_press') requireString('key')
   if (tool === 'desktop_wait') {

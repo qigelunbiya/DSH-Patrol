@@ -458,6 +458,38 @@ try {
       }
     }
 
+    'paste-target' {
+      $process = Resolve-Window $request $true
+      Activate-Window $process
+      $target = Find-TargetElement $request
+      $focusMethod = Focus-Target $target
+      [System.Windows.Forms.SendKeys]::SendWait('^v')
+      Start-Sleep -Milliseconds 100
+      [ordered]@{
+        ok=$true
+        focusMethod=$focusMethod
+        target=(Element-Record $target.Element)
+        window=(Window-Record $process)
+      }
+    }
+    'press-target' {
+      $key=[string](Get-Prop $request 'key' '')
+      if ([string]::IsNullOrWhiteSpace($key)) { throw 'press-target requires key' }
+      $process = Resolve-Window $request $true
+      Activate-Window $process
+      $target = Find-TargetElement $request
+      $focusMethod = Focus-Target $target
+      Send-Key $key
+      Start-Sleep -Milliseconds 100
+      [ordered]@{
+        ok=$true
+        key=$key
+        focusMethod=$focusMethod
+        target=(Element-Record $target.Element)
+        window=(Window-Record $process)
+      }
+    }
+
     'hotkey' {
       $window = Activate-RequestedWindow $request
       $combo=[string](Get-Prop $request 'combo' '')

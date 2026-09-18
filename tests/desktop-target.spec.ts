@@ -193,6 +193,74 @@ describe('native desktop inspection targets', () => {
     })).toThrow(/timeoutMs must be between 100 and 120000/i)
   })
 
+  it('requires a stable top-level window for focus-relative desktop replay and validates atomic target actions', () => {
+    const now = '2026-09-18T03:30:00.000Z'
+    const browserBase = {
+      schemaVersion: '0.2' as const,
+      id: 'browser-to-wechat-focus',
+      name: '跨应用焦点',
+      description: '浏览器到微信',
+      status: 'draft' as const,
+      target: { type: 'browser' as const, url: 'https://example.com' },
+      expectedResult: '微信收到内容',
+      artifacts: [],
+      auth: { mode: 'none' as const },
+      schedule: null,
+      metadata: { createdAt: now, updatedAt: now },
+    }
+
+    expect(() => assertInspectionDefinition({
+      ...browserBase,
+      steps: [{
+        id: 'step-001',
+        kind: 'tool',
+        name: '不安全粘贴',
+        tool: 'desktop_paste',
+        arguments: {},
+        recordedAt: now,
+      }],
+    })).toThrow(/requires processName\/title\/titleContains for replay-safe desktop focus/i)
+
+    expect(() => assertInspectionDefinition({
+      ...browserBase,
+      steps: [{
+        id: 'step-001',
+        kind: 'tool',
+        name: '安全粘贴',
+        tool: 'desktop_paste',
+        arguments: { processName: 'WeChat', titleContains: '微信' },
+        recordedAt: now,
+      }],
+    })).not.toThrow()
+
+    const desktopBase = {
+      ...browserBase,
+      id: 'wechat-atomic-actions',
+      target: { type: 'desktop' as const, app: '微信', processName: 'WeChat' },
+    }
+    expect(() => assertInspectionDefinition({
+      ...desktopBase,
+      steps: [
+        {
+          id: 'step-001',
+          kind: 'tool',
+          name: '定向粘贴',
+          tool: 'desktop_paste_target',
+          arguments: { controlType: 'Edit', className: 'MessageInput' },
+          recordedAt: now,
+        },
+        {
+          id: 'step-002',
+          kind: 'tool',
+          name: '定向回车',
+          tool: 'desktop_press_target',
+          arguments: { controlType: 'Edit', className: 'MessageInput', key: 'Enter' },
+          recordedAt: now,
+        },
+      ],
+    })).not.toThrow()
+  })
+
   it('creates a desktop-only draft without inventing targetUrl', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-desktop-target-'))
     roots.push(root)

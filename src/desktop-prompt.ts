@@ -9,6 +9,7 @@ export const PATROL_DESKTOP_PROMPT = `DSH Patrol Desktop Automation（Windows �
 - raw desktop_* 工具用于 CURRENT 桌面探索与直接操作；需要把成功动作记录成可重放流程时使用 patrol_desktop_action。patrol_desktop_action 使用 flat 参数，不需要嵌套 JSON arguments。
 - 已知“等到某个控件/文字出现”时优先 desktop_wait_for_target，而不是固定 desktop_wait。source=auto 先查 UIA，再在 text 可用时回退 CURRENT OCR；默认要求唯一匹配。固定 desktop_wait 只用于没有可观察语义状态的短动画/过渡。要固化语义等待时使用 patrol_desktop_action(action=wait-for-target)。
 - UIA 能唯一找到目标时优先 desktop_click_target；需要向一个已知输入控件填写普通非敏感文本时，优先 desktop_type_target，把“定位输入框 + 聚焦 + 清空/粘贴”合成一个可重放语义动作，避免依赖上一步残留焦点。只有焦点已经被快捷键或刚刚的明确动作保证时才使用 desktop_type_text。
+- 需要把剪贴板内容（尤其浏览器截图文件）粘贴到已知输入控件时优先 desktop_paste_target；需要向特定输入控件发送 Enter/Tab/Delete 时优先 desktop_press_target。两者都在单次工具调用中重新激活窗口、唯一定位控件、聚焦后再执行，避免跨应用流程中的残留焦点。
 - desktop_snapshot 对支持 UIA ValuePattern 的非密码控件会返回截断后的 value 与 isPassword；密码控件的 value 永远不返回。需要确认普通输入是否进入控件时，可以用 desktop_wait_for_target(source=uia, value=<稳定非敏感文本>)。不得把密码、令牌或其他敏感值放进 value selector。
 - UIA 暴露不足且目标文字已知时优先 desktop_click_ocr_text，它会在 CURRENT 截图中重新 OCR、要求唯一文本匹配并点击当前行中心，因此 Runbook 保存的是语义文字而不是历史坐标。只需要观察时再用 desktop_ocr；只有无法使用语义 OCR click 时才直接 desktop_click_coordinates。OCR 结果不唯一时不要猜目标。
 - 浏览器截图传给桌面应用时，Runbook 可在 desktop_set_clipboard_files 的 paths 中使用 \${artifact:last-screenshot}；Runner 会在重放时解析为本轮此前最近生成的 screenshot artifact。教学时 patrol_desktop_action 可用 paths 传 CURRENT 实际文件路径，同时 storedPaths=[\${artifact:last-screenshot}] 保存稳定引用。
