@@ -44,7 +44,7 @@ describe('atomic semantic click extension layer', () => {
   it('can resolve title-backed custom tree nodes such as Ant Design tree labels', () => {
     const source = readFileSync(join(root, 'browser-extension', 'semantic-click.js'), 'utf8')
 
-    expect(source).toContain("'[role="treeitem"]'")
+    expect(source).toContain("'[role=\"treeitem\"]'")
     expect(source).toContain("'.ant-tree-node-content-wrapper'")
     expect(source).toContain("'[title]'")
     expect(source).toContain("'aria-label', 'title'")
