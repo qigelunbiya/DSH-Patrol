@@ -65,6 +65,7 @@ export function registerPatrolDesktopActionTools(
       milliseconds: { type: 'integer' },
       scope: { type: 'string', enum: ['active-window', 'screen'] },
       fileName: { type: 'string' },
+      languages: { type: 'array', items: { type: 'string' }, description: 'Optional OCR language passes for action=ocr.' },
       paths: { type: 'array', items: { type: 'string' } },
       storedPaths: {
         type: 'array',
@@ -198,9 +199,11 @@ function desktopArguments(action: DesktopAction, args: Record<string, unknown>, 
     case 'wait':
       add('milliseconds', args.milliseconds); break
     case 'screenshot':
-    case 'ocr':
       add('scope', args.scope); add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
       add('fileName', args.fileName); break
+    case 'ocr':
+      add('scope', args.scope); add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
+      add('fileName', args.fileName); add('languages', args.languages); break
     case 'set-clipboard-text':
       add('text', args.text); break
     case 'set-clipboard-files':
