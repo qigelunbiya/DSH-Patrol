@@ -138,11 +138,24 @@ function Element-Record($element) {
     $rect = $current.BoundingRectangle
     $control = [string]$current.ControlType.ProgrammaticName
     if ($control.StartsWith('ControlType.')) { $control = $control.Substring(12) }
+    $isPassword = [bool]$current.IsPassword
+    $value = $null
+    if (-not $isPassword) {
+      $valuePattern = $null
+      if ($element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$valuePattern)) {
+        try {
+          $rawValue = [string]([System.Windows.Automation.ValuePattern]$valuePattern).Current.Value
+          $value = if ($rawValue.Length -le 2000) { $rawValue } else { $rawValue.Substring(0, 2000) + '…' }
+        } catch {}
+      }
+    }
     return [ordered]@{
       name = [string]$current.Name
       automationId = [string]$current.AutomationId
       controlType = $control
       className = [string]$current.ClassName
+      isPassword = $isPassword
+      value = $value
       enabled = [bool]$current.IsEnabled
       offscreen = [bool]$current.IsOffscreen
       rect = [ordered]@{
@@ -193,7 +206,7 @@ function Find-TargetElement($args) {
   $match = [string](Get-Prop $args 'match' 'exact')
   $indexValue = Get-Prop $args 'index' $null
   if ([string]::IsNullOrWhiteSpace($name) -and [string]::IsNullOrWhiteSpace($automationId) -and [string]::IsNullOrWhiteSpace($controlType) -and [string]::IsNullOrWhiteSpace($className)) {
-    throw 'desktop_click_target requires at least one of name, automationId, controlType, className'
+    throw 'desktop target requires at least one of name, automationId, controlType, className'
   }
 
   $all = $resolved.Root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
@@ -259,6 +272,21 @@ function Invoke-Target($target) {
   $y = [int]($rect.y + [Math]::Max(1, [Math]::Floor($rect.height / 2)))
   Click-Point $x $y 0
   return 'bounding-rect-click'
+}
+
+function Focus-Target($target) {
+  try {
+    $target.Element.SetFocus()
+    Start-Sleep -Milliseconds 80
+    return 'uia-set-focus'
+  } catch {
+    $rect = $target.Record.rect
+    $x = [int]($rect.x + [Math]::Max(1, [Math]::Floor($rect.width / 2)))
+    $y = [int]($rect.y + [Math]::Max(1, [Math]::Floor($rect.height / 2)))
+    Click-Point $x $y 0
+    Start-Sleep -Milliseconds 80
+    return 'bounding-rect-click'
+  }
 }
 
 function Send-Key([string]$key) {
@@ -396,6 +424,26 @@ try {
       [System.Windows.Forms.SendKeys]::SendWait('^v')
       [ordered]@{ ok=$true; chars=$text.Length }
     }
+    'type-target' {
+      $text = [string](Get-Prop $args 'text' '')
+      $process = Resolve-Window $args $true
+      Activate-Window $process
+      $target = Find-TargetElement $args
+      $focusMethod = Focus-Target $target
+      $clear = [bool](Get-Prop $args 'clear' $false)
+      if ($clear) { [System.Windows.Forms.SendKeys]::SendWait('^a'); Start-Sleep -Milliseconds 40 }
+      [System.Windows.Forms.Clipboard]::SetText($text)
+      [System.Windows.Forms.SendKeys]::SendWait('^v')
+      Start-Sleep -Milliseconds 100
+      [ordered]@{
+        ok=$true
+        chars=$text.Length
+        focusMethod=$focusMethod
+        target=(Element-Record $target.Element)
+        window=(Window-Record $process)
+      }
+    }
+
     'hotkey' {
       $combo=[string](Get-Prop $args 'combo' '')
       if ([string]::IsNullOrWhiteSpace($combo)) { throw 'hotkey requires combo' }
