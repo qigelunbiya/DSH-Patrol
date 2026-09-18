@@ -140,13 +140,25 @@ function Element-Record($element) {
     if ($control.StartsWith('ControlType.')) { $control = $control.Substring(12) }
     $isPassword = [bool]$current.IsPassword
     $value = $null
+    $valueSource = $null
     if (-not $isPassword) {
       $valuePattern = $null
       if ($element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$valuePattern)) {
         try {
           $rawValue = [string]([System.Windows.Automation.ValuePattern]$valuePattern).Current.Value
           $value = if ($rawValue.Length -le 2000) { $rawValue } else { $rawValue.Substring(0, 2000) + '…' }
+          $valueSource = 'value-pattern'
         } catch {}
+      }
+      if ($null -eq $value) {
+        $textPattern = $null
+        if ($element.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$textPattern)) {
+          try {
+            $rawText = [string]([System.Windows.Automation.TextPattern]$textPattern).DocumentRange.GetText(2000)
+            $value = $rawText
+            $valueSource = 'text-pattern'
+          } catch {}
+        }
       }
     }
     return [ordered]@{
@@ -156,6 +168,7 @@ function Element-Record($element) {
       className = [string]$current.ClassName
       isPassword = $isPassword
       value = $value
+      valueSource = $valueSource
       enabled = [bool]$current.IsEnabled
       offscreen = [bool]$current.IsOffscreen
       rect = [ordered]@{
@@ -184,7 +197,7 @@ function Get-Snapshot($args) {
     if (-not $includeOffscreen -and $record.offscreen) { continue }
     if ($record.rect.width -le 0 -or $record.rect.height -le 0) { continue }
     if ([string]::IsNullOrWhiteSpace($record.name) -and [string]::IsNullOrWhiteSpace($record.automationId)) {
-      $interactiveTypes = @('Button','Edit','ListItem','MenuItem','TabItem','TreeItem','Hyperlink','CheckBox','RadioButton','ComboBox','DataItem')
+      $interactiveTypes = @('Button','Edit','Document','ListItem','MenuItem','TabItem','TreeItem','Hyperlink','CheckBox','RadioButton','ComboBox','DataItem')
       if ($interactiveTypes -notcontains $record.controlType) { continue }
     }
     $items += $record
