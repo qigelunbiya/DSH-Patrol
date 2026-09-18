@@ -242,6 +242,11 @@ function validateRequiredDesktopArguments(action: DesktopAction, args: JsonObjec
   const requireNumber = (key: string) => {
     if (typeof args[key] !== 'number' || !Number.isInteger(args[key] as number)) throw new Error(`${action} requires integer ${key}`)
   }
+  const requireRange = (key: string, min: number, max: number) => {
+    requireNumber(key)
+    const value = args[key] as number
+    if (value < min || value > max) throw new Error(`${action} ${key} must be between ${min} and ${max}`)
+  }
   switch (action) {
     case 'launch-app': requireText('file'); break
     case 'open-path':
@@ -268,8 +273,9 @@ function validateRequiredDesktopArguments(action: DesktopAction, args: JsonObjec
         throw new Error('wait-for-target requires text or a UI Automation selector')
       }
       if (args.source === 'ocr') requireText('text')
-      if (args.timeoutMs !== undefined) requireNumber('timeoutMs')
-      if (args.pollMs !== undefined) requireNumber('pollMs')
+      if (args.timeoutMs !== undefined) requireRange('timeoutMs', 100, 120000)
+      if (args.pollMs !== undefined) requireRange('pollMs', 100, 5000)
+      if (args.maxElements !== undefined) requireRange('maxElements', 1, 1000)
       break
     case 'set-clipboard-files':
       if (!Array.isArray(args.paths) || args.paths.length === 0) throw new Error('set-clipboard-files requires paths')
