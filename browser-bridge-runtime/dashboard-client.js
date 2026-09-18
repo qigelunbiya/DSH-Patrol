@@ -43,8 +43,24 @@
   })[status] || esc(status || '未知')}</span>`
 
   const host = value => {
-    try { return new URL(value).host } catch { return value || '—' }
+    try {
+      const parsed = new URL(value)
+      return parsed.host || value || '—'
+    } catch {
+      return value || '—'
+    }
   }
+
+  const targetLabel = definition => {
+    const target = definition?.target
+    if (target?.type === 'desktop') {
+      const process = target.processName ? ` · ${target.processName}` : ''
+      return `桌面应用：${target.app || '—'}${process}`
+    }
+    return target?.url || '—'
+  }
+
+  const targetLabelName = definition => definition?.target?.type === 'desktop' ? '目标应用' : '目标地址'
 
   function empty(title, subtitle) {
     return `<div class="card empty"><div class="empty-title">${esc(title)}</div><div class="muted empty-sub">${esc(subtitle || '')}</div></div>`
@@ -131,7 +147,7 @@
       <div class="flow-icon">${esc(String((definition.name || definition.id).trim().charAt(0) || '流').toUpperCase())}</div>
       <div class="flow-head"><div class="flow-name">${esc(definition.name || definition.id)}</div>${pill(definition.status)}</div>
       <div class="flow-desc">${esc(definition.description || '暂无流程说明')}</div>
-      <div class="tiny muted truncate">${esc(host(definition.target?.url || ''))}</div>
+      <div class="tiny muted truncate">${esc(host(definition.target?.type === 'desktop' ? `desktop:${definition.target.app || '应用'}` : (definition.target?.url || '')))}</div>
       <div class="flow-meta"><span>${(definition.steps || []).length} 个步骤 · ${item.runCount} 次运行</span><span>${latest ? fmt(latest.startedAt) : '尚未运行'}</span></div>
     </article>`
   }
@@ -148,7 +164,7 @@
       <h2>${esc(definition.name || definition.id)}</h2>
       <p>${esc(definition.description || '暂无流程说明')}</p>
       <div class="meta-grid">
-        ${meta('目标地址', definition.target?.url || '—')}
+        ${meta(targetLabelName(definition), targetLabel(definition))}
         ${meta('预期结果', definition.expectedResult || '—')}
         ${meta('最近更新', fmt(definition.metadata?.updatedAt))}
         ${meta('步骤数量', `${(definition.steps || []).length} 个`)}
@@ -296,7 +312,7 @@
     if (detailTab === 'logs') return logsView(report, definition)
     const rows = report.results || []
     const passed = rows.filter(item => item.status === 'passed').length
-    return `<div class="detail-grid"><section class="card panel"><h3 class="section-title">本次巡检概述</h3><div class="overview-text">${esc(report.summary || '没有额外摘要。')}</div><div class="muted overview-progress">步骤完成 ${passed}/${rows.length}</div></section><section class="card panel"><h3 class="section-title">关键信息</h3>${info('目标地址', definition.target?.url || '—')}${info('预期结果', report.expectedResult || definition.expectedResult || '—')}${info('开始时间', fmt(report.startedAt))}${info('结束时间', fmt(report.finishedAt))}${info('产物数量', String(artifacts.length))}</section></div>`
+    return `<div class="detail-grid"><section class="card panel"><h3 class="section-title">本次巡检概述</h3><div class="overview-text">${esc(report.summary || '没有额外摘要。')}</div><div class="muted overview-progress">步骤完成 ${passed}/${rows.length}</div></section><section class="card panel"><h3 class="section-title">关键信息</h3>${info(targetLabelName(definition), targetLabel(definition))}${info('预期结果', report.expectedResult || definition.expectedResult || '—')}${info('开始时间', fmt(report.startedAt))}${info('结束时间', fmt(report.finishedAt))}${info('产物数量', String(artifacts.length))}</section></div>`
   }
 
   function stepsView(report) {
