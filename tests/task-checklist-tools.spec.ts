@@ -44,7 +44,11 @@ async function setup(steps = 0, checklist?: string[]) {
   const definitions: any[] = []
   const ctx = { tools: { register(tool: any) { definitions.push(tool); return () => {} } } } as unknown as Context
   registerPatrolTaskChecklistTools(ctx, store)
-  return { store, set: definitions.find(item => item.name === 'patrol_set_task_checklist') }
+  return {
+    store,
+    set: definitions.find(item => item.name === 'patrol_set_task_checklist'),
+    update: definitions.find(item => item.name === 'patrol_update_task_checklist'),
+  }
 }
 
 describe('Patrol task checklist backfill', () => {
@@ -89,4 +93,39 @@ describe('Patrol task checklist backfill', () => {
       items: ['访问目标 URL', '点击工作台'],
     })).rejects.toThrow(/different persisted task checklist/)
   })
+  it('updates an existing human checklist during explicit DRAFT editing without rewriting Runbook steps', async () => {
+    const { store, update } = await setup(2, ['访问目标 URL', '点击待办待阅工单'])
+    const before = await store.load('legacy-draft')
+    const ids = before.steps.map(step => step.id)
+
+    const result = await update.execute({
+      inspectionId: 'legacy-draft',
+      items: ['访问目标 URL', '点击我的工作台', '点击待办待阅工单', '等待 5 秒', '打开第一张工单'],
+    })
+
+    expect(result).toContain('Updated human task checklist')
+    expect(result).toContain('Persistence check: PASSED')
+    const saved = await store.load('legacy-draft')
+    expect(saved.steps.map(step => step.id)).toEqual(ids)
+    expect(saved.metadata.taskChecklist).toEqual([
+      '访问目标 URL',
+      '点击我的工作台',
+      '点击待办待阅工单',
+      '等待 5 秒',
+      '打开第一张工单',
+    ])
+  })
+
+  it('requires READY flows to enter edit mode before the checklist can be changed', async () => {
+    const { store, update } = await setup(1, ['访问目标 URL'])
+    const definition = await store.load('legacy-draft')
+    definition.status = 'ready'
+    await store.save(definition)
+
+    await expect(update.execute({
+      inspectionId: 'legacy-draft',
+      items: ['访问目标 URL', '点击工作台'],
+    })).rejects.toThrow(/patrol_begin_edit/)
+  })
+
 })

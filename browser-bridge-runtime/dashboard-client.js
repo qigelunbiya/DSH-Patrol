@@ -39,7 +39,7 @@
   }
 
   const pill = status => `<span class="pill ${esc(status)}">${({
-    passed: '通过', failed: '失败', waiting: '等待中', ready: '已就绪', draft: '草稿',
+    passed: '通过', failed: '失败', waiting: '等待中', ready: '已保存', draft: '编辑中',
   })[status] || esc(status || '未知')}</span>`
 
   const host = value => {
@@ -118,7 +118,7 @@
       '<button class="btn" data-action="refresh">↻ 刷新</button>',
     ) + notice() + `<div class="stats">
       <div class="stat"><span>流程总数</span><b>${cards.length}</b></div>
-      <div class="stat"><span>已就绪</span><b>${cards.filter(item => item.definition.status === 'ready').length}</b></div>
+      <div class="stat"><span>已保存</span><b>${cards.filter(item => item.definition.status === 'ready').length}</b></div>
       <div class="stat"><span>已加载巡检</span><b>${runs.length}</b></div>
       <div class="stat"><span>通过记录</span><b>${passed}</b></div>
     </div>` + (cards.length ? `<div class="flow-grid">${cards.map(flowCard).join('')}</div>` : empty('还没有流程', '保存第一个巡检流程后，这里会自动出现。'))

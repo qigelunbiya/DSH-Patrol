@@ -176,6 +176,13 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
     return `@flow:${value.id}`;
   }
 
+  function flowStatusLabel(status) {
+    const value = String(status || 'draft').toLocaleLowerCase('en-US');
+    if (value === 'ready') return '已保存';
+    if (value === 'draft') return '编辑中';
+    return value || '未知';
+  }
+
   function registerPatrolFlowReferenceSource(ctx) {
     const source = {
       trigger: '@',
@@ -193,7 +200,7 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
             .slice(0, 50)
             .map(flow => ({
               name: flow.name,
-              description: `${flow.id} · ${String(flow.status || 'draft').toUpperCase()} · ${Array.isArray(flow.steps) ? flow.steps.length : 0} 步`,
+              description: `${flow.id} · ${flowStatusLabel(flow.status)} · ${Array.isArray(flow.steps) ? flow.steps.length : 0} 步`,
               section: FLOW_REFERENCE_SECTION,
               value: JSON.stringify(flowReferenceValue(flow)),
             }));
@@ -338,7 +345,7 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
       details.replaceChildren();
       const steps = Array.isArray(flow.steps) ? flow.steps : [];
       const title = document.createElement('div'); title.textContent = flow.name; title.style.cssText = 'font-size:17px;font-weight:720;line-height:1.35';
-      const meta = document.createElement('div'); meta.textContent = `${flow.id} · ${String(flow.status || 'draft').toUpperCase()} · ${steps.length} 步`; meta.style.cssText = 'font-size:11px;color:#667085;margin-top:5px';
+      const meta = document.createElement('div'); meta.textContent = `${flow.id} · ${flowStatusLabel(flow.status)} · ${steps.length} 步`; meta.style.cssText = 'font-size:11px;color:#667085;margin-top:5px';
       details.append(title, meta);
       if (typeof flow.description === 'string' && flow.description.trim()) {
         const description = document.createElement('div'); description.textContent = flow.description.trim(); description.style.cssText = 'font-size:12px;line-height:1.65;margin-top:12px;color:inherit'; details.appendChild(description);
@@ -533,7 +540,7 @@ window.__ModuleLoader__.load({ id: 'dsh-patrol-client-host', factory: (require) 
         const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.setAttribute('data-dsh-patrol-flow-select', flow.id); checkbox.title = '加入批量巡检'; checkbox.style.cssText = 'width:16px;height:16px;cursor:pointer;flex:0 0 auto'; checkbox.addEventListener('change', () => toggleSelected(flow));
         const button = document.createElement('button'); button.type = 'button'; button.setAttribute('aria-label', `查看流程 ${flow.name}`); button.style.cssText = 'display:block;min-width:0;flex:1;text-align:left;border:0;background:transparent;color:inherit;cursor:pointer;padding:2px 0';
         const title = document.createElement('div'); title.textContent = flow.name; title.style.cssText = 'font-size:13px;font-weight:650;line-height:1.35';
-        const meta = document.createElement('div'); meta.textContent = `${flow.id} · ${String(flow.status || 'draft').toUpperCase()} · ${Array.isArray(flow.steps) ? flow.steps.length : 0} 步`; meta.style.cssText = 'font-size:10px;color:#667085;margin-top:4px';
+        const meta = document.createElement('div'); meta.textContent = `${flow.id} · ${flowStatusLabel(flow.status)} · ${Array.isArray(flow.steps) ? flow.steps.length : 0} 步`; meta.style.cssText = 'font-size:10px;color:#667085;margin-top:4px';
         button.append(title, meta); button.addEventListener('click', () => preview(flow));
         row.append(checkbox, button); flowRows.set(flow.id, { row, checkbox, button }); list.appendChild(row);
       }
