@@ -184,12 +184,50 @@ describe('desktop Runbook replay', () => {
           arguments: { text: '测试联系人', clear: true },
           recordedAt: '2026-09-18T01:00:02.000Z',
         },
+        {
+          id: 'step-004',
+          kind: 'tool',
+          name: '等待联系人出现',
+          tool: 'desktop_wait_for_target',
+          arguments: { source: 'auto', text: '测试联系人', processName: 'WeChat', timeoutMs: 10000 },
+          recordedAt: '2026-09-18T01:00:03.000Z',
+        },
+        {
+          id: 'step-005',
+          kind: 'tool',
+          name: '打开联系人',
+          tool: 'desktop_click_ocr_text',
+          arguments: { text: '测试联系人', processName: 'WeChat' },
+          recordedAt: '2026-09-18T01:00:04.000Z',
+        },
+        {
+          id: 'step-006',
+          kind: 'tool',
+          name: '输入测试消息',
+          tool: 'desktop_type_target',
+          arguments: {
+            processName: 'WeChat',
+            controlType: 'Edit',
+            className: 'MessageInput',
+            text: 'DSH Patrol 测试',
+            clear: true,
+          },
+          recordedAt: '2026-09-18T01:00:05.000Z',
+        },
+        {
+          id: 'step-007',
+          kind: 'tool',
+          name: '发送消息',
+          tool: 'desktop_press',
+          arguments: { key: 'Enter' },
+          recordedAt: '2026-09-18T01:00:06.000Z',
+        },
       ],
       metadata: {
         createdAt: '2026-09-18T01:00:00.000Z',
-        updatedAt: '2026-09-18T01:00:02.000Z',
-        validatedAt: '2026-09-18T01:00:03.000Z',
-        taskChecklist: ['激活微信', '打开搜索', '输入联系人'],
+        updatedAt: '2026-09-18T01:00:06.000Z',
+        validatedAt: '2026-09-18T01:00:07.000Z',
+        taskChecklist: ['激活微信', '打开搜索', '输入联系人', '等待联系人出现', '打开联系人', '输入测试消息', '发送消息'],
       },
     }
 
@@ -205,6 +243,10 @@ describe('desktop Runbook replay', () => {
       'desktop_activate_window',
       'desktop_hotkey',
       'desktop_type_text',
+      'desktop_wait_for_target',
+      'desktop_click_ocr_text',
+      'desktop_type_target',
+      'desktop_press',
     ])
     expect(calls.some(item => item.name.startsWith('browser_'))).toBe(false)
   })

@@ -149,7 +149,7 @@ function actionKindForTool(tool: string): BusinessAction {
     || tool === 'desktop_click_target' || tool === 'desktop_click_ocr_text' || tool === 'desktop_click_coordinates' || tool === 'desktop_press'
     || tool === 'desktop_hotkey' || tool === 'desktop_paste' || tool === 'desktop_drag'
     || tool === 'desktop_close_window' || tool === 'desktop_delete_path') return 'click'
-  if (tool.startsWith('browser_type') || tool === 'desktop_type_text' || tool === 'desktop_set_clipboard_text' || tool === 'desktop_set_clipboard_files') return 'type'
+  if (tool.startsWith('browser_type') || tool === 'desktop_type_text' || tool === 'desktop_type_target' || tool === 'desktop_set_clipboard_text' || tool === 'desktop_set_clipboard_files') return 'type'
   if (tool === 'browser_read_page' || tool === 'desktop_snapshot' || tool === 'desktop_ocr') return 'read'
   if (tool === 'browser_screenshot' || tool === 'desktop_screenshot') return 'screenshot'
   if (tool === 'browser_wait' || tool === 'browser_scroll' || tool === 'desktop_wait' || tool === 'desktop_wait_for_target') return 'wait'
@@ -244,6 +244,7 @@ function isDurableBusinessProgress(step: InspectionStep): boolean {
     || step.tool === 'desktop_hotkey'
     || step.tool === 'desktop_paste'
     || step.tool === 'desktop_type_text'
+    || step.tool === 'desktop_type_target'
     || step.tool === 'desktop_set_clipboard_text'
     || step.tool === 'desktop_set_clipboard_files'
 }

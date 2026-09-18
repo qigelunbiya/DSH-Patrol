@@ -44,6 +44,7 @@ desktop_click_ocr_text
 desktop_click_coordinates
 desktop_drag
 desktop_type_text
+desktop_type_target
 desktop_hotkey
 desktop_press
 desktop_wait
@@ -84,6 +85,23 @@ desktop_wait_for_target
 `source=auto` 会先读取 CURRENT UI Automation tree；如果提供了 `text` 且 UIA 没命中，再回退 CURRENT OCR。它只在匹配满足条件时返回成功，因此比固定 `desktop_wait` 更适合可重放流程。
 
 固定 `desktop_wait` 保留给没有可观察语义状态的短动画、系统对话框过渡或应用自身延迟。需要保存进 Runbook 时使用 `patrol_desktop_action(action=wait-for-target)`。
+
+### 定向文本输入
+
+当输入框能通过 UI Automation 稳定识别时，优先使用：
+
+```text
+desktop_type_target
+  processName=WeChat
+  controlType=Edit
+  className=<CURRENT snapshot 中唯一稳定的 class>
+  text=<普通非敏感文本>
+  clear=true
+```
+
+它会完成“激活窗口 → 唯一定位控件 → 聚焦 → 可选清空 → 粘贴文本”，避免把输入正确性寄托在上一步是否仍保持键盘焦点。需要写入 Runbook 时使用 `patrol_desktop_action(action=type-target)`。
+
+`desktop_snapshot` 对支持 UIA `ValuePattern` 的**非密码控件**会返回最多 2000 字符的 `value`，并返回 `isPassword`。密码控件不会读取或输出 `value`。因此普通文本可以通过 `desktop_wait_for_target(source=uia, value=<非敏感片段>, match=contains)` 做 CURRENT 验证；密码、Token、验证码等敏感值不得这样保存或验证。
 
 ## 两种流程类型
 
@@ -174,9 +192,11 @@ patrol-desktop-knowledge/微信.md
 9. UIA 能唯一定位联系人时 desktop_click_target
 10. 如果 UIA 看不到结果，优先 desktop_click_ocr_text 按联系人名称做唯一语义匹配；失败后再 desktop_ocr 查看文字与坐标
 11. desktop_wait_for_target 等待聊天标题/输入区进入可操作状态
-12. desktop_type_text 输入一条测试消息
-13. desktop_press Enter
-14. desktop_wait_for_target 或 desktop_snapshot / desktop_ocr 确认消息已出现在当前聊天
+12. desktop_snapshot 找到消息输入区的稳定 UIA selector
+13. desktop_type_target 定向输入一条普通测试消息
+14. 如果该控件提供 ValuePattern，用 desktop_wait_for_target(source=uia,value=<测试消息片段>)确认输入成功
+15. desktop_press Enter
+16. desktop_wait_for_target 或 desktop_snapshot / desktop_ocr 确认消息已出现在当前聊天
 ```
 
 这条链路跑通后，再测试：

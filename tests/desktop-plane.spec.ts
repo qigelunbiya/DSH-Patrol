@@ -28,6 +28,7 @@ describe('desktop agent plane', () => {
     expect(names).toContain('desktop_snapshot')
     expect(names).toContain('desktop_click_target')
     expect(names).toContain('desktop_wait_for_target')
+    expect(names).toContain('desktop_type_target')
     expect(names).toContain('desktop_hotkey')
     expect(names).toContain('desktop_ocr')
     expect(names).toContain('desktop_set_clipboard_files')

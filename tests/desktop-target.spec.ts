@@ -99,6 +99,52 @@ describe('native desktop inspection targets', () => {
     })).toThrow(/name, automationId, controlType, or className/i)
   })
 
+  it('validates targeted desktop typing with a stable UIA selector', () => {
+    const base = {
+      schemaVersion: '0.2' as const,
+      id: 'wechat-type-target',
+      name: '微信定向输入',
+      description: 'targeted desktop typing',
+      status: 'draft' as const,
+      target: { type: 'desktop' as const, app: '微信', processName: 'WeChat' },
+      expectedResult: '消息输入完成',
+      artifacts: [],
+      auth: { mode: 'none' as const },
+      schedule: null,
+      metadata: { createdAt: '2026-09-18T02:30:00.000Z', updatedAt: '2026-09-18T02:30:00.000Z' },
+    }
+
+    expect(() => assertInspectionDefinition({
+      ...base,
+      steps: [{
+        id: 'step-001',
+        kind: 'tool',
+        name: '输入微信消息',
+        tool: 'desktop_type_target',
+        arguments: {
+          processName: 'WeChat',
+          controlType: 'Edit',
+          className: 'MessageInput',
+          text: 'DSH Patrol 测试',
+          clear: true,
+        },
+        recordedAt: '2026-09-18T02:30:00.000Z',
+      }],
+    })).not.toThrow()
+
+    expect(() => assertInspectionDefinition({
+      ...base,
+      steps: [{
+        id: 'step-001',
+        kind: 'tool',
+        name: '缺少输入区 selector',
+        tool: 'desktop_type_target',
+        arguments: { text: 'DSH Patrol 测试' },
+        recordedAt: '2026-09-18T02:30:00.000Z',
+      }],
+    })).toThrow(/desktop_type_target requires name, automationId, controlType, or className/i)
+  })
+
   it('validates replayable semantic desktop waits without historical coordinates', () => {
     const base = {
       schemaVersion: '0.2' as const,

@@ -34,7 +34,7 @@ async function setup() {
     metadata: {
       createdAt: now,
       updatedAt: now,
-      taskChecklist: ['等待测试联系人出现'],
+      taskChecklist: ['等待测试联系人出现', '在微信消息输入区输入测试消息'],
     },
   }
   await store.create(definition)
@@ -121,6 +121,94 @@ describe('recordable desktop actions', () => {
     expect(args).not.toHaveProperty('y')
     expect(args).not.toHaveProperty('hwnd')
     expect(args).not.toHaveProperty('processId')
+  })
+
+  it('executes and persists targeted desktop typing by stable UIA selector', async () => {
+    const { store, action, exec, dispatched } = await setup()
+
+    const output = await action.execute({
+      inspectionId: 'wechat-semantic-wait',
+      stepName: '在消息输入区输入测试消息',
+      action: 'type-target',
+      processName: 'WeChat',
+      controlType: 'Edit',
+      className: 'MessageInput',
+      text: 'DSH Patrol Desktop Automation 测试',
+      clear: true,
+    }, exec)
+
+    expect(output).toContain('Executed and recorded step-001 (desktop_type_target)')
+    expect(dispatched).toEqual([{
+      tool: 'desktop_type_target',
+      args: {
+        processName: 'WeChat',
+        controlType: 'Edit',
+        className: 'MessageInput',
+        text: 'DSH Patrol Desktop Automation 测试',
+        clear: true,
+      },
+    }])
+
+    const saved = await store.load('wechat-semantic-wait')
+    expect(saved.steps[0]).toMatchObject({
+      id: 'step-001',
+      name: '在消息输入区输入测试消息',
+      tool: 'desktop_type_target',
+      arguments: {
+        processName: 'WeChat',
+        controlType: 'Edit',
+        className: 'MessageInput',
+        text: 'DSH Patrol Desktop Automation 测试',
+        clear: true,
+      },
+    })
+    const args = saved.steps[0]?.kind === 'tool' ? saved.steps[0].arguments : {}
+    expect(args).not.toHaveProperty('x')
+    expect(args).not.toHaveProperty('y')
+    expect(args).not.toHaveProperty('hwnd')
+    expect(args).not.toHaveProperty('processId')
+  })
+
+  it('persists a safe UIA value selector for semantic verification waits', async () => {
+    const { store, action, exec, dispatched } = await setup()
+
+    await action.execute({
+      inspectionId: 'wechat-semantic-wait',
+      stepName: '等待输入区包含测试消息',
+      action: 'wait-for-target',
+      source: 'uia',
+      processName: 'WeChat',
+      controlType: 'Edit',
+      className: 'MessageInput',
+      value: 'DSH Patrol',
+      match: 'contains',
+      requireUnique: true,
+      timeoutMs: 5000,
+    }, exec)
+
+    expect(dispatched[0]).toEqual({
+      tool: 'desktop_wait_for_target',
+      args: {
+        source: 'uia',
+        processName: 'WeChat',
+        controlType: 'Edit',
+        className: 'MessageInput',
+        value: 'DSH Patrol',
+        match: 'contains',
+        requireUnique: true,
+        timeoutMs: 5000,
+      },
+    })
+    const saved = await store.load('wechat-semantic-wait')
+    expect(saved.steps[0]).toMatchObject({
+      tool: 'desktop_wait_for_target',
+      arguments: {
+        source: 'uia',
+        controlType: 'Edit',
+        className: 'MessageInput',
+        value: 'DSH Patrol',
+      },
+    })
   })
 
   it('rejects invalid wait bounds before dispatching or recording', async () => {

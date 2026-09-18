@@ -57,8 +57,8 @@ Windows UI Automation
 
 - `desktop_list_windows` / `desktop_activate_window`
 - `desktop_snapshot` / `desktop_click_target` / `desktop_click_ocr_text`
-- `desktop_hotkey` / `desktop_press` / `desktop_type_text`
-- `desktop_wait_for_target`（UIA → OCR 的语义就绪等待）/ `desktop_wait`
+- `desktop_hotkey` / `desktop_press` / `desktop_type_text` / `desktop_type_target`（按 UIA selector 定向聚焦并输入）
+- `desktop_wait_for_target`（UIA → OCR 的语义就绪等待；非密码 UIA ValuePattern 也可作为安全的普通文本状态证据）/ `desktop_wait`
 - `desktop_screenshot` / `desktop_ocr`
 - `desktop_click_coordinates` / `desktop_drag`
 - `desktop_set_clipboard_text` / `desktop_set_clipboard_files` / `desktop_paste`

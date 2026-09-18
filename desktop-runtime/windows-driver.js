@@ -199,7 +199,7 @@ export class WindowsDesktopDriver {
     const pollMs = boundedInteger(args.pollMs, 300, 100, 5000)
     const requireUnique = args.requireUnique !== false
     const text = String(args.text ?? '').trim()
-    const hasUiaSelector = ['name', 'automationId', 'controlType', 'className']
+    const hasUiaSelector = ['name', 'automationId', 'controlType', 'className', 'value']
       .some(key => typeof args[key] === 'string' && args[key].trim() !== '')
     if (!hasUiaSelector && !text) {
       throw new Error('desktop_wait_for_target requires text or a UI Automation selector')
@@ -450,6 +450,7 @@ export function findUiaTargetMatches(elements, args = {}) {
   const requestedAutomationId = String(args.automationId ?? '').trim()
   const requestedControlType = String(args.controlType ?? '').trim()
   const requestedClassName = String(args.className ?? '').trim()
+  const requestedValue = String(args.value ?? '').trim()
   const normalize = value => caseSensitive ? String(value ?? '') : String(value ?? '').toLocaleLowerCase()
   const compare = (actual, expected, mode = 'exact') => {
     if (!expected) return true
@@ -461,7 +462,8 @@ export function findUiaTargetMatches(elements, args = {}) {
     compare(row?.name, requestedName, match)
     && compare(row?.automationId, requestedAutomationId)
     && compare(row?.controlType, requestedControlType)
-    && compare(row?.className, requestedClassName))
+    && compare(row?.className, requestedClassName)
+    && compare(row?.value, requestedValue, match))
 }
 
 export function findOcrTextMatches(lines, args = {}) {
