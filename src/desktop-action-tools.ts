@@ -61,6 +61,7 @@ export function registerPatrolDesktopActionTools(
       y: { type: 'integer' },
       xRatio: { type: 'number' },
       yRatio: { type: 'number' },
+      frameId: { type: 'string', description: 'Ephemeral frameId from the immediately preceding desktop_screenshot. It is never persisted into the Runbook.' },
       allowWindowChrome: { type: 'boolean' },
       button: { type: 'string', enum: ['left', 'right'] },
       fromX: { type: 'integer' },
@@ -212,7 +213,9 @@ function desktopArguments(action: DesktopAction, args: Record<string, unknown>, 
       add('fileName', args.fileName); break
     case 'click-visual-point':
       add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
-      add('xRatio', args.xRatio); add('yRatio', args.yRatio); add('button', args.button); add('allowWindowChrome', args.allowWindowChrome); break
+      add('xRatio', args.xRatio); add('yRatio', args.yRatio); add('button', args.button); add('allowWindowChrome', args.allowWindowChrome)
+      if (!persisted) add('frameId', args.frameId)
+      break
     case 'click-coordinates':
       add('x', args.x); add('y', args.y); add('button', args.button); break
     case 'drag':

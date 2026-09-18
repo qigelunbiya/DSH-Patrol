@@ -137,10 +137,11 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_click_visual_point',
-      description: 'Click a point identified from a CURRENT active-window screenshot by model vision. xRatio/yRatio are normalized to the selected window (0..1), so cropped screenshot coordinates are never confused with absolute desktop coordinates. The top-right window-control zone is rejected by default to prevent accidental closes.',
+      description: 'Click a point identified from the latest CURRENT desktop_screenshot visual frame. The click is bound to the exact same top-level HWND and physical screen rectangle used for that screenshot; if the window moved/resized/recreated, the click is rejected and a new screenshot is required. xRatio/yRatio are 0..1 inside that frame. The top-right window-control zone is rejected by default.',
       parameters: {
         xRatio: reqNum,
         yRatio: reqNum,
+        frameId: str,
         button: { type: 'string', enum: ['left', 'right'] },
         processName: str,
         title: str,
@@ -148,7 +149,7 @@ export function apply(ctx, config = {}) {
         allowWindowChrome: bool,
       },
       output: jsonOutput('Desktop visual point clicked'),
-      execute: async (args, exec) => await driver.run('click-visual-point', compact(args), exec),
+      execute: async (args, exec) => await driver.clickVisualPoint(compact(args), exec),
     }),
     defineTool({
       name: 'desktop_click_coordinates',
@@ -289,17 +290,17 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_screenshot',
-      description: 'Capture one selected/active desktop window or the whole virtual screen. active-window supports captureMethod=print-window to render the target HWND surface directly, avoiding pixels from windows behind/in front; auto tries PrintWindow before screen-copy fallback.',
+      description: 'Capture a geometry-faithful model-vision frame. For active-window, Patrol activates the selected top-level window, resolves its visible DWM frame bounds, then screen-copies exactly that whole physical rectangle. It deliberately does NOT use PrintWindow because custom/GPU apps may report success while rendering only part of the UI. The result includes frameId; desktop_click_visual_point is bound to this exact HWND+rectangle.',
       parameters: {
         scope: { type: 'string', enum: ['active-window', 'screen'] },
-        captureMethod: { type: 'string', enum: ['auto', 'print-window', 'screen'] },
+        captureMethod: { type: 'string', enum: ['auto', 'print-window', 'screen'], description: 'Compatibility input. active-window visual screenshots always force geometry-faithful screen copy.' },
         processName: str,
         title: str,
         titleContains: str,
         fileName: str,
       },
       output: jsonOutput('Desktop screenshot captured'),
-      execute: async (args, exec) => await driver.screenshot(compact(args), exec),
+      execute: async (args, exec) => await driver.visualScreenshot(compact(args), exec),
     }),
     defineTool({
       name: 'desktop_ocr',

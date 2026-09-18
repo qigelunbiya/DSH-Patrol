@@ -81,9 +81,94 @@ describe('Desktop Automation runtime foundation', () => {
 
     const backend = readFileSync(join(process.cwd(), 'desktop-runtime', 'windows-desktop.ps1'), 'utf8')
     expect(backend).toContain("'click-visual-point' {")
-    expect(backend).toContain("method='window-relative-visual-point'")
+    expect(backend).toContain("method='bound-window-visual-point'")
     expect(backend).toContain('top-right window-control zone')
+    expect(backend).toContain('frameHwnd')
+    expect(backend).toContain('window bounds changed after screenshot')
     expect(backend).toContain('Resolve-Window $request $true')
+  })
+
+  it('binds model-vision clicks to the exact full-window screenshot frame and consumes that frame', async () => {
+    const driver = new WindowsDesktopDriver()
+    driver.screenshot = async (args: any) => {
+      expect(args.captureMethod).toBe('screen')
+      expect(args.scope).toBe('active-window')
+      return {
+        ok: true,
+        path: 'blue-letter.png',
+        scope: 'active-window',
+        captureMethod: 'screen',
+        x: 100,
+        y: 60,
+        width: 1000,
+        height: 700,
+        window: {
+          hwnd: 4242,
+          processName: 'LxMainNew',
+          title: 'blue-letter',
+          rect: { x: 100, y: 60, width: 1000, height: 700 },
+        },
+      }
+    }
+
+    const shot = await driver.visualScreenshot({ processName: 'LxMainNew', captureMethod: 'print-window' })
+    expect(shot.frameId).toMatch(/^visual-/)
+    expect(shot.visualFrame).toMatchObject({
+      hwnd: 4242,
+      rect: { x: 100, y: 60, width: 1000, height: 700 },
+      coordinateSpace: 'physical-screen-top-level-window',
+    })
+
+    const calls: any[] = []
+    driver.run = async (action: string, args: any) => {
+      calls.push({ action, args })
+      return { ok: true, method: 'bound-window-visual-point', x: 600, y: 410 }
+    }
+    const clicked = await driver.clickVisualPoint({
+      processName: 'LxMainNew',
+      frameId: shot.frameId,
+      xRatio: 0.5,
+      yRatio: 0.5,
+    })
+    expect(clicked).toMatchObject({
+      frameId: shot.frameId,
+      screenshotPath: 'blue-letter.png',
+      frameBounds: { x: 100, y: 60, width: 1000, height: 700 },
+    })
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toMatchObject({
+      action: 'click-visual-point',
+      args: {
+        hwnd: 4242,
+        frameHwnd: 4242,
+        frameX: 100,
+        frameY: 60,
+        frameWidth: 1000,
+        frameHeight: 700,
+      },
+    })
+    await expect(driver.clickVisualPoint({
+      processName: 'LxMainNew',
+      frameId: shot.frameId,
+      xRatio: 0.5,
+      yRatio: 0.5,
+    })).rejects.toThrow(/unavailable or already consumed/)
+  })
+
+  it('uses DPI-aware DWM visible bounds and refuses partial active-window screen copies', () => {
+    const source = readFileSync(join(process.cwd(), 'desktop-runtime', 'windows-desktop.ps1'), 'utf8')
+    expect(source).toContain('SetProcessDpiAwarenessContext')
+    expect(source).toContain('DwmGetWindowAttribute')
+    expect(source).toContain('dwm-extended-frame')
+    expect(source).toContain('target window is not fully inside the virtual screen')
+    const tools = readFileSync(join(process.cwd(), 'desktop-runtime', 'tools-plugin.js'), 'utf8')
+    expect(tools).toContain('deliberately does NOT use PrintWindow')
+    expect(tools).toContain('driver.visualScreenshot')
+    expect(tools).toContain('driver.clickVisualPoint')
+    expect(tools).toContain('frameId: str')
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/PrintWindow 返回成功但只画出一部分 UI/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/frameId、HWND、rect 与 desktop_click_visual_point 强绑定/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/不能把 Ctrl\+F .*通用桌面能力/)
   })
 
   it('matches OCR text despite recognition-inserted whitespace', () => {
