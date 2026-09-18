@@ -887,8 +887,10 @@ export function canReuseAuthenticatedSession(definition: InspectionDefinition, c
 
 export function knownFlowOrigins(definition: InspectionDefinition): Set<string> {
   const origins = new Set<string>()
-  const targetOrigin = httpOrigin(definition.target.url)
-  if (targetOrigin !== undefined) origins.add(targetOrigin)
+  if (definition.target.type === 'browser') {
+    const targetOrigin = httpOrigin(definition.target.url)
+    if (targetOrigin !== undefined) origins.add(targetOrigin)
+  }
   for (const step of definition.steps) {
     if (step.kind !== 'tool' || step.tool !== 'browser_navigate') continue
     const url = typeof step.arguments.url === 'string' ? step.arguments.url : undefined
