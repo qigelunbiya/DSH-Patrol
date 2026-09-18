@@ -322,32 +322,12 @@ if ($SourceHash -ne $TargetHash) {
     throw "preset.yml copy verification failed"
 }
 
-$AgentYaml = @"
-# Patrol identity and workflow guidance are injected by the dsh-patrol plugin
-# itself. Do not compose @deepseek-ai/dsh-persona here: Harness changed that
-# row's required config from text to prefix in 2026-09, while older builds
-# require text. Avoiding that row keeps this installed preset cross-version.
-
-- id: tool-fs
-  name: '@deepseek-ai/dsh-tool-fs'
-
-- id: browser-tools
-  name: '$BrowserToolsIndex'
-  config:
-    commandTimeoutMs: 60000
-
-- id: desktop-tools
-  name: '$DesktopToolsIndex'
-  config:
-    commandTimeoutMs: 30000
-
-- id: dsh-patrol
-  name: '$PatrolIndex'
-  config:
-    storagePath: '$SafeStoragePath'
-    maxSteps: 200
-    reportMaxChars: 30000
-"@
+$AgentPresetSource = Join-Path $ProjectRoot "presets\patrol\agent.cordis.yml"
+$AgentYaml = [System.IO.File]::ReadAllText($AgentPresetSource)
+$AgentYaml = $AgentYaml.Replace("name: 'dsh-patrol/browser-tools'", "name: '$BrowserToolsIndex'")
+$AgentYaml = $AgentYaml.Replace("name: 'dsh-patrol/desktop-tools'", "name: '$DesktopToolsIndex'")
+$AgentYaml = $AgentYaml.Replace("name: 'dsh-patrol'", "name: '$PatrolIndex'")
+$AgentYaml = $AgentYaml.Replace("storagePath: .dsh-patrol", "storagePath: '$SafeStoragePath'")
 $AgentPresetPath = Join-Path $PresetDir "agent.cordis.yml"
 Write-Utf8NoBom -Path $AgentPresetPath -Content $AgentYaml
 $InstalledAgentYaml = [System.IO.File]::ReadAllText($AgentPresetPath)
