@@ -257,6 +257,7 @@ function assertDesktopToolArgumentPolicy(stepId: string, tool: string, args: Jso
       throw new Error(`step ${stepId} desktop_click_target requires name or automationId`)
     }
   }
+  if (tool === 'desktop_click_ocr_text') requireString('text')
   if (tool === 'desktop_click_coordinates') {
     requireInteger('x')
     requireInteger('y')
