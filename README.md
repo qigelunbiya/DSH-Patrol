@@ -504,7 +504,7 @@ Harness 会移除依赖并重算 bundle layer。由于 Harness 当前没有第�
 - 固定 browser allowlist；不注册 `browser_eval`。
 - Browser tool Guard 只允许当前 Patrol composite 的嵌套调用。
 - Page / DOM 输出是 untrusted data。
-- 明文 credential 不落盘。
+- 明文 credential 不落盘；桌面 Runbook 的普通文本输入与 UIA value selector 同样拒绝验证码、JWT 和明显 secret-like 值。
 - URL 中敏感 query / fragment 参数和 userinfo 会被拒绝持久化。
 - Managed Browser 使用 DSH-owned 专用 Profile，不修改日常浏览器 Profile。
 - Browser Bridge 只监听本机，并限制 Chromium Extension Origin。
