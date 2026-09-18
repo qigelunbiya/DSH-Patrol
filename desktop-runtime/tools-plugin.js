@@ -203,6 +203,7 @@ export function apply(ctx, config = {}) {
         controlType: str,
         className: str,
         text: str,
+        value: str,
         match: { type: 'string', enum: ['exact', 'contains'] },
         caseSensitive: bool,
         requireUnique: bool,
