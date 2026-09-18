@@ -110,7 +110,7 @@ function checklistMatch(step: ToolStep, checklist: readonly string[], claimed: R
 
 function rankedChecklistIndexes(step: ToolStep, checklist: readonly string[]): number[] {
   const stepAction = actionKindForStep(step)
-  if (!['navigate', 'click', 'type', 'read', 'screenshot'].includes(stepAction)) return []
+  if (!['navigate', 'click', 'type', 'read', 'screenshot', 'wait'].includes(stepAction)) return []
   const stepTokens = businessTokens(step.name)
   if (stepTokens.size === 0) return []
 
@@ -149,7 +149,7 @@ function actionKindForTool(tool: string): BusinessAction {
   if (tool.startsWith('browser_type') || tool === 'desktop_type_text' || tool === 'desktop_set_clipboard_text' || tool === 'desktop_set_clipboard_files') return 'type'
   if (tool === 'browser_read_page' || tool === 'desktop_snapshot' || tool === 'desktop_ocr') return 'read'
   if (tool === 'browser_screenshot' || tool === 'desktop_screenshot') return 'screenshot'
-  if (tool === 'browser_wait' || tool === 'browser_scroll' || tool === 'desktop_wait') return 'wait'
+  if (tool === 'browser_wait' || tool === 'browser_scroll' || tool === 'desktop_wait' || tool === 'desktop_wait_for_target') return 'wait'
   if (tool === 'browser_login_state' || tool === 'browser_detect_auth_challenge') return 'context'
   return 'other'
 }
