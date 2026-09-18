@@ -393,6 +393,10 @@ describe('bounded checklist structural recovery', () => {
       'browser_snapshot:',
       'browser_wait:700',
       'browser_snapshot:',
+      'browser_wait:1500',
+      'browser_snapshot:',
+      'browser_wait:2500',
+      'browser_snapshot:',
     ])
   })
 
