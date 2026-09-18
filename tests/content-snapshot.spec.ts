@@ -70,6 +70,14 @@ function setup(elements: FakeElement[]) {
 }
 
 describe('browser content snapshot', () => {
+  it('does not invent button roles for custom clickable spans and supports unique title selectors', () => {
+    const source = readFileSync(join(process.cwd(), 'browser-extension', 'content.js'), 'utf8')
+    expect(source).not.toContain("if (isLikelyClickable(element)) return 'button'")
+    expect(source).toContain("const title = element.getAttribute('title')")
+    expect(source).toContain('[title="')
+  })
+
+
   it('surfaces Ant table action text carried by a title even when the span itself has no pointer cursor', () => {
     const rdp = new FakeElement('SPAN', rect(990, 420, 180, 32))
     rdp.className = 'act_margin_left'
