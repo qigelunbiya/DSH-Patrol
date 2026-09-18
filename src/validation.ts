@@ -256,7 +256,10 @@ function assertDesktopToolArgumentPolicy(stepId: string, tool: string, args: Jso
       throw new Error(`step ${stepId} desktop_click_target requires name, automationId, controlType, or className`)
     }
   }
-  if (tool === 'desktop_click_ocr_text') requireString('text')
+  if (tool === 'desktop_click_ocr_text') {
+    const text = requireString('text')
+    assertSafePersistentText(text, `step ${stepId} desktop_click_ocr_text text`)
+  }
   if (tool === 'desktop_click_coordinates') {
     requireInteger('x')
     requireInteger('y')
@@ -267,9 +270,13 @@ function assertDesktopToolArgumentPolicy(stepId: string, tool: string, args: Jso
     requireInteger('toX')
     requireInteger('toY')
   }
-  if (tool === 'desktop_type_text' || tool === 'desktop_set_clipboard_text') requireString('text')
+  if (tool === 'desktop_type_text' || tool === 'desktop_set_clipboard_text') {
+    const text = requireString('text')
+    assertSafePublicInputText(text)
+  }
   if (tool === 'desktop_type_target') {
-    requireString('text')
+    const text = requireString('text')
+    assertSafePublicInputText(text)
     const selectors = [args.name, args.automationId, args.controlType, args.className]
     if (selectors.every(value => typeof value !== 'string' || value.trim() === '')) {
       throw new Error(`step ${stepId} desktop_type_target requires name, automationId, controlType, or className`)
@@ -282,6 +289,8 @@ function assertDesktopToolArgumentPolicy(stepId: string, tool: string, args: Jso
     if (milliseconds < 0 || milliseconds > 600000) throw new Error(`step ${stepId} desktop_wait milliseconds must be between 0 and 600000`)
   }
   if (tool === 'desktop_wait_for_target') {
+    if (typeof args.text === 'string') assertSafePersistentText(args.text, `step ${stepId} desktop_wait_for_target text`)
+    if (typeof args.value === 'string') assertSafePublicInputText(args.value)
     const selectors = [args.name, args.automationId, args.controlType, args.className, args.value, args.text]
     if (selectors.every(value => typeof value !== 'string' || value.trim() === '')) {
       throw new Error(`step ${stepId} desktop_wait_for_target requires text or a UI Automation selector`)
