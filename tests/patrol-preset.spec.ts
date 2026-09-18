@@ -29,10 +29,11 @@ describe('Patrol preset compatibility', () => {
 
     expect(preset).toContain("- id: browser-tools\n  name: 'dsh-patrol/browser-tools'")
     expect(preset).toContain("- id: desktop-tools\n  name: 'dsh-patrol/desktop-tools'")
-    expect(installer).toContain('$BrowserToolsIndex')
-    expect(installer).toContain('$DesktopToolsIndex')
-    expect(installer).toContain("- id: browser-tools\n  name: '$BrowserToolsIndex'")
-    expect(installer).toContain("- id: desktop-tools\n  name: '$DesktopToolsIndex'")
+    expect(installer).toContain('$AgentPresetSource = Join-Path $ProjectRoot "presets\\patrol\\agent.cordis.yml"')
+    expect(installer).toContain(`Replace("name: 'dsh-patrol/browser-tools'", "name: '$BrowserToolsIndex'")`)
+    expect(installer).toContain(`Replace("name: 'dsh-patrol/desktop-tools'", "name: '$DesktopToolsIndex'")`)
+    expect(installer).toContain('"id: desktop-tools"')
+    expect(installer).toContain('"name: \'$DesktopToolsIndex\'"')
     expect(installer).toContain('Patrol agent preset is incomplete after local install')
   })
 
@@ -41,6 +42,7 @@ describe('Patrol preset compatibility', () => {
     const installer = normalizeNewlines(readFileSync(join(root, 'scripts', 'install-local.ps1'), 'utf8'))
 
     expect(preset).toContain("- id: tool-fs\n  name: '@deepseek-ai/dsh-tool-fs'")
-    expect(installer).toContain("- id: tool-fs\n  name: '@deepseek-ai/dsh-tool-fs'")
+    expect(installer).toContain('$AgentPresetSource = Join-Path $ProjectRoot "presets\\patrol\\agent.cordis.yml"')
+    expect(installer).toContain('$AgentYaml = [System.IO.File]::ReadAllText($AgentPresetSource)')
   })
 })
