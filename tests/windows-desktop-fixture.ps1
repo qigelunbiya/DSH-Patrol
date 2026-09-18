@@ -31,6 +31,7 @@ $input.Margin = '0,0,0,12'
 $button = New-Object System.Windows.Controls.Button
 $button.Name = 'SmokeButton'
 $button.Content = 'Apply'
+$button.IsDefault = $true
 $button.Width = 100
 $button.Height = 32
 $button.HorizontalAlignment = 'Left'
