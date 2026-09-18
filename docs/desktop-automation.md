@@ -22,12 +22,14 @@ Windows UI Automation
         ↓ 不可见 / 自绘 UI
 稳定快捷键 / 键盘
         ↓ 仍不足
-CURRENT screenshot + Windows OCR（返回行级 rect / center）
+CURRENT OCR 语义点击（按文字重新定位并点击）
+        ↓ 只观察 / 诊断
+Windows OCR（返回行级 rect / center）
         ↓ 仍不足
 CURRENT OCR/视觉证据支持的坐标点击 / 拖拽
 ```
 
-不要把旧截图里的坐标当成稳定 Runbook selector。`desktop_ocr` 会返回 CURRENT 截图中每条 OCR 行的绝对屏幕 `rect` 与 `center`；只有文字唯一命中目标时才可直接使用该 `center` 做坐标点击。
+不要把旧截图里的坐标当成稳定 Runbook selector。UIA 找不到、但目标文字稳定时优先 `desktop_click_ocr_text`：它会在每次执行时重新 OCR 并点击唯一文字的 CURRENT 中心，因此比持久化绝对坐标稳定。`desktop_ocr` 仍会返回每条 OCR 行的绝对屏幕 `rect` 与 `center` 供诊断。
 
 ## 原语层与 Runbook 层
 
@@ -38,6 +40,7 @@ desktop_list_windows
 desktop_activate_window
 desktop_snapshot
 desktop_click_target
+desktop_click_ocr_text
 desktop_click_coordinates
 desktop_drag
 desktop_type_text
@@ -151,7 +154,7 @@ patrol-desktop-knowledge/微信.md
 6. desktop_type_text 输入一个明确且唯一的联系人名称
 7. desktop_snapshot 再次观察
 8. UIA 能唯一定位联系人时 desktop_click_target
-9. 如果 UIA 看不到结果，再 desktop_ocr；如果 OCR 唯一识别到联系人名称，使用该行返回的 center.x / center.y 作为 CURRENT 坐标后备
+9. 如果 UIA 看不到结果，优先 desktop_click_ocr_text 按联系人名称做唯一语义匹配；失败后再 desktop_ocr 查看文字与坐标
 10. 确认聊天标题正确
 11. desktop_type_text 输入一条测试消息
 12. desktop_press Enter
