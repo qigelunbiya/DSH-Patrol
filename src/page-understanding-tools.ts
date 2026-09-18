@@ -259,7 +259,8 @@ function rankDomCandidates(elements: readonly SnapshotElement[], tokens: readonl
     score += tokens.filter(token => haystack.includes(normalize(token))).length * 8
     if (['button', 'a', 'input'].includes(element.tag)) score += 4
     if (['button', 'link', 'menuitem'].includes(element.role)) score += 3
-    if (/\[data-(?:testid|test|cy)=|#[A-Za-z_]|\[name=|\[aria-/i.test(element.selector)) score += 2
+    if (wanted && normalize(element.text) === wanted && /\[title=/.test(element.selector)) score += 30
+    if (/\[data-(?:testid|test|cy)=|#[A-Za-z_]|\[name=|\[aria-|\[title=/i.test(element.selector)) score += 2
     return { element, score }
   }).filter(item => item.score > 0).sort((a, b) => b.score - a.score)
   if (!scored[0]) return []
