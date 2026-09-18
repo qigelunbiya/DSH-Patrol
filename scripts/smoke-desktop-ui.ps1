@@ -47,50 +47,52 @@ function Wait-SmokeWindow {
   throw "Smoke WinForms host did not expose window '$windowTitle' within 15 seconds."
 }
 
-$hostSource = @"
-\$ErrorActionPreference = 'Stop'
+$hostSource = @'
+$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-\$form = New-Object System.Windows.Forms.Form
-\$form.Text = '$windowTitle'
-\$form.Name = 'PatrolSmokeWindow'
-\$form.Width = 640
-\$form.Height = 360
-\$form.StartPosition = 'CenterScreen'
+$form = New-Object System.Windows.Forms.Form
+$form.Text = '__WINDOW_TITLE__'
+$form.Name = 'PatrolSmokeWindow'
+$form.Width = 640
+$form.Height = 360
+$form.StartPosition = 'CenterScreen'
 
-\$input = New-Object System.Windows.Forms.TextBox
-\$input.Name = 'PatrolSmokeInput'
-\$input.AccessibleName = 'PatrolSmokeInput'
-\$input.Multiline = \$true
-\$input.Location = New-Object System.Drawing.Point(20, 20)
-\$input.Size = New-Object System.Drawing.Size(580, 180)
+$input = New-Object System.Windows.Forms.TextBox
+$input.Name = 'PatrolSmokeInput'
+$input.AccessibleName = 'PatrolSmokeInput'
+$input.Multiline = $true
+$input.Location = New-Object System.Drawing.Point(20, 20)
+$input.Size = New-Object System.Drawing.Size(580, 180)
 
-\$button = New-Object System.Windows.Forms.Button
-\$button.Name = 'PatrolSmokeButton'
-\$button.AccessibleName = 'PatrolSmokeButton'
-\$button.Text = 'Apply'
-\$button.Location = New-Object System.Drawing.Point(20, 220)
-\$button.Size = New-Object System.Drawing.Size(100, 36)
+$button = New-Object System.Windows.Forms.Button
+$button.Name = 'PatrolSmokeButton'
+$button.AccessibleName = 'PatrolSmokeButton'
+$button.Text = 'Apply'
+$button.Location = New-Object System.Drawing.Point(20, 220)
+$button.Size = New-Object System.Drawing.Size(100, 36)
 
-\$status = New-Object System.Windows.Forms.Label
-\$status.Name = 'PatrolSmokeStatus'
-\$status.AccessibleName = 'PatrolSmokeStatus'
-\$status.Text = 'waiting'
-\$status.Location = New-Object System.Drawing.Point(150, 228)
-\$status.AutoSize = \$true
+$status = New-Object System.Windows.Forms.Label
+$status.Name = 'PatrolSmokeStatus'
+$status.AccessibleName = 'PatrolSmokeStatus'
+$status.Text = 'waiting'
+$status.Location = New-Object System.Drawing.Point(150, 228)
+$status.AutoSize = $true
 
-\$button.Add_Click({
-  \$status.Text = 'clicked'
-  \$status.AccessibleName = 'PatrolSmokeStatus clicked'
+$button.Add_Click({
+  $status.Text = 'clicked'
+  $status.AccessibleName = 'PatrolSmokeStatus clicked'
 })
 
-\$form.Controls.Add(\$input)
-\$form.Controls.Add(\$button)
-\$form.Controls.Add(\$status)
-\$form.Add_Shown({ \$input.Focus() })
-[void]\$form.ShowDialog()
-"@
+$form.Controls.Add($input)
+$form.Controls.Add($button)
+$form.Controls.Add($status)
+$form.Add_Shown({ $input.Focus() })
+[void]$form.ShowDialog()
+'@
+$hostSource = $hostSource.Replace('__WINDOW_TITLE__', $windowTitle.Replace("'", "''"))
+
 Set-Content -LiteralPath $hostScript -Value $hostSource -Encoding UTF8
 
 $hostProcess = $null
