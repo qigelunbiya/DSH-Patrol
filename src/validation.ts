@@ -251,10 +251,9 @@ function assertDesktopToolArgumentPolicy(stepId: string, tool: string, args: Jso
   if (tool === 'desktop_launch_app') requireString('file')
   if (tool === 'desktop_open_path' || tool === 'desktop_delete_path') requireString('path')
   if (tool === 'desktop_click_target') {
-    const name = args.name
-    const automationId = args.automationId
-    if ((typeof name !== 'string' || name.trim() === '') && (typeof automationId !== 'string' || automationId.trim() === '')) {
-      throw new Error(`step ${stepId} desktop_click_target requires name or automationId`)
+    const selectors = [args.name, args.automationId, args.controlType, args.className]
+    if (selectors.every(value => typeof value !== 'string' || value.trim() === '')) {
+      throw new Error(`step ${stepId} desktop_click_target requires name, automationId, controlType, or className`)
     }
   }
   if (tool === 'desktop_click_ocr_text') requireString('text')
