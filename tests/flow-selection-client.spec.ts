@@ -52,6 +52,13 @@ describe('Patrol flow selection client surface', () => {
     expect(clientSource).toContain('await submitReplayPrompt(ctx, sessionId, batchReplayPrompt(items), items);')
     expect(clientSource).toContain('一次调用 patrol_run_batch')
   })
+  it('shows human Chinese flow states instead of raw DRAFT/READY labels', () => {
+    expect(clientSource).toContain("if (value === 'ready') return '已保存'")
+    expect(clientSource).toContain("if (value === 'draft') return '编辑中'")
+    expect(clientSource).toContain('flowStatusLabel(flow.status)')
+    expect(clientSource).not.toContain("String(flow.status || 'draft').toUpperCase()")
+  })
+
   it('submits selected flows through native reference chips', () => {
     expect(clientSource).toContain('flowMentionToken(flowReferenceValue(item))')
     expect(clientSource).toContain('function flowReferenceInsert(flow)')
