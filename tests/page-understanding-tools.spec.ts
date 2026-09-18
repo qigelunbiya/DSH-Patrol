@@ -206,10 +206,13 @@ describe('Patrol page understanding planner', () => {
     expect(guard(click)).toBeUndefined()
   })
 
-  it('keeps image-code out of the click planner and makes TEST teaching visual-first', () => {
+  it('keeps image-code out of the click planner and makes TEST teaching local-OCR-first', () => {
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/图片字符验证码不走页面点击规划器/)
-    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/browser_capture_image_code_visual/)
-    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/不要先跑 ddddocr\/Windows OCR 预检/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/patrol_solve_current_image_code/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/Windows OCR\/本地 OCR/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/一次性 fallbackToken/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/没有 fallbackToken 时禁止模型视觉/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).not.toMatch(/不要先跑 ddddocr\/Windows OCR 预检/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/HARD STOP/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/HARD STOP 后必须直接结束当前 assistant turn/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/禁止在同一回复里复述相同句式/)

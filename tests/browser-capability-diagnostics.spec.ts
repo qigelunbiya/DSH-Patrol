@@ -4,6 +4,7 @@ import {
   assertImageCodeCaptureCapability,
   registerImageCodeVisualTool,
 } from '../browser-bridge-runtime/image-code-visual-tool.js'
+import { issueImageCodeVisualAuthorization } from '../browser-bridge-runtime/image-code-visual-authorization.js'
 import { registerTools } from '../browser-bridge-runtime/tools.js'
 
 function fakeToolContext() {
@@ -119,6 +120,19 @@ describe('browser capability diagnostics', () => {
     })).not.toThrow()
   })
 
+  it('rejects CAPTCHA visual capture without an explicit local-OCR fallback authorization', async () => {
+    const fixture = fakeToolContext()
+    const bridge = {
+      status: () => ({ extension: { version: '0.2.1', capabilities: ['captureImageCode'] } }),
+      request: async () => { throw new Error('visual capture must not dispatch without authorization') },
+      saveScreenshot: () => '/tmp/unused.png',
+    }
+    registerImageCodeVisualTool(fixture.ctx, bridge)
+    const tool = fixture.definitions.find(definition => definition.name === 'browser_capture_image_code_visual')
+    await expect(tool.execute({ fallbackToken: 'not-issued' }, { signal: new AbortController().signal }))
+      .rejects.toThrow(/not authorized/i)
+  })
+
   it('falls back to a full screenshot when an older extension does not support captureImageCode', async () => {
     const fixture = fakeToolContext()
     const calls = []
@@ -135,7 +149,7 @@ describe('browser capability diagnostics', () => {
 
     registerImageCodeVisualTool(fixture.ctx, bridge)
     const tool = fixture.definitions.find(definition => definition.name === 'browser_capture_image_code_visual')
-    const value = await tool.execute({}, { agent: { session: { header: { cwd: '/tmp' } } }, signal: new AbortController().signal })
+    const value = await tool.execute({ fallbackToken: issueImageCodeVisualAuthorization() }, { agent: { session: { header: { cwd: '/tmp' } } }, signal: new AbortController().signal })
 
     expect(calls).toEqual(['captureImageCode', 'screenshot'])
     expect(value.captureMode).toBe('full-page-screenshot-fallback')
@@ -170,7 +184,7 @@ describe('browser capability diagnostics', () => {
 
     registerImageCodeVisualTool(fixture.ctx, bridge)
     const tool = fixture.definitions.find(definition => definition.name === 'browser_capture_image_code_visual')
-    const value = await tool.execute({}, { rootCallId: 'root', token: Symbol('visual'), agent: { session: { header: { cwd: '/tmp' } } }, signal: new AbortController().signal })
+    const value = await tool.execute({ fallbackToken: issueImageCodeVisualAuthorization() }, { rootCallId: 'root', token: Symbol('visual'), agent: { session: { header: { cwd: '/tmp' } } }, signal: new AbortController().signal })
     const rendered = tool.output.render({}, value)
 
     expect(value.image).toMatchObject({ attachmentId: expect.stringMatching(/^sha256:/), mediaType: 'image/png' })

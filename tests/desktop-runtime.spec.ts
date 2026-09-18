@@ -58,7 +58,7 @@ describe('Desktop Automation runtime foundation', () => {
     expect(PATROL_DESKTOP_PROMPT).toMatch(/minXRatio=0\.33/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/右侧聊天标题区域/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/禁止再次点联系人/)
-    expect(PATROL_DESKTOP_PROMPT).toMatch(/只有 desktop_list_windows 明确确认微信窗口已经不存在时才允许重新 launch/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/只有 desktop_list_windows 明确确认微信窗口(?:已经)?不存在时才允许重新 launch/)
   })
 
   it('matches OCR text despite recognition-inserted whitespace', () => {
