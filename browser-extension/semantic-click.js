@@ -164,24 +164,14 @@ async function semanticClickPageCommand(mode, spec) {
   const modalSelectors = ['[role="dialog"][aria-modal="true"]', '.ant-modal-content', '.el-dialog', '.ivu-modal-content', '.arco-modal', '.semi-modal']
   const modal = modalSelectors.flatMap(selector => [...document.querySelectorAll(selector)]).find(visible)
   const root = modal || document
-  const actionableAncestorSelector = [
-    'a', 'button', 'input[type="button"]', 'input[type="submit"]', 'input[type="reset"]',
-    '[role="button"]', '[role="link"]', '[role="menuitem"]', '[role="tab"]', '[role="treeitem"]',
-    '[onclick]', '[bg-click]', '[ng-click]', '[data-action]', '[tabindex]:not([tabindex="-1"])',
-    '.ant-tree-node-content-wrapper',
-  ].join(',')
   const selector = [
-    actionableAncestorSelector,
-    '[title]',
+    'a', 'button', 'input[type="button"]', 'input[type="submit"]', 'input[type="reset"]',
+    '[role="button"]', '[role="link"]', '[role="menuitem"]', '[role="tab"]',
+    '[onclick]', '[bg-click]', '[ng-click]', '[data-action]', '[tabindex]:not([tabindex="-1"])',
+    '[role="treeitem"]', '.ant-tree-node-content-wrapper', '[title]',
     'img', 'svg', '[id*="logo" i]', '[class*="logo" i]',
   ].join(',')
   const candidates = [...new Set([...root.querySelectorAll(selector)])].filter(element => visible(element) && !disabled(element))
-  const actionableAncestorForTitleLeaf = element => {
-    if (!(element instanceof Element) || !element.getAttribute?.('title')) return null
-    const ancestor = element.parentElement?.closest?.(actionableAncestorSelector)
-    if (!(ancestor instanceof Element) || ancestor === element || !root.contains(ancestor)) return null
-    return visible(ancestor) && !disabled(ancestor) ? ancestor : null
-  }
   const wantedText = normalize(spec.locatorText || '')
   const wantedRole = normalize(spec.locatorRole || '')
   const wantedTag = normalize(spec.locatorTag || '')
@@ -213,18 +203,6 @@ async function semanticClickPageCommand(mode, spec) {
       const titleText = normalize(element.getAttribute?.('title') || '')
       if (titleText === wantedText) score += 90
       else if (titleText && titleText.includes(wantedText)) score += 35
-
-      const descendantTitles = [...(element.querySelectorAll?.('[title]') || [])]
-        .map(child => normalize(child.getAttribute?.('title') || ''))
-        .filter(Boolean)
-      if (descendantTitles.some(value => value === wantedText)) score += 70
-      else if (descendantTitles.some(value => value.includes(wantedText))) score += 25
-
-      // A title is often painted on a child <span> while the framework's click
-      // handler lives on an ancestor wrapper (Ant Tree is a common example).
-      // Prefer that actionable ancestor over the decorative title leaf so the
-      // saved selector and the physical click both target the business control.
-      if (actionableAncestorForTitleLeaf(element)) score -= 110
       if (element.matches?.('.ant-tree-node-content-wrapper,[role="treeitem"]')) score += 24
     }
     if (selectorHint) {

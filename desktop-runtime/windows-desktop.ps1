@@ -410,13 +410,15 @@ function Resolve-AppLaunchSpec($request) {
   if ($null -ne $getStartApps) {
     $apps = @(Get-StartApps | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.AppID) })
     $exact = @($apps | Where-Object {
-      ([string]$_.Name).Equals($app, [StringComparison]::OrdinalIgnoreCase)
-      -or ([string]$_.AppID).Equals($app, [StringComparison]::OrdinalIgnoreCase)
+      $nameText = [string]$_.Name
+      $appIdText = [string]$_.AppID
+      return $nameText.Equals($app, [StringComparison]::OrdinalIgnoreCase) -or $appIdText.Equals($app, [StringComparison]::OrdinalIgnoreCase)
     })
     $matches = if ($exact.Count -gt 0) { $exact } else {
       @($apps | Where-Object {
-        ([string]$_.Name).IndexOf($app, [StringComparison]::OrdinalIgnoreCase) -ge 0
-        -or ([string]$_.AppID).IndexOf($app, [StringComparison]::OrdinalIgnoreCase) -ge 0
+        $nameText = [string]$_.Name
+        $appIdText = [string]$_.AppID
+        return $nameText.IndexOf($app, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or $appIdText.IndexOf($app, [StringComparison]::OrdinalIgnoreCase) -ge 0
       })
     }
     if ($matches.Count -eq 1) {
@@ -441,6 +443,10 @@ try {
   $result = switch ($Action) {
     'list-windows' {
       [ordered]@{ ok=$true; windows=@(Get-Windows) }
+    }
+    'resolve-app' {
+      $spec = Resolve-AppLaunchSpec $request
+      [ordered]@{ ok=$true; spec=$spec }
     }
     'launch-app' {
       $spec = Resolve-AppLaunchSpec $request

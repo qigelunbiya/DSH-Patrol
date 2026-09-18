@@ -14,14 +14,6 @@ describe('TEST MODE operational click fallbacks', () => {
     expect(source).toContain("test-bypass-v10-desktop-automation")
   })
 
-  it('does not contradict the always-on HARD STOP selector budget in the TEST prompt', () => {
-    const prompt = readFileSync(join(process.cwd(), 'src', 'test-mode.ts'), 'utf8')
-    expect(prompt).toContain('同一业务点击最多两种策略')
-    expect(prompt).toContain('一旦工具返回 HARD STOP')
-    expect(prompt).toContain('必须立即结束该点击尝试和当前 assistant turn')
-    expect(prompt).not.toContain('HARD STOP 和 direct-browser 全禁用规则不作为 TEST MODE 的运行时拦截器')
-  })
-
   it('allows non-secret low-level interaction fallbacks in TEST MODE', () => {
     const source = readFileSync(join(process.cwd(), 'src', 'index.ts'), 'utf8')
     expect(source).toContain("'browser_semantic_click'")

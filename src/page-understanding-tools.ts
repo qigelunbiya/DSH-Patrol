@@ -67,52 +67,18 @@ export const PATROL_PAGE_UNDERSTANDING_PROMPT = `DSH Patrol 页面理解与执�
 /** Always-on even in TEST MODE: bound model-facing retry strategies. */
 export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = createPatrolClickOutcomeTracker()) {
   const states = new Map<string, PlanningGuardState>()
-  let lastInspectionId = ''
   return (execution: any): string | undefined => {
     const name = String(execution?.name ?? '')
-    const args = isRecord(execution?.arguments) ? execution.arguments : {}
-    const now = Date.now()
-    for (const [key, value] of states) if (now - value.touchedAt > STATE_TTL_MS) states.delete(key)
-
-    // Internal browser_* calls dispatched by Patrol composites carry a parent
-    // token and must not consume the model-facing strategy budget. Direct
-    // TEST-mode escape hatches have no parent; once one inspection has entered
-    // click recovery, bound those low-level calls to the same two-strategy
-    // budget instead of letting selector variants bypass patrol_* guards.
-    if (name.startsWith('browser_') && execution?.parent === undefined) {
-      const activeState = lastInspectionId ? states.get(lastInspectionId) : undefined
-      if (activeState !== undefined) {
-        activeState.touchedAt = now
-        if (name === 'browser_click' || name === 'browser_semantic_click') {
-          if (activeState.strategyAttempts >= 2) return strategyHardStop('低层 browser click 已无剩余策略预算')
-          if (activeState.strategyAttempts === 0) {
-            return 'DSH Patrol 页面规划器：低层 browser_click 只能作为语义 Patrol 点击失败后的最后后备。先使用 patrol_click_target；不要把 raw browser click 当第一策略。'
-          }
-          if (!activeState.analyzed) {
-            return 'DSH Patrol 页面规划器：第一次业务点击未成功后，低层 browser_click 只能基于一次 patrol_analyze_step 的 CURRENT 证据执行。不要继续猜 selector。'
-          }
-          activeState.strategyAttempts += 1
-          activeState.analyzed = false
-          return undefined
-        }
-        if (['browser_count', 'browser_snapshot', 'browser_read_page'].includes(name)) {
-          if (activeState.strategyAttempts >= 2) return strategyHardStop('两种点击策略已经用完，禁止继续低层 DOM 诊断')
-          if (activeState.analyzed) {
-            return 'DSH Patrol 页面规划器：patrol_analyze_step 已经提供本业务点击的 CURRENT 证据。不要继续 browser_count/snapshot/read_page 猜 selector；执行唯一恢复方案一次，失败则停止。'
-          }
-        }
-      }
-      return undefined
-    }
-
     if (!name.startsWith('patrol_')) return undefined
+    const args = isRecord(execution?.arguments) ? execution.arguments : {}
     const inspectionId = cleanString(args.inspectionId)
     if (!inspectionId) return undefined
-    lastInspectionId = inspectionId
 
     const urlIssue = malformedPatrolUrl(name, args)
     if (urlIssue !== undefined) return urlIssue
 
+    const now = Date.now()
+    for (const [key, value] of states) if (now - value.touchedAt > STATE_TTL_MS) states.delete(key)
     let state = states.get(inspectionId)
     if (state === undefined) {
       state = { touchedAt: now, analyzed: false, businessKey: '', strategyAttempts: 0 }
@@ -123,14 +89,12 @@ export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = 
     if (RESET_EPISODE_TOOLS.has(name)) {
       outcomes.clearInspection(inspectionId)
       states.delete(inspectionId)
-      if (lastInspectionId === inspectionId) lastInspectionId = ''
       return undefined
     }
 
     if (PHASE_PROGRESS_TOOLS.has(name)) {
       outcomes.clearInspection(inspectionId)
       states.delete(inspectionId)
-      if (lastInspectionId === inspectionId) lastInspectionId = ''
       return undefined
     }
 

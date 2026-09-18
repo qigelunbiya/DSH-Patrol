@@ -92,58 +92,6 @@ describe('Patrol page understanding planner', () => {
     })).toMatch(/HARD STOP/)
   })
 
-  it('bounds direct TEST-mode browser diagnostics and raw clicks to the active business strategy budget', () => {
-    const guard = createPatrolPlanningGuard()
-
-    expect(guard({
-      name: 'patrol_click_target',
-      arguments: { inspectionId: 'demo', stepName: '点击未分组', locatorText: '未分组' },
-    })).toBeUndefined()
-    expect(guard({
-      name: 'patrol_analyze_step',
-      arguments: { inspectionId: 'demo', task: '点击未分组', locatorText: '未分组' },
-    })).toBeUndefined()
-
-    expect(guard({
-      name: 'browser_count',
-      arguments: { selector: 'span[title="未分组"]' },
-    })).toMatch(/已经提供.*CURRENT 证据|不要继续 browser_count/i)
-
-    expect(guard({
-      name: 'browser_click',
-      arguments: { selector: 'span[title="未分组"]' },
-    })).toBeUndefined()
-
-    expect(guard({
-      name: 'browser_click',
-      arguments: { selector: '.ant-tree-node-content-wrapper' },
-    })).toMatch(/HARD STOP/)
-  })
-
-  it('does not charge internal browser dispatches from Patrol composites against the model-facing fallback budget', () => {
-    const guard = createPatrolPlanningGuard()
-
-    expect(guard({
-      name: 'patrol_click_target',
-      arguments: { inspectionId: 'demo', stepName: '点击未分组', locatorText: '未分组' },
-    })).toBeUndefined()
-
-    expect(guard({
-      name: 'browser_semantic_click',
-      parent: Symbol('patrol-parent'),
-      arguments: { locatorText: '未分组' },
-    })).toBeUndefined()
-
-    expect(guard({
-      name: 'patrol_analyze_step',
-      arguments: { inspectionId: 'demo', task: '点击未分组', locatorText: '未分组' },
-    })).toBeUndefined()
-    expect(guard({
-      name: 'patrol_click',
-      arguments: { inspectionId: 'demo', stepName: '点击未分组', selector: 'span[title="未分组"]' },
-    })).toBeUndefined()
-  })
-
   it('counts a raw selector recovery as the second and final strategy', () => {
     const guard = createPatrolPlanningGuard()
     expect(guard({

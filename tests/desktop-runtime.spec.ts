@@ -209,6 +209,8 @@ describe('Desktop Automation runtime foundation', () => {
     expect(source).toContain('App Paths')
     expect(source).toContain('Get-StartApps')
     expect(source).toContain("throw 'launch-app requires file or app'")
+    expect(source).toContain("'resolve-app'")
+    expect(source).not.toMatch(/^\\s*-or\\b/m)
     expect(source).not.toMatch(/WeChat|微信|WPS|百度网盘/)
   })
 

@@ -147,6 +147,23 @@ jobs:
           if ($value.ok -ne $true) { throw "desktop runtime smoke returned ok=false: $output" }
           if ($null -eq $value.windows) { throw "desktop runtime smoke did not return windows array: $output" }
 
+      - name: Resolve friendly Start Apps without launching
+        shell: pwsh
+        run: |
+          $entry = Get-StartApps | Where-Object {
+            -not [string]::IsNullOrWhiteSpace([string]$_.AppID) -and
+            -not [string]::IsNullOrWhiteSpace([string]$_.Name)
+          } | Select-Object -First 1
+          if ($null -eq $entry) { throw 'Get-StartApps returned no resolvable applications' }
+          $json = @{ app = [string]$entry.AppID } | ConvertTo-Json -Compress
+          $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
+          $output = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File desktop-runtime/windows-desktop.ps1 -Action resolve-app -Payload $payload
+          if ($LASTEXITCODE -ne 0) { throw "desktop app resolver exited with $LASTEXITCODE : $output" }
+          $value = $output | ConvertFrom-Json
+          if ($value.ok -ne $true) { throw "desktop app resolver returned ok=false: $output" }
+          if ($value.spec.mode -ne 'shell-app') { throw "expected shell-app resolution for AppID '$($entry.AppID)': $output" }
+          if ([string]$value.spec.appId -ne [string]$entry.AppID) { throw "resolved AppID mismatch: $output" }
+
       - name: Execute Desktop Automation UIA integration smoke
         shell: pwsh
         run: node tests/windows-desktop-integration.mjs

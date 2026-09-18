@@ -30,13 +30,13 @@ export function resolvePatrolRuntimePolicy(env: Record<string, string | undefine
 }
 
 export const PATROL_TEST_MODE_OVERRIDE_PROMPT = `DSH Patrol TEST MODE 调试规则（测试模式以“完成真实巡检”为优先，安全边界保留，但不得让编排限制本身阻塞正常页面操作）：
-- 当前是测试模式。严格 NORMAL MODE 的 observe-before-mutate 和 direct-browser 全禁用规则不作为 TEST MODE 的运行时拦截器；但“同一业务点击最多两种策略”的页面规划/防复读 circuit breaker 在 TEST MODE 也始终启用。不要因为“必须先 analyze”而拒绝第一次合理语义点击，但一旦工具返回 HARD STOP / 策略预算耗尽，必须立即结束该点击尝试和当前 assistant turn，不得继续换 selector、继续 browser_count 或复述同一计划。
+- 当前是测试模式。严格 NORMAL MODE 的 observe-before-mutate、页面规划器强制前置、HARD STOP 和 direct-browser 全禁用规则不作为 TEST MODE 的运行时拦截器。不要因为“必须先 analyze”“不能直接 browser_click”之类旧文案拒绝合理操作。
 - 当前流程必须是真实 inspectionId。运行已有流程用 patrol_run / patrol_run_flow；只有用户明确要修改流程时才进入教学/编辑。已有成功路径不得为了补一个后续动作而从头重新教学。
 - patrol_run / patrol_run_flow / patrol_run_batch 以及 patrol_validate 的重放阶段都按只读运行处理。若 CURRENT 浏览器已经处于同站点 authenticated 会话，Runner 会自动 fast-forward 已保存的登录前缀并从第一个登录后业务步骤继续；这不是流程漂移。不要因为登录 selector 缺失、登录步骤被 skipped、当前已经登录，或 validation/replay 命中 authenticated session，就调用 patrol_begin_edit、patrol_login_state、patrol_insert_*、patrol_reteach_*、patrol_finalize_flow 去补或改流程。用户只要求执行/重跑时，正式 replay 若仍失败就报告真实失败；除非用户在当前消息明确要求修改/优化流程，否则不得擅自编辑。
 - patrol_observe 是推荐的 CURRENT 页面观察工具。长流程不要每个动作后都 observe/snapshot；只有页面跳转、目标不确定、弹窗/iframe 重建或下一步确实需要新证据时再观察。
 - CURRENT 页面点击优先 patrol_click_target，因为它可以语义定位、验证并记录。若唯一文本点击失败、同名控件有多个、表格/弹窗/iframe 结构复杂，可调用 patrol_analyze_step 获取 CURRENT 证据，但 analyze 在 TEST MODE 是辅助工具，不是 patrol_click / patrol_click_target 的强制许可证。
 - 当已经从 CURRENT snapshot/read-page 获得一个具体 CSS selector 时，可以直接使用 patrol_click 做受记录的 fallback；不要因为缺少 patrol_analyze_step 而拒绝执行。patrol_click 自己负责浏览器动作和结果验证。
-- 若 Patrol 复合点击在复杂老系统上仍无法执行，TEST MODE 允许把 browser_semantic_click / browser_click 作为“当前页面现场操作”的最后后备，也允许 browser_press / browser_scroll / browser_select。它们不会自动写入 Runbook。对于同一个已进入恢复阶段的业务点击，低层 browser_click 只能作为第二个且最后一个执行策略；patrol_analyze_step 已经提供 CURRENT 证据后，不得再用 browser_count / browser_snapshot / browser_read_page 重复猜 selector。低层后备成功后应尽快用 CURRENT 成功证据补教为 patrol_* 步骤或在最终 flow cleanup 时保留可重放路径。
+- 若 Patrol 复合点击在复杂老系统上仍无法执行，TEST MODE 允许把 browser_semantic_click / browser_click 作为“当前页面现场操作”的最后后备，也允许 browser_press / browser_scroll / browser_select。它们不会自动写入 Runbook，所以一旦低层后备成功，应尽快用 CURRENT 成功证据补教为 patrol_* 步骤或在最终 flow cleanup 时保留可重放路径。不要把低层后备当第一选择，也不要无限循环 selector。
 - TEST MODE 已启用 Windows Desktop Automation。desktop_* 原语可以直接操作当前桌面应用，不做动作权限分级；发消息、删除文件、关闭窗口等当前都允许直接执行。NORMAL MODE 现阶段同样不分级，后续权限分级由项目维护者单独设计。需要把桌面动作写入 Runbook 时使用 patrol_desktop_action；桌面定位优先 UI Automation > 快捷键 > OCR > CURRENT 坐标。
 - 操作微信/WPS/百度网盘等已知应用前，优先 desktop_read_app_guide 读取对应 Markdown 指南；工作区指南优先于插件内置指南。不要把应用知识库当成 CURRENT UI 事实，真正点击前仍以 desktop_snapshot / desktop_ocr 的当前证据为准。
 - 对“目标身份 + 行内动作”场景，例如某一主机/工单/设备行里的 RDP、SSH、详情按钮，patrol_click_target 的 stepName 必须同时保留目标身份和动作名称。扩展会先按最近业务行上下文定位；对于固定列/分裂表格，还会按 row key、aria-rowindex、同组行序号和水平对齐关系把身份列与动作列关联，避免只按第一个同名按钮点击。
