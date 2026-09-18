@@ -28,10 +28,10 @@ export function apply(ctx, config = {}) {
   const definitions = [
     defineTool({
       name: 'desktop_status',
-      description: 'Report Desktop Automation availability. Windows uses UI Automation first, then keyboard, OCR, and coordinate fallbacks. Current Patrol desktop permission mode is unrestricted in both TEST and NORMAL modes.',
+      description: 'Report Desktop Automation availability and execute a real lightweight PowerShell backend probe. ok=true means the backend script actually ran, not merely that the plugin is installed.',
       parameters: {},
       output: jsonOutput('Desktop Automation status'),
-      execute: async () => driver.status(),
+      execute: async (_args, exec) => await driver.status(exec),
     }),
     defineTool({
       name: 'desktop_list_windows',
@@ -42,14 +42,20 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_launch_app',
-      description: 'Launch a Windows application by executable path/name. This is a direct desktop action; no permission tier is currently applied.',
+      description: 'Launch a Windows application. Provide file for an executable/path, or app for a friendly installed application name. app resolution uses Windows command/App Paths/Start Apps discovery and is generic across applications.',
       parameters: {
-        file: reqStr,
+        file: str,
+        app: str,
         arguments: { type: 'array', items: { type: 'string' } },
         workingDirectory: str,
       },
       output: jsonOutput('Application launched'),
-      execute: async (args, exec) => await driver.run('launch-app', compact(args), exec),
+      execute: async (args, exec) => {
+        if (![args.file, args.app].some(value => typeof value === 'string' && value.trim())) {
+          throw new Error('desktop_launch_app requires file or app')
+        }
+        return await driver.run('launch-app', compact(args), exec)
+      },
     }),
     defineTool({
       name: 'desktop_open_path',

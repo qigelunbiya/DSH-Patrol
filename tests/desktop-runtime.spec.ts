@@ -4,12 +4,18 @@ import { describe, expect, it } from 'vitest'
 import { findUiaTargetMatches, normalizeOcrObservations, WindowsDesktopDriver } from '../desktop-runtime/windows-driver.js'
 
 describe('Desktop Automation runtime foundation', () => {
-  it('exposes an explicit unrestricted Windows desktop strategy without affecting non-Windows CI', () => {
+  it('exposes an explicit unrestricted Windows desktop strategy without affecting non-Windows CI', async () => {
     const driver = new WindowsDesktopDriver()
-    const status = driver.status()
+    if (process.platform === 'win32') {
+      driver.run = async action => action === 'list-windows'
+        ? { ok: true, windows: [{ title: 'fixture' }] }
+        : { ok: true }
+    }
+    const status = await driver.status()
     expect(status.permissionMode).toBe('unrestricted')
     expect(status.strategy).toEqual(['uia', 'keyboard', 'ocr', 'coordinates'])
     expect(status.supported).toBe(process.platform === 'win32')
+    expect(status.backendReachable).toBe(process.platform === 'win32')
   })
 
   it('ships application knowledge guides including the first WeChat workflow', async () => {
@@ -194,6 +200,33 @@ describe('Desktop Automation runtime foundation', () => {
       ],
     })
     await expect(driver.clickOcrText({ text: '测试联系人' })).rejects.toThrow(/ambiguous \(2 matches\)/i)
+  })
+
+  it('resolves friendly installed app names without application-specific hardcoding', () => {
+    const source = readFileSync(join(process.cwd(), 'desktop-runtime', 'windows-desktop.ps1'), 'utf8')
+    expect(source).toContain('function Resolve-AppLaunchSpec')
+    expect(source).toContain('Get-Command -Name $name -CommandType Application')
+    expect(source).toContain('App Paths')
+    expect(source).toContain('Get-StartApps')
+    expect(source).toContain("throw 'launch-app requires file or app'")
+    expect(source).not.toMatch(/WeChat|微信|WPS|百度网盘/)
+  })
+
+  it('keeps the Windows PowerShell 5.1 backend ASCII-only so BOM-less checkout encoding cannot corrupt parser tokens', () => {
+    const source = readFileSync(join(process.cwd(), 'desktop-runtime', 'windows-desktop.ps1'), 'utf8')
+    expect(/[^\x00-\x7F]/.test(source)).toBe(false)
+    expect(source).toContain("$rawValue.Substring(0, 2000) + '...'")
+  })
+
+  it('reports a failed real backend probe instead of claiming Desktop Automation is healthy', async () => {
+    const driver = new WindowsDesktopDriver()
+    Object.defineProperty(driver, 'supported', { get: () => true })
+    driver.run = async () => { throw new Error('ParserError: Unexpected token') }
+
+    const status = await driver.status()
+    expect(status.ok).toBe(false)
+    expect(status.backendReachable).toBe(false)
+    expect(status.error).toMatch(/ParserError/)
   })
 
   it('does not shadow PowerShell automatic $args with desktop request payloads', () => {

@@ -17,6 +17,8 @@ describe('snapshot title action enrichment', () => {
     const source = readFileSync(join(root, 'browser-extension', 'snapshot-title-action-enrichment.js'), 'utf8')
     expect(source).toContain("document.querySelectorAll('[title]')")
     expect(source).toContain("evidence: 'title-backed-custom-action'")
+    expect(source).toContain('const explicitRole = element.getAttribute(\'role\')')
+    expect(source).not.toContain("element.getAttribute('role') || 'button'")
     expect(source).toContain('context: compact')
     expect(source).toContain('[data-row-key=')
     expect(source).not.toContain("element.click()")

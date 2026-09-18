@@ -267,7 +267,11 @@ function assertDesktopToolArgumentPolicy(stepId: string, tool: string, args: Jso
     return value
   }
 
-  if (tool === 'desktop_launch_app') requireString('file')
+  if (tool === 'desktop_launch_app') {
+    const file = typeof args.file === 'string' ? args.file.trim() : ''
+    const app = typeof args.app === 'string' ? args.app.trim() : ''
+    if (!file && !app) throw new Error(`step ${stepId} desktop_launch_app requires file or app`)
+  }
   if (tool === 'desktop_open_path' || tool === 'desktop_delete_path') requireString('path')
   if (tool === 'desktop_click_target') {
     const selectors = [args.name, args.automationId, args.controlType, args.className]

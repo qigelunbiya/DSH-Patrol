@@ -75,7 +75,9 @@ function semanticRole(element) {
   if (tag === 'button') return 'button'
   if (tag === 'a' && element.getAttribute('href')) return 'link'
   if (element instanceof HTMLInputElement && ['button', 'submit', 'reset'].includes(element.type)) return 'button'
-  if (isLikelyClickable(element)) return 'button'
+  // Do not invent role=button for custom clickable spans/divs. The semantic
+  // resolver must not receive a role constraint that the CURRENT DOM does not
+  // actually expose.
   return undefined
 }
 
@@ -375,6 +377,11 @@ function dispatchRealisticClick(element) {
 
 function stableSelector(element) {
   if (element.id) return `#${CSS.escape(element.id)}`
+  const title = element.getAttribute('title')
+  if (title) {
+    const byTitle = `${element.tagName.toLowerCase()}[title="${cssString(title)}"]`
+    if (document.querySelectorAll(byTitle).length === 1) return byTitle
+  }
   for (const attr of ['data-testid', 'data-test', 'data-cy']) {
     const value = element.getAttribute(attr)
     if (value) return `[${attr}="${cssString(value)}"]`

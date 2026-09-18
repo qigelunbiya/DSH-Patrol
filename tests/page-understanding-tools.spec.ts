@@ -30,6 +30,19 @@ describe('Patrol page understanding planner', () => {
     expect(plans[0]).toMatchObject({ kind: 'semantic', selector: 'top-frame::#workbench', locatorText: '我的工作台' })
   })
 
+  it('prefers a unique exact title-backed tree target over nested same-text wrappers', () => {
+    const plans = analyzePageEvidence('点击主机下的未分组', '未分组', '', [
+      { tag: 'span', role: 'button', text: '未分组', selector: 'top-frame::span[title="未分组"]' },
+      { tag: 'span', role: 'button', text: '未分组', selector: 'top-frame::div:nth-of-type(2) > span:nth-of-type(2)' },
+      { tag: 'div', role: 'button', text: '主机 未分组', selector: 'top-frame::.ant-tree-list-holder-inner' },
+    ])
+    expect(plans[0]).toMatchObject({
+      kind: 'semantic',
+      selector: 'top-frame::span[title="未分组"]',
+      locatorText: '未分组',
+    })
+  })
+
   it('refuses to pretend an ambiguous same-text target is unique', () => {
     const plans = analyzePageEvidence('点击 RDP', 'RDP', '', [
       { tag: 'span', role: 'button', text: 'RDP', selector: '#a' },
@@ -56,6 +69,26 @@ describe('Patrol page understanding planner', () => {
     expect(guard({
       name: 'patrol_analyze_step',
       arguments: { inspectionId: 'demo', task: '点击目标行的 RDP', locatorText: 'RDP' },
+    })).toMatch(/HARD STOP/)
+  })
+
+  it('does not reset a stalled selector budget just because the same target is renamed cosmetically', () => {
+    const guard = createPatrolPlanningGuard()
+    expect(guard({
+      name: 'patrol_click_target',
+      arguments: { inspectionId: 'demo', stepName: '点击主机下的未分组', locatorText: '未分组' },
+    })).toBeUndefined()
+    expect(guard({
+      name: 'patrol_analyze_step',
+      arguments: { inspectionId: 'demo', task: '点击未分组节点', locatorText: '未分组' },
+    })).toBeUndefined()
+    expect(guard({
+      name: 'patrol_click',
+      arguments: { inspectionId: 'demo', stepName: '点击未分组', selector: 'span[title="未分组"]' },
+    })).toBeUndefined()
+    expect(guard({
+      name: 'patrol_click',
+      arguments: { inspectionId: 'demo', stepName: '尝试未分组菜单项', selector: '.ant-tree-node-content-wrapper' },
     })).toMatch(/HARD STOP/)
   })
 
@@ -127,6 +160,8 @@ describe('Patrol page understanding planner', () => {
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/browser_capture_image_code_visual/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/不要先跑 ddddocr\/Windows OCR 预检/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/HARD STOP/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/HARD STOP 后必须直接结束当前 assistant turn/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/禁止在同一回复里复述相同句式/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/不要为每个内部工具调用.*重复/s)
   })
 })

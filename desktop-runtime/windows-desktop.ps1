@@ -145,7 +145,7 @@ function Element-Record($element) {
       if ($element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$valuePattern)) {
         try {
           $rawValue = [string]([System.Windows.Automation.ValuePattern]$valuePattern).Current.Value
-          $value = if ($rawValue.Length -le 2000) { $rawValue } else { $rawValue.Substring(0, 2000) + '…' }
+          $value = if ($rawValue.Length -le 2000) { $rawValue } else { $rawValue.Substring(0, 2000) + '...' }
         } catch {}
       }
     }
@@ -369,6 +369,73 @@ function Capture-Screenshot($request) {
   return [ordered]@{ ok=$true; path=$path; x=[int]$x; y=[int]$y; width=[int]$width; height=[int]$height }
 }
 
+function Resolve-AppLaunchSpec($request) {
+  $file = [string](Get-Prop $request 'file' '')
+  if (-not [string]::IsNullOrWhiteSpace($file)) {
+    return [ordered]@{ mode='file'; file=$file; resolvedName=$file }
+  }
+
+  $app = [string](Get-Prop $request 'app' '')
+  if ([string]::IsNullOrWhiteSpace($app)) { throw 'launch-app requires file or app' }
+
+  $commandNames = @($app)
+  if (-not $app.EndsWith('.exe', [StringComparison]::OrdinalIgnoreCase)) {
+    $commandNames += "$app.exe"
+  }
+  foreach ($name in $commandNames) {
+    $command = Get-Command -Name $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -ne $command) {
+      $path = [string]$command.Source
+      if ([string]::IsNullOrWhiteSpace($path)) { $path = [string]$command.Path }
+      if (-not [string]::IsNullOrWhiteSpace($path)) {
+        return [ordered]@{ mode='file'; file=$path; resolvedName=[string]$command.Name }
+      }
+    }
+  }
+
+  foreach ($name in $commandNames) {
+    foreach ($root in @('HKCU:\Software\Microsoft\Windows\CurrentVersion\App Paths', 'HKLM:\Software\Microsoft\Windows\CurrentVersion\App Paths')) {
+      $key = Join-Path $root $name
+      try {
+        $item = Get-Item -LiteralPath $key -ErrorAction Stop
+        $path = [string]$item.GetValue('')
+        if (-not [string]::IsNullOrWhiteSpace($path)) {
+          return [ordered]@{ mode='file'; file=$path; resolvedName=$name }
+        }
+      } catch {}
+    }
+  }
+
+  $getStartApps = Get-Command -Name Get-StartApps -ErrorAction SilentlyContinue
+  if ($null -ne $getStartApps) {
+    $apps = @(Get-StartApps | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.AppID) })
+    $exact = @($apps | Where-Object {
+      ([string]$_.Name).Equals($app, [StringComparison]::OrdinalIgnoreCase)
+      -or ([string]$_.AppID).Equals($app, [StringComparison]::OrdinalIgnoreCase)
+    })
+    $matches = if ($exact.Count -gt 0) { $exact } else {
+      @($apps | Where-Object {
+        ([string]$_.Name).IndexOf($app, [StringComparison]::OrdinalIgnoreCase) -ge 0
+        -or ([string]$_.AppID).IndexOf($app, [StringComparison]::OrdinalIgnoreCase) -ge 0
+      })
+    }
+    if ($matches.Count -eq 1) {
+      return [ordered]@{
+        mode='shell-app'
+        file='explorer.exe'
+        appId=[string]$matches[0].AppID
+        resolvedName=[string]$matches[0].Name
+      }
+    }
+    if ($matches.Count -gt 1) {
+      $sample = ($matches | Select-Object -First 8 | ForEach-Object { "$($_.Name) [$($_.AppID)]" }) -join ' | '
+      throw "launch-app app query is ambiguous ($($matches.Count) matches): $sample"
+    }
+  }
+
+  throw "installed desktop app not found for '$app'; call desktop_list_windows for running apps or provide desktop_launch_app file=<executable path>"
+}
+
 $request = Decode-Payload $Payload
 try {
   $result = switch ($Action) {
@@ -376,15 +443,23 @@ try {
       [ordered]@{ ok=$true; windows=@(Get-Windows) }
     }
     'launch-app' {
-      $file = [string](Get-Prop $request 'file' '')
-      if ([string]::IsNullOrWhiteSpace($file)) { throw 'launch-app requires file' }
+      $spec = Resolve-AppLaunchSpec $request
       $argumentList = @(Get-Prop $request 'arguments' @())
       $workingDirectory = [string](Get-Prop $request 'workingDirectory' '')
-      $parameters = @{ FilePath=$file; PassThru=$true }
-      if ($argumentList.Count -gt 0) { $parameters.ArgumentList = $argumentList }
-      if (-not [string]::IsNullOrWhiteSpace($workingDirectory)) { $parameters.WorkingDirectory = $workingDirectory }
-      $p = Start-Process @parameters
-      [ordered]@{ ok=$true; processId=[int]$p.Id; file=$file }
+      if ($spec.mode -eq 'shell-app') {
+        if ($argumentList.Count -gt 0 -or -not [string]::IsNullOrWhiteSpace($workingDirectory)) {
+          throw 'launch-app app=<friendly name> does not support arguments/workingDirectory; provide file=<executable path> for those options'
+        }
+        $shellTarget = "shell:AppsFolder\$($spec.appId)"
+        Start-Process -FilePath $spec.file -ArgumentList @($shellTarget) | Out-Null
+        [ordered]@{ ok=$true; mode=$spec.mode; appId=$spec.appId; resolvedName=$spec.resolvedName }
+      } else {
+        $parameters = @{ FilePath=$spec.file; PassThru=$true }
+        if ($argumentList.Count -gt 0) { $parameters.ArgumentList = $argumentList }
+        if (-not [string]::IsNullOrWhiteSpace($workingDirectory)) { $parameters.WorkingDirectory = $workingDirectory }
+        $p = Start-Process @parameters
+        [ordered]@{ ok=$true; mode=$spec.mode; processId=[int]$p.Id; file=$spec.file; resolvedName=$spec.resolvedName }
+      }
     }
     'open-path' {
       $path = [string](Get-Prop $request 'path' '')

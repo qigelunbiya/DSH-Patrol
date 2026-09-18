@@ -242,15 +242,16 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   })
   ctx.effect(() => ctx.tools.register(runtimeModeTool), 'dsh-patrol: runtime mode diagnostic')
 
+  // Selector/click strategy budgets are safety against model loops, not a
+  // NORMAL-mode permission tier. Keep this guard active in TEST MODE too:
+  // TEST may expose low-level browser fallbacks, but patrol_click/patrol_click_target
+  // still get at most two evidence-backed strategies for one business target.
+  ctx.effect(
+    () => ctx.tools.guard(execution => planningGuard(execution)),
+    'dsh-patrol: bounded page-understanding click strategy breaker',
+  )
+
   if (runtimePolicy.installGuards) {
-    // NORMAL MODE keeps the strict planning circuit breaker. TEST MODE is an
-    // interactive teaching/debug environment: the analyzer stays available,
-    // but it must not reject an otherwise valid patrol_click merely because the
-    // model did not call patrol_analyze_step first.
-    ctx.effect(
-      () => ctx.tools.guard(execution => planningGuard(execution)),
-      'dsh-patrol: strict page-understanding click strategy breaker',
-    )
     ctx.effect(
       () => ctx.tools.guard(execution => observationGate.guard(execution)),
       'dsh-patrol: observe-before-mutate browser state gate',
@@ -291,16 +292,14 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       text: PATROL_FLOW_REFERENCE_PROMPT,
     }), 'dsh-patrol: deterministic flow reference and existing-flow replay prompt')
 
-    // NORMAL MODE receives the strict planner contract. TEST MODE gets the
-    // lighter operational policy from PATROL_TEST_MODE_OVERRIDE_PROMPT so old
-    // HARD STOP wording cannot make the model stop a valid patrol by itself.
-    if (runtimePolicy.installGuards) {
-      ctx.effect(() => systemPrompt.section({
-        name: 'agent:dsh-patrol-page-understanding',
-        order: 1120,
-        text: PATROL_PAGE_UNDERSTANDING_PROMPT,
-      }), 'dsh-patrol: strict current-page understanding and bounded plan execution prompt')
-    }
+    // The page-understanding contract includes the selector-loop budget and
+    // anti-repetition rules. It applies in TEST MODE too; TEST still keeps its
+    // direct low-level browser fallbacks, but it must not spin on selector prose.
+    ctx.effect(() => systemPrompt.section({
+      name: 'agent:dsh-patrol-page-understanding',
+      order: 1120,
+      text: PATROL_PAGE_UNDERSTANDING_PROMPT,
+    }), 'dsh-patrol: current-page understanding and bounded plan execution prompt')
 
     if (runtimePolicy.injectStrictWorkflowPrompt) {
       ctx.effect(() => systemPrompt.section({

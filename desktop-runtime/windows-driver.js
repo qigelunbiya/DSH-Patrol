@@ -24,14 +24,30 @@ export class WindowsDesktopDriver {
     return process.platform === 'win32'
   }
 
-  status() {
-    return {
-      ok: true,
+  async status(exec) {
+    const base = {
       platform: process.platform,
       supported: this.supported,
       backend: this.supported ? 'windows-uia+powershell' : 'unsupported',
       permissionMode: 'unrestricted',
       strategy: ['uia', 'keyboard', 'ocr', 'coordinates'],
+    }
+    if (!this.supported) return { ok: true, ...base, backendReachable: false }
+    try {
+      const probe = await this.run('list-windows', {}, exec)
+      return {
+        ok: true,
+        ...base,
+        backendReachable: true,
+        visibleWindowCount: Array.isArray(probe.windows) ? probe.windows.length : 0,
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        ...base,
+        backendReachable: false,
+        error: error instanceof Error ? error.message : String(error),
+      }
     }
   }
 

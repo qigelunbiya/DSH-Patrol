@@ -123,6 +123,29 @@ describe('recordable desktop actions', () => {
     expect(args).not.toHaveProperty('processId')
   })
 
+  it('records a generic friendly-name application launch without guessing an executable path', async () => {
+    const { store, action, exec, dispatched } = await setup()
+
+    const output = await action.execute({
+      inspectionId: 'wechat-semantic-wait',
+      stepName: '启动桌面应用',
+      action: 'launch-app',
+      app: 'Some Installed App',
+    }, exec)
+
+    expect(output).toContain('Executed and recorded step-001 (desktop_launch_app)')
+    expect(dispatched).toEqual([{
+      tool: 'desktop_launch_app',
+      args: { app: 'Some Installed App' },
+    }])
+    const saved = await store.load('wechat-semantic-wait')
+    expect(saved.steps[0]).toMatchObject({
+      tool: 'desktop_launch_app',
+      arguments: { app: 'Some Installed App' },
+    })
+    expect(saved.steps[0]?.kind === 'tool' ? saved.steps[0].arguments : {}).not.toHaveProperty('file')
+  })
+
   it('executes and persists targeted desktop typing by stable UIA selector', async () => {
     const { store, action, exec, dispatched } = await setup()
 
