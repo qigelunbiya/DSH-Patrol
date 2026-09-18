@@ -1,4 +1,4 @@
-import type { JsonObject } from './types.js'
+import type { InspectionDefinition, JsonObject } from './types.js'
 
 export const SAFE_DESKTOP_TOOLS = [
   'desktop_status',
@@ -13,6 +13,8 @@ export const SAFE_DESKTOP_TOOLS = [
   'desktop_drag',
   'desktop_type_text',
   'desktop_type_target',
+  'desktop_paste_target',
+  'desktop_press_target',
   'desktop_hotkey',
   'desktop_press',
   'desktop_wait',
@@ -67,6 +69,8 @@ export const DESKTOP_ACTIONS = [
   'drag',
   'type-text',
   'type-target',
+  'paste-target',
+  'press-target',
   'hotkey',
   'press',
   'wait',
@@ -93,6 +97,8 @@ export const DESKTOP_ACTION_TOOL: Record<DesktopAction, ReplayableDesktopTool> =
   drag: 'desktop_drag',
   'type-text': 'desktop_type_text',
   'type-target': 'desktop_type_target',
+  'paste-target': 'desktop_paste_target',
+  'press-target': 'desktop_press_target',
   hotkey: 'desktop_hotkey',
   press: 'desktop_press',
   wait: 'desktop_wait',
@@ -104,6 +110,39 @@ export const DESKTOP_ACTION_TOOL: Record<DesktopAction, ReplayableDesktopTool> =
   paste: 'desktop_paste',
   'close-window': 'desktop_close_window',
   'delete-path': 'desktop_delete_path',
+}
+
+
+const DESKTOP_WINDOW_SCOPED_TOOLS = new Set<string>([
+  'desktop_activate_window',
+  'desktop_snapshot',
+  'desktop_click_target',
+  'desktop_click_ocr_text',
+  'desktop_type_text',
+  'desktop_type_target',
+  'desktop_paste_target',
+  'desktop_press_target',
+  'desktop_hotkey',
+  'desktop_press',
+  'desktop_wait_for_target',
+  'desktop_screenshot',
+  'desktop_ocr',
+  'desktop_paste',
+  'desktop_close_window',
+])
+
+export function applyDesktopTargetDefaults(
+  definition: InspectionDefinition,
+  tool: string,
+  args: JsonObject,
+): JsonObject {
+  if (definition.target.type !== 'desktop' || !DESKTOP_WINDOW_SCOPED_TOOLS.has(tool)) return args
+  if (args.scope === 'screen') return args
+  if (['processName', 'title', 'titleContains'].some(key => typeof args[key] === 'string' && String(args[key]).trim() !== '')) return args
+  const defaults: JsonObject = {}
+  if (definition.target.processName !== undefined) defaults.processName = definition.target.processName
+  if (definition.target.titleContains !== undefined) defaults.titleContains = definition.target.titleContains
+  return Object.keys(defaults).length === 0 ? args : { ...args, ...defaults }
 }
 
 export const LAST_SCREENSHOT_ARTIFACT = '${artifact:last-screenshot}'
