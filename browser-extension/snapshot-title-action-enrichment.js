@@ -132,9 +132,10 @@ function snapshotTitleActionCollect() {
   return {
     elements: nodes.map(element => {
       const row = element.closest('tr,[role="row"],.ant-table-row,.el-table__row,.arco-table-tr,[data-row-key],[aria-rowindex]')
+      const explicitRole = element.getAttribute('role')
       return {
         tag: element.tagName.toLowerCase(),
-        role: element.getAttribute('role') || 'button',
+        ...(explicitRole ? { role: explicitRole } : {}),
         text: compact(element.getAttribute('title') || element.innerText || element.textContent || '', 160),
         selector: pathSelector(element),
         context: compact(row?.innerText || row?.textContent || '', 260),
