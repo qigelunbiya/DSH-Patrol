@@ -63,6 +63,30 @@ describe('task checklist step binding', () => {
     ])
   })
 
+  it('binds explicit semantic wait checklist items to desktop_wait_for_target', () => {
+    const wait = step('step-001', '等待联系人出现', 'desktop_wait_for_target', {
+      source: 'auto',
+      text: '测试联系人',
+      timeoutMs: 10000,
+    })
+    const value = definition([wait], ['等待联系人出现'])
+
+    bindChecklistTasks(value)
+
+    expect((value.steps[0] as ToolStep).taskHint).toBe('等待联系人出现')
+  })
+
+  it('does not treat ordinary result wording containing 出现 as an extra wait requirement', () => {
+    const click = step('step-001', '点击联系人', 'desktop_click_ocr_text', {
+      text: '测试联系人',
+    })
+    const value = definition([click], ['点击联系人后出现聊天窗口'])
+
+    compactTeachingFlow(value)
+
+    expect(value.metadata.flowHealth?.warnings ?? []).toEqual([])
+  })
+
   it('preserves an explicit task hint instead of overwriting it during rebinding', () => {
     const typed = step('step-001', '账号输入', 'browser_type', { selector: '#user', text: 'user' })
     typed.taskHint = '人工确认过的账号输入工序'
