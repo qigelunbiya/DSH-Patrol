@@ -45,20 +45,22 @@ $status.Text = 'idle'
 [System.Windows.Automation.AutomationProperties]::SetName($status, 'idle')
 
 $button.Add_Click({
-  $next = "applied:$($input.Text)"
-  $status.Text = $next
-  [System.Windows.Automation.AutomationProperties]::SetName($status, $next)
-}.GetNewClosure())
+  param($sender, $eventArgs)
+  $owner = [System.Windows.Window]::GetWindow($sender)
+  $container = [System.Windows.Controls.Panel]$owner.Content
+  $inputControl = $container.Children | Where-Object { $_.Name -eq 'SmokeInput' } | Select-Object -First 1
+  $statusControl = $container.Children | Where-Object { $_.Name -eq 'SmokeStatus' } | Select-Object -First 1
+  if ($null -eq $inputControl -or $null -eq $statusControl) { throw 'fixture controls unavailable' }
+  $next = "applied:$($inputControl.Text)"
+  $statusControl.Text = $next
+  [System.Windows.Automation.AutomationProperties]::SetName($statusControl, $next)
+})
 
 [void]$panel.Children.Add($label)
 [void]$panel.Children.Add($input)
 [void]$panel.Children.Add($button)
 [void]$panel.Children.Add($status)
 $window.Content = $panel
-
-$window.Add_ContentRendered({
-  [void]$input.Focus()
-}.GetNewClosure())
 
 try {
   [void]$window.ShowDialog()
