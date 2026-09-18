@@ -49,6 +49,7 @@ export function registerPatrolDesktopActionTools(
       automationId: { type: 'string' },
       controlType: { type: 'string' },
       match: { type: 'string', enum: ['exact', 'contains'] },
+      caseSensitive: { type: 'boolean' },
       index: { type: 'integer' },
       x: { type: 'integer' },
       y: { type: 'integer' },
@@ -186,6 +187,10 @@ function desktopArguments(action: DesktopAction, args: Record<string, unknown>, 
       add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
       add('name', args.name); add('automationId', args.automationId); add('controlType', args.controlType)
       add('match', args.match); add('index', args.index); break
+    case 'click-ocr-text':
+      add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
+      add('text', args.text); add('match', args.match); add('caseSensitive', args.caseSensitive); add('index', args.index)
+      add('button', args.button); add('scope', args.scope); add('languages', args.languages); add('fileName', args.fileName); break
     case 'click-coordinates':
       add('x', args.x); add('y', args.y); add('button', args.button); break
     case 'drag':
@@ -234,6 +239,7 @@ function validateRequiredDesktopArguments(action: DesktopAction, args: JsonObjec
     case 'click-target':
       if (typeof args.name !== 'string' && typeof args.automationId !== 'string') throw new Error('click-target requires name or automationId')
       break
+    case 'click-ocr-text': requireText('text'); break
     case 'click-coordinates': requireNumber('x'); requireNumber('y'); break
     case 'drag': requireNumber('fromX'); requireNumber('fromY'); requireNumber('toX'); requireNumber('toY'); break
     case 'type-text':
