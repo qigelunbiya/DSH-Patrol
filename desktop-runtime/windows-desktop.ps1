@@ -145,7 +145,7 @@ function Element-Record($element) {
       if ($element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$valuePattern)) {
         try {
           $rawValue = [string]([System.Windows.Automation.ValuePattern]$valuePattern).Current.Value
-          $value = if ($rawValue.Length -le 2000) { $rawValue } else { $rawValue.Substring(0, 2000) + '…' }
+          $value = if ($rawValue.Length -le 2000) { $rawValue } else { $rawValue.Substring(0, 2000) + '...' }
         } catch {}
       }
     }
