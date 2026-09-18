@@ -16,8 +16,11 @@ describe('snapshot title action enrichment', () => {
   it('is read-only and captures title-backed span/div action evidence with row context', () => {
     const source = readFileSync(join(root, 'browser-extension', 'snapshot-title-action-enrichment.js'), 'utf8')
     expect(source).toContain("document.querySelectorAll('[title]')")
-    expect(source).toContain("evidence: 'title-backed-custom-action'")
-    expect(source).toContain('const explicitRole = element.getAttribute(\'role\')')
+    expect(source).toContain("'title-backed-custom-action'")
+    expect(source).toContain("evidence: target === label ? 'title-backed-custom-action' : 'title-backed-descendant-action'")
+    expect(source).toContain('promotedActionTarget')
+    expect(source).toContain("'.ant-tree-node-content-wrapper'")
+    expect(source).toContain('const explicitRole = target.getAttribute(\'role\')')
     expect(source).not.toContain("element.getAttribute('role') || 'button'")
     expect(source).toContain('context: compact')
     expect(source).toContain('[data-row-key=')

@@ -78,6 +78,17 @@ function snapshotTitleActionCollect() {
   const unique = selector => {
     try { return document.querySelectorAll(selector).length === 1 } catch { return false }
   }
+  const ACTIONABLE_ANCESTOR = [
+    'a', 'button', '[role="button"]', '[role="link"]', '[role="menuitem"]', '[role="tab"]', '[role="treeitem"]',
+    '[onclick]', '[bg-click]', '[ng-click]', '[data-action]', '[tabindex]:not([tabindex="-1"])',
+    '.ant-tree-node-content-wrapper',
+  ].join(',')
+  const promotedActionTarget = element => {
+    if (!(element instanceof Element)) return element
+    if (element.matches?.(ACTIONABLE_ANCESTOR)) return element
+    const ancestor = element.parentElement?.closest?.(ACTIONABLE_ANCESTOR)
+    return ancestor instanceof Element && visible(ancestor) ? ancestor : element
+  }
   const pathSelector = element => {
     if (element.id) return `#${cssEscape(element.id)}`
     const title = element.getAttribute('title')
@@ -121,25 +132,27 @@ function snapshotTitleActionCollect() {
 
   const nodes = [...document.querySelectorAll('[title]')]
     .filter(visible)
-    .filter(element => {
-      const title = compact(element.getAttribute('title'), 160)
+    .map(label => ({ label, target: promotedActionTarget(label) }))
+    .filter(({ label, target }) => {
+      const title = compact(label.getAttribute('title'), 160)
       if (!title || title.length > 80) return false
-      const style = getComputedStyle(element)
+      const style = getComputedStyle(label)
+      if (target !== label) return true
       return style.cursor === 'pointer' || /\[[^\]]{1,24}\]|\b[A-Z]{2,8}\b|登录|访问|打开|连接|进入|查看|详情|配置|下载|确定|提交/i.test(title)
     })
     .slice(0, 40)
 
   return {
-    elements: nodes.map(element => {
-      const row = element.closest('tr,[role="row"],.ant-table-row,.el-table__row,.arco-table-tr,[data-row-key],[aria-rowindex]')
-      const explicitRole = element.getAttribute('role')
+    elements: nodes.map(({ label, target }) => {
+      const row = target.closest('tr,[role="row"],.ant-table-row,.el-table__row,.arco-table-tr,[data-row-key],[aria-rowindex]')
+      const explicitRole = target.getAttribute('role')
       return {
-        tag: element.tagName.toLowerCase(),
+        tag: target.tagName.toLowerCase(),
         ...(explicitRole ? { role: explicitRole } : {}),
-        text: compact(element.getAttribute('title') || element.innerText || element.textContent || '', 160),
-        selector: pathSelector(element),
+        text: compact(label.getAttribute('title') || target.innerText || target.textContent || '', 160),
+        selector: pathSelector(target),
         context: compact(row?.innerText || row?.textContent || '', 260),
-        evidence: 'title-backed-custom-action',
+        evidence: target === label ? 'title-backed-custom-action' : 'title-backed-descendant-action',
       }
     }),
   }
