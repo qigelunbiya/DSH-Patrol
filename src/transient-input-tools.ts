@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { forgetTransientSecret, rememberTransientSecret } from '../browser-bridge-runtime/transient-secret-store.js'
 import { imageCodeConstraintError, inferImageCodeConstraint, renderImageCodeConstraint } from './captcha-constraints.js'
+import { issueImageCodeVisualAuthorization } from '../browser-bridge-runtime/image-code-visual-authorization.js'
 import { isPatrolTestMode } from './test-mode.js'
 import { assertSafePersistentText } from './security.js'
 import { PatrolRunner } from './runner.js'
@@ -184,10 +185,12 @@ export function registerPatrolTransientInputTools(
       }
 
       if (visualFallback) {
+        const fallbackToken = issueImageCodeVisualAuthorization()
         return [
           dispatched.text,
-          'TEST MODE: local OCR did not safely auto-fill the CURRENT image-code and explicitly authorized the model-vision fallback.',
-          'Now call browser_capture_image_code_visual on the CURRENT page, then patrol_type_current_image_code only when confidence >= 0.90 and the persisted taskChecklist format is satisfied.',
+          'TEST MODE: local OCR did not safely auto-fill the CURRENT image-code and explicitly authorized one model-vision fallback capture.',
+          `Now call browser_capture_image_code_visual with fallbackToken=${fallbackToken} on the CURRENT page, then patrol_type_current_image_code only when confidence >= 0.90 and the persisted taskChecklist format is satisfied.`,
+          'The fallbackToken is one-use and expires quickly; without this exact authorization the visual CAPTCHA tool will refuse to run.',
         ].filter(Boolean).join('\n')
       }
 

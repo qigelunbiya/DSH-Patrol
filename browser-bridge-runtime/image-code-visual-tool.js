@@ -2,8 +2,10 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { imageCodeCaptureSelector, imageCodeSelectorsEquivalent } from './image-code-selector.js'
+import { consumeImageCodeVisualAuthorization } from './image-code-visual-authorization.js'
 
 const reqBool = { type: 'boolean', required: true }
+const reqStr = { type: 'string', required: true }
 const str = { type: 'string' }
 const optStr = { type: 'string' }
 const optInt = { type: 'integer' }
@@ -35,8 +37,9 @@ export function registerImageCodeVisualTool(ctx, bridge, config = {}) {
   const timeoutMs = config.commandTimeoutMs ?? 60000
   const definition = defineTool({
     name: 'browser_capture_image_code_visual',
-    description: 'Capture the CURRENT conventional image-code CAPTCHA for model vision. Prefer a tight 3x crop; if the page bridge or a stale tab prevents element discovery, fall back once to the CURRENT active-page screenshot. This visual tool deliberately runs no local OCR and never types or submits a value.',
+    description: 'Capture the CURRENT conventional image-code CAPTCHA for model vision only after patrol_solve_current_image_code explicitly authorizes fallback. Requires the one-use fallbackToken returned by that solver; direct/unapproved visual CAPTCHA capture is rejected at runtime.',
     parameters: {
+      fallbackToken: reqStr,
       tabId: optInt,
       inputSelector: optStr,
       imageSelector: optStr,
@@ -80,9 +83,12 @@ export function registerImageCodeVisualTool(ctx, bridge, config = {}) {
       card: 'generic',
       title: 'Capture current CAPTCHA visual',
       kind: 'other',
-      rawInput: args,
+      rawInput: { ...args, fallbackToken: '[ONE-USE-AUTH]' },
     }),
     async execute(args, exec) {
+      if (!consumeImageCodeVisualAuthorization(args.fallbackToken)) {
+        throw new Error('CAPTCHA model-vision fallback is not authorized. Call patrol_solve_current_image_code first; visual capture is allowed only after explicit testModeFallback=true / strategy=model-visual-test.')
+      }
       assertImageCodeCaptureCapability(bridge)
       const { captured, captureError } = await captureCurrentImageCodeVisual(bridge, args, exec, timeoutMs)
       if (!captured || typeof captured !== 'object' || captured.ok === false || typeof captured.dataUrl !== 'string') {

@@ -5,6 +5,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PATROL_BEHAVIOR_PROMPT } from '../src/behavior-prompt.ts'
 import { PATROL_SYSTEM_PROMPT } from '../src/prompt.ts'
+import { PATROL_PAGE_UNDERSTANDING_PROMPT } from '../src/page-understanding-tools.ts'
 import { PATROL_TRANSIENT_INPUT_PROMPT, registerPatrolTransientInputTools } from '../src/transient-input-tools.ts'
 import { PATROL_TEST_MODE_OVERRIDE_PROMPT } from '../src/test-mode.ts'
 import { PatrolStore } from '../src/store.ts'
@@ -129,6 +130,8 @@ describe('TEST MODE image-code routing', () => {
 
     expect(calls).toEqual([{ name: 'browser_detect_auth_challenge', args: {} }])
     expect(result).toContain('browser_capture_image_code_visual')
+    expect(result).toContain('fallbackToken=')
+    expect(result).toContain('one-use')
     expect(result).toContain('patrol_type_current_image_code')
     expect((await store.load('captcha-login')).steps).toEqual([])
   })
@@ -154,6 +157,7 @@ describe('TEST MODE image-code routing', () => {
       PATROL_BEHAVIOR_PROMPT,
       PATROL_TRANSIENT_INPUT_PROMPT,
       PATROL_TEST_MODE_OVERRIDE_PROMPT,
+      PATROL_PAGE_UNDERSTANDING_PROMPT,
     ]) {
       expect(prompt).toContain('patrol_solve_current_image_code')
       expect(prompt).toContain('browser_capture_image_code_visual')
@@ -163,5 +167,7 @@ describe('TEST MODE image-code routing', () => {
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toContain('browser_detect_auth_challenge')
     expect(PATROL_TRANSIENT_INPUT_PROMPT).not.toContain('TEST MODE 交互教学使用视觉优先')
     expect(PATROL_TRANSIENT_INPUT_PROMPT).not.toContain('不要先运行本地 ddddocr/Windows OCR 预检')
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).not.toContain('TEST MODE 的交互教学直接使用 browser_capture_image_code_visual')
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toContain('一次性 fallbackToken')
   })
 })

@@ -69,7 +69,7 @@ export const PATROL_PAGE_UNDERSTANDING_PROMPT = `DSH Patrol 页面理解与执�
 - 不要为每个内部工具调用向用户重复“我再观察一下/我再试一下/让我换个选择器”。只有需要用户输入/确认、遇到不可恢复阻塞、或任务最终完成时才发自然语言说明。任何没有新工具结果或新页面证据支持的 selector 推测最多写一次；禁止在同一回复里复述相同句式、相同 DOM 猜测或相同“尝试更具体 selector”计划。
 - 教学轨迹不等于 Runbook。诊断 snapshot/read、失败点击、重复输入、临时等待都不是最终流程。任务完成后必须 patrol_finalize_flow，只保留真正完成 taskChecklist 的已验证业务路径，再确认流程。已有非空 DRAFT 缺 checklist 时使用非破坏性 backfill，不能因此清空/重建。
 - targetUrl/browser_navigate 必须是纯 http/https URL。若对话渲染成 Markdown 链接 [url](url)，还原 href 后再调用工具，禁止把 Markdown 链接字符串写进 Flow JSON。
-- 图片字符验证码不走页面点击规划器。TEST MODE 的交互教学直接使用 browser_capture_image_code_visual 获取 CURRENT 紧凑裁图并由模型视觉读取，再用 patrol_type_current_image_code 填写；不要先跑 ddddocr/Windows OCR 预检，也不要把低置信度候选提交。NORMAL/无人值守重放仍可使用动态本地 solver。OTP/TOTP 继续走现有专用工具。`
+- 图片字符验证码不走页面点击规划器。TEST MODE 必须先调用 patrol_solve_current_image_code，让 browser_detect_auth_challenge 走 Windows OCR/本地 OCR 路径；只有该工具明确返回 testModeFallback=true / strategy=model-visual-test 并提供一次性 fallbackToken 时，才允许 browser_capture_image_code_visual。没有 fallbackToken 时禁止模型视觉。NORMAL/无人值守重放继续使用动态本地 solver。OTP/TOTP 继续走现有专用工具。`
 
 /** Always-on even in TEST MODE: bound model-facing retry strategies. */
 export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = createPatrolClickOutcomeTracker()) {
@@ -351,7 +351,7 @@ function renderUnderstanding(task: string, url: string, title: string, modal: bo
     lines.push(`   证据：${redactLikelySecrets(plan.evidence)}`)
   })
   lines.push('纪律：只执行一个最具体方案；若这是第一次失败后的恢复方案且仍失败，立即 HARD STOP，不再继续 selector 探索。')
-  lines.push('验证码例外：TEST MODE 交互教学使用 CURRENT 视觉裁图；本理解器不识别、不刷新、不保存验证码。')
+  lines.push('验证码例外：本理解器不识别验证码；TEST MODE 必须先 patrol_solve_current_image_code 走本地 OCR，只有明确 fallback + 一次性 token 才允许模型视觉。')
   return lines.join('\n')
 }
 

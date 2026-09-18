@@ -9,6 +9,7 @@ import { PATROL_BEHAVIOR_PROMPT } from './behavior-prompt.js'
 import { registerPatrolClickTargetTool } from './click-target-tools.js'
 import { registerPatrolCreationTools } from './creation-tools.js'
 import { registerPatrolCredentialTools } from './credential-tools.js'
+import { registerPatrolContextPressureGuard } from './context-pressure-hardening.js'
 import { registerPatrolDesktopActionTools } from './desktop-action-tools.js'
 import { PATROL_DESKTOP_PROMPT } from './desktop-prompt.js'
 import { registerPatrolEditTools } from './edit-tools.js'
@@ -155,6 +156,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const verificationGuard = createManualVerificationGuard()
   const clickOutcomes = createPatrolClickOutcomeTracker()
   const planningGuard = createPatrolPlanningGuard(clickOutcomes)
+
+  ctx.effect(
+    () => registerPatrolContextPressureGuard(ctx),
+    'dsh-patrol: hardened local-Qwen context pressure protection',
+  )
 
   // This is intentionally independent of NORMAL/TEST mode. It prevents URL
   // bypasses and injects the business-flow contract, but it no longer blocks a

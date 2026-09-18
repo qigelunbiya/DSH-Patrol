@@ -6,6 +6,9 @@ describe('CAPTCHA visual fallback readability', () => {
   it('requests a 3x tight crop and does not run a second local OCR pass', () => {
     const tool = readFileSync(join(process.cwd(), 'browser-bridge-runtime', 'image-code-visual-tool.js'), 'utf8')
     expect(tool).toContain('visualScale: 3')
+    expect(tool).toContain('fallbackToken: reqStr')
+    expect(tool).toContain('consumeImageCodeVisualAuthorization(args.fallbackToken)')
+    expect(tool).toContain('CAPTCHA model-vision fallback is not authorized')
     expect(tool).toContain('No ddddocr/Windows OCR preflight was run')
     expect(tool).not.toContain('recognizeImageCodeWithDdddocr')
     expect(tool).not.toContain('tryLocalOcr')
