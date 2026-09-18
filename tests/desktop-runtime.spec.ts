@@ -196,6 +196,23 @@ describe('Desktop Automation runtime foundation', () => {
     await expect(driver.clickOcrText({ text: '测试联系人' })).rejects.toThrow(/ambiguous \(2 matches\)/i)
   })
 
+  it('keeps the Windows PowerShell 5.1 backend ASCII-only so BOM-less checkout encoding cannot corrupt parser tokens', () => {
+    const source = readFileSync(join(process.cwd(), 'desktop-runtime', 'windows-desktop.ps1'), 'utf8')
+    expect(/[^\x00-\x7F]/.test(source)).toBe(false)
+    expect(source).toContain("$rawValue.Substring(0, 2000) + '...'")
+  })
+
+  it('reports a failed real backend probe instead of claiming Desktop Automation is healthy', async () => {
+    const driver = new WindowsDesktopDriver()
+    Object.defineProperty(driver, 'supported', { get: () => true })
+    driver.run = async () => { throw new Error('ParserError: Unexpected token') }
+
+    const status = await driver.status()
+    expect(status.ok).toBe(false)
+    expect(status.backendReachable).toBe(false)
+    expect(status.error).toMatch(/ParserError/)
+  })
+
   it('does not shadow PowerShell automatic $args with desktop request payloads', () => {
     const source = readFileSync(join(process.cwd(), 'desktop-runtime', 'windows-desktop.ps1'), 'utf8')
     expect(source).not.toMatch(/\$args\b/)
