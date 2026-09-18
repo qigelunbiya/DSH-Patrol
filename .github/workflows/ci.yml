@@ -157,14 +157,18 @@ jobs:
           $entryJson = & powershell.exe -NoProfile -NonInteractive -Command $probe
           if ($LASTEXITCODE -ne 0) { throw "Windows PowerShell Get-StartApps probe exited with $LASTEXITCODE" }
           $entry = $entryJson | ConvertFrom-Json
-          $json = @{ app = [string]$entry.AppID } | ConvertTo-Json -Compress
+          # Real Patrol calls use a friendly application name (for example
+          # app="微信"), not the shell's internal AppID. AppID formatting can
+          # differ between independent Windows PowerShell processes, while the
+          # Start Apps display name is the stable public lookup key.
+          $json = @{ app = [string]$entry.Name } | ConvertTo-Json -Compress
           $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
           $output = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File desktop-runtime/windows-desktop.ps1 -Action resolve-app -Payload $payload
           if ($LASTEXITCODE -ne 0) { throw "desktop app resolver exited with $LASTEXITCODE : $output" }
           $value = $output | ConvertFrom-Json
           if ($value.ok -ne $true) { throw "desktop app resolver returned ok=false: $output" }
-          if ($value.spec.mode -ne 'shell-app') { throw "expected shell-app resolution for AppID '$($entry.AppID)': $output" }
-          if ([string]$value.spec.appId -ne [string]$entry.AppID) { throw "resolved AppID mismatch: $output" }
+          if ($value.spec.mode -ne 'shell-app') { throw "expected shell-app resolution for friendly name '$($entry.Name)': $output" }
+          if ([string]$value.spec.resolvedName -ne [string]$entry.Name) { throw "resolved friendly-name mismatch: $output" }
 
       - name: Execute Desktop Automation UIA integration smoke
         shell: pwsh
