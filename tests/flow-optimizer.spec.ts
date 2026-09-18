@@ -114,6 +114,56 @@ describe('flow compaction', () => {
     expect(value.steps.map(step => step.name)).toEqual(['Navigate', 'Correct username', 'Submit', 'Final read', 'Final screenshot'])
   })
 
+  it('drops corrected targeted desktop input to the same stable UIA control before the next interaction', () => {
+    const value = definition([
+      tool('step-001', '激活微信', 'desktop_activate_window', { arguments: { processName: 'WeChat' } } as Partial<InspectionStep>),
+      tool('step-002', '错误消息', 'desktop_type_target', {
+        arguments: {
+          processName: 'WeChat',
+          controlType: 'Edit',
+          className: 'MessageInput',
+          text: '错误内容',
+          clear: true,
+        },
+      } as Partial<InspectionStep>),
+      tool('step-003', '正确消息', 'desktop_type_target', {
+        arguments: {
+          processName: 'WeChat',
+          controlType: 'Edit',
+          className: 'MessageInput',
+          text: '正确内容',
+          clear: true,
+        },
+      } as Partial<InspectionStep>),
+      tool('step-004', '发送消息', 'desktop_press', { arguments: { key: 'Enter' } } as Partial<InspectionStep>),
+      tool('step-005', '保存截图', 'desktop_screenshot', { artifact: 'screenshot' } as Partial<InspectionStep>),
+      tool('step-006', '读取页面', 'browser_read_page', { artifact: 'page-text' } as Partial<InspectionStep>),
+    ])
+
+    compactTeachingFlow(value)
+
+    expect(value.steps.map(step => step.name)).toContain('正确消息')
+    expect(value.steps.map(step => step.name)).not.toContain('错误消息')
+  })
+
+  it('drops a fixed desktop sleep when a later semantic wait covers the same pre-interaction gap', () => {
+    const value = definition([
+      tool('step-001', '激活微信', 'desktop_activate_window', { arguments: { processName: 'WeChat' } } as Partial<InspectionStep>),
+      tool('step-002', '固定等待', 'desktop_wait', { arguments: { milliseconds: 1000 } } as Partial<InspectionStep>),
+      tool('step-003', '等待联系人出现', 'desktop_wait_for_target', {
+        arguments: { source: 'auto', text: '测试联系人', timeoutMs: 10000 },
+      } as Partial<InspectionStep>),
+      tool('step-004', '点击联系人', 'desktop_click_ocr_text', { arguments: { text: '测试联系人' } } as Partial<InspectionStep>),
+      tool('step-005', '保存截图', 'desktop_screenshot', { artifact: 'screenshot' } as Partial<InspectionStep>),
+      tool('step-006', '读取页面', 'browser_read_page', { artifact: 'page-text' } as Partial<InspectionStep>),
+    ])
+
+    compactTeachingFlow(value)
+
+    expect(value.steps.map(step => step.name)).toContain('等待联系人出现')
+    expect(value.steps.map(step => step.name)).not.toContain('固定等待')
+  })
+
   it('collapses repeated identical clicks from failed captcha retry loops', () => {
     const value = definition([
       tool('step-001', 'Navigate', 'browser_navigate', { arguments: { url: 'https://example.test' } } as Partial<InspectionStep>),
