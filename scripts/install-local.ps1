@@ -297,6 +297,7 @@ $PatrolIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "lib
 $BridgeHostIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "browser-bridge-runtime\index.js")))).AbsoluteUri
 $ClientHostRoot = [System.IO.Path]::GetFullPath((Join-Path $ProjectRoot "client-host-runtime"))
 $BrowserToolsIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "browser-bridge-runtime\tools-plugin.js")))).AbsoluteUri
+$DesktopToolsIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "desktop-runtime\tools-plugin.js")))).AbsoluteUri
 $SafeStoragePath = ConvertTo-YamlSingleQuoted -Value $PatrolStorage
 
 # Newer Harness versions resolve client rows from the profile's dependency
@@ -321,28 +322,27 @@ if ($SourceHash -ne $TargetHash) {
     throw "preset.yml copy verification failed"
 }
 
-$AgentYaml = @"
-# Patrol identity and workflow guidance are injected by the dsh-patrol plugin
-# itself. Do not compose @deepseek-ai/dsh-persona here: Harness changed that
-# row's required config from text to prefix in 2026-09, while older builds
-# require text. Avoiding that row keeps this installed preset cross-version.
-
-- id: tool-fs
-  name: '@deepseek-ai/dsh-tool-fs'
-
-- id: browser-tools
-  name: '$BrowserToolsIndex'
-  config:
-    commandTimeoutMs: 60000
-
-- id: dsh-patrol
-  name: '$PatrolIndex'
-  config:
-    storagePath: '$SafeStoragePath'
-    maxSteps: 200
-    reportMaxChars: 30000
-"@
-Write-Utf8NoBom -Path (Join-Path $PresetDir "agent.cordis.yml") -Content $AgentYaml
+$AgentPresetSource = Join-Path $ProjectRoot "presets\patrol\agent.cordis.yml"
+$AgentYaml = [System.IO.File]::ReadAllText($AgentPresetSource)
+$AgentYaml = $AgentYaml.Replace("name: 'dsh-patrol/browser-tools'", "name: '$BrowserToolsIndex'")
+$AgentYaml = $AgentYaml.Replace("name: 'dsh-patrol/desktop-tools'", "name: '$DesktopToolsIndex'")
+$AgentYaml = $AgentYaml.Replace("name: 'dsh-patrol'", "name: '$PatrolIndex'")
+$AgentYaml = $AgentYaml.Replace("storagePath: .dsh-patrol", "storagePath: '$SafeStoragePath'")
+$AgentPresetPath = Join-Path $PresetDir "agent.cordis.yml"
+Write-Utf8NoBom -Path $AgentPresetPath -Content $AgentYaml
+$InstalledAgentYaml = [System.IO.File]::ReadAllText($AgentPresetPath)
+foreach ($requiredRow in @(
+    "id: browser-tools",
+    "name: '$BrowserToolsIndex'",
+    "id: desktop-tools",
+    "name: '$DesktopToolsIndex'",
+    "id: dsh-patrol",
+    "name: '$PatrolIndex'"
+)) {
+    if (-not $InstalledAgentYaml.Contains($requiredRow)) {
+        throw "Patrol agent preset is incomplete after local install; missing row: $requiredRow"
+    }
+}
 Write-Utf8NoBom -Path (Join-Path $PresetDir ".managed-by-dsh-patrol") -Content "managed by dsh-patrol local installer`n"
 
 # Copy a self-contained cleanup plugin outside the source checkout. If the
@@ -382,6 +382,8 @@ Write-Host "Lifecycle cleanup coordinator installed: $CleanupTarget" -Foreground
 Write-Host "Patrol workspace storage: $PatrolStorage" -ForegroundColor Green
 Write-Host "Patrol screenshot temp storage: $PatrolScreenshotDir" -ForegroundColor Green
 Write-Host "Patrol credential helper: $CredentialHelperTarget" -ForegroundColor Green
+Write-Host "Browser provider: installed in Patrol preset from $BrowserToolsIndex" -ForegroundColor Green
+Write-Host "Desktop provider: installed in Patrol preset from $DesktopToolsIndex" -ForegroundColor Green
 Write-Host "Browser provisioning: automatic managed Chromium profile; no manual extension installation is required." -ForegroundColor Green
 if ($HarnessRoot) {
     Write-Host "Start Harness with:" -ForegroundColor Cyan
