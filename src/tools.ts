@@ -10,6 +10,7 @@ import {
   SAFE_BROWSER_TOOLS,
   type BrowserAction,
 } from './browser.js'
+import { SAFE_DESKTOP_TOOLS } from './desktop.js'
 import { renderRunReport, summarizeReport } from './report.js'
 import {
   assertSafeCheckpointPrompt,
@@ -64,7 +65,7 @@ export function registerPatrolTools(
 function createDefinitions(ctx: Context, store: PatrolStore, runner: PatrolRunner, options: PatrolToolsOptions): ToolDefinition[] {
   const doctor = defineTool({
     name: 'patrol_doctor',
-    description: 'Diagnose DSH Patrol managed-browser capabilities and credential-reference readiness. Always use this instead of guessing browser_* tool names.',
+    description: 'Diagnose DSH Patrol browser + Windows Desktop Automation capabilities and credential-reference readiness. Always use this instead of guessing browser_*/desktop_* tool names.',
     parameters: {
       inspectionId: { type: 'string', description: 'Optional existing inspection whose credential references should be checked.' },
     },
@@ -86,6 +87,17 @@ function createDefinitions(ctx: Context, store: PatrolStore, runner: PatrolRunne
         } else {
           lines.push(`browser provider: ${status.text}`)
         }
+      }
+
+      const missingDesktop = SAFE_DESKTOP_TOOLS.filter(name => ctx.tools.get(name, exec.agent) === undefined)
+      lines.push(`expected desktop tools: ${SAFE_DESKTOP_TOOLS.join(', ')}`)
+      if (missingDesktop.length > 0) {
+        lines.push(`desktop provider: MISSING (${missingDesktop.join(', ')})`)
+        lines.push('Fix: restart Harness after updating DSH Patrol. Patrol mode must load dsh-patrol/desktop-tools from the managed preset.')
+      } else {
+        const desktop = await runner.dispatch('desktop_status', {}, exec)
+        if (!desktop.ok) lines.push(`desktop provider: installed but unavailable: ${desktop.error ?? desktop.text}`)
+        else lines.push(`desktop provider: ${desktop.text}`)
       }
 
       if (args.inspectionId !== undefined) {
@@ -707,7 +719,7 @@ function markEdited(definition: InspectionDefinition): void {
 
 function assertRequiredArtifactsRepresented(definition: InspectionDefinition): void {
   const requested = new Set(definition.artifacts.map(item => item.toLowerCase()))
-  if (requested.has('screenshot') && !definition.steps.some(step => step.kind === 'tool' && step.tool === 'browser_screenshot')) {
+  if (requested.has('screenshot') && !definition.steps.some(step => step.kind === 'tool' && (step.tool === 'browser_screenshot' || step.tool === 'desktop_screenshot'))) {
     throw new Error('inspection requests screenshot but the runbook has no screenshot step')
   }
   if (requested.has('page-text')

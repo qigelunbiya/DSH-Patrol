@@ -60,6 +60,10 @@ jobs:
           grep -qx 'package/browser-bridge-runtime/index.js' .pack-check/contents.txt
           grep -qx 'package/browser-bridge-runtime/managed-browser.js' .pack-check/contents.txt
           grep -qx 'package/browser-bridge-runtime/tools-plugin.js' .pack-check/contents.txt
+          grep -qx 'package/desktop-runtime/tools-plugin.js' .pack-check/contents.txt
+          grep -qx 'package/desktop-runtime/windows-driver.js' .pack-check/contents.txt
+          grep -qx 'package/desktop-runtime/windows-desktop.ps1' .pack-check/contents.txt
+          grep -qx 'package/desktop-knowledge/微信.md' .pack-check/contents.txt
           grep -qx 'package/browser-bridge-runtime/captcha-demo.js' .pack-check/contents.txt
           grep -qx 'package/browser-bridge-runtime/captcha-demo-solver.py' .pack-check/contents.txt
           grep -qx 'package/browser-bridge-runtime/qr-decode.py' .pack-check/contents.txt
@@ -121,7 +125,7 @@ jobs:
         shell: pwsh
         run: |
           $failed = $false
-          foreach ($path in @('scripts/install-local.ps1', 'scripts/install-captcha-demo.ps1', 'scripts/uninstall-local.ps1', 'scripts/set-patrol-credential.ps1', 'scripts/dev.ps1')) {
+          foreach ($path in @('scripts/install-local.ps1', 'scripts/install-captcha-demo.ps1', 'scripts/uninstall-local.ps1', 'scripts/set-patrol-credential.ps1', 'scripts/dev.ps1', 'desktop-runtime/windows-desktop.ps1')) {
             $tokens = $null
             $errors = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path), [ref]$tokens, [ref]$errors)
@@ -131,6 +135,17 @@ jobs:
             }
           }
           if ($failed) { exit 1 }
+
+      - name: Execute Desktop Automation backend smoke
+        shell: pwsh
+        run: |
+          $json = '{}'
+          $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
+          $output = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File desktop-runtime/windows-desktop.ps1 -Action list-windows -Payload $payload
+          if ($LASTEXITCODE -ne 0) { throw "desktop runtime exited with $LASTEXITCODE : $output" }
+          $value = $output | ConvertFrom-Json
+          if ($value.ok -ne $true) { throw "desktop runtime smoke returned ok=false: $output" }
+          if ($null -eq $value.windows) { throw "desktop runtime smoke did not return windows array: $output" }
 
       - name: Build
         run: pnpm build

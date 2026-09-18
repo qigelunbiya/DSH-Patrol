@@ -1,5 +1,6 @@
 import { INSPECTION_ARTIFACTS, type InspectionDefinition, type InspectionStep, type JsonObject, type JsonValue, type StepCondition, type TextExpectation } from './types.js'
 import { isReplayableBrowserTool } from './browser.js'
+import { isReplayableDesktopTool } from './desktop.js'
 import { assertSafeCheckpointPrompt, assertSafeForStorage, assertSafePersistentText, assertSafePublicInputText, collectCredentialReferences, credentialReferenceName } from './security.js'
 
 const INSPECTION_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/
@@ -139,7 +140,14 @@ function assertStep(value: unknown): asserts value is InspectionStep {
   }
   if (step.kind !== 'tool') throw new Error(`step ${step.id} kind is invalid`)
   if (typeof step.tool !== 'string' || step.tool.length === 0) throw new Error(`tool step ${step.id} tool is required`)
-  if (!isReplayableBrowserTool(step.tool)) throw new Error(`tool step ${step.id} uses non-replayable browser tool ${step.tool}`)
+  if (!isReplayableBrowserTool(step.tool) && !isReplayableDesktopTool(step.tool)) {
+    const family = step.tool.startsWith('browser_')
+      ? 'browser'
+      : step.tool.startsWith('desktop_')
+        ? 'desktop'
+        : 'Patrol'
+    throw new Error(`tool step ${step.id} uses non-replayable ${family} tool ${step.tool}`)
+  }
   if (step.arguments === undefined) throw new Error(`tool step ${step.id} arguments are required`)
   assertSafeForStorage(step.arguments)
   assertToolArgumentPolicy(step.id, step.tool, step.arguments)
@@ -158,12 +166,17 @@ function assertStep(value: unknown): asserts value is InspectionStep {
     throw new Error(`step ${step.id} artifact is invalid`)
   }
   if (step.artifact === 'page-text' && step.tool !== 'browser_read_page') throw new Error(`step ${step.id} page-text artifact requires browser_read_page`)
-  if (step.artifact === 'screenshot' && step.tool !== 'browser_screenshot') throw new Error(`step ${step.id} screenshot artifact requires browser_screenshot`)
+  if (step.artifact === 'screenshot' && step.tool !== 'browser_screenshot' && step.tool !== 'desktop_screenshot') {
+    throw new Error(`step ${step.id} screenshot artifact requires browser_screenshot or desktop_screenshot`)
+  }
 }
 
 function assertToolArgumentPolicy(stepId: string, tool: string, args: JsonObject): void {
   if ('tabId' in args) {
     throw new Error(`step ${stepId} must not persist ephemeral browser tabId values`)
+  }
+  if (isReplayableDesktopTool(tool)) {
+    assertDesktopToolArgumentPolicy(stepId, tool, args)
   }
   if (tool === 'browser_navigate') {
     const action = args.action ?? 'navigate'
@@ -188,6 +201,60 @@ function assertToolArgumentPolicy(stepId: string, tool: string, args: JsonObject
     const text = args.text
     if (typeof text !== 'string') throw new Error(`step ${stepId} browser_type requires text`)
     assertSafePublicInputText(text)
+  }
+}
+
+function assertDesktopToolArgumentPolicy(stepId: string, tool: string, args: JsonObject): void {
+  if ('hwnd' in args || 'processId' in args) {
+    throw new Error(`step ${stepId} may not persist ephemeral desktop hwnd/processId values; use processName/title/titleContains`)
+  }
+
+  const requireString = (key: string): string => {
+    const value = args[key]
+    if (typeof value !== 'string' || value.trim().length === 0) {
+      throw new Error(`step ${stepId} ${tool} requires ${key}`)
+    }
+    return value
+  }
+  const requireInteger = (key: string): number => {
+    const value = args[key]
+    if (typeof value !== 'number' || !Number.isInteger(value)) {
+      throw new Error(`step ${stepId} ${tool} requires integer ${key}`)
+    }
+    return value
+  }
+
+  if (tool === 'desktop_launch_app') requireString('file')
+  if (tool === 'desktop_open_path' || tool === 'desktop_delete_path') requireString('path')
+  if (tool === 'desktop_click_target') {
+    const name = args.name
+    const automationId = args.automationId
+    if ((typeof name !== 'string' || name.trim() === '') && (typeof automationId !== 'string' || automationId.trim() === '')) {
+      throw new Error(`step ${stepId} desktop_click_target requires name or automationId`)
+    }
+  }
+  if (tool === 'desktop_click_coordinates') {
+    requireInteger('x')
+    requireInteger('y')
+  }
+  if (tool === 'desktop_drag') {
+    requireInteger('fromX')
+    requireInteger('fromY')
+    requireInteger('toX')
+    requireInteger('toY')
+  }
+  if (tool === 'desktop_type_text' || tool === 'desktop_set_clipboard_text') requireString('text')
+  if (tool === 'desktop_hotkey') requireString('combo')
+  if (tool === 'desktop_press') requireString('key')
+  if (tool === 'desktop_wait') {
+    const milliseconds = requireInteger('milliseconds')
+    if (milliseconds < 0 || milliseconds > 600000) throw new Error(`step ${stepId} desktop_wait milliseconds must be between 0 and 600000`)
+  }
+  if (tool === 'desktop_set_clipboard_files') {
+    const paths = args.paths
+    if (!Array.isArray(paths) || paths.length === 0 || paths.some(item => typeof item !== 'string' || item.trim() === '')) {
+      throw new Error(`step ${stepId} desktop_set_clipboard_files requires a non-empty string paths array`)
+    }
   }
 }
 

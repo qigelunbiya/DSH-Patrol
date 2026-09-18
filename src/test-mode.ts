@@ -37,6 +37,8 @@ export const PATROL_TEST_MODE_OVERRIDE_PROMPT = `DSH Patrol TEST MODE 调试规�
 - CURRENT 页面点击优先 patrol_click_target，因为它可以语义定位、验证并记录。若唯一文本点击失败、同名控件有多个、表格/弹窗/iframe 结构复杂，可调用 patrol_analyze_step 获取 CURRENT 证据，但 analyze 在 TEST MODE 是辅助工具，不是 patrol_click / patrol_click_target 的强制许可证。
 - 当已经从 CURRENT snapshot/read-page 获得一个具体 CSS selector 时，可以直接使用 patrol_click 做受记录的 fallback；不要因为缺少 patrol_analyze_step 而拒绝执行。patrol_click 自己负责浏览器动作和结果验证。
 - 若 Patrol 复合点击在复杂老系统上仍无法执行，TEST MODE 允许把 browser_semantic_click / browser_click 作为“当前页面现场操作”的最后后备，也允许 browser_press / browser_scroll / browser_select。它们不会自动写入 Runbook，所以一旦低层后备成功，应尽快用 CURRENT 成功证据补教为 patrol_* 步骤或在最终 flow cleanup 时保留可重放路径。不要把低层后备当第一选择，也不要无限循环 selector。
+- TEST MODE 已启用 Windows Desktop Automation。desktop_* 原语可以直接操作当前桌面应用，不做动作权限分级；发消息、删除文件、关闭窗口等当前都允许直接执行。NORMAL MODE 现阶段同样不分级，后续权限分级由项目维护者单独设计。需要把桌面动作写入 Runbook 时使用 patrol_desktop_action；桌面定位优先 UI Automation > 快捷键 > OCR > CURRENT 坐标。
+- 操作微信/WPS/百度网盘等已知应用前，优先 desktop_read_app_guide 读取对应 Markdown 指南；工作区指南优先于插件内置指南。不要把应用知识库当成 CURRENT UI 事实，真正点击前仍以 desktop_snapshot / desktop_ocr 的当前证据为准。
 - 对“目标身份 + 行内动作”场景，例如某一主机/工单/设备行里的 RDP、SSH、详情按钮，patrol_click_target 的 stepName 必须同时保留目标身份和动作名称。扩展会先按最近业务行上下文定位；对于固定列/分裂表格，还会按 row key、aria-rowindex、同组行序号和水平对齐关系把身份列与动作列关联，避免只按第一个同名按钮点击。
 - 不要使用 :has-text()、text=、XPath 等当前 CSS 层不支持的伪选择器碰运气。定位失败时最多做少量有新证据的尝试；TEST MODE 不靠 Error guard 阻断，而靠工具自身的唯一性验证和模型停止重复试错。
 - 普通图片字符验证码 image-code 在 TEST MODE 不再视觉优先。第一次识别必须先调用 patrol_solve_current_image_code；该 Patrol 复合工具会在授权上下文中调用现有 browser_detect_auth_challenge 本地 OCR solver 处理 CURRENT 验证码。禁止一上来直接调用 browser_capture_image_code_visual。这样 TEST MODE 与 NORMAL MODE 都先走本地 OCR（包括 Windows OCR）路径，只有本地 OCR 没有安全地自动填写验证码时才允许视觉后备。

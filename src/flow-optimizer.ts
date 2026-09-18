@@ -68,7 +68,11 @@ export function selectSuccessfulTeachingPath(
     'screenshot',
     definition.artifacts.includes('screenshot') ? 1 : 0,
   )
-  for (const index of findLastToolIndices(original, 'browser_screenshot', requiredScreenshots)) keep.add(original[index]!.id)
+  const screenshotCandidates = [
+    ...findLastToolIndices(original, 'browser_screenshot', requiredScreenshots),
+    ...findLastToolIndices(original, 'desktop_screenshot', requiredScreenshots),
+  ].sort((left, right) => right - left).slice(0, requiredScreenshots)
+  for (const index of screenshotCandidates) keep.add(original[index]!.id)
 
   const selected = original.filter(step => keep.has(step.id))
   assertCausalBusinessPath(selected)
@@ -111,11 +115,11 @@ export function compactTeachingFlow(definition: InspectionDefinition): FlowCompa
       definition.artifacts.includes('page-text') || definition.artifacts.includes('page-summary') ? 1 : 0,
     ),
   ))
-  const screenshotIndexes = new Set(findLastToolIndices(
-    original,
-    'browser_screenshot',
-    requiredArtifactCount(definition, 'screenshot', definition.artifacts.includes('screenshot') ? 1 : 0),
-  ))
+  const screenshotRequired = requiredArtifactCount(definition, 'screenshot', definition.artifacts.includes('screenshot') ? 1 : 0)
+  const screenshotIndexes = new Set([
+    ...findLastToolIndices(original, 'browser_screenshot', screenshotRequired),
+    ...findLastToolIndices(original, 'desktop_screenshot', screenshotRequired),
+  ].sort((left, right) => right - left).slice(0, screenshotRequired))
   const resetFloor = findSafeResetFloor(original, referenced)
 
   const kept = original.filter((step, index) => shouldKeepStep(
@@ -162,7 +166,7 @@ function shouldKeepStep(
     return pageReadIndexes.has(index)
   }
 
-  if (step.tool === 'browser_screenshot') {
+  if (step.tool === 'browser_screenshot' || step.tool === 'desktop_screenshot') {
     if (stepHasMeaningfulNotes(step)) return true
     return screenshotIndexes.has(index)
   }
@@ -178,7 +182,11 @@ function assertCausalBusinessPath(steps: readonly InspectionStep[]): void {
   const lastInput = findLastMatchingIndex(steps, step => step.kind === 'tool' && isTypingTool(step.tool))
   if (lastInput < 0) return
   const advancesAfterInput = steps.slice(lastInput + 1).some(step =>
-    step.kind === 'tool' && ['browser_click', 'browser_press', 'browser_select', 'browser_navigate'].includes(step.tool),
+    step.kind === 'tool' && [
+      'browser_click', 'browser_press', 'browser_select', 'browser_navigate',
+      'desktop_click_target', 'desktop_click_coordinates', 'desktop_press', 'desktop_hotkey',
+      'desktop_paste', 'desktop_drag', 'desktop_launch_app', 'desktop_open_path', 'desktop_activate_window',
+    ].includes(step.tool),
   )
   if (!advancesAfterInput) {
     throw new Error('successful path is incomplete: recorded input is not followed by any verified action that advances/submits the business flow')
@@ -198,7 +206,11 @@ function updateStructuralFlowHealth(definition: InspectionDefinition): void {
   const lastInput = findLastMatchingIndex(steps, step => step.kind === 'tool' && isTypingTool(step.tool))
   if (lastInput >= 0) {
     const advancesAfterInput = steps.slice(lastInput + 1).some(step =>
-      step.kind === 'tool' && ['browser_click', 'browser_press', 'browser_select', 'browser_navigate'].includes(step.tool),
+      step.kind === 'tool' && [
+        'browser_click', 'browser_press', 'browser_select', 'browser_navigate',
+        'desktop_click_target', 'desktop_click_coordinates', 'desktop_press', 'desktop_hotkey',
+        'desktop_paste', 'desktop_drag', 'desktop_launch_app', 'desktop_open_path', 'desktop_activate_window',
+      ].includes(step.tool),
     )
     if (!advancesAfterInput) {
       warnings.push('输入步骤之后没有任何已记录的提交/点击/选择/导航动作；该流程很可能缺少登录提交或后续业务点击。')
@@ -263,10 +275,10 @@ function checklistActionCounts(checklist: readonly string[]): Record<ChecklistAc
 }
 
 function checklistMatchesAction(text: string, action: ChecklistAction): boolean {
-  if (action === 'navigate') return /(访问|导航|navigate|visit|go to)/i.test(text)
-  if (action === 'click') return /(点击|点开|进入|选择|打开.*(?:入口|菜单|工单|详情)|click|select|open .*?(?:menu|item|detail))/i.test(text)
-  if (action === 'type') return /(输入|填写|填入|type|enter|fill)/i.test(text)
-  if (action === 'read') return /(读取|整理|查看.*(?:信息|列表|内容)|read|summar|inspect.*(?:list|content|info))/i.test(text)
+  if (action === 'navigate') return /(访问|导航|启动|激活|打开.*(?:应用|软件|窗口|微信|WPS|网盘)|navigate|visit|go to|launch|activate)/i.test(text)
+  if (action === 'click') return /(点击|点开|进入|选择|发送|关闭|删除|粘贴|打开.*(?:入口|菜单|工单|详情)|click|select|send|close|delete|paste|open .*?(?:menu|item|detail))/i.test(text)
+  if (action === 'type') return /(输入|填写|填入|复制到剪贴板|放入剪贴板|type|enter|fill|clipboard)/i.test(text)
+  if (action === 'read') return /(读取|整理|查看.*(?:信息|列表|内容)|识别|OCR|read|summar|inspect.*(?:list|content|info)|ocr)/i.test(text)
   return /(截图|screenshot|capture)/i.test(text)
 }
 
@@ -281,11 +293,26 @@ function flowActionCounts(steps: readonly InspectionStep[]): Record<ChecklistAct
 }
 
 function flowActionForStep(step: ToolStep): ChecklistAction | undefined {
-  if (step.tool === 'browser_navigate') return 'navigate'
-  if (step.tool === 'browser_click' || step.tool === 'browser_press' || step.tool === 'browser_select') return 'click'
-  if (isTypingTool(step.tool)) return 'type'
-  if (step.tool === 'browser_read_page') return 'read'
-  if (step.tool === 'browser_screenshot') return 'screenshot'
+  if (step.tool === 'browser_navigate'
+    || step.tool === 'desktop_launch_app'
+    || step.tool === 'desktop_open_path'
+    || step.tool === 'desktop_activate_window') return 'navigate'
+  if (step.tool === 'browser_click'
+    || step.tool === 'browser_press'
+    || step.tool === 'browser_select'
+    || step.tool === 'desktop_click_target'
+    || step.tool === 'desktop_click_coordinates'
+    || step.tool === 'desktop_press'
+    || step.tool === 'desktop_hotkey'
+    || step.tool === 'desktop_paste'
+    || step.tool === 'desktop_drag'
+    || step.tool === 'desktop_close_window'
+    || step.tool === 'desktop_delete_path') return 'click'
+  if (isTypingTool(step.tool)
+    || step.tool === 'desktop_set_clipboard_text'
+    || step.tool === 'desktop_set_clipboard_files') return 'type'
+  if (step.tool === 'browser_read_page' || step.tool === 'desktop_snapshot' || step.tool === 'desktop_ocr') return 'read'
+  if (step.tool === 'browser_screenshot' || step.tool === 'desktop_screenshot') return 'screenshot'
   return undefined
 }
 
@@ -389,6 +416,13 @@ function isInteractionBoundary(step: InspectionStep): boolean {
     || step.tool === 'browser_press'
     || step.tool === 'browser_navigate'
     || step.tool === 'browser_detect_auth_challenge'
+    || step.tool === 'desktop_click_target'
+    || step.tool === 'desktop_click_coordinates'
+    || step.tool === 'desktop_press'
+    || step.tool === 'desktop_hotkey'
+    || step.tool === 'desktop_paste'
+    || step.tool === 'desktop_launch_app'
+    || step.tool === 'desktop_activate_window'
 }
 
 function isTypingTool(tool: string): boolean {
@@ -396,6 +430,7 @@ function isTypingTool(tool: string): boolean {
     || tool === 'browser_type_credential'
     || tool === 'browser_type_transient_ref'
     || tool === 'browser_type_totp_profile'
+    || tool === 'desktop_type_text'
 }
 
 function rewriteSteps(definition: InspectionDefinition, kept: readonly InspectionStep[], stripTeaching: boolean): void {

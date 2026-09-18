@@ -61,7 +61,9 @@ function shouldKeepToolStep(step: ToolStep, checklist: readonly string[], refere
   if (step.tool === 'browser_navigate') return checklistExplicitlyMatches(step, checklist)
   if (isDynamicImageCodeSolver(step)) return checklistExplicitlyMatches(step, checklist)
   if (CONTEXT_TOOLS.has(step.tool) || SUPPORT_TOOLS.has(step.tool)) return checklistExplicitlyMatches(step, checklist)
-  if (step.tool === 'browser_read_page' || step.tool === 'browser_screenshot') return checklistExplicitlyMatches(step, checklist)
+  if (step.tool === 'browser_read_page' || step.tool === 'browser_screenshot' || step.tool === 'desktop_snapshot' || step.tool === 'desktop_ocr' || step.tool === 'desktop_screenshot') {
+    return checklistExplicitlyMatches(step, checklist)
+  }
 
   return true
 }
@@ -139,12 +141,15 @@ function isDynamicImageCodeSolver(step: ToolStep): boolean {
 }
 
 function actionKindForTool(tool: string): BusinessAction {
-  if (tool === 'browser_navigate') return 'navigate'
-  if (tool === 'browser_click' || tool === 'browser_press' || tool === 'browser_select') return 'click'
-  if (tool.startsWith('browser_type')) return 'type'
-  if (tool === 'browser_read_page') return 'read'
-  if (tool === 'browser_screenshot') return 'screenshot'
-  if (tool === 'browser_wait' || tool === 'browser_scroll') return 'wait'
+  if (tool === 'browser_navigate' || tool === 'desktop_launch_app' || tool === 'desktop_open_path' || tool === 'desktop_activate_window') return 'navigate'
+  if (tool === 'browser_click' || tool === 'browser_press' || tool === 'browser_select'
+    || tool === 'desktop_click_target' || tool === 'desktop_click_coordinates' || tool === 'desktop_press'
+    || tool === 'desktop_hotkey' || tool === 'desktop_paste' || tool === 'desktop_drag'
+    || tool === 'desktop_close_window' || tool === 'desktop_delete_path') return 'click'
+  if (tool.startsWith('browser_type') || tool === 'desktop_type_text' || tool === 'desktop_set_clipboard_text' || tool === 'desktop_set_clipboard_files') return 'type'
+  if (tool === 'browser_read_page' || tool === 'desktop_snapshot' || tool === 'desktop_ocr') return 'read'
+  if (tool === 'browser_screenshot' || tool === 'desktop_screenshot') return 'screenshot'
+  if (tool === 'browser_wait' || tool === 'browser_scroll' || tool === 'desktop_wait') return 'wait'
   if (tool === 'browser_login_state' || tool === 'browser_detect_auth_challenge') return 'context'
   return 'other'
 }
@@ -152,12 +157,12 @@ function actionKindForTool(tool: string): BusinessAction {
 function actionKindForChecklist(value: string): BusinessAction {
   const text = String(value || '')
   if (/(截图|screenshot|capture)/i.test(text)) return 'screenshot'
-  if (/(输入|填写|填入|type|enter|fill)/i.test(text)) return 'type'
-  if (/(读取|整理|查看.*(?:信息|列表|内容)|read|summar|inspect.*(?:list|content|info))/i.test(text)) return 'read'
+  if (/(输入|填写|填入|复制到剪贴板|放入剪贴板|type|enter|fill|clipboard)/i.test(text)) return 'type'
+  if (/(读取|整理|查看.*(?:信息|列表|内容)|识别|OCR|read|summar|inspect.*(?:list|content|info)|ocr)/i.test(text)) return 'read'
   if (/(等待|wait|scroll|滚动)/i.test(text)) return 'wait'
   if (/(登录状态|认证状态|auth(?:entication)? state|login state|验证挑战|验证码类型)/i.test(text)) return 'context'
-  if (/(点击|点开|打开.*(?:入口|菜单|工单|详情)|click|open .*?(?:menu|item|detail))/i.test(text)) return 'click'
-  if (/(访问|导航|navigate|visit|go to)/i.test(text)) return 'navigate'
+  if (/(点击|点开|发送|关闭|删除|粘贴|打开.*(?:入口|菜单|工单|详情)|click|send|close|delete|paste|open .*?(?:menu|item|detail))/i.test(text)) return 'click'
+  if (/(访问|导航|启动|激活|打开.*(?:应用|软件|窗口|微信|WPS|网盘)|navigate|visit|go to|launch|activate)/i.test(text)) return 'navigate'
   return 'other'
 }
 
@@ -229,4 +234,12 @@ function isDurableBusinessProgress(step: InspectionStep): boolean {
     || step.tool === 'browser_press'
     || step.tool === 'browser_select'
     || step.tool.startsWith('browser_type')
+    || step.tool === 'desktop_click_target'
+    || step.tool === 'desktop_click_coordinates'
+    || step.tool === 'desktop_press'
+    || step.tool === 'desktop_hotkey'
+    || step.tool === 'desktop_paste'
+    || step.tool === 'desktop_type_text'
+    || step.tool === 'desktop_set_clipboard_text'
+    || step.tool === 'desktop_set_clipboard_files'
 }

@@ -1253,7 +1253,7 @@ function updatedNotes(current: string | undefined, next: string | undefined, cle
 
 function assertRequiredArtifactsRepresented(definition: InspectionDefinition): void {
   const requested = new Set(definition.artifacts.map(item => item.toLowerCase()))
-  if (requested.has('screenshot') && !definition.steps.some(step => step.kind === 'tool' && step.tool === 'browser_screenshot')) {
+  if (requested.has('screenshot') && !definition.steps.some(step => step.kind === 'tool' && (step.tool === 'browser_screenshot' || step.tool === 'desktop_screenshot'))) {
     throw new Error('inspection requests screenshot but the runbook has no screenshot step')
   }
   if (requested.has('page-text')

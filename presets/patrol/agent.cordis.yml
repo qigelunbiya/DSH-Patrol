@@ -19,6 +19,11 @@
   config:
     commandTimeoutMs: 60000
 
+- id: desktop-tools
+  name: 'dsh-patrol/desktop-tools'
+  config:
+    commandTimeoutMs: 30000
+
 - id: dsh-patrol
   name: 'dsh-patrol'
   config:

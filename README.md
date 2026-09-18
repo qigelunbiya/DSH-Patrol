@@ -12,11 +12,11 @@
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-green"></a>
 </p>
 
-**DSH Patrol** 是面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的网页巡检 / Browser Automation 插件：你只需要用自然语言把巡检流程教给 Agent 一次，验证后它会固化成 Runbook；之后由确定性 Runner 重放，不再让模型每次临场猜步骤。
+**DSH Patrol** 是面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的浏览器 + Windows 桌面跨应用巡检 / Automation 插件：你只需要用自然语言把巡检流程教给 Agent 一次，验证后它会固化成 Runbook；之后由确定性 Runner 重放，不再让模型每次临场猜步骤。
 
-**DSH Patrol is a browser patrol and website inspection plugin for DeepSeek Harness. Teach a workflow once, verify it, then replay it deterministically with a managed Chromium browser.**
+**DSH Patrol is a browser + Windows desktop patrol automation plugin for DeepSeek Harness. Teach a workflow once, verify it, then replay it deterministically across managed Chromium and desktop applications.**
 
-> 把「每次都让 AI 重新操作网页」变成「教一次，后续稳定巡检」。
+> 把「每次都让 AI 重新操作网页 / 应用」变成「教一次，后续稳定巡检」。
 
 > **当前状态：Alpha / GitHub-first。** 现阶段推荐直接从 GitHub 克隆源码并使用仓库自带安装脚本。项目稳定后再考虑发布 npm 预构建包；目前 README 不把 npm 作为默认安装入口。
 
@@ -30,8 +30,95 @@
 - **Checkpoint / Resume**：遇到人工令牌、扫码、二次确认等步骤可以暂停，人工完成后继续原 run。
 - **截图与页面摘要**：巡检结果可以落地截图、页面文本、JSON / Markdown 报告和确定性摘要。
 - **保守的 Selector 自愈**：只在唯一、精确的语义匹配下进行一次重试；真正修改 selector 需要显式确认。
+- **Windows Desktop Automation**：桌面应用优先走 Windows UI Automation；不足时依次使用快捷键、Windows OCR、CURRENT 坐标后备。
+- **跨应用 Runbook**：同一条流程可以先巡检网页并生成截图，再激活微信/WPS/百度网盘等桌面应用继续操作。
+- **应用知识库**：内置 `微信.md`、`WPS.md`、`百度网盘.md`，并支持工作区自定义 Markdown 指南覆盖。
+- **跨步骤 Artifact 引用**：桌面步骤可用 `${artifact:last-screenshot}` 获取本轮前面生成的最近截图。
 
-适合的场景包括：内部运维后台巡检、业务系统日常检查、网页状态核对、需要登录态的重复流程、截图留证、人工令牌介入的半自动巡检，以及“先由 Agent 教会、以后稳定重放”的浏览器工作流。
+适合的场景包括：内部运维后台巡检、业务系统日常检查、网页状态核对、需要登录态的重复流程、截图留证、人工令牌介入的半自动巡检，以及“网页巡检 → 桌面应用通知/归档”的跨应用工作流。
+
+## Desktop Automation（Windows）
+
+Desktop Automation 与现有 Browser Patrol **彼此独立**：Browser Bridge、受管 Chromium 和网页 Runbook 仍按原逻辑工作；桌面能力通过独立的 `dsh-patrol/desktop-tools` Agent 插件提供。
+
+当前桌面执行策略：
+
+```text
+Windows UI Automation
+        ↓ 找不到 / 应用自绘
+快捷键 / 键盘
+        ↓ 仍不足
+截图 + Windows OCR
+        ↓ 仍不足
+基于 CURRENT 视觉证据的坐标点击 / 拖拽
+```
+
+主要原语包括：
+
+- `desktop_list_windows` / `desktop_activate_window`
+- `desktop_snapshot` / `desktop_click_target`
+- `desktop_hotkey` / `desktop_press` / `desktop_type_text`
+- `desktop_screenshot` / `desktop_ocr`
+- `desktop_click_coordinates` / `desktop_drag`
+- `desktop_set_clipboard_text` / `desktop_set_clipboard_files` / `desktop_paste`
+- `desktop_launch_app` / `desktop_open_path` / `desktop_close_window`
+- `desktop_delete_path`
+- `desktop_list_app_guides` / `desktop_read_app_guide`
+
+需要把成功的桌面操作写入 Runbook 时使用 `patrol_desktop_action`。当前版本按项目调试阶段要求，**TEST MODE 与 NORMAL MODE 的 Desktop Automation 都暂不做动作权限分级**；消息发送、文件删除、关闭窗口等动作不会被 Patrol 自己额外拦截。后续 NORMAL MODE 分级由项目维护者基于真实使用反馈再设计。
+
+### 应用知识库
+
+内置目录：
+
+```text
+desktop-knowledge/
+├── 微信.md
+├── WPS.md
+└── 百度网盘.md
+```
+
+工作区可以创建：
+
+```text
+patrol-desktop-knowledge/微信.md
+```
+
+或：
+
+```text
+.dsh-patrol/desktop-knowledge/微信.md
+```
+
+同名工作区指南优先于插件内置指南。知识库提供快捷键、常见操作顺序和恢复经验，但真正执行前仍以 CURRENT `desktop_snapshot` / `desktop_ocr` 为准。
+
+### 浏览器截图发送到桌面应用
+
+Runbook 支持：
+
+```text
+browser_screenshot
+      ↓
+${artifact:last-screenshot}
+      ↓
+desktop_set_clipboard_files
+      ↓
+desktop_paste
+```
+
+因此后续可以构建类似：
+
+```text
+打开巡检网站
+→ 生成网页截图
+→ 激活微信
+→ Ctrl+F 搜索联系人
+→ 打开目标聊天
+→ 把本轮网页截图放进剪贴板
+→ 粘贴并发送
+```
+
+首个桌面实际验证目标为 Windows 微信。
 
 ## 快速开始
 
