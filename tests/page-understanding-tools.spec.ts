@@ -140,6 +140,8 @@ describe('Patrol page understanding planner', () => {
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/browser_capture_image_code_visual/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/不要先跑 ddddocr\/Windows OCR 预检/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/HARD STOP/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/HARD STOP 后必须直接结束当前 assistant turn/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/禁止在同一回复里复述相同句式/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/不要为每个内部工具调用.*重复/s)
   })
 })
