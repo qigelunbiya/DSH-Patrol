@@ -48,6 +48,7 @@ export function registerPatrolDesktopActionTools(
       name: { type: 'string' },
       automationId: { type: 'string' },
       controlType: { type: 'string' },
+      className: { type: 'string' },
       match: { type: 'string', enum: ['exact', 'contains'] },
       caseSensitive: { type: 'boolean' },
       index: { type: 'integer' },
@@ -185,7 +186,7 @@ function desktopArguments(action: DesktopAction, args: Record<string, unknown>, 
       add('maxElements', args.maxElements); add('includeOffscreen', args.includeOffscreen); break
     case 'click-target':
       add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
-      add('name', args.name); add('automationId', args.automationId); add('controlType', args.controlType)
+      add('name', args.name); add('automationId', args.automationId); add('controlType', args.controlType); add('className', args.className)
       add('match', args.match); add('index', args.index); break
     case 'click-ocr-text':
       add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
@@ -237,7 +238,12 @@ function validateRequiredDesktopArguments(action: DesktopAction, args: JsonObjec
     case 'open-path':
     case 'delete-path': requireText('path'); break
     case 'click-target':
-      if (typeof args.name !== 'string' && typeof args.automationId !== 'string') throw new Error('click-target requires name or automationId')
+      if (typeof args.name !== 'string'
+        && typeof args.automationId !== 'string'
+        && typeof args.controlType !== 'string'
+        && typeof args.className !== 'string') {
+        throw new Error('click-target requires name, automationId, controlType, or className')
+      }
       break
     case 'click-ocr-text': requireText('text'); break
     case 'click-coordinates': requireNumber('x'); requireNumber('y'); break
