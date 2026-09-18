@@ -48,8 +48,6 @@ interface SnapshotElement {
   text: string
   role: string
   tag: string
-  context?: string
-  evidence?: string
 }
 
 export interface PageUnderstandingPlan {
@@ -63,13 +61,13 @@ export const PATROL_PAGE_UNDERSTANDING_PROMPT = `DSH Patrol 页面理解与执�
 - taskChecklist 只描述业务动作；真正执行页面动作前，要根据 CURRENT DOM/iframe/modal/structured table 判断该业务动作对应的真实前端结构，不要把用户文字直接翻译成 nth-of-type 后盲点。
 - 唯一且明显的文本目标可直接 patrol_click_target。第一次定位失败、出现 ambiguous、同名控件有多个、目标位于表格行/弹窗/iframe 时，必须先 patrol_analyze_step，再执行一次有新证据支持的恢复方案；同一业务点击总共最多两种策略，第二种仍失败就停止并报告具体阻塞。
 - patrol_analyze_step 永远不写 Runbook。它优先把“行身份 + 行内动作”绑定，例如“目标地址 + RDP”，避免只按 [RDP] 命中多行。不要把分析器给出的 selector 再扩写成更长的 nth-of-type，也不要在分析失败后继续 browser_count/snapshot/read_page 猜选择器。
-- selector 参数只接受当前浏览器 querySelector 层支持的 CSS。严禁使用 jQuery/Playwright/XPath 方言：:contains(...)、:has-text(...)、text=...、//...、.//...、xpath=...。title-backed 树节点优先使用 CURRENT snapshot/analyze 给出的稳定 CSS；当多个节点都叫“未分组”等同名文本时，必须利用 CURRENT tree hierarchy/context（例如“主机 > 未分组”）消歧，不得丢掉父节点语义后再猜 selector。不要把“第 N 个搜索结果”误写成全局 :nth-of-type(N)。非法 selector 会在执行前被拒绝且不消耗点击策略预算。
+- selector 参数只接受当前浏览器 querySelector 层支持的 CSS。严禁使用 jQuery/Playwright/XPath 方言：:contains(...)、:has-text(...)、text=...、//...、.//...、xpath=...。title-backed 树节点优先使用 CURRENT snapshot/analyze 给出的 [title="..."] 稳定 CSS；不要把“第 N 个搜索结果”误写成全局 :nth-of-type(N)。非法 selector 会在执行前被拒绝且不消耗点击策略预算。
 - 业务点击优先 patrol_click_target；它会在一次调用内完成语义定位、唯一 selector fallback、结果验证与成功记录。若物理点击已发生但结果未验证，必须先刷新 CURRENT 证据并 analyze，最多再恢复一次；两次物理点击均未验证就停止，避免重复提交。定位阶段同样受两策略上限约束，ambiguous/not-found 不能无限重试。
 - 运行时若返回“策略预算已耗尽/HARD STOP”，必须立即结束这个点击的 selector 探索；禁止继续 patrol_analyze_step、patrol_click、patrol_click_target 或低层 browser_count 去换一种说法重复同一件事。只用一条自然语言说明缺少什么证据。HARD STOP 后必须直接结束当前 assistant turn，不得继续生成“让我再尝试/换一个 selector/从截图看”等计划段落。
 - 不要为每个内部工具调用向用户重复“我再观察一下/我再试一下/让我换个选择器”。只有需要用户输入/确认、遇到不可恢复阻塞、或任务最终完成时才发自然语言说明。任何没有新工具结果或新页面证据支持的 selector 推测最多写一次；禁止在同一回复里复述相同句式、相同 DOM 猜测或相同“尝试更具体 selector”计划。
 - 教学轨迹不等于 Runbook。诊断 snapshot/read、失败点击、重复输入、临时等待都不是最终流程。任务完成后必须 patrol_finalize_flow，只保留真正完成 taskChecklist 的已验证业务路径，再确认流程。已有非空 DRAFT 缺 checklist 时使用非破坏性 backfill，不能因此清空/重建。
 - targetUrl/browser_navigate 必须是纯 http/https URL。若对话渲染成 Markdown 链接 [url](url)，还原 href 后再调用工具，禁止把 Markdown 链接字符串写进 Flow JSON。
-- 图片字符验证码不走页面点击规划器。TEST MODE 必须先调用 patrol_solve_current_image_code，让 browser_detect_auth_challenge 走 Windows OCR/本地 OCR 路径；只有该工具明确返回 testModeFallback=true / strategy=model-visual-test 并提供一次性 fallbackToken 时，才允许 browser_capture_image_code_visual。没有 fallbackToken 时禁止模型视觉。NORMAL/无人值守重放继续使用动态本地 solver。OTP/TOTP 继续走现有专用工具。`
+- 图片字符验证码不走页面点击规划器。TEST MODE 必须先调用 patrol_solve_current_image_code，让 browser_detect_auth_challenge 走 Windows OCR/本地 OCR；只有明确 testModeFallback=true / strategy=model-visual-test 并拿到一次性 fallbackToken 时才允许 browser_capture_image_code_visual。没有 fallbackToken 时禁止模型视觉。NORMAL/无人值守重放继续使用动态本地 solver。OTP/TOTP 继续走专用工具。`
 
 /** Always-on even in TEST MODE: bound model-facing retry strategies. */
 export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = createPatrolClickOutcomeTracker()) {
@@ -283,21 +281,45 @@ function extractClickSelectors(row: string): Array<{ field: string; selector: st
 
 function rankDomCandidates(elements: readonly SnapshotElement[], tokens: readonly string[], locatorText?: string): SnapshotElement[] {
   const wanted = normalize(locatorText || '')
-  const scored = elements.map(element => {
-    const haystack = normalize(`${element.text} ${element.selector} ${element.role} ${element.tag} ${element.context || ''}`)
-    const normalizedContext = normalize(element.context || '')
+  const exactTitle = wanted
+    ? elements.filter(element =>
+        normalize(element.text) === wanted
+        && /\[title=(?:"|')/i.test(element.selector),
+      )
+    : []
+  const pool = exactTitle.length > 0 ? exactTitle : elements
+  const deduped = new Map<string, SnapshotElement>()
+  for (const element of pool) {
+    const key = exactTitle.length > 0 ? `${normalize(element.text)}|${normalizeTitleSelector(element.selector)}` : element.selector
+    const existing = deduped.get(key)
+    if (existing === undefined || stableSelectorScore(element.selector) > stableSelectorScore(existing.selector)) deduped.set(key, element)
+  }
+  const scored = [...deduped.values()].map(element => {
+    const haystack = normalize(`${element.text} ${element.selector} ${element.role} ${element.tag}`)
     let score = wanted && normalize(element.text) === wanted ? 100 : wanted && normalize(element.text).includes(wanted) ? 40 : 0
     score += tokens.filter(token => haystack.includes(normalize(token))).length * 8
-    score += tokens.filter(token => normalizedContext.includes(normalize(token))).length * 14
     if (['button', 'a', 'input'].includes(element.tag)) score += 4
     if (['button', 'link', 'menuitem'].includes(element.role)) score += 3
     if (wanted && normalize(element.text) === wanted && /\[title=/.test(element.selector)) score += 30
-    if (element.evidence === 'title-backed-tree-action') score += 12
     if (/\[data-(?:testid|test|cy)=|#[A-Za-z_]|\[name=|\[aria-|\[title=/i.test(element.selector)) score += 2
     return { element, score }
   }).filter(item => item.score > 0).sort((a, b) => b.score - a.score)
   if (!scored[0]) return []
   return scored.filter(item => item.score === scored[0]!.score).slice(0, 8).map(item => item.element)
+}
+
+function normalizeTitleSelector(selector: string): string {
+  const match = /\[title=(?:"([^"]+)"|'([^']+)')\]/i.exec(selector)
+  return normalize(match?.[1] || match?.[2] || selector)
+}
+
+function stableSelectorScore(selector: string): number {
+  let score = 0
+  if (/\[title=/.test(selector)) score += 20
+  if (/\.new_tree_box\b/.test(selector)) score += 12
+  if (/top-frame::/.test(selector)) score += 2
+  score -= Math.min(10, selector.split('>').length)
+  return score
 }
 
 function importantTaskTokens(task: string, locatorText?: string): string[] {
@@ -306,16 +328,6 @@ function importantTaskTokens(task: string, locatorText?: string): string[] {
   for (const match of task.matchAll(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g)) out.add(match[0])
   for (const match of task.matchAll(/\b(?:RDP|SSH|VNC|SFTP|FTP|HTTP|HTTPS)\b/gi)) out.add(match[0].toUpperCase())
   for (const phrase of ['登录', '确定', '提交', '打开', '访问', '详情', '工作台', '主机运维', '待办待阅工单', '运维']) if (task.includes(phrase)) out.add(phrase)
-  const hierarchyText = task
-    .replace(/(?:下面的|下的|中的|里的|之下)/g, ' ')
-    .replace(/[>→/\\|,:：，。()（）\[\]\-]+/g, ' ')
-  for (const raw of hierarchyText.split(/\s+/)) {
-    const token = raw
-      .replace(/^(?:请)?(?:点击|点一下|打开|选择|进入|查看|访问|展开)+/g, '')
-      .replace(/(?:节点|菜单项|菜单|选项)$/g, '')
-      .trim()
-    if (token.length >= 2 && token.length <= 30) out.add(token)
-  }
   return [...out]
 }
 
@@ -325,16 +337,7 @@ function snapshotElements(value: unknown): SnapshotElement[] {
     if (!isRecord(raw)) return []
     const selector = cleanString(raw.selector)
     if (!selector) return []
-    const context = cleanString(raw.context)
-    const evidence = cleanString(raw.evidence)
-    return [{
-      selector,
-      text: cleanString(raw.text),
-      role: cleanString(raw.role).toLowerCase(),
-      tag: cleanString(raw.tag).toLowerCase(),
-      ...(context ? { context } : {}),
-      ...(evidence ? { evidence } : {}),
-    }]
+    return [{ selector, text: cleanString(raw.text), role: cleanString(raw.role).toLowerCase(), tag: cleanString(raw.tag).toLowerCase() }]
   })
 }
 
@@ -351,7 +354,7 @@ function renderUnderstanding(task: string, url: string, title: string, modal: bo
     lines.push(`   证据：${redactLikelySecrets(plan.evidence)}`)
   })
   lines.push('纪律：只执行一个最具体方案；若这是第一次失败后的恢复方案且仍失败，立即 HARD STOP，不再继续 selector 探索。')
-  lines.push('验证码例外：本理解器不识别验证码；TEST MODE 必须先 patrol_solve_current_image_code 走本地 OCR，只有明确 fallback + 一次性 token 才允许模型视觉。')
+  lines.push('验证码例外：本理解器不识别验证码；TEST MODE 先走 patrol_solve_current_image_code 本地 OCR，只有明确 fallback + 一次性 token 才允许视觉。')
   return lines.join('\n')
 }
 
