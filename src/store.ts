@@ -400,7 +400,9 @@ function renderRunbookMarkdown(definition: InspectionDefinition): string {
     '',
     `- Inspection ID: \`${definition.id}\``,
     `- Status: \`${definition.status}\``,
-    `- Target: ${definition.target.url}`,
+    `- Target: ${definition.target.type === 'browser'
+      ? definition.target.url
+      : `desktop:${definition.target.app}${definition.target.processName ? ` (process=${definition.target.processName})` : ''}`}`,
     `- Expected result: ${definition.expectedResult}`,
     `- Auth mode: \`${definition.auth.mode}\``,
     `- Updated: ${definition.metadata.updatedAt}`,
