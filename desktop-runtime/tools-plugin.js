@@ -28,10 +28,10 @@ export function apply(ctx, config = {}) {
   const definitions = [
     defineTool({
       name: 'desktop_status',
-      description: 'Report Desktop Automation availability. Windows uses UI Automation first, then keyboard, OCR, and coordinate fallbacks. Current Patrol desktop permission mode is unrestricted in both TEST and NORMAL modes.',
+      description: 'Report Desktop Automation availability and execute a real lightweight PowerShell backend probe. ok=true means the backend script actually ran, not merely that the plugin is installed.',
       parameters: {},
       output: jsonOutput('Desktop Automation status'),
-      execute: async () => driver.status(),
+      execute: async (_args, exec) => await driver.status(exec),
     }),
     defineTool({
       name: 'desktop_list_windows',
