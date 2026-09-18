@@ -174,8 +174,10 @@ export function registerPatrolClickTargetTool(
             includeHidden: false,
             tabId: args.tabId,
           }), exec)
+          const fallbackSelector = selector
+          if (fallbackSelector === undefined) throw new Error('selector fallback invariant violated')
           const selectorBound = currentSnapshot.ok && locator !== undefined
-            && isSelectorBoundToCurrentSnapshot(currentSnapshot.value, selector, locator)
+            && isSelectorBoundToCurrentSnapshot(currentSnapshot.value, fallbackSelector, locator)
           if (!selectorBound) {
             return [
               'Reliable semantic click failed and selector fallback was NOT recorded.',
@@ -183,16 +185,16 @@ export function registerPatrolClickTargetTool(
               `The selector hint was not uniquely bound to the CURRENT snapshot for locator ${JSON.stringify(locator)}.`,
             ].join('\n')
           }
-          const counted = await runner.dispatch('browser_count', compactObject({ selector, visibleOnly: true, tabId: args.tabId }), exec)
+          const counted = await runner.dispatch('browser_count', compactObject({ selector: fallbackSelector, visibleOnly: true, tabId: args.tabId }), exec)
           const count = objectNumber(counted.value, 'count')
           if (!counted.ok || count !== 1) {
             return [
               'Reliable semantic click failed and selector fallback was NOT recorded.',
               atomic.error ?? atomic.text ?? 'Unknown atomic semantic click error',
-              counted.error ?? `CURRENT selector ${JSON.stringify(selector)} is not unique (${count ?? 'unknown'} visible matches).`,
+              counted.error ?? `CURRENT selector ${JSON.stringify(fallbackSelector)} is not unique (${count ?? 'unknown'} visible matches).`,
             ].join('\n')
           }
-          const fallback = await runner.dispatch('browser_click', compactObject({ selector, tabId: args.tabId }), exec)
+          const fallback = await runner.dispatch('browser_click', compactObject({ selector: fallbackSelector, tabId: args.tabId }), exec)
           if (!fallback.ok) {
             return [
               'Reliable semantic click failed and selector fallback was NOT recorded.',
@@ -201,9 +203,9 @@ export function registerPatrolClickTargetTool(
             ].join('\n')
           }
           physicalClickExecuted = true
-          resolvedSelector = selector
+          resolvedSelector = fallbackSelector
           clickedText = fallback.text
-          resolutionSummary = `selector=${JSON.stringify(selector)}, transport=selector-compatible fallback`
+          resolutionSummary = `selector=${JSON.stringify(fallbackSelector)}, transport=selector-compatible fallback`
           }
         } else {
           physicalClickExecuted = true

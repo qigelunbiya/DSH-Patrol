@@ -411,6 +411,11 @@ function objectString(value: unknown, key: string): string | undefined {
 function objectBoolean(value: unknown, key: string): boolean | undefined {
   return isRecord(value) && typeof value[key] === 'boolean' ? value[key] : undefined
 }
+function objectNumber(value: unknown, key: string): number | undefined {
+  if (!isRecord(value)) return undefined
+  const child = value[key]
+  return typeof child === 'number' && Number.isFinite(child) ? child : undefined
+}
 function cleanString(value: unknown): string { return typeof value === 'string' ? value.trim() : '' }
 function exactTitleSelector(text: string): string {
   const escaped = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\r\n]+/g, ' ')
