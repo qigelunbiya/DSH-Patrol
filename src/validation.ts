@@ -268,6 +268,13 @@ function assertDesktopToolArgumentPolicy(stepId: string, tool: string, args: Jso
     requireInteger('toY')
   }
   if (tool === 'desktop_type_text' || tool === 'desktop_set_clipboard_text') requireString('text')
+  if (tool === 'desktop_type_target') {
+    requireString('text')
+    const selectors = [args.name, args.automationId, args.controlType, args.className]
+    if (selectors.every(value => typeof value !== 'string' || value.trim() === '')) {
+      throw new Error(`step ${stepId} desktop_type_target requires name, automationId, controlType, or className`)
+    }
+  }
   if (tool === 'desktop_hotkey') requireString('combo')
   if (tool === 'desktop_press') requireString('key')
   if (tool === 'desktop_wait') {
@@ -275,7 +282,7 @@ function assertDesktopToolArgumentPolicy(stepId: string, tool: string, args: Jso
     if (milliseconds < 0 || milliseconds > 600000) throw new Error(`step ${stepId} desktop_wait milliseconds must be between 0 and 600000`)
   }
   if (tool === 'desktop_wait_for_target') {
-    const selectors = [args.name, args.automationId, args.controlType, args.className, args.text]
+    const selectors = [args.name, args.automationId, args.controlType, args.className, args.value, args.text]
     if (selectors.every(value => typeof value !== 'string' || value.trim() === '')) {
       throw new Error(`step ${stepId} desktop_wait_for_target requires text or a UI Automation selector`)
     }
