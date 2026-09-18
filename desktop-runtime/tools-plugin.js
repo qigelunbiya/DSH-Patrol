@@ -14,7 +14,7 @@ const textOutput = {
   render: (_args, value) => [{ type: 'text', text: String(value ?? '') }],
 }
 const jsonOutput = label => ({
-  schema: { type: 'json' },
+  schema: { type: 'object', additionalProperties: true, properties: {} },
   render: (_args, value) => [{ type: 'text', text: `${label}\n${JSON.stringify(value, null, 2)}` }],
 })
 
