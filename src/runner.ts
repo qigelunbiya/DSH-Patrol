@@ -982,7 +982,7 @@ function failedResult(step: ToolStep, startedAt: string, error: string): StepRun
 function providerValueFailure(value: JsonValue): string | undefined {
   if (value === null || Array.isArray(value) || typeof value !== 'object') return undefined
   if (value.ok === false) {
-    return typeof value.error === 'string' && value.error.length > 0 ? value.error : 'browser provider returned ok=false'
+    return typeof value.error === 'string' && value.error.length > 0 ? value.error : 'Patrol provider returned ok=false'
   }
   return undefined
 }
@@ -995,7 +995,10 @@ function objectString(value: JsonValue | undefined, key: string): string | undef
 
 function safeOutputForStep(step: ToolStep, text: string): string {
   const redacted = redactLikelySecrets(text)
-  return step.tool === 'browser_read_page' || step.tool === 'browser_snapshot'
+  return step.tool === 'browser_read_page'
+    || step.tool === 'browser_snapshot'
+    || step.tool === 'desktop_snapshot'
+    || step.tool === 'desktop_ocr'
     ? untrustedPageData(redacted)
     : redacted
 }
