@@ -184,7 +184,7 @@ function assertCausalBusinessPath(steps: readonly InspectionStep[]): void {
   const advancesAfterInput = steps.slice(lastInput + 1).some(step =>
     step.kind === 'tool' && [
       'browser_click', 'browser_press', 'browser_select', 'browser_navigate',
-      'desktop_click_target', 'desktop_click_coordinates', 'desktop_press', 'desktop_hotkey',
+      'desktop_click_target', 'desktop_click_ocr_text', 'desktop_click_coordinates', 'desktop_press', 'desktop_hotkey',
       'desktop_paste', 'desktop_drag', 'desktop_launch_app', 'desktop_open_path', 'desktop_activate_window',
     ].includes(step.tool),
   )
@@ -208,7 +208,7 @@ function updateStructuralFlowHealth(definition: InspectionDefinition): void {
     const advancesAfterInput = steps.slice(lastInput + 1).some(step =>
       step.kind === 'tool' && [
         'browser_click', 'browser_press', 'browser_select', 'browser_navigate',
-        'desktop_click_target', 'desktop_click_coordinates', 'desktop_press', 'desktop_hotkey',
+        'desktop_click_target', 'desktop_click_ocr_text', 'desktop_click_coordinates', 'desktop_press', 'desktop_hotkey',
         'desktop_paste', 'desktop_drag', 'desktop_launch_app', 'desktop_open_path', 'desktop_activate_window',
       ].includes(step.tool),
     )
@@ -301,6 +301,7 @@ function flowActionForStep(step: ToolStep): ChecklistAction | undefined {
     || step.tool === 'browser_press'
     || step.tool === 'browser_select'
     || step.tool === 'desktop_click_target'
+    || step.tool === 'desktop_click_ocr_text'
     || step.tool === 'desktop_click_coordinates'
     || step.tool === 'desktop_press'
     || step.tool === 'desktop_hotkey'
@@ -417,6 +418,7 @@ function isInteractionBoundary(step: InspectionStep): boolean {
     || step.tool === 'browser_navigate'
     || step.tool === 'browser_detect_auth_challenge'
     || step.tool === 'desktop_click_target'
+    || step.tool === 'desktop_click_ocr_text'
     || step.tool === 'desktop_click_coordinates'
     || step.tool === 'desktop_press'
     || step.tool === 'desktop_hotkey'
