@@ -125,7 +125,7 @@ jobs:
         shell: pwsh
         run: |
           $failed = $false
-          foreach ($path in @('scripts/install-local.ps1', 'scripts/install-captcha-demo.ps1', 'scripts/uninstall-local.ps1', 'scripts/set-patrol-credential.ps1', 'scripts/dev.ps1', 'desktop-runtime/windows-desktop.ps1')) {
+          foreach ($path in @('scripts/install-local.ps1', 'scripts/install-captcha-demo.ps1', 'scripts/uninstall-local.ps1', 'scripts/set-patrol-credential.ps1', 'scripts/dev.ps1', 'scripts/smoke-desktop-ui.ps1', 'desktop-runtime/windows-desktop.ps1')) {
             $tokens = $null
             $errors = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path), [ref]$tokens, [ref]$errors)
@@ -146,6 +146,10 @@ jobs:
           $value = $output | ConvertFrom-Json
           if ($value.ok -ne $true) { throw "desktop runtime smoke returned ok=false: $output" }
           if ($null -eq $value.windows) { throw "desktop runtime smoke did not return windows array: $output" }
+
+      - name: Execute real Desktop UI Automation smoke
+        shell: pwsh
+        run: .\scripts\smoke-desktop-ui.ps1
 
       - name: Build
         run: pnpm build
