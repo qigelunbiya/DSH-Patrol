@@ -53,6 +53,10 @@ describe('current Patrol behavior prompt', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_insert_.*持久化失败.*禁止退化/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/禁止用 patrol_rewrite_flow_path 代替纯新增\/参数修改/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/保存图尚未匹配用户要求时调用 patrol_validate/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/任务清单是给人看的业务说明.*Runbook 流程图是给执行器看的/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_update_task_checklist/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/不得只改流程图后留下过期任务清单/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_task_checklist.*核对/s)
   })
 
   it('uses structural update tools for parameter-only edits without live browser teaching', () => {
