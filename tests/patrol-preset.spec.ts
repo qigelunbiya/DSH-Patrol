@@ -23,6 +23,19 @@ describe('Patrol preset compatibility', () => {
     expect(testMode).toContain('DSH Patrol TEST MODE')
   })
 
+  it('mounts both browser and desktop providers in source and local-install preset templates', () => {
+    const preset = normalizeNewlines(readFileSync(join(root, 'presets', 'patrol', 'agent.cordis.yml'), 'utf8'))
+    const installer = normalizeNewlines(readFileSync(join(root, 'scripts', 'install-local.ps1'), 'utf8'))
+
+    expect(preset).toContain("- id: browser-tools\n  name: 'dsh-patrol/browser-tools'")
+    expect(preset).toContain("- id: desktop-tools\n  name: 'dsh-patrol/desktop-tools'")
+    expect(installer).toContain('$BrowserToolsIndex')
+    expect(installer).toContain('$DesktopToolsIndex')
+    expect(installer).toContain("- id: browser-tools\n  name: '$BrowserToolsIndex'")
+    expect(installer).toContain("- id: desktop-tools\n  name: '$DesktopToolsIndex'")
+    expect(installer).toContain('Patrol agent preset is incomplete after local install')
+  })
+
   it('mounts Harness native filesystem/image tools in both source and installed preset templates', () => {
     const preset = normalizeNewlines(readFileSync(join(root, 'presets', 'patrol', 'agent.cordis.yml'), 'utf8'))
     const installer = normalizeNewlines(readFileSync(join(root, 'scripts', 'install-local.ps1'), 'utf8'))
