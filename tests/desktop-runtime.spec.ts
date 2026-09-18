@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { normalizeOcrObservations, WindowsDesktopDriver } from '../desktop-runtime/windows-driver.js'
+import { findUiaTargetMatches, normalizeOcrObservations, WindowsDesktopDriver } from '../desktop-runtime/windows-driver.js'
 
 describe('Desktop Automation runtime foundation', () => {
   it('exposes an explicit unrestricted Windows desktop strategy without affecting non-Windows CI', () => {
@@ -71,6 +71,25 @@ describe('Desktop Automation runtime foundation', () => {
       rect: { x: 600, y: 240, width: 200, height: 64 },
       center: { x: 700, y: 272 },
     })
+  })
+
+  it('matches safe non-password UIA values and keeps password values out of snapshots', () => {
+    const matches = findUiaTargetMatches([
+      { name: '', automationId: '', controlType: 'Edit', className: 'MessageInput', isPassword: false, value: 'DSH Patrol 测试' },
+      { name: '', automationId: '', controlType: 'Edit', className: 'PasswordBox', isPassword: true, value: null },
+    ], {
+      controlType: 'Edit',
+      value: 'DSH Patrol',
+      match: 'contains',
+    })
+
+    expect(matches).toHaveLength(1)
+    expect(matches[0]).toMatchObject({ className: 'MessageInput', value: 'DSH Patrol 测试' })
+
+    const source = readFileSync(join(process.cwd(), 'desktop-runtime', 'windows-desktop.ps1'), 'utf8')
+    expect(source).toContain('$isPassword = [bool]$current.IsPassword')
+    expect(source).toContain('if (-not $isPassword)')
+    expect(source).toContain('ValuePattern')
   })
 
   it('waits for semantic desktop targets through UIA first and OCR fallback second', async () => {
@@ -188,6 +207,7 @@ describe('Desktop Automation runtime foundation', () => {
       'desktop_click_coordinates',
       'desktop_wait_for_target',
       'desktop_type_text',
+      'desktop_type_target',
       'desktop_hotkey',
       'desktop_screenshot',
       'desktop_ocr',
