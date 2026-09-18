@@ -1,6 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
-import { DESKTOP_ACTIONS, desktopArtifactForTool, desktopToolForAction, type DesktopAction } from './desktop.js'
+import { applyDesktopTargetDefaults, DESKTOP_ACTIONS, desktopArtifactForTool, desktopToolForAction, type DesktopAction } from './desktop.js'
 import { assertSafeForStorage, assertSafePersistentText } from './security.js'
 import { PatrolRunner } from './runner.js'
 import { assertPersistedTaskChecklist, PatrolStore } from './store.js'
@@ -121,10 +121,12 @@ async function executeAndRecordDesktopAction(
 ): Promise<string> {
   assertSafePersistentText(stepName, 'stepName')
   if (notes !== undefined) assertSafePersistentText(notes, 'step notes')
-  assertSafeForStorage(storedArgs)
   const definition = await loadEditable(store, inspectionId, maxSteps)
+  const effectiveExecutionArgs = applyDesktopTargetDefaults(definition, tool, executionArgs)
+  const effectiveStoredArgs = applyDesktopTargetDefaults(definition, tool, storedArgs)
+  assertSafeForStorage(effectiveStoredArgs)
 
-  const dispatched = await runner.dispatch(tool, executionArgs, exec)
+  const dispatched = await runner.dispatch(tool, effectiveExecutionArgs, exec)
   if (!dispatched.ok) {
     return `Desktop teaching action failed and was NOT recorded. ${dispatched.error ?? dispatched.text ?? 'Unknown desktop error'}`
   }
@@ -135,7 +137,7 @@ async function executeAndRecordDesktopAction(
     kind: 'tool',
     name: stepName,
     tool,
-    arguments: storedArgs,
+    arguments: effectiveStoredArgs,
     ...(artifact === undefined ? {} : { artifact }),
     ...(notes === undefined ? {} : { notes }),
     recordedAt: new Date().toISOString(),
@@ -208,6 +210,14 @@ function desktopArguments(action: DesktopAction, args: Record<string, unknown>, 
       add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
       add('name', args.name); add('automationId', args.automationId); add('controlType', args.controlType); add('className', args.className)
       add('match', args.match); add('index', args.index); add('text', args.text); add('clear', args.clear); break
+    case 'paste-target':
+      add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
+      add('name', args.name); add('automationId', args.automationId); add('controlType', args.controlType); add('className', args.className)
+      add('match', args.match); add('index', args.index); break
+    case 'press-target':
+      add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
+      add('name', args.name); add('automationId', args.automationId); add('controlType', args.controlType); add('className', args.className)
+      add('match', args.match); add('index', args.index); add('key', args.key); break
     case 'hotkey':
       add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
       add('combo', args.combo); break
@@ -277,6 +287,19 @@ function validateRequiredDesktopArguments(action: DesktopAction, args: JsonObjec
       if (![args.name, args.automationId, args.controlType, args.className]
         .some(value => typeof value === 'string' && value.trim() !== '')) {
         throw new Error('type-target requires name, automationId, controlType, or className')
+      }
+      break
+    case 'paste-target':
+      if (![args.name, args.automationId, args.controlType, args.className]
+        .some(value => typeof value === 'string' && value.trim() !== '')) {
+        throw new Error('paste-target requires name, automationId, controlType, or className')
+      }
+      break
+    case 'press-target':
+      requireText('key')
+      if (![args.name, args.automationId, args.controlType, args.className]
+        .some(value => typeof value === 'string' && value.trim() !== '')) {
+        throw new Error('press-target requires name, automationId, controlType, or className')
       }
       break
     case 'hotkey': requireText('combo'); break
