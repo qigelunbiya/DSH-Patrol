@@ -173,6 +173,11 @@ function snapshotMainWorld(args = {}) {
   }
   const stableSelector = element => {
     if (element.id) return `#${cssEscape(element.id)}`
+    const title = element.getAttribute?.('title')
+    if (title) {
+      const byTitle = `${element.tagName.toLowerCase()}[title="${cssString(title)}"]`
+      if (unique(byTitle)) return byTitle
+    }
     for (const attr of ['data-testid', 'data-test', 'data-cy']) {
       const value = element.getAttribute(attr)
       if (!value) continue
