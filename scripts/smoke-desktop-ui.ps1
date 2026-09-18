@@ -51,23 +51,33 @@ try {
   $started = Start-Process notepad.exe -PassThru
   $windowProcess = Wait-NotepadWindow -PreferredProcessId $started.Id
 
-  $snapshot = Invoke-PatrolDesktopAction -Action 'snapshot' -Arguments @{
-    processId = [int]$windowProcess.Id
-    maxElements = 1000
-    includeOffscreen = $false
+  $snapshot = $null
+  $editors = @()
+  $editorDeadline = [DateTime]::UtcNow.AddSeconds(12)
+  while ([DateTime]::UtcNow -lt $editorDeadline) {
+    $snapshot = Invoke-PatrolDesktopAction -Action 'snapshot' -Arguments @{
+      processId = [int]$windowProcess.Id
+      maxElements = 1000
+      includeOffscreen = $false
+    }
+
+    $editors = @($snapshot.elements | Where-Object {
+      $_.enabled -eq $true -and
+      $_.offscreen -ne $true -and
+      $_.isPassword -ne $true -and
+      @('Edit', 'Document') -contains [string]$_.controlType -and
+      [int]$_.rect.width -gt 0 -and
+      [int]$_.rect.height -gt 0
+    })
+    if ($editors.Count -gt 0) { break }
+    Start-Sleep -Milliseconds 300
   }
 
-  $editors = @($snapshot.elements | Where-Object {
-    $_.enabled -eq $true -and
-    $_.offscreen -ne $true -and
-    $_.isPassword -ne $true -and
-    @('Edit', 'Document') -contains [string]$_.controlType -and
-    [int]$_.rect.width -gt 0 -and
-    [int]$_.rect.height -gt 0
-  })
   if ($editors.Count -eq 0) {
-    $types = @($snapshot.elements | ForEach-Object { [string]$_.controlType } | Sort-Object -Unique) -join ', '
-    throw "Notepad snapshot exposed no editable UIA Edit/Document control. controlTypes=[$types]"
+    $observed = @($snapshot.elements | Select-Object -First 20 | ForEach-Object {
+      "$($_.controlType):$($_.name):$($_.automationId):$($_.className):$($_.valueSource)"
+    }) -join ' | '
+    throw "Notepad snapshot exposed no editable UIA Edit/Document control after waiting for the app content. observed=$observed"
   }
 
   $target = $editors |
