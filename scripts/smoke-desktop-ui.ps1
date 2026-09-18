@@ -7,7 +7,6 @@ $runtime = (Resolve-Path (Join-Path $PSScriptRoot '..\desktop-runtime\windows-de
 $token = [Guid]::NewGuid().ToString('N').Substring(0, 8)
 $windowTitle = "DSH Patrol UI Smoke $token"
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) "dsh-patrol-ui-smoke-$token"
-$hostScript = Join-Path $tempRoot 'host.ps1'
 $screenshotPath = Join-Path $tempRoot 'smoke.png'
 [IO.Directory]::CreateDirectory($tempRoot) | Out-Null
 
@@ -44,16 +43,18 @@ function Wait-SmokeWindow {
     }
     Start-Sleep -Milliseconds 200
   }
-  throw "Smoke WinForms host did not expose window '$windowTitle' within 15 seconds."
+  $current = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+  throw "Smoke WinForms host did not expose window '$windowTitle' within 15 seconds. mainWindowTitle='$($current.MainWindowTitle)' handle=$($current.MainWindowHandle)"
 }
 
 $hostSource = @'
+param([string]$Title)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = '__WINDOW_TITLE__'
+$form.Text = $Title
 $form.Name = 'PatrolSmokeWindow'
 $form.Width = 640
 $form.Height = 360
@@ -91,20 +92,22 @@ $form.Controls.Add($status)
 $form.Add_Shown({ $input.Focus() })
 [void]$form.ShowDialog()
 '@
-$hostSource = $hostSource.Replace('__WINDOW_TITLE__', $windowTitle.Replace("'", "''"))
 
-Set-Content -LiteralPath $hostScript -Value $hostSource -Encoding UTF8
-
-$hostProcess = $null
+$hostRunspace = $null
+$hostPowerShell = $null
+$hostAsync = $null
 try {
-  $hostProcess = Start-Process powershell.exe -ArgumentList @(
-    '-NoProfile',
-    '-STA',
-    '-ExecutionPolicy', 'Bypass',
-    '-File', ('"' + $hostScript + '"')
-  ) -WindowStyle Hidden -PassThru
+  $hostRunspace = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
+  $hostRunspace.ApartmentState = [System.Threading.ApartmentState]::STA
+  $hostRunspace.ThreadOptions = [System.Management.Automation.Runspaces.PSThreadOptions]::ReuseThread
+  $hostRunspace.Open()
 
-  $windowProcess = Wait-SmokeWindow -ProcessId $hostProcess.Id
+  $hostPowerShell = [PowerShell]::Create()
+  $hostPowerShell.Runspace = $hostRunspace
+  [void]$hostPowerShell.AddScript($hostSource).AddArgument($windowTitle)
+  $hostAsync = $hostPowerShell.BeginInvoke()
+
+  $windowProcess = Wait-SmokeWindow -ProcessId $PID
   $processId = [int]$windowProcess.Id
 
   $snapshot = Invoke-PatrolDesktopAction -Action 'snapshot' -Arguments @{
@@ -241,8 +244,13 @@ try {
   Write-Host "Desktop UI Automation smoke passed: snapshot + targeted type + value verification + click + screenshot."
 }
 finally {
-  if ($null -ne $hostProcess) {
-    Stop-Process -Id $hostProcess.Id -Force -ErrorAction SilentlyContinue
+  if ($null -ne $hostPowerShell) {
+    try { $hostPowerShell.Stop() } catch {}
+    $hostPowerShell.Dispose()
+  }
+  if ($null -ne $hostRunspace) {
+    try { $hostRunspace.Close() } catch {}
+    $hostRunspace.Dispose()
   }
   Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
