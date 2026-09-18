@@ -1,7 +1,7 @@
 {
   "name": "dsh-patrol",
   "version": "0.2.0-alpha.1",
-  "description": "Browser patrol and website inspection plugin for DeepSeek Harness: teach once, replay deterministic runbooks with managed Chromium, credentials, screenshots, checkpoints, and selector recovery.",
+  "description": "Browser + Windows desktop patrol automation for DeepSeek Harness: teach once, replay deterministic runbooks across managed Chromium and desktop applications with screenshots, checkpoints, selector recovery, UI Automation, OCR, keyboard, and coordinate fallbacks.",
   "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@11.7.0",
@@ -22,6 +22,8 @@
     "browser-automation",
     "website-monitoring",
     "web-automation",
+    "desktop-automation",
+    "windows-automation",
     "ai-agent",
     "runbook",
     "puppeteer",
@@ -44,6 +46,9 @@
     "./browser-tools": {
       "default": "./browser-bridge-runtime/tools-plugin.js"
     },
+    "./desktop-tools": {
+      "default": "./desktop-runtime/tools-plugin.js"
+    },
     "./preset-installer": {
       "types": "./lib/preset-installer.d.ts",
       "default": "./lib/preset-installer.js"
@@ -59,6 +64,8 @@
     "presets/**/*",
     "browser-extension/**/*",
     "browser-bridge-runtime/**/*",
+    "desktop-runtime/**/*",
+    "desktop-knowledge/**/*",
     "client-host-runtime/**/*",
     "excel-runtime/**/*",
     "cleanup-runtime/**/*",
@@ -78,8 +85,8 @@
     "catalog": {
       "category": "workflow",
       "summary": {
-        "en": "Teach browser inspections once, then replay deterministic patrol runbooks with managed Chromium, screenshots, credential references, checkpoints, and conservative selector recovery.",
-        "zh": "用自然语言教一次网页巡检，随后由确定性 Runbook 稳定重放；内置受管 Chromium、截图、凭据引用、断点恢复和保守的选择器自愈。"
+        "en": "Teach browser and Windows desktop inspections once, then replay deterministic patrol runbooks across managed Chromium and desktop applications with screenshots, UI Automation, OCR, keyboard and conservative recovery.",
+        "zh": "用自然语言教一次网页与 Windows 桌面巡检，随后由确定性 Runbook 稳定重放；内置受管 Chromium、Windows UI Automation、OCR、快捷键、截图和保守恢复。"
       }
     }
   },
