@@ -275,6 +275,14 @@ function assertDesktopToolArgumentPolicy(stepId: string, tool: string, args: Jso
       throw new Error(`step ${stepId} desktop_type_target requires name, automationId, controlType, or className`)
     }
   }
+  if (tool === 'desktop_paste_target' || tool === 'desktop_press_target') {
+    if (tool === 'desktop_press_target') requireString('key')
+    const selectors = [args.name, args.automationId, args.controlType, args.className]
+    if (selectors.every(value => typeof value !== 'string' || value.trim() === '')) {
+      throw new Error(`step ${stepId} ${tool} requires name, automationId, controlType, or className`)
+    }
+  }
+
   if (tool === 'desktop_hotkey') requireString('combo')
   if (tool === 'desktop_press') requireString('key')
   if (tool === 'desktop_wait') {
