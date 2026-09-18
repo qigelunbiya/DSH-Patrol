@@ -406,6 +406,35 @@ function Resolve-AppLaunchSpec($request) {
     }
   }
 
+  $shortcutRoots = @(
+    [Environment]::GetFolderPath('StartMenu'),
+    [Environment]::GetFolderPath('CommonStartMenu')
+  ) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }
+  $shortcuts = @()
+  foreach ($root in $shortcutRoots) {
+    $programs = Join-Path ([string]$root) 'Programs'
+    if (-not (Test-Path -LiteralPath $programs)) { continue }
+    $shortcuts += @(Get-ChildItem -LiteralPath $programs -Filter '*.lnk' -File -Recurse -ErrorAction SilentlyContinue)
+  }
+  $shortcutExact = @($shortcuts | Where-Object {
+    ([string]$_.BaseName).Equals($app, [StringComparison]::OrdinalIgnoreCase)
+  })
+  if ($shortcutExact.Count -gt 0) {
+    $match = $shortcutExact[0]
+    return [ordered]@{ mode='shortcut'; file=[string]$match.FullName; resolvedName=[string]$match.BaseName }
+  }
+  $shortcutMatches = @($shortcuts | Where-Object {
+    ([string]$_.BaseName).IndexOf($app, [StringComparison]::OrdinalIgnoreCase) -ge 0
+  })
+  if ($shortcutMatches.Count -eq 1) {
+    $match = $shortcutMatches[0]
+    return [ordered]@{ mode='shortcut'; file=[string]$match.FullName; resolvedName=[string]$match.BaseName }
+  }
+  if ($shortcutMatches.Count -gt 1) {
+    $sample = ($shortcutMatches | Select-Object -First 8 | ForEach-Object { [string]$_.BaseName }) -join ' | '
+    throw "launch-app app query is ambiguous ($($shortcutMatches.Count) Start Menu shortcuts): $sample"
+  }
+
   $getStartApps = Get-Command -Name Get-StartApps -ErrorAction SilentlyContinue
   if ($null -ne $getStartApps) {
     $apps = @(Get-StartApps | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.AppID) })
@@ -459,6 +488,12 @@ try {
         $shellTarget = "shell:AppsFolder\$($spec.appId)"
         Start-Process -FilePath $spec.file -ArgumentList @($shellTarget) | Out-Null
         [ordered]@{ ok=$true; mode=$spec.mode; appId=$spec.appId; resolvedName=$spec.resolvedName }
+      } elseif ($spec.mode -eq 'shortcut') {
+        if ($argumentList.Count -gt 0 -or -not [string]::IsNullOrWhiteSpace($workingDirectory)) {
+          throw 'launch-app app=<friendly name> does not support arguments/workingDirectory; provide file=<executable path> for those options'
+        }
+        Start-Process -FilePath $spec.file | Out-Null
+        [ordered]@{ ok=$true; mode=$spec.mode; file=$spec.file; resolvedName=$spec.resolvedName }
       } else {
         $parameters = @{ FilePath=$spec.file; PassThru=$true }
         if ($argumentList.Count -gt 0) { $parameters.ArgumentList = $argumentList }

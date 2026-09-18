@@ -167,7 +167,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "desktop app resolver exited with $LASTEXITCODE : $output" }
           $value = $output | ConvertFrom-Json
           if ($value.ok -ne $true) { throw "desktop app resolver returned ok=false: $output" }
-          if ($value.spec.mode -ne 'shell-app') { throw "expected shell-app resolution for friendly name '$($entry.Name)': $output" }
+          if (@('shortcut', 'shell-app') -notcontains [string]$value.spec.mode) { throw "expected shortcut/shell-app resolution for friendly name '$($entry.Name)': $output" }
           if ([string]$value.spec.resolvedName -ne [string]$entry.Name) { throw "resolved friendly-name mismatch: $output" }
 
       - name: Execute Desktop Automation UIA integration smoke

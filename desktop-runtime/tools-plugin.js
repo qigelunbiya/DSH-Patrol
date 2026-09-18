@@ -42,7 +42,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_launch_app',
-      description: 'Launch a Windows application. Provide file for an executable/path, or app for a friendly installed application name. app resolution uses Windows command/App Paths/Start Apps discovery and is generic across applications.',
+      description: 'Launch a Windows application. Provide file for an executable/path, or app for a friendly installed application name. app resolution uses Windows command/App Paths/Start Menu shortcut/Start Apps discovery and is generic across applications.',
       parameters: {
         file: str,
         app: str,
