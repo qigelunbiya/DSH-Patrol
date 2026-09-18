@@ -73,6 +73,68 @@ describe('Desktop Automation runtime foundation', () => {
     })
   })
 
+  it('waits for semantic desktop targets through UIA first and OCR fallback second', async () => {
+    const driver = new WindowsDesktopDriver()
+    const calls: string[] = []
+    driver.run = async (action: string) => {
+      calls.push(action)
+      if (action === 'activate-window') return { ok: true }
+      if (action === 'snapshot') {
+        return {
+          ok: true,
+          window: { title: '微信' },
+          elements: [{ name: '搜索', automationId: 'SearchBox', controlType: 'Edit', className: 'SearchEdit' }],
+        }
+      }
+      throw new Error(`unexpected action ${action}`)
+    }
+
+    const uia = await driver.waitForTarget({
+      source: 'auto',
+      processName: 'WeChat',
+      name: '搜索',
+      controlType: 'Edit',
+      timeoutMs: 1000,
+    })
+    expect(uia).toMatchObject({
+      ok: true,
+      method: 'uia',
+      matchCount: 1,
+      target: { name: '搜索', controlType: 'Edit' },
+    })
+    expect(calls).toEqual(['activate-window', 'snapshot'])
+
+    calls.length = 0
+    driver.run = async (action: string) => {
+      calls.push(action)
+      if (action === 'activate-window') return { ok: true }
+      if (action === 'snapshot') return { ok: true, window: { title: '微信' }, elements: [] }
+      throw new Error(`unexpected action ${action}`)
+    }
+    driver.ocr = async () => ({
+      ok: true,
+      status: 'recognized',
+      lines: [{ text: '测试联系人', center: { x: 320, y: 280 } }],
+      screenshotPath: 'current.png',
+      screenshotBounds: { x: 0, y: 0, width: 1000, height: 800 },
+      languagesTried: ['zh-CN'],
+    })
+
+    const ocr = await driver.waitForTarget({
+      source: 'auto',
+      processName: 'WeChat',
+      text: '测试联系人',
+      timeoutMs: 1000,
+    })
+    expect(ocr).toMatchObject({
+      ok: true,
+      method: 'ocr',
+      matchCount: 1,
+      target: { text: '测试联系人', center: { x: 320, y: 280 } },
+    })
+    expect(calls).toEqual(['activate-window', 'snapshot'])
+  })
+
   it('clicks one unique CURRENT OCR text match and rejects ambiguity', async () => {
     const driver = new WindowsDesktopDriver()
     const clicks: any[] = []
@@ -124,6 +186,7 @@ describe('Desktop Automation runtime foundation', () => {
       'desktop_click_target',
       'desktop_click_ocr_text',
       'desktop_click_coordinates',
+      'desktop_wait_for_target',
       'desktop_type_text',
       'desktop_hotkey',
       'desktop_screenshot',
