@@ -89,7 +89,7 @@ describe('desktop Runbook replay', () => {
           kind: 'tool',
           name: '粘贴截图',
           tool: 'desktop_paste',
-          arguments: {},
+          arguments: { processName: 'WeChat', titleContains: '微信' },
           recordedAt: '2026-09-18T00:00:02.000Z',
         },
       ],
@@ -249,6 +249,9 @@ describe('desktop Runbook replay', () => {
       'desktop_press',
     ])
     expect(calls.some(item => item.name.startsWith('browser_'))).toBe(false)
+    expect(calls[1]?.arguments).toMatchObject({ processName: 'WeChat', titleContains: '微信', combo: 'Ctrl+F' })
+    expect(calls[2]?.arguments).toMatchObject({ processName: 'WeChat', titleContains: '微信', text: '测试联系人' })
+    expect(calls[6]?.arguments).toMatchObject({ processName: 'WeChat', titleContains: '微信', key: 'Enter' })
   })
 
   it('auto-captures a required final screenshot with desktop_screenshot for desktop-only targets', async () => {
