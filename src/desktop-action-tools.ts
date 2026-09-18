@@ -65,6 +65,7 @@ export function registerPatrolDesktopActionTools(
       toY: { type: 'integer' },
       durationMs: { type: 'integer' },
       text: { type: 'string' },
+      value: { type: 'string', description: 'Optional non-secret UIA ValuePattern value selector for wait-for-target.' },
       clear: { type: 'boolean' },
       combo: { type: 'string' },
       key: { type: 'string' },
@@ -202,6 +203,10 @@ function desktopArguments(action: DesktopAction, args: Record<string, unknown>, 
       add('fromX', args.fromX); add('fromY', args.fromY); add('toX', args.toX); add('toY', args.toY); add('durationMs', args.durationMs); break
     case 'type-text':
       add('text', args.text); add('clear', args.clear); break
+    case 'type-target':
+      add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
+      add('name', args.name); add('automationId', args.automationId); add('controlType', args.controlType); add('className', args.className)
+      add('match', args.match); add('index', args.index); add('text', args.text); add('clear', args.clear); break
     case 'hotkey':
       add('combo', args.combo); break
     case 'press':
@@ -210,7 +215,7 @@ function desktopArguments(action: DesktopAction, args: Record<string, unknown>, 
       add('milliseconds', args.milliseconds); break
     case 'wait-for-target':
       add('source', args.source); add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
-      add('name', args.name); add('automationId', args.automationId); add('controlType', args.controlType); add('className', args.className)
+      add('name', args.name); add('automationId', args.automationId); add('controlType', args.controlType); add('className', args.className); add('value', args.value)
       add('text', args.text); add('match', args.match); add('caseSensitive', args.caseSensitive); add('requireUnique', args.requireUnique)
       add('scope', args.scope); add('languages', args.languages); add('maxElements', args.maxElements); add('timeoutMs', args.timeoutMs); add('pollMs', args.pollMs); break
     case 'screenshot':
@@ -264,11 +269,18 @@ function validateRequiredDesktopArguments(action: DesktopAction, args: JsonObjec
     case 'drag': requireNumber('fromX'); requireNumber('fromY'); requireNumber('toX'); requireNumber('toY'); break
     case 'type-text':
     case 'set-clipboard-text': requireText('text'); break
+    case 'type-target':
+      requireText('text')
+      if (![args.name, args.automationId, args.controlType, args.className]
+        .some(value => typeof value === 'string' && value.trim() !== '')) {
+        throw new Error('type-target requires name, automationId, controlType, or className')
+      }
+      break
     case 'hotkey': requireText('combo'); break
     case 'press': requireText('key'); break
     case 'wait': requireNumber('milliseconds'); break
     case 'wait-for-target':
-      if (![args.name, args.automationId, args.controlType, args.className, args.text]
+      if (![args.name, args.automationId, args.controlType, args.className, args.value, args.text]
         .some(value => typeof value === 'string' && value.trim() !== '')) {
         throw new Error('wait-for-target requires text or a UI Automation selector')
       }
