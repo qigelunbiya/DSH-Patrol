@@ -107,7 +107,8 @@ function createDefinitions(ctx: Context, store: PatrolStore, runner: PatrolRunne
       if (missingDesktop.length > 0) {
         if (desktopRequired) {
           lines.push(`desktop provider: MISSING (${missingDesktop.join(', ')})`)
-          lines.push('Fix: restart Harness after updating DSH Patrol. Patrol mode must load dsh-patrol/desktop-tools from the managed preset.')
+          lines.push('Diagnosis: Desktop Automation actions such as activate-window are valid, but the generic desktop provider is not mounted in this agent session. This affects all Windows applications, not just the current app.')
+          lines.push('Fix: update/reinstall DSH Patrol so the managed Patrol agent preset includes dsh-patrol/desktop-tools, restart Harness, then open a NEW Patrol session. Do not substitute launch-app/open-path/pwsh or edit a Runbook to work around a missing provider.')
         } else {
           lines.push(`desktop provider: optional for this saved flow; unavailable tools=(${missingDesktop.join(', ')})`)
         }
