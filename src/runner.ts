@@ -4,6 +4,7 @@ import { CallId } from '@deepseek-ai/dsh-llm'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { findAdaptiveClickRecovery, findAdaptiveSelectorRecovery, isSelectorUnavailable } from './adaptive-recovery.js'
 import { findUniqueHealingSelector, isPageReadStep, isScreenshotStep, isSafeBrowserTool, isSelectorBoundToCurrentSnapshot } from './browser.js'
+import { isSafeDesktopTool } from './desktop.js'
 import { verifyPostClickExpectation } from './post-click-verification.js'
 import { renderRunReport } from './report.js'
 import { credentialReferenceName, redactLikelySecrets, untrustedPageData } from './security.js'
@@ -51,7 +52,7 @@ export class PatrolRunner {
   ) {}
 
   isToolAllowed(name: string): boolean {
-    return isSafeBrowserTool(name)
+    return isSafeBrowserTool(name) || isSafeDesktopTool(name)
   }
 
   browserGuard(name: string, parent: ToolRunContext['token'] | undefined): string | undefined {
@@ -62,7 +63,7 @@ export class PatrolRunner {
 
   async dispatch(tool: string, args: JsonObject, exec: ToolRunContext, exactSecrets: readonly string[] = []): Promise<DispatchResult> {
     if (!this.isToolAllowed(tool)) {
-      return { ok: false, text: '', error: `tool ${tool} is not in DSH Patrol's exact browser allowlist` }
+      return { ok: false, text: '', error: `tool ${tool} is not in DSH Patrol's exact browser/desktop allowlist` }
     }
 
     this.authorize(exec.token)
@@ -225,7 +226,7 @@ export class PatrolRunner {
         break
       }
 
-      const result = await this.executeToolStep(definition, state.runId, step, exec, stepStartedAt, outputWorkspace)
+      const result = await this.executeToolStep(definition, state.runId, step, exec, stepStartedAt, outputWorkspace, results)
       results.push(result)
       if (result.status === 'failed') {
         status = 'failed'
@@ -334,6 +335,7 @@ export class PatrolRunner {
     exec: ToolRunContext,
     startedAt: string,
     outputWorkspace: string | undefined,
+    previousResults: readonly StepRunResult[],
   ): Promise<StepRunResult> {
     const reusedSession = await this.reuseAuthenticatedSession(definition, step, exec)
     if (reusedSession !== undefined) {
@@ -351,7 +353,7 @@ export class PatrolRunner {
 
     let runtimeArguments: JsonObject
     try {
-      runtimeArguments = prepareRuntimeArguments(step)
+      runtimeArguments = prepareRuntimeArguments(step, previousResults)
     } catch (error: unknown) {
       return failedResult(step, startedAt, errorMessage(error))
     }
@@ -564,7 +566,7 @@ export class PatrolRunner {
 
     if (!dispatched.ok) {
       return {
-        ...failedResult(step, startedAt, dispatched.error ?? 'Unknown browser tool error'),
+        ...failedResult(step, startedAt, dispatched.error ?? 'Unknown Patrol tool error'),
         output: dispatched.text,
       }
     }
@@ -599,9 +601,9 @@ export class PatrolRunner {
 
     const artifacts: RunArtifact[] = []
     try {
-      if (isScreenshotStep(step)) {
+      if (isScreenshotStep(step) || step.tool === 'desktop_screenshot') {
         const providerPath = objectString(dispatched.value, 'path')
-        if (providerPath === undefined) throw new Error('browser_screenshot returned no artifact path')
+        if (providerPath === undefined) throw new Error(`${step.tool} returned no artifact path`)
         const copied = await this.store.copyArtifact(definition.id, runId, providerPath, `${step.id}-screenshot`, outputWorkspace)
         artifacts.push({ kind: 'screenshot', path: copied })
       }
@@ -620,7 +622,7 @@ export class PatrolRunner {
         startedAt,
         finishedAt: new Date().toISOString(),
         output: safeOutputForStep(step, dispatched.text),
-        error: `browser action succeeded but required artifact persistence failed: ${errorMessage(error)}`,
+        error: `Patrol action succeeded but required artifact persistence failed: ${errorMessage(error)}`,
       }
     }
 
@@ -718,21 +720,50 @@ async function observeChecklistClickTargetWithSettle(
   return { snapshot, attempts: STRUCTURAL_RECOVERY_SETTLE_DELAYS_MS.length, error: lastError }
 }
 
-function prepareRuntimeArguments(step: ToolStep): JsonObject {
+function prepareRuntimeArguments(step: ToolStep, previousResults: readonly StepRunResult[]): JsonObject {
+  let runtime = resolveArtifactReferences(step.arguments, previousResults)
+
   if (step.tool !== 'browser_type_credential') {
     const refs: string[] = []
-    collectCredentialPlaceholders(step.arguments, refs)
+    collectCredentialPlaceholders(runtime, refs)
     if (refs.length > 0) {
       throw new Error(`credential references are only valid in browser_type_credential steps; found ${refs.join(', ')}`)
     }
-    return step.arguments
+    return runtime
   }
 
-  const raw = step.arguments.credentialRef
+  const raw = runtime.credentialRef
   if (typeof raw !== 'string') throw new Error('browser_type_credential requires credentialRef')
   const ref = credentialReferenceName(raw) ?? (/^[A-Za-z_][A-Za-z0-9_]*$/.test(raw) ? raw : undefined)
   if (ref === undefined) throw new Error('browser_type_credential credentialRef must be ${credential:REF} or a valid Harness credential reference name')
-  return Object.fromEntries(Object.entries(step.arguments).filter(([key]) => key !== 'text').map(([key, value]) => [key, key === 'credentialRef' ? ref : value])) as JsonObject
+  runtime = Object.fromEntries(Object.entries(runtime).filter(([key]) => key !== 'text').map(([key, value]) => [key, key === 'credentialRef' ? ref : value])) as JsonObject
+  return runtime
+}
+
+function resolveArtifactReferences(value: JsonObject, previousResults: readonly StepRunResult[]): JsonObject {
+  const resolveValue = (input: JsonValue): JsonValue => {
+    if (typeof input === 'string') {
+      if (input === '${artifact:last-screenshot}') {
+        const artifact = [...previousResults].reverse()
+          .flatMap(result => result.artifacts ?? [])
+          .find(item => item.kind === 'screenshot')
+        if (artifact === undefined) throw new Error('artifact placeholder ${artifact:last-screenshot} has no prior screenshot artifact in this run')
+        return artifact.path
+      }
+      const stepMatch = /^\$\{artifact:(step-[A-Za-z0-9._-]+)\}$/.exec(input)
+      if (stepMatch?.[1]) {
+        const result = [...previousResults].reverse().find(item => item.stepId === stepMatch[1])
+        const artifact = result?.artifacts?.[0]
+        if (artifact === undefined) throw new Error(`artifact placeholder ${input} has no artifact on ${stepMatch[1]}`)
+        return artifact.path
+      }
+      return input
+    }
+    if (input === null || typeof input === 'number' || typeof input === 'boolean') return input
+    if (Array.isArray(input)) return input.map(resolveValue)
+    return Object.fromEntries(Object.entries(input).map(([key, child]) => [key, resolveValue(child)]))
+  }
+  return resolveValue(value) as JsonObject
 }
 
 function recoveryClickArguments(original: JsonObject, selector: string): JsonObject {
