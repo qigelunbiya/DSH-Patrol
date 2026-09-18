@@ -107,9 +107,9 @@ try {
   })
 
   await driver.run('set-clipboard-text', { text: PASTE_SUFFIX })
-  const pasted = await driver.run('paste', { title: TITLE })
-  if (pasted.window?.title !== TITLE) {
-    throw new Error(`targeted paste did not activate fixture window: ${JSON.stringify(pasted)}`)
+  const pasted = await driver.run('paste-target', { title: TITLE, ...selector })
+  if (pasted.window?.title !== TITLE || !pasted.focusMethod) {
+    throw new Error(`atomic target paste did not focus fixture input: ${JSON.stringify(pasted)}`)
   }
   const pastedText = `${HOTKEY_TEXT}${PASTE_SUFFIX}`
   await driver.waitForTarget({
@@ -123,9 +123,9 @@ try {
     pollMs: 200,
   })
 
-  const pressed = await driver.run('press', { title: TITLE, key: 'Enter' })
-  if (pressed.window?.title !== TITLE) {
-    throw new Error(`targeted key press did not activate fixture window: ${JSON.stringify(pressed)}`)
+  const pressed = await driver.run('press-target', { title: TITLE, ...selector, key: 'Enter' })
+  if (pressed.window?.title !== TITLE || !pressed.focusMethod) {
+    throw new Error(`atomic target key press did not focus fixture input: ${JSON.stringify(pressed)}`)
   }
   await driver.waitForTarget({
     source: 'uia',
@@ -179,8 +179,10 @@ try {
     targetedKeyboard: {
       hotkeyWindow: selected.window?.title,
       typeTextWindow: relativeTyped.window?.title,
-      pasteWindow: pasted.window?.title,
-      pressWindow: pressed.window?.title,
+      pasteTargetWindow: pasted.window?.title,
+      pasteTargetFocus: pasted.focusMethod,
+      pressTargetWindow: pressed.window?.title,
+      pressTargetFocus: pressed.focusMethod,
     },
     screenshot: { width: shot.width, height: shot.height },
   }, null, 2))
