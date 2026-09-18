@@ -602,7 +602,7 @@ const esc=v=>String(v??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'
 const fmt=t=>{if(!t)return'—';const d=new Date(t);return Number.isNaN(d.getTime())?esc(t):d.toLocaleString('zh-CN',{hour12:false})};
 const dur=(a,b)=>{const x=new Date(a).getTime(),y=new Date(b).getTime();if(!Number.isFinite(x)||!Number.isFinite(y)||y<x)return'—';const s=(y-x)/1000;return s<60?s.toFixed(1)+' 秒':Math.floor(s/60)+' 分 '+Math.round(s%60)+' 秒'};
 const pill=s=>'<span class="pill '+esc(s)+'">'+({passed:'通过',failed:'失败',waiting:'等待中',ready:'已保存',draft:'编辑中'}[s]||esc(s||'未知'))+'</span>';
-const host=u=>{try{return new URL(u).host}catch{return u||'—'}};
+const host=u=>{try{const p=new URL(u);return p.host||u||'—'}catch{return u||'—'}};
 function empty(t,s){return '<div class="card empty"><div style="font-weight:720">'+esc(t)+'</div><div class="muted" style="font-size:12px;margin-top:7px">'+esc(s||'')+'</div></div>'}
 function header(t,s,a=''){return '<div class="top"><div><div class="eyebrow">DSH PATROL</div><h1 class="title">'+esc(t)+'</h1><div class="sub">'+esc(s)+'</div></div><div class="actions">'+a+'</div></div>'}
 async function get(path,timeout=12000){const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),timeout);try{const r=await fetch(API+path,{cache:'no-store',credentials:'same-origin',signal:ctl.signal});const p=await r.json();if(!r.ok||p.ok!==true)throw new Error(p.error||'请求失败');return p}catch(e){if(e&&e.name==='AbortError')throw new Error('读取巡检数据超时。请确认 Patrol Host 已更新并重新启动。');throw e}finally{clearTimeout(timer)}}
