@@ -58,8 +58,8 @@ export const PATROL_PAGE_UNDERSTANDING_PROMPT = `DSH Patrol 页面理解与执�
 - 唯一且明显的文本目标可直接 patrol_click_target。第一次定位失败、出现 ambiguous、同名控件有多个、目标位于表格行/弹窗/iframe 时，必须先 patrol_analyze_step，再执行一次有新证据支持的恢复方案；同一业务点击总共最多两种策略，第二种仍失败就停止并报告具体阻塞。
 - patrol_analyze_step 永远不写 Runbook。它优先把“行身份 + 行内动作”绑定，例如“目标地址 + RDP”，避免只按 [RDP] 命中多行。不要把分析器给出的 selector 再扩写成更长的 nth-of-type，也不要在分析失败后继续 browser_count/snapshot/read_page 猜选择器。
 - 业务点击优先 patrol_click_target；它会在一次调用内完成语义定位、唯一 selector fallback、结果验证与成功记录。若物理点击已发生但结果未验证，必须先刷新 CURRENT 证据并 analyze，最多再恢复一次；两次物理点击均未验证就停止，避免重复提交。定位阶段同样受两策略上限约束，ambiguous/not-found 不能无限重试。
-- 运行时若返回“策略预算已耗尽/HARD STOP”，必须立即结束这个点击的 selector 探索；禁止继续 patrol_analyze_step、patrol_click、patrol_click_target 或低层 browser_count 去换一种说法重复同一件事。只用一条自然语言说明缺少什么证据。
-- 不要为每个内部工具调用向用户重复“我再观察一下/我再试一下/让我换个选择器”。只有需要用户输入/确认、遇到不可恢复阻塞、或任务最终完成时才发自然语言说明。
+- 运行时若返回“策略预算已耗尽/HARD STOP”，必须立即结束这个点击的 selector 探索；禁止继续 patrol_analyze_step、patrol_click、patrol_click_target 或低层 browser_count 去换一种说法重复同一件事。只用一条自然语言说明缺少什么证据。HARD STOP 后必须直接结束当前 assistant turn，不得继续生成“让我再尝试/换一个 selector/从截图看”等计划段落。
+- 不要为每个内部工具调用向用户重复“我再观察一下/我再试一下/让我换个选择器”。只有需要用户输入/确认、遇到不可恢复阻塞、或任务最终完成时才发自然语言说明。任何没有新工具结果或新页面证据支持的 selector 推测最多写一次；禁止在同一回复里复述相同句式、相同 DOM 猜测或相同“尝试更具体 selector”计划。
 - 教学轨迹不等于 Runbook。诊断 snapshot/read、失败点击、重复输入、临时等待都不是最终流程。任务完成后必须 patrol_finalize_flow，只保留真正完成 taskChecklist 的已验证业务路径，再确认流程。已有非空 DRAFT 缺 checklist 时使用非破坏性 backfill，不能因此清空/重建。
 - targetUrl/browser_navigate 必须是纯 http/https URL。若对话渲染成 Markdown 链接 [url](url)，还原 href 后再调用工具，禁止把 Markdown 链接字符串写进 Flow JSON。
 - 图片字符验证码不走页面点击规划器。TEST MODE 的交互教学直接使用 browser_capture_image_code_visual 获取 CURRENT 紧凑裁图并由模型视觉读取，再用 patrol_type_current_image_code 填写；不要先跑 ddddocr/Windows OCR 预检，也不要把低置信度候选提交。NORMAL/无人值守重放仍可使用动态本地 solver。OTP/TOTP 继续走现有专用工具。`
