@@ -269,6 +269,61 @@ describe('recordable desktop actions', () => {
     ])
   })
 
+  it('inherits the desktop inspection target and records atomic paste/key actions for one UIA control', async () => {
+    const { store, action, exec, dispatched } = await setup()
+
+    await action.execute({
+      inspectionId: 'wechat-semantic-wait',
+      stepName: '粘贴截图到消息输入区',
+      action: 'paste-target',
+      controlType: 'Edit',
+      className: 'MessageInput',
+    }, exec)
+    await action.execute({
+      inspectionId: 'wechat-semantic-wait',
+      stepName: '在消息输入区按回车',
+      action: 'press-target',
+      controlType: 'Edit',
+      className: 'MessageInput',
+      key: 'Enter',
+    }, exec)
+
+    expect(dispatched).toEqual([
+      {
+        tool: 'desktop_paste_target',
+        args: {
+          processName: 'WeChat',
+          controlType: 'Edit',
+          className: 'MessageInput',
+        },
+      },
+      {
+        tool: 'desktop_press_target',
+        args: {
+          processName: 'WeChat',
+          controlType: 'Edit',
+          className: 'MessageInput',
+          key: 'Enter',
+        },
+      },
+    ])
+
+    const saved = await store.load('wechat-semantic-wait')
+    expect(saved.steps.map(step => step.kind === 'tool' ? [step.tool, step.arguments] : [])).toEqual([
+      ['desktop_paste_target', {
+        processName: 'WeChat',
+        controlType: 'Edit',
+        className: 'MessageInput',
+      }],
+      ['desktop_press_target', {
+        processName: 'WeChat',
+        controlType: 'Edit',
+        className: 'MessageInput',
+        key: 'Enter',
+      }],
+    ])
+  })
+
   it('rejects invalid wait bounds before dispatching or recording', async () => {
     const { store, action, exec, dispatched } = await setup()
 
