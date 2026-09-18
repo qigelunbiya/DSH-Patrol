@@ -169,13 +169,14 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_ocr',
-      description: 'Capture the active desktop window/screen and run bundled Windows system OCR. Use this after UI Automation when an application paints text without exposing accessible controls.',
+      description: 'Capture the active desktop window/screen and run bundled Windows system OCR. Returns recognized line text plus absolute screen rect/center coordinates so coordinate fallback can use CURRENT OCR evidence when UI Automation is unavailable.',
       parameters: {
         scope: { type: 'string', enum: ['active-window', 'screen'] },
         processName: str,
         title: str,
         titleContains: str,
         fileName: str,
+        languages: { type: 'array', items: { type: 'string' }, description: 'Optional preferred OCR languages. Patrol also tries the current locale, zh-CN and en-US in a bounded set of passes.' },
       },
       output: jsonOutput('Desktop OCR result'),
       execute: async (args, exec) => await driver.ocr(compact(args), exec),
