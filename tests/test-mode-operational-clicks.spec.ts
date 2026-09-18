@@ -3,11 +3,13 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 describe('TEST MODE operational click fallbacks', () => {
-  it('does not install the strict planning guard outside NORMAL MODE', () => {
+  it('keeps click-strategy loop protection active in TEST MODE without disabling low-level fallbacks', () => {
     const source = readFileSync(join(process.cwd(), 'src', 'index.ts'), 'utf8')
-    const strictBlock = source.match(/if \(runtimePolicy\.installGuards\) \{[\s\S]*?\n  \} else \{/i)?.[0] ?? ''
-    expect(strictBlock).toContain('planningGuard(execution)')
-    expect(source.indexOf('planningGuard(execution)')).toBeGreaterThan(source.indexOf('if (runtimePolicy.installGuards)'))
+    const planningIndex = source.indexOf('planningGuard(execution)')
+    const strictIndex = source.indexOf('if (runtimePolicy.installGuards)')
+    expect(planningIndex).toBeGreaterThan(0)
+    expect(planningIndex).toBeLessThan(strictIndex)
+    expect(source).toContain('Selector/click strategy budgets are safety against model loops')
     expect(source).toContain("build=${TEST_MODE_BUILD_MARKER}")
     expect(source).toContain("test-bypass-v10-desktop-automation")
   })
