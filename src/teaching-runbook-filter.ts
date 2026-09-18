@@ -110,7 +110,10 @@ function checklistMatch(step: ToolStep, checklist: readonly string[], claimed: R
 
 function rankedChecklistIndexes(step: ToolStep, checklist: readonly string[]): number[] {
   const stepAction = actionKindForStep(step)
-  if (!['navigate', 'click', 'type', 'read', 'screenshot', 'wait'].includes(stepAction)) return []
+  // Support waits are not checklist-deduped here: fixed waits are teaching probes,
+  // while desktop_wait_for_target is a semantic assertion that should survive
+  // until final flow compaction can bind it to an explicit wait checklist item.
+  if (!['navigate', 'click', 'type', 'read', 'screenshot'].includes(stepAction)) return []
   const stepTokens = businessTokens(step.name)
   if (stepTokens.size === 0) return []
 
