@@ -171,7 +171,8 @@ function shouldKeepStep(
     return screenshotIndexes.has(index)
   }
 
-  if (step.tool === 'browser_wait' && hasLaterUnassertedWaitBeforeBoundary(all, index)) return false
+  if ((step.tool === 'browser_wait' || step.tool === 'desktop_wait')
+    && hasLaterUnassertedWaitBeforeBoundary(all, index, step.tool)) return false
   if (isTypingTool(step.tool) && isSupersededTypingStep(all, index, step)) return false
   if (isDuplicateRetryStep(all, index, step)) return false
 
@@ -336,11 +337,17 @@ function requiredArtifactCount(definition: InspectionDefinition, action: 'read' 
   return Math.max(fallback, required)
 }
 
-function hasLaterUnassertedWaitBeforeBoundary(all: readonly InspectionStep[], index: number): boolean {
+function hasLaterUnassertedWaitBeforeBoundary(
+  all: readonly InspectionStep[],
+  index: number,
+  currentTool: 'browser_wait' | 'desktop_wait',
+): boolean {
   for (let cursor = index + 1; cursor < all.length; cursor += 1) {
     const next = all[cursor]!
     if (isInteractionBoundary(next)) return false
-    if (next.kind === 'tool' && next.tool === 'browser_wait' && !referencedOrAssertive(next)) return true
+    if (next.kind !== 'tool' || referencedOrAssertive(next)) continue
+    if (currentTool === 'browser_wait' && next.tool === 'browser_wait') return true
+    if (currentTool === 'desktop_wait' && (next.tool === 'desktop_wait' || next.tool === 'desktop_wait_for_target')) return true
   }
   return false
 }
@@ -403,15 +410,31 @@ function navigationIdentity(value: string): string {
 }
 
 function isSupersededTypingStep(all: readonly InspectionStep[], index: number, step: ToolStep): boolean {
-  const selector = typeof step.arguments.selector === 'string' ? step.arguments.selector : ''
-  if (!selector) return false
+  const identity = typingTargetIdentity(step)
+  if (!identity) return false
   for (let cursor = index + 1; cursor < all.length; cursor += 1) {
     const next = all[cursor]!
     if (isInteractionBoundary(next)) return false
     if (next.kind !== 'tool' || !isTypingTool(next.tool)) continue
-    if (next.arguments.selector === selector) return true
+    if (typingTargetIdentity(next) === identity) return true
   }
   return false
+}
+
+function typingTargetIdentity(step: ToolStep): string {
+  if (step.tool.startsWith('browser_type')) {
+    const selector = typeof step.arguments.selector === 'string' ? step.arguments.selector.trim() : ''
+    return selector ? `browser:${selector}` : ''
+  }
+  if (step.tool === 'desktop_type_target') {
+    const stable = ['processName', 'title', 'titleContains', 'name', 'automationId', 'controlType', 'className', 'index']
+      .map(key => [key, step.arguments[key]] as const)
+      .filter(([, value]) => typeof value === 'string' ? value.trim() !== '' : typeof value === 'number')
+    return stable.length === 0 ? '' : `desktop-target:${JSON.stringify(Object.fromEntries(stable))}`
+  }
+  // desktop_type_text is intentionally focus-relative; without a stable target
+  // it cannot be safely assumed to supersede an earlier input.
+  return ''
 }
 
 function isInteractionBoundary(step: InspectionStep): boolean {
