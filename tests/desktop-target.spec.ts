@@ -141,10 +141,10 @@ describe('native desktop inspection targets', () => {
         kind: 'tool',
         name: '错误等待',
         tool: 'desktop_wait_for_target',
-        arguments: { source: 'ocr', timeoutMs: 50 },
+        arguments: { source: 'ocr', text: '测试联系人', timeoutMs: 50 },
         recordedAt: '2026-09-18T03:00:00.000Z',
       }],
-    })).toThrow(/requires text or a UI Automation selector|requires text/i)
+    })).toThrow(/timeoutMs must be between 100 and 120000/i)
   })
 
   it('creates a desktop-only draft without inventing targetUrl', async () => {
