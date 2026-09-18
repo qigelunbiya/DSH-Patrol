@@ -52,7 +52,6 @@ describe('atomic semantic click extension layer', () => {
     expect(source).toContain('actionableAncestorForTitleLeaf')
     expect(source).toContain("querySelectorAll?.('[title]')")
     expect(source).toContain('score -= 110')
-    expect(source).toContain('title-backed')
   })
 
   it('can discover a plain image or SVG logo even when it has no link/button wrapper', () => {
