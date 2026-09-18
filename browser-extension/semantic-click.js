@@ -135,7 +135,7 @@ async function semanticClickPageCommand(mode, spec) {
   const roleOf = element => compact(element.getAttribute?.('role') || (element.tagName === 'A' ? 'link' : element.tagName === 'BUTTON' ? 'button' : element instanceof HTMLInputElement && ['button', 'submit', 'reset'].includes(String(element.type || '').toLowerCase()) ? 'button' : ''))
   const stableSelector = element => {
     if (element.id) return `#${cssEscape(element.id)}`
-    for (const attr of ['data-testid', 'data-test', 'data-cy', 'name', 'menuid', 'aria-label']) {
+    for (const attr of ['data-testid', 'data-test', 'data-cy', 'name', 'menuid', 'aria-label', 'title']) {
       const value = element.getAttribute?.(attr)
       if (value) return `${element.tagName.toLowerCase()}[${attr}="${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]`
     }
@@ -168,6 +168,7 @@ async function semanticClickPageCommand(mode, spec) {
     'a', 'button', 'input[type="button"]', 'input[type="submit"]', 'input[type="reset"]',
     '[role="button"]', '[role="link"]', '[role="menuitem"]', '[role="tab"]',
     '[onclick]', '[bg-click]', '[ng-click]', '[data-action]', '[tabindex]:not([tabindex="-1"])',
+    '[role="treeitem"]', '.ant-tree-node-content-wrapper', '[title]',
     'img', 'svg', '[id*="logo" i]', '[class*="logo" i]',
   ].join(',')
   const candidates = [...new Set([...root.querySelectorAll(selector)])].filter(element => visible(element) && !disabled(element))
@@ -197,6 +198,12 @@ async function semanticClickPageCommand(mode, spec) {
       if (normText === wantedText) score += 140
       else if (normText.includes(wantedText) || wantedText.includes(normText)) score += 80
       else return null
+    }
+    if (wantedText) {
+      const titleText = normalize(element.getAttribute?.('title') || '')
+      if (titleText === wantedText) score += 90
+      else if (titleText && titleText.includes(wantedText)) score += 35
+      if (element.matches?.('.ant-tree-node-content-wrapper,[role="treeitem"]')) score += 24
     }
     if (selectorHint) {
       try { if (element.matches(selectorHint)) score += 35 } catch {}
