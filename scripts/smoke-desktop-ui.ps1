@@ -176,12 +176,30 @@ try {
     throw "type-target completed but CURRENT UIA snapshot did not expose typed text. observed=$observed"
   }
 
-  $clicked = Invoke-PatrolDesktopAction -Action 'click-target' -Arguments @{
-    processId = $processId
-    name = 'Apply'
-    controlType = 'Button'
-    match = 'exact'
+  $button = @($snapshot.elements | Where-Object {
+    $_.enabled -eq $true -and
+    $_.offscreen -ne $true -and
+    [string]$_.controlType -eq 'Button'
+  }) | Select-Object -First 1
+  if ($null -eq $button) {
+    throw 'Smoke form exposed no UIA Button control.'
   }
+
+  $clickArgs = @{
+    processId = $processId
+    controlType = 'Button'
+  }
+  if (-not [string]::IsNullOrWhiteSpace([string]$button.automationId)) {
+    $clickArgs.automationId = [string]$button.automationId
+  } elseif (-not [string]::IsNullOrWhiteSpace([string]$button.name)) {
+    $clickArgs.name = [string]$button.name
+  } elseif (-not [string]::IsNullOrWhiteSpace([string]$button.className)) {
+    $clickArgs.className = [string]$button.className
+  } else {
+    $clickArgs.index = 0
+  }
+
+  $clicked = Invoke-PatrolDesktopAction -Action 'click-target' -Arguments $clickArgs
   if ([string]::IsNullOrWhiteSpace([string]$clicked.method)) {
     throw 'click-target returned no invocation method.'
   }
@@ -194,7 +212,10 @@ try {
       maxElements = 1000
       includeOffscreen = $false
     }
-    if (@($snapshot.elements | Where-Object { [string]$_.name -eq 'clicked' }).Count -gt 0) {
+    if (@($snapshot.elements | Where-Object {
+      ([string]$_.name).IndexOf('clicked', [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+      ($null -ne $_.value -and ([string]$_.value).IndexOf('clicked', [StringComparison]::OrdinalIgnoreCase) -ge 0)
+    }).Count -gt 0) {
       $verifiedClick = $true
       Write-Host "Desktop UI smoke verified click-target state change."
       break
