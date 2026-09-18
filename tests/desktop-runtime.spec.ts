@@ -222,5 +222,6 @@ describe('Desktop Automation runtime foundation', () => {
       expect(source).toContain(`name: '${tool}'`)
     }
     expect(source).toContain('permission policy is intentionally unrestricted')
+    expect(source).not.toMatch(/\\$args\\b/i)
   })
 })
