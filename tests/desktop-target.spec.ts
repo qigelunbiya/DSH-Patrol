@@ -145,6 +145,46 @@ describe('native desktop inspection targets', () => {
     })).toThrow(/desktop_type_target requires name, automationId, controlType, or className/i)
   })
 
+  it('rejects secret-like text and code-like value selectors in persisted desktop steps', () => {
+    const base = {
+      schemaVersion: '0.2' as const,
+      id: 'desktop-secret-safety',
+      name: '桌面敏感数据保护',
+      description: 'secret-safe desktop steps',
+      status: 'draft' as const,
+      target: { type: 'desktop' as const, app: '微信', processName: 'WeChat' },
+      expectedResult: '不保存敏感数据',
+      artifacts: [],
+      auth: { mode: 'none' as const },
+      schedule: null,
+      metadata: { createdAt: '2026-09-18T03:30:00.000Z', updatedAt: '2026-09-18T03:30:00.000Z' },
+    }
+
+    expect(() => assertInspectionDefinition({
+      ...base,
+      steps: [{
+        id: 'step-001',
+        kind: 'tool',
+        name: '危险桌面输入',
+        tool: 'desktop_type_target',
+        arguments: { controlType: 'Edit', text: 'demo@1234' },
+        recordedAt: '2026-09-18T03:30:00.000Z',
+      }],
+    })).toThrow(/secret-like/i)
+
+    expect(() => assertInspectionDefinition({
+      ...base,
+      steps: [{
+        id: 'step-001',
+        kind: 'tool',
+        name: '危险 value selector',
+        tool: 'desktop_wait_for_target',
+        arguments: { source: 'uia', controlType: 'Edit', value: '123456' },
+        recordedAt: '2026-09-18T03:30:00.000Z',
+      }],
+    })).toThrow(/code-like/i)
+  })
+
   it('validates replayable semantic desktop waits without historical coordinates', () => {
     const base = {
       schemaVersion: '0.2' as const,
