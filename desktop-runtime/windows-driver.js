@@ -146,7 +146,8 @@ export class WindowsDesktopDriver {
       screenshotPath: shot.path,
       screenshotBounds: screenshotBounds(shot),
       scope: shot.scope ?? args.scope ?? 'active-window',
-      window: shot.window,
+      ...(shot.captureMethod === undefined ? {} : { captureMethod: shot.captureMethod }),
+      ...(shot.window === undefined ? {} : { window: shot.window }),
       x: shot.x,
       y: shot.y,
       width: shot.width,
@@ -296,9 +297,10 @@ export class WindowsDesktopDriver {
               target: matches[0],
               screenshotPath: ocr.screenshotPath,
               screenshotBounds: ocr.screenshotBounds,
-              scope: ocr.scope,
-              window: ocr.window,
-              region: ocrRegionDescriptor(args),
+              ...(ocr.scope === undefined ? {} : { scope: ocr.scope }),
+              ...(ocr.captureMethod === undefined ? {} : { captureMethod: ocr.captureMethod }),
+              ...(ocr.window === undefined ? {} : { window: ocr.window }),
+              ...(ocrRegionDescriptor(args) === undefined ? {} : { region: ocrRegionDescriptor(args) }),
               languagesTried: ocr.languagesTried,
             }
           }

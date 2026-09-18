@@ -34,17 +34,21 @@ describe('Desktop Automation runtime foundation', () => {
     expect(wechat.content).toContain('source=ocr')
     expect(wechat.content).toContain('scope=active-window')
     expect(wechat.content).toContain('minXRatio=0.33')
+    expect(wechat.content).toContain('captureMethod=print-window')
     expect(wechat.content).toContain('右侧聊天标题区')
     expect(wechat.content).toContain('禁止自动点击“返回上一页”')
     expect(wechat.content).toContain('${artifact:last-screenshot}')
   })
 
-  it('forces selected-window screenshots to the foreground before CopyFromScreen', () => {
+  it('captures selected windows from their own HWND surface before screen-copy fallback', () => {
     const source = readFileSync(join(process.cwd(), 'desktop-runtime', 'windows-desktop.ps1'), 'utf8')
     const capture = source.slice(source.indexOf('function Capture-Screenshot'), source.indexOf('function Resolve-AppLaunchSpec'))
+    expect(source).toContain('PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint nFlags)')
     expect(capture).toContain('Activate-Window $process')
-    expect(capture.indexOf('Activate-Window $process')).toBeLessThan(capture.indexOf('$graphics.CopyFromScreen'))
-    expect(capture).toContain('scope=$scope; window=$windowRecord')
+    expect(capture).toContain("PrintWindow([IntPtr]$process.MainWindowHandle, $hdc, 2)")
+    expect(capture.indexOf('PrintWindow([IntPtr]$process.MainWindowHandle')).toBeLessThan(capture.indexOf('$graphics.CopyFromScreen'))
+    expect(capture).toContain("captureMethod='print-window'")
+    expect(capture).toContain("captureMethod='screen'")
     const activation = source.slice(source.indexOf('function Activate-Window'), source.indexOf('function Get-Root'))
     expect(activation).toContain('GetForegroundWindow()')
     expect(activation).toContain('if ($foreground -eq $target) { return }')
@@ -56,6 +60,7 @@ describe('Desktop Automation runtime foundation', () => {
     expect(PATROL_DESKTOP_PROMPT).toMatch(/不能一边显示“巡检流程”一边只调用 raw desktop_\*/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/scope=active-window/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/minXRatio=0\.33/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/captureMethod=print-window/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/右侧聊天标题区域/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/禁止再次点联系人/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/只有 desktop_list_windows 明确确认微信窗口(?:已经)?不存在时才允许重新 launch/)
@@ -215,6 +220,33 @@ describe('Desktop Automation runtime foundation', () => {
       target: { text: '测试联系人', center: { x: 320, y: 280 } },
     })
     expect(calls).toEqual(['activate-window', 'snapshot'])
+  })
+
+  it('omits undefined optional OCR wait metadata so tool output remains lossless JSON', async () => {
+    const driver = new WindowsDesktopDriver()
+    driver.run = async (action: string) => {
+      if (action === 'activate-window') return { ok: true }
+      throw new Error(`unexpected action ${action}`)
+    }
+    driver.ocr = async () => ({
+      ok: true,
+      status: 'recognized',
+      lines: [{ text: '文件传输助手', center: { x: 600, y: 80 } }],
+      screenshotPath: 'current.png',
+      screenshotBounds: { x: 0, y: 0, width: 1000, height: 800 },
+      languagesTried: ['zh-CN'],
+    })
+    const result = await driver.waitForTarget({
+      source: 'ocr',
+      processName: 'Weixin',
+      text: '文件传输助手',
+      timeoutMs: 1000,
+    })
+    expect(Object.hasOwn(result, 'region')).toBe(false)
+    expect(Object.hasOwn(result, 'window')).toBe(false)
+    expect(Object.hasOwn(result, 'scope')).toBe(false)
+    expect(Object.hasOwn(result, 'captureMethod')).toBe(false)
+    expect(JSON.parse(JSON.stringify(result))).toEqual(result)
   })
 
   it('clicks one unique CURRENT OCR text match and rejects ambiguity', async () => {

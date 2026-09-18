@@ -23,6 +23,7 @@ namespace PatrolDesktop {
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+    [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint nFlags);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
   }
@@ -352,16 +353,17 @@ function Capture-Screenshot($request) {
   $path = [string](Get-Prop $request 'path' '')
   if ([string]::IsNullOrWhiteSpace($path)) { throw 'desktop screenshot path is required' }
   $scope = [string](Get-Prop $request 'scope' 'active-window')
+  $captureMethod = [string](Get-Prop $request 'captureMethod' 'auto')
+  if (@('auto','print-window','screen') -notcontains $captureMethod) { throw "unsupported desktop captureMethod '$captureMethod'" }
   $windowRecord = $null
+  $process = $null
   if ($scope -ieq 'screen') {
+    $captureMethod = 'screen'
     $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
     $x = $bounds.X; $y = $bounds.Y; $width = $bounds.Width; $height = $bounds.Height
   } else {
     $scope = 'active-window'
     $process = Resolve-Window $request $true
-    # CopyFromScreen captures visible pixels rather than an off-screen window
-    # surface. Raise the requested window first so overlapping apps cannot
-    # contaminate a window-scoped OCR capture.
     Activate-Window $process
     $windowRecord = Window-Record $process
     $rect = New-Object PatrolDesktop.Native+RECT
@@ -371,6 +373,27 @@ function Capture-Screenshot($request) {
   if ($width -le 0 -or $height -le 0) { throw "invalid screenshot bounds $width x $height" }
   $directory = [IO.Path]::GetDirectoryName($path)
   if (-not [string]::IsNullOrWhiteSpace($directory)) { [IO.Directory]::CreateDirectory($directory) | Out-Null }
+
+  if ($scope -eq 'active-window' -and $captureMethod -ne 'screen') {
+    $bitmap = New-Object System.Drawing.Bitmap($width, $height)
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    $hdc = [IntPtr]::Zero
+    $printed = $false
+    try {
+      $hdc = $graphics.GetHdc()
+      $printed = [PatrolDesktop.Native]::PrintWindow([IntPtr]$process.MainWindowHandle, $hdc, 2)
+    } finally {
+      if ($hdc -ne [IntPtr]::Zero) { $graphics.ReleaseHdc($hdc) }
+      $graphics.Dispose()
+    }
+    if ($printed) {
+      try { $bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png) } finally { $bitmap.Dispose() }
+      return [ordered]@{ ok=$true; path=$path; scope=$scope; captureMethod='print-window'; window=$windowRecord; x=[int]$x; y=[int]$y; width=[int]$width; height=[int]$height }
+    }
+    $bitmap.Dispose()
+    if ($captureMethod -eq 'print-window') { throw 'PrintWindow failed for the requested desktop window' }
+  }
+
   $bitmap = New-Object System.Drawing.Bitmap($width, $height)
   $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
   try {
@@ -380,9 +403,8 @@ function Capture-Screenshot($request) {
     $graphics.Dispose()
     $bitmap.Dispose()
   }
-  return [ordered]@{ ok=$true; path=$path; scope=$scope; window=$windowRecord; x=[int]$x; y=[int]$y; width=[int]$width; height=[int]$height }
+  return [ordered]@{ ok=$true; path=$path; scope=$scope; captureMethod='screen'; window=$windowRecord; x=[int]$x; y=[int]$y; width=[int]$width; height=[int]$height }
 }
-
 function Resolve-AppLaunchSpec($request) {
   $file = [string](Get-Prop $request 'file' '')
   if (-not [string]::IsNullOrWhiteSpace($file)) {

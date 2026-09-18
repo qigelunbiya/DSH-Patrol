@@ -120,6 +120,7 @@ export function apply(ctx, config = {}) {
         index: int,
         button: { type: 'string', enum: ['left', 'right'] },
         scope: { type: 'string', enum: ['active-window', 'screen'] },
+        captureMethod: { type: 'string', enum: ['auto', 'print-window', 'screen'] },
         processName: str,
         title: str,
         titleContains: str,
@@ -257,6 +258,7 @@ export function apply(ctx, config = {}) {
         title: str,
         titleContains: str,
         scope: { type: 'string', enum: ['active-window', 'screen'] },
+        captureMethod: { type: 'string', enum: ['auto', 'print-window', 'screen'] },
         languages: { type: 'array', items: { type: 'string' } },
         minXRatio: num,
         maxXRatio: num,
@@ -271,9 +273,10 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_screenshot',
-      description: 'Capture one selected/active desktop window or, only when scope=screen is explicitly requested, the whole virtual screen. Window-scoped capture raises the selected process/title window before CopyFromScreen so background apps cannot contaminate the image.',
+      description: 'Capture one selected/active desktop window or the whole virtual screen. active-window supports captureMethod=print-window to render the target HWND surface directly, avoiding pixels from windows behind/in front; auto tries PrintWindow before screen-copy fallback.',
       parameters: {
         scope: { type: 'string', enum: ['active-window', 'screen'] },
+        captureMethod: { type: 'string', enum: ['auto', 'print-window', 'screen'] },
         processName: str,
         title: str,
         titleContains: str,
@@ -287,6 +290,7 @@ export function apply(ctx, config = {}) {
       description: 'Run bundled Windows system OCR on a CURRENT capture. Default scope is active-window; with processName/title/titleContains the backend raises that exact window before capture and returns capture window metadata. Use scope=screen only for an explicitly whole-desktop task.',
       parameters: {
         scope: { type: 'string', enum: ['active-window', 'screen'] },
+        captureMethod: { type: 'string', enum: ['auto', 'print-window', 'screen'] },
         processName: str,
         title: str,
         titleContains: str,
