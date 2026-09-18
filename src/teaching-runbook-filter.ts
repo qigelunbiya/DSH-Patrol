@@ -146,8 +146,8 @@ function isDynamicImageCodeSolver(step: ToolStep): boolean {
 function actionKindForTool(tool: string): BusinessAction {
   if (tool === 'browser_navigate' || tool === 'desktop_launch_app' || tool === 'desktop_open_path' || tool === 'desktop_activate_window') return 'navigate'
   if (tool === 'browser_click' || tool === 'browser_press' || tool === 'browser_select'
-    || tool === 'desktop_click_target' || tool === 'desktop_click_ocr_text' || tool === 'desktop_click_coordinates' || tool === 'desktop_press'
-    || tool === 'desktop_hotkey' || tool === 'desktop_paste' || tool === 'desktop_drag'
+    || tool === 'desktop_click_target' || tool === 'desktop_click_ocr_text' || tool === 'desktop_click_coordinates' || tool === 'desktop_press' || tool === 'desktop_press_target'
+    || tool === 'desktop_hotkey' || tool === 'desktop_paste' || tool === 'desktop_paste_target' || tool === 'desktop_drag'
     || tool === 'desktop_close_window' || tool === 'desktop_delete_path') return 'click'
   if (tool.startsWith('browser_type') || tool === 'desktop_type_text' || tool === 'desktop_type_target' || tool === 'desktop_set_clipboard_text' || tool === 'desktop_set_clipboard_files') return 'type'
   if (tool === 'browser_read_page' || tool === 'desktop_snapshot' || tool === 'desktop_ocr') return 'read'
@@ -241,6 +241,7 @@ function isDurableBusinessProgress(step: InspectionStep): boolean {
     || step.tool === 'desktop_click_ocr_text'
     || step.tool === 'desktop_click_coordinates'
     || step.tool === 'desktop_press'
+    || step.tool === 'desktop_press_target'
     || step.tool === 'desktop_hotkey'
     || step.tool === 'desktop_paste'
     || step.tool === 'desktop_type_text'
