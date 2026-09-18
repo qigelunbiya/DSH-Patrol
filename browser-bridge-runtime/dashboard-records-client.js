@@ -321,7 +321,7 @@
     if (detailTab === 'checklist') return checklistView(report, definition)
     const rows = report.results || []
     const passed = rows.filter(item => item.status === 'passed').length
-    return `<div class="detail-grid"><section class="card panel"><h3 class="section-title">本次巡检概述</h3><div class="overview-text">${esc(report.summary || '没有额外摘要。')}</div><div class="muted overview-progress">步骤完成 ${passed}/${rows.length}</div></section><section class="card panel"><h3 class="section-title">关键信息</h3>${info('目标地址', definition.target?.url || '—')}${info('预期结果', report.expectedResult || definition.expectedResult || '—')}${info('开始时间', fmt(report.startedAt))}${info('结束时间', fmt(report.finishedAt))}${info('产物数量', String(artifacts.length))}</section></div>`
+    return `<div class="detail-grid"><section class="card panel"><h3 class="section-title">本次巡检概述</h3><div class="overview-text">${esc(report.summary || '没有额外摘要。')}</div><div class="muted overview-progress">步骤完成 ${passed}/${rows.length}</div></section><section class="card panel"><h3 class="section-title">关键信息</h3>${info(targetLabelName(definition), targetLabel(definition))}${info('预期结果', report.expectedResult || definition.expectedResult || '—')}${info('开始时间', fmt(report.startedAt))}${info('结束时间', fmt(report.finishedAt))}${info('产物数量', String(artifacts.length))}</section></div>`
   }
 
   function checklistView(report, definition) {
