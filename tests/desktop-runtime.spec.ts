@@ -214,6 +214,8 @@ describe('Desktop Automation runtime foundation', () => {
       'desktop_wait_for_target',
       'desktop_type_text',
       'desktop_type_target',
+      'desktop_paste_target',
+      'desktop_press_target',
       'desktop_hotkey',
       'desktop_screenshot',
       'desktop_ocr',
