@@ -75,7 +75,12 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       inspectionId: { type: 'string', required: true },
       name: { type: 'string' },
       description: { type: 'string' },
-      targetUrl: { type: 'string' },
+      targetUrl: { type: 'string', description: 'Browser-target URL only.' },
+      desktopApp: { type: 'string', description: 'Desktop-target app label only.' },
+      desktopProcessName: { type: 'string' },
+      clearDesktopProcessName: { type: 'boolean' },
+      desktopTitleContains: { type: 'string' },
+      clearDesktopTitleContains: { type: 'boolean' },
       expectedResult: { type: 'string' },
       authMode: { type: 'string', enum: ['none', 'existing-session', 'manual-checkpoint', 'secret-ref'] },
       authNotes: { type: 'string' },
@@ -85,6 +90,8 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
     async execute(args) {
       await assertNoPendingRun(store, args.inspectionId)
       if (args.name === undefined && args.description === undefined && args.targetUrl === undefined
+        && args.desktopApp === undefined && args.desktopProcessName === undefined && args.clearDesktopProcessName !== true
+        && args.desktopTitleContains === undefined && args.clearDesktopTitleContains !== true
         && args.expectedResult === undefined && args.authMode === undefined && args.authNotes === undefined
         && args.clearAuthNotes !== true) {
         throw new Error('at least one inspection field must be supplied')
@@ -99,9 +106,35 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
         definition.description = args.description
       }
       if (args.targetUrl !== undefined) {
+        if (definition.target.type !== 'browser') throw new Error('targetUrl can only update a browser-target inspection')
         assertHttpUrl(args.targetUrl)
         assertSafeForStorage({ url: args.targetUrl })
         definition.target.url = args.targetUrl
+      }
+      if (args.desktopApp !== undefined) {
+        if (definition.target.type !== 'desktop') throw new Error('desktopApp can only update a desktop-target inspection')
+        assertSafePersistentText(args.desktopApp, 'inspection.target.app')
+        definition.target.app = args.desktopApp
+      }
+      if (args.desktopProcessName !== undefined && args.clearDesktopProcessName === true) {
+        throw new Error('desktopProcessName and clearDesktopProcessName cannot both be supplied')
+      }
+      if (args.desktopTitleContains !== undefined && args.clearDesktopTitleContains === true) {
+        throw new Error('desktopTitleContains and clearDesktopTitleContains cannot both be supplied')
+      }
+      if (args.desktopProcessName !== undefined || args.clearDesktopProcessName === true
+        || args.desktopTitleContains !== undefined || args.clearDesktopTitleContains === true) {
+        if (definition.target.type !== 'desktop') throw new Error('desktop target hints can only update a desktop-target inspection')
+        if (args.clearDesktopProcessName === true) delete definition.target.processName
+        else if (args.desktopProcessName !== undefined) {
+          assertSafePersistentText(args.desktopProcessName, 'inspection.target.processName')
+          definition.target.processName = args.desktopProcessName
+        }
+        if (args.clearDesktopTitleContains === true) delete definition.target.titleContains
+        else if (args.desktopTitleContains !== undefined) {
+          assertSafePersistentText(args.desktopTitleContains, 'inspection.target.titleContains')
+          definition.target.titleContains = args.desktopTitleContains
+        }
       }
       if (args.expectedResult !== undefined) {
         assertSafePersistentText(args.expectedResult, 'inspection.expectedResult')
@@ -115,7 +148,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       }
       markEdited(definition)
       await persistRunbookEdit(store, definition)
-      return `Updated inspection ${definition.id}. It is DRAFT and must be end-to-end validated before confirmation.${args.targetUrl === undefined ? '' : ' If a stored browser_navigate step should use the same new URL, update that step structurally with patrol_update_navigate_step; only re-teach when live navigation semantics actually changed.'}`
+      return `Updated inspection ${definition.id}. It is DRAFT and must be end-to-end validated before confirmation.${args.targetUrl === undefined ? '' : ' If a stored browser_navigate step should use the same new URL, update that step structurally with patrol_update_navigate_step; only re-teach when live navigation semantics actually changed.'}${definition.target.type === 'desktop' ? ' Desktop target metadata is human/stable app identity; live window state should still be resolved with desktop_list_windows/desktop_snapshot.' : ''}`
     },
   })
 

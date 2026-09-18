@@ -238,15 +238,23 @@ export class PatrolRunner {
       && definition.artifacts.some(item => item.toLowerCase() === 'screenshot')
       && !results.some(result => result.artifacts?.some(artifact => artifact.kind === 'screenshot'))) {
       const capturedAt = new Date().toISOString()
-      const captured = await this.dispatch('browser_screenshot', {}, exec)
+      const finalScreenshotTool = definition.target.type === 'desktop' ? 'desktop_screenshot' : 'browser_screenshot'
+      const finalScreenshotArguments: JsonObject = definition.target.type === 'desktop'
+        ? {
+            scope: 'active-window',
+            ...(definition.target.processName === undefined ? {} : { processName: definition.target.processName }),
+            ...(definition.target.titleContains === undefined ? {} : { titleContains: definition.target.titleContains }),
+          }
+        : {}
+      const captured = await this.dispatch(finalScreenshotTool, finalScreenshotArguments, exec)
       if (!captured.ok) {
-        const warning = `final screenshot artifact capture failed: ${captured.error ?? 'browser_screenshot failed'}`
+        const warning = `final screenshot artifact capture failed: ${captured.error ?? `${finalScreenshotTool} failed`}`
         pushWarning(warnings, warning)
         results.push({
           stepId: 'artifact-final-screenshot',
           name: 'Final screenshot artifact',
           kind: 'tool',
-          tool: 'browser_screenshot',
+          tool: finalScreenshotTool,
           status: 'skipped',
           startedAt: capturedAt,
           finishedAt: new Date().toISOString(),
@@ -256,7 +264,7 @@ export class PatrolRunner {
       } else {
         try {
           const providerPath = objectString(captured.value, 'path')
-          if (providerPath === undefined) throw new Error('browser_screenshot returned no artifact path')
+          if (providerPath === undefined) throw new Error(`${finalScreenshotTool} returned no artifact path`)
           const copied = await this.store.copyArtifact(
             definition.id,
             state.runId,
@@ -268,11 +276,13 @@ export class PatrolRunner {
             stepId: 'artifact-final-screenshot',
             name: 'Final screenshot artifact',
             kind: 'tool',
-            tool: 'browser_screenshot',
+            tool: finalScreenshotTool,
             status: 'passed',
             startedAt: capturedAt,
             finishedAt: new Date().toISOString(),
-            output: 'Captured the final page state automatically because this inspection requires a screenshot artifact.',
+            output: definition.target.type === 'desktop'
+              ? 'Captured the final desktop application state automatically because this inspection requires a screenshot artifact.'
+              : 'Captured the final page state automatically because this inspection requires a screenshot artifact.',
             artifacts: [{ kind: 'screenshot', path: copied }],
           })
         } catch (error: unknown) {
@@ -282,7 +292,7 @@ export class PatrolRunner {
             stepId: 'artifact-final-screenshot',
             name: 'Final screenshot artifact',
             kind: 'tool',
-            tool: 'browser_screenshot',
+            tool: finalScreenshotTool,
             status: 'skipped',
             startedAt: capturedAt,
             finishedAt: new Date().toISOString(),
@@ -887,8 +897,10 @@ export function canReuseAuthenticatedSession(definition: InspectionDefinition, c
 
 export function knownFlowOrigins(definition: InspectionDefinition): Set<string> {
   const origins = new Set<string>()
-  const targetOrigin = httpOrigin(definition.target.url)
-  if (targetOrigin !== undefined) origins.add(targetOrigin)
+  if (definition.target.type === 'browser') {
+    const targetOrigin = httpOrigin(definition.target.url)
+    if (targetOrigin !== undefined) origins.add(targetOrigin)
+  }
   for (const step of definition.steps) {
     if (step.kind !== 'tool' || step.tool !== 'browser_navigate') continue
     const url = typeof step.arguments.url === 'string' ? step.arguments.url : undefined

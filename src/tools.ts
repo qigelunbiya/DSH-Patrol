@@ -127,12 +127,16 @@ function createDefinitions(ctx: Context, store: PatrolStore, runner: PatrolRunne
 
   const createDraft = defineTool({
     name: 'patrol_create_draft',
-    description: 'Create a v0.2 inspection draft after the user has supplied the browser patrol goal. Never include plaintext credentials.',
+    description: 'Create a v0.2 browser or Windows-desktop inspection draft. targetType defaults to browser for backward compatibility. Never include plaintext credentials.',
     parameters: {
       inspectionId: { type: 'string', required: true, description: 'Stable short id, e.g. example-workbench.' },
       name: { type: 'string', required: true },
       description: { type: 'string', required: true },
-      targetUrl: { type: 'string', required: true },
+      targetType: { type: 'string', enum: ['browser', 'desktop'] },
+      targetUrl: { type: 'string', description: 'Required for browser targets.' },
+      desktopApp: { type: 'string', description: 'Required for desktop targets.' },
+      desktopProcessName: { type: 'string' },
+      desktopTitleContains: { type: 'string' },
       expectedResult: { type: 'string', required: true },
       authMode: { type: 'string', required: true, enum: ['none', 'existing-session', 'manual-checkpoint', 'secret-ref'] },
       artifacts: { type: 'array', items: { type: 'string', enum: [...INSPECTION_ARTIFACTS] }, description: 'Requested Patrol outputs.' },
@@ -145,6 +149,10 @@ function createDefinitions(ctx: Context, store: PatrolStore, runner: PatrolRunne
       assertSafePersistentText(args.description, 'inspection.description')
       assertSafePersistentText(args.expectedResult, 'inspection.expectedResult')
       if (args.notes !== undefined) assertSafePersistentText(args.notes, 'inspection.auth.notes')
+      const targetType = args.targetType === 'desktop' ? 'desktop' : 'browser'
+      const target: InspectionDefinition['target'] = targetType === 'desktop'
+        ? patrolDesktopTarget(args.desktopApp, args.desktopProcessName, args.desktopTitleContains)
+        : patrolBrowserTarget(args.targetUrl)
       const now = new Date().toISOString()
       const definition: InspectionDefinition = {
         schemaVersion: '0.2',
@@ -152,7 +160,7 @@ function createDefinitions(ctx: Context, store: PatrolStore, runner: PatrolRunne
         name: args.name,
         description: args.description,
         status: 'draft',
-        target: { type: 'browser', url: args.targetUrl },
+        target,
         expectedResult: args.expectedResult,
         artifacts: (args.artifacts ?? ['markdown-report', 'json-report']) as InspectionArtifact[],
         auth: {
@@ -172,7 +180,7 @@ function createDefinitions(ctx: Context, store: PatrolStore, runner: PatrolRunne
       if (typeof lifecycle.beginTeachingRun === 'function') {
         await lifecycle.beginTeachingRun(definition.id, definition.metadata.workspaceRoot)
       }
-      return `Created draft ${definition.id}. An in-progress patrol record is active for this flow. Run patrol_doctor, then teach replayable actions with patrol_browser_step / patrol_type_text / patrol_type_credential.`
+      return `Created draft ${definition.id} with ${definition.target.type} target. An in-progress patrol record is active for this flow. Run patrol_doctor, then teach replayable actions with ${definition.target.type === 'desktop' ? 'desktop_* exploration + patrol_desktop_action' : 'patrol_browser_step / patrol_type_text / patrol_type_credential'}.`
     },
   })
 
@@ -657,6 +665,28 @@ function assertDraft(definition: InspectionDefinition): void {
 
 function assertReady(definition: InspectionDefinition): void {
   if (definition.status !== 'ready') throw new Error(`inspection ${definition.id} is ${definition.status}; confirm it before replay`)
+}
+
+function patrolBrowserTarget(value: unknown): InspectionDefinition['target'] {
+  if (typeof value !== 'string' || value.trim().length === 0) throw new Error('targetUrl is required for browser target')
+  assertSafeForStorage({ url: value })
+  return { type: 'browser', url: value }
+}
+
+function patrolDesktopTarget(appValue: unknown, processValue: unknown, titleValue: unknown): InspectionDefinition['target'] {
+  const app = typeof appValue === 'string' ? appValue.trim() : ''
+  if (!app) throw new Error('desktopApp is required for desktop target')
+  assertSafePersistentText(app, 'inspection.target.app')
+  const processName = typeof processValue === 'string' ? processValue.trim() : ''
+  const titleContains = typeof titleValue === 'string' ? titleValue.trim() : ''
+  if (processName) assertSafePersistentText(processName, 'inspection.target.processName')
+  if (titleContains) assertSafePersistentText(titleContains, 'inspection.target.titleContains')
+  return {
+    type: 'desktop',
+    app,
+    ...(processName ? { processName } : {}),
+    ...(titleContains ? { titleContains } : {}),
+  }
 }
 
 function nextStepId(steps: readonly InspectionStep[]): string {

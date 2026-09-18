@@ -48,7 +48,9 @@ export function registerPatrolDesktopActionTools(
       name: { type: 'string' },
       automationId: { type: 'string' },
       controlType: { type: 'string' },
+      className: { type: 'string' },
       match: { type: 'string', enum: ['exact', 'contains'] },
+      caseSensitive: { type: 'boolean' },
       index: { type: 'integer' },
       x: { type: 'integer' },
       y: { type: 'integer' },
@@ -65,6 +67,7 @@ export function registerPatrolDesktopActionTools(
       milliseconds: { type: 'integer' },
       scope: { type: 'string', enum: ['active-window', 'screen'] },
       fileName: { type: 'string' },
+      languages: { type: 'array', items: { type: 'string' }, description: 'Optional OCR language passes for action=ocr.' },
       paths: { type: 'array', items: { type: 'string' } },
       storedPaths: {
         type: 'array',
@@ -183,8 +186,12 @@ function desktopArguments(action: DesktopAction, args: Record<string, unknown>, 
       add('maxElements', args.maxElements); add('includeOffscreen', args.includeOffscreen); break
     case 'click-target':
       add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
-      add('name', args.name); add('automationId', args.automationId); add('controlType', args.controlType)
+      add('name', args.name); add('automationId', args.automationId); add('controlType', args.controlType); add('className', args.className)
       add('match', args.match); add('index', args.index); break
+    case 'click-ocr-text':
+      add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
+      add('text', args.text); add('match', args.match); add('caseSensitive', args.caseSensitive); add('index', args.index)
+      add('button', args.button); add('scope', args.scope); add('languages', args.languages); add('fileName', args.fileName); break
     case 'click-coordinates':
       add('x', args.x); add('y', args.y); add('button', args.button); break
     case 'drag':
@@ -198,9 +205,11 @@ function desktopArguments(action: DesktopAction, args: Record<string, unknown>, 
     case 'wait':
       add('milliseconds', args.milliseconds); break
     case 'screenshot':
-    case 'ocr':
       add('scope', args.scope); add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
       add('fileName', args.fileName); break
+    case 'ocr':
+      add('scope', args.scope); add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
+      add('fileName', args.fileName); add('languages', args.languages); break
     case 'set-clipboard-text':
       add('text', args.text); break
     case 'set-clipboard-files':
@@ -229,8 +238,14 @@ function validateRequiredDesktopArguments(action: DesktopAction, args: JsonObjec
     case 'open-path':
     case 'delete-path': requireText('path'); break
     case 'click-target':
-      if (typeof args.name !== 'string' && typeof args.automationId !== 'string') throw new Error('click-target requires name or automationId')
+      if (typeof args.name !== 'string'
+        && typeof args.automationId !== 'string'
+        && typeof args.controlType !== 'string'
+        && typeof args.className !== 'string') {
+        throw new Error('click-target requires name, automationId, controlType, or className')
+      }
       break
+    case 'click-ocr-text': requireText('text'); break
     case 'click-coordinates': requireNumber('x'); requireNumber('y'); break
     case 'drag': requireNumber('fromX'); requireNumber('fromY'); requireNumber('toX'); requireNumber('toY'); break
     case 'type-text':

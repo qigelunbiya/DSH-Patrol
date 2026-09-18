@@ -129,6 +129,166 @@ describe('desktop Runbook replay', () => {
     expect(clipboardPath).toContain('patrol-results')
   })
 
+  it('runs a native desktop-only inspection without requiring any browser target or browser dispatch', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-desktop-only-'))
+    roots.push(root)
+    const calls: Array<{ name: string; arguments: any }> = []
+    const ctx = {
+      tools: {
+        execute: async (input: { name: string; arguments: any }) => {
+          calls.push({ name: input.name, arguments: input.arguments })
+          return {
+            isError: false,
+            value: { ok: true },
+            content: [{ type: 'text', text: `${input.name} ok` }],
+          }
+        },
+      },
+    } as unknown as Context
+    const store = new PatrolStore(join(root, 'store'))
+    await store.init()
+    const runner = new PatrolRunner(ctx, store, { reportMaxChars: 30000 })
+    const definition: InspectionDefinition = {
+      schemaVersion: '0.2',
+      id: 'wechat-only',
+      name: '微信桌面巡检',
+      description: '只操作微信，不使用浏览器',
+      status: 'ready',
+      target: { type: 'desktop', app: '微信', processName: 'WeChat', titleContains: '微信' },
+      expectedResult: '打开微信并进入指定聊天',
+      artifacts: [],
+      auth: { mode: 'none' },
+      schedule: null,
+      steps: [
+        {
+          id: 'step-001',
+          kind: 'tool',
+          name: '激活微信',
+          tool: 'desktop_activate_window',
+          arguments: { processName: 'WeChat', titleContains: '微信' },
+          recordedAt: '2026-09-18T01:00:00.000Z',
+        },
+        {
+          id: 'step-002',
+          kind: 'tool',
+          name: '打开搜索',
+          tool: 'desktop_hotkey',
+          arguments: { combo: 'Ctrl+F' },
+          recordedAt: '2026-09-18T01:00:01.000Z',
+        },
+        {
+          id: 'step-003',
+          kind: 'tool',
+          name: '输入联系人',
+          tool: 'desktop_type_text',
+          arguments: { text: '测试联系人', clear: true },
+          recordedAt: '2026-09-18T01:00:02.000Z',
+        },
+      ],
+      metadata: {
+        createdAt: '2026-09-18T01:00:00.000Z',
+        updatedAt: '2026-09-18T01:00:02.000Z',
+        validatedAt: '2026-09-18T01:00:03.000Z',
+        taskChecklist: ['激活微信', '打开搜索', '输入联系人'],
+      },
+    }
+
+    const exec = {
+      token: Symbol('desktop-only-parent'),
+      rootCallId: 'root',
+      signal: new AbortController().signal,
+    } as unknown as ToolRunContext
+    const { report } = await runner.run(definition, exec)
+
+    expect(report.status).toBe('passed')
+    expect(calls.map(item => item.name)).toEqual([
+      'desktop_activate_window',
+      'desktop_hotkey',
+      'desktop_type_text',
+    ])
+    expect(calls.some(item => item.name.startsWith('browser_'))).toBe(false)
+  })
+
+  it('auto-captures a required final screenshot with desktop_screenshot for desktop-only targets', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-desktop-final-shot-'))
+    roots.push(root)
+    const workspace = join(root, 'workspace')
+    const providerShot = join(root, 'desktop-final.png')
+    await writeFile(providerShot, 'fake desktop png')
+    const calls: Array<{ name: string; arguments: any }> = []
+    const ctx = {
+      tools: {
+        execute: async (input: { name: string; arguments: any }) => {
+          calls.push({ name: input.name, arguments: input.arguments })
+          if (input.name === 'desktop_activate_window') {
+            return { isError: false, value: { ok: true }, content: [{ type: 'text', text: 'activated' }] }
+          }
+          if (input.name === 'desktop_screenshot') {
+            return {
+              isError: false,
+              value: { ok: true, path: providerShot, x: 0, y: 0, width: 800, height: 600 },
+              content: [{ type: 'text', text: 'desktop screenshot captured' }],
+            }
+          }
+          throw new Error(`unexpected tool ${input.name}`)
+        },
+      },
+    } as unknown as Context
+    const store = new PatrolStore(join(root, 'store'))
+    await store.init()
+    const runner = new PatrolRunner(ctx, store, { reportMaxChars: 30000 })
+    const definition: InspectionDefinition = {
+      schemaVersion: '0.2',
+      id: 'wechat-final-shot',
+      name: '微信最终截图',
+      description: '桌面巡检结束时自动截图',
+      status: 'ready',
+      target: { type: 'desktop', app: '微信', processName: 'WeChat', titleContains: '微信' },
+      expectedResult: '微信窗口截图留证',
+      artifacts: ['screenshot'],
+      auth: { mode: 'none' },
+      schedule: null,
+      steps: [{
+        id: 'step-001',
+        kind: 'tool',
+        name: '激活微信',
+        tool: 'desktop_activate_window',
+        arguments: { processName: 'WeChat', titleContains: '微信' },
+        recordedAt: '2026-09-18T02:30:00.000Z',
+      }],
+      metadata: {
+        createdAt: '2026-09-18T02:30:00.000Z',
+        updatedAt: '2026-09-18T02:30:00.000Z',
+        validatedAt: '2026-09-18T02:30:00.000Z',
+        workspaceRoot: workspace,
+        taskChecklist: ['激活微信'],
+      },
+    }
+
+    const exec = {
+      token: Symbol('desktop-final-shot-parent'),
+      rootCallId: 'root',
+      signal: new AbortController().signal,
+      agent: { session: { header: { cwd: workspace } } },
+    } as unknown as ToolRunContext
+    const { report } = await runner.run(definition, exec)
+
+    expect(report.status).toBe('passed')
+    expect(calls.map(item => item.name)).toEqual(['desktop_activate_window', 'desktop_screenshot'])
+    expect(calls[1]?.arguments).toEqual({
+      scope: 'active-window',
+      processName: 'WeChat',
+      titleContains: '微信',
+    })
+    expect(report.results.at(-1)).toMatchObject({
+      stepId: 'artifact-final-screenshot',
+      tool: 'desktop_screenshot',
+      status: 'passed',
+    })
+    expect(report.results.at(-1)?.artifacts?.[0]?.kind).toBe('screenshot')
+    expect(calls.some(item => item.name === 'browser_screenshot')).toBe(false)
+  })
+
   it('fails before dispatch when a desktop artifact placeholder has no prior screenshot', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-desktop-placeholder-'))
     roots.push(root)

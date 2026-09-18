@@ -56,7 +56,7 @@ Windows UI Automation
 主要原语包括：
 
 - `desktop_list_windows` / `desktop_activate_window`
-- `desktop_snapshot` / `desktop_click_target`
+- `desktop_snapshot` / `desktop_click_target` / `desktop_click_ocr_text`
 - `desktop_hotkey` / `desktop_press` / `desktop_type_text`
 - `desktop_screenshot` / `desktop_ocr`
 - `desktop_click_coordinates` / `desktop_drag`
@@ -119,6 +119,8 @@ desktop_paste
 ```
 
 首个桌面实际验证目标为 Windows 微信。
+
+更完整的 Desktop Automation 架构、纯桌面/跨应用流程说明以及微信首轮联调步骤见 [`docs/desktop-automation.md`](docs/desktop-automation.md)。
 
 ## 快速开始
 

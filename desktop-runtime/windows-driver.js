@@ -46,6 +46,7 @@ export class WindowsDesktopDriver {
       const result = await execFileAsync(this.powerShell, [
         '-NoProfile',
         '-NonInteractive',
+        '-STA',
         '-ExecutionPolicy', 'Bypass',
         '-File', SCRIPT_PATH,
         '-Action', action,
@@ -85,19 +86,110 @@ export class WindowsDesktopDriver {
     const recognize = systemOcr.recognize ?? systemOcr.default?.recognize
     const OcrAccuracy = systemOcr.OcrAccuracy ?? systemOcr.default?.OcrAccuracy
     if (typeof recognize !== 'function' || !OcrAccuracy) {
-      return { ok: true, status: 'unavailable', text: '', screenshotPath: shot.path }
+      return {
+        ok: true,
+        status: 'unavailable',
+        text: '',
+        lines: [],
+        screenshotPath: shot.path,
+        screenshotBounds: screenshotBounds(shot),
+      }
     }
+
     const locale = Intl.DateTimeFormat().resolvedOptions().locale || 'zh-CN'
-    const languages = [...new Set([locale, 'zh-CN', 'en-US'])]
-    const result = await recognize(image, OcrAccuracy.Accurate, languages, exec?.signal)
-    const text = normalizeOcr(result?.text)
+    const requested = Array.isArray(args.languages)
+      ? args.languages.map(value => String(value ?? '').trim()).filter(Boolean)
+      : []
+    const languages = [...new Set([...requested, locale, 'zh-CN', 'en-US'])].slice(0, 4)
+    const observations = []
+    const failures = []
+    for (const language of languages) {
+      try {
+        // system-ocr on Windows only consumes the first preferred language,
+        // so run bounded passes and merge the line geometry. This matters for
+        // Chinese apps such as WeChat on machines whose Node locale is en-US.
+        const result = await recognize(image, OcrAccuracy.Accurate, [language], exec?.signal)
+        observations.push({ language, result })
+      } catch (error) {
+        failures.push({ language, error: String(error?.message ?? error) })
+      }
+    }
+
+    const lines = normalizeOcrObservations(observations, shot)
+    const lineText = lines.map(line => line.text).join('\n')
+    const fallbackText = observations.map(item => item?.result?.text ?? '').join('\n')
+    const text = normalizeOcr(lineText || fallbackText)
     return {
       ok: true,
-      status: text ? 'recognized' : 'empty',
+      status: text ? 'recognized' : observations.length > 0 ? 'empty' : 'unavailable',
       text,
+      lines,
+      languagesTried: languages,
+      languagesSucceeded: observations.map(item => item.language),
+      ...(failures.length === 0 ? {} : { languageErrors: failures }),
       screenshotPath: shot.path,
+      screenshotBounds: screenshotBounds(shot),
+      x: shot.x,
+      y: shot.y,
       width: shot.width,
       height: shot.height,
+    }
+  }
+
+  async clickOcrText(args = {}, exec) {
+    const text = String(args.text ?? '').trim()
+    if (!text) throw new Error('desktop_click_ocr_text requires text')
+    const match = args.match === 'contains' ? 'contains' : 'exact'
+    const caseSensitive = args.caseSensitive === true
+    const windowArgs = Object.fromEntries(
+      ['processName', 'title', 'titleContains']
+        .filter(key => typeof args[key] === 'string' && args[key].trim() !== '')
+        .map(key => [key, args[key]]),
+    )
+    if (Object.keys(windowArgs).length > 0) {
+      await this.run('activate-window', windowArgs, exec)
+    }
+    const ocr = await this.ocr(args, exec)
+    const normalize = value => caseSensitive ? String(value ?? '') : String(value ?? '').toLocaleLowerCase()
+    const needle = normalize(text)
+    const candidates = (ocr.lines ?? []).filter(line => {
+      const haystack = normalize(line.text)
+      return match === 'contains' ? haystack.includes(needle) : haystack === needle
+    })
+
+    let target
+    if (args.index !== undefined) {
+      const index = Number(args.index)
+      if (!Number.isInteger(index) || index < 0 || index >= candidates.length) {
+        throw new Error(`desktop OCR target index ${args.index} is out of range; matches=${candidates.length}`)
+      }
+      target = candidates[index]
+    } else {
+      if (candidates.length === 0) {
+        throw new Error(`desktop OCR text target not found: ${JSON.stringify(text)}`)
+      }
+      if (candidates.length !== 1) {
+        const sample = candidates.slice(0, 8).map(item => `${item.text}@(${item.center.x},${item.center.y})`).join(' | ')
+        throw new Error(`desktop OCR text target is ambiguous (${candidates.length} matches): ${sample}`)
+      }
+      target = candidates[0]
+    }
+
+    await this.run('click-coordinates', {
+      x: target.center.x,
+      y: target.center.y,
+      button: args.button === 'right' ? 'right' : 'left',
+    }, exec)
+    return {
+      ok: true,
+      method: 'ocr-line-center',
+      match,
+      query: text,
+      matchCount: candidates.length,
+      target,
+      screenshotPath: ocr.screenshotPath,
+      screenshotBounds: ocr.screenshotBounds,
+      languagesTried: ocr.languagesTried,
     }
   }
 
@@ -198,12 +290,88 @@ function cleanPowerShellError(error, stderr) {
   return details ? `${message}: ${details.slice(0, 1000)}` : message
 }
 
+export function normalizeOcrObservations(observations, shot, maxLines = 240) {
+  const out = []
+  const width = finiteNumber(shot?.width, 0)
+  const height = finiteNumber(shot?.height, 0)
+  const originX = finiteNumber(shot?.x, 0)
+  const originY = finiteNumber(shot?.y, 0)
+  if (width <= 0 || height <= 0) return out
+
+  for (const observation of observations ?? []) {
+    const language = String(observation?.language ?? '')
+    const lines = Array.isArray(observation?.result?.lines) ? observation.result.lines : []
+    for (const raw of lines) {
+      const text = normalizeOcrLine(raw?.text)
+      const box = raw?.boundingBox
+      if (!text || !validNormalizedBox(box)) continue
+      const x = Math.round(originX + box.x * width)
+      const y = Math.round(originY + box.y * height)
+      const lineWidth = Math.max(1, Math.round(box.width * width))
+      const lineHeight = Math.max(1, Math.round(box.height * height))
+      const center = {
+        x: Math.round(x + lineWidth / 2),
+        y: Math.round(y + lineHeight / 2),
+      }
+      if (out.some(existing =>
+        existing.text.toLocaleLowerCase() === text.toLocaleLowerCase()
+        && Math.abs(existing.center.x - center.x) <= 8
+        && Math.abs(existing.center.y - center.y) <= 8)) {
+        continue
+      }
+      out.push({
+        text,
+        confidence: finiteNumber(raw?.confidence, 0),
+        language,
+        rect: { x, y, width: lineWidth, height: lineHeight },
+        center,
+      })
+      if (out.length >= maxLines) return out
+    }
+  }
+  return out
+}
+
+function screenshotBounds(shot) {
+  return {
+    x: finiteNumber(shot?.x, 0),
+    y: finiteNumber(shot?.y, 0),
+    width: finiteNumber(shot?.width, 0),
+    height: finiteNumber(shot?.height, 0),
+  }
+}
+
+function validNormalizedBox(box) {
+  return box
+    && Number.isFinite(box.x)
+    && Number.isFinite(box.y)
+    && Number.isFinite(box.width)
+    && Number.isFinite(box.height)
+    && box.width > 0
+    && box.height > 0
+}
+
+function finiteNumber(value, fallback) {
+  return Number.isFinite(value) ? Number(value) : fallback
+}
+
+function normalizeOcrLine(value) {
+  return String(value ?? '').replace(/\u0000/g, ' ').replace(/[\t ]+/g, ' ').trim()
+}
+
 function normalizeOcr(value) {
-  const text = String(value ?? '')
+  const seen = new Set()
+  const lines = String(value ?? '')
     .replace(/\u0000/g, ' ')
     .split(/\r?\n/)
     .map(line => line.replace(/[\t ]+/g, ' ').trim())
     .filter(Boolean)
-    .join('\n')
+    .filter(line => {
+      const key = line.toLocaleLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  const text = lines.join('\n')
   return text.length <= MAX_OCR_CHARS ? text : `${text.slice(0, MAX_OCR_CHARS)}…`
 }

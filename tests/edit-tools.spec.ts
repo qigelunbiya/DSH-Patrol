@@ -411,6 +411,57 @@ describe('editable Patrol runbooks', () => {
     expect(dispatchCalls()).toBe(0)
   })
 
+  it('edits desktop target metadata without converting the flow into a browser target', async () => {
+    const { store, tool, exec } = await setup()
+    const now = new Date().toISOString()
+    const definition: InspectionDefinition = {
+      schemaVersion: '0.2',
+      id: 'wechat-edit',
+      name: '微信桌面流程',
+      description: 'desktop metadata edit',
+      status: 'ready',
+      target: { type: 'desktop', app: '微信', processName: 'WeChat', titleContains: '微信' },
+      expectedResult: '完成微信操作',
+      artifacts: [],
+      auth: { mode: 'none' },
+      schedule: null,
+      steps: [{
+        id: 'step-001',
+        kind: 'tool',
+        name: '激活微信',
+        tool: 'desktop_activate_window',
+        arguments: { processName: 'WeChat', titleContains: '微信' },
+        recordedAt: now,
+      }],
+      metadata: {
+        createdAt: now,
+        updatedAt: now,
+        validatedAt: now,
+        taskChecklist: ['激活微信'],
+      },
+    }
+    await store.create(definition)
+
+    await tool('patrol_begin_edit').execute({ inspectionId: 'wechat-edit' }, exec)
+    await tool('patrol_update_inspection').execute({
+      inspectionId: 'wechat-edit',
+      desktopApp: '微信 Windows',
+      desktopProcessName: 'Weixin',
+      clearDesktopTitleContains: true,
+    }, exec)
+
+    const updated = await store.load('wechat-edit')
+    expect(updated.target).toEqual({
+      type: 'desktop',
+      app: '微信 Windows',
+      processName: 'Weixin',
+    })
+    await expect(tool('patrol_update_inspection').execute({
+      inspectionId: 'wechat-edit',
+      targetUrl: 'https://example.com',
+    }, exec)).rejects.toThrow(/browser-target inspection/i)
+  })
+
   it('refuses a structural updater when the saved step tool does not match', async () => {
     const { store, tool, exec } = await setup()
     const definition = readyDefinition()

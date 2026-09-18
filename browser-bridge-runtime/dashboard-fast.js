@@ -256,7 +256,7 @@ async function loadRunSummary(storageRoot, definition, runId) {
     startedAt: runIdTimestamp(runId),
     finishedAt: '',
     summary: '历史巡检记录缺少可读取的轻量索引，点击后可尝试读取完整详情。',
-    targetUrl: definition?.target?.url || '',
+    targetUrl: dashboardTarget(definition),
     expectedResult: definition?.expectedResult || '',
     stepCount: 0,
     passedSteps: 0,
@@ -293,7 +293,7 @@ function enrichSummary(value, definition, source) {
     startedAt: value.startedAt || '',
     finishedAt: value.finishedAt || '',
     summary: value.summary || '巡检已完成，打开详情查看步骤结果。',
-    targetUrl: definition?.target?.url || '',
+    targetUrl: dashboardTarget(definition),
     expectedResult: value.expectedResult || definition?.expectedResult || '',
     stepCount,
     passedSteps,
@@ -302,6 +302,15 @@ function enrichSummary(value, definition, source) {
     partial: Boolean(value.partial),
     source,
   }
+}
+
+function dashboardTarget(definition) {
+  const target = definition?.target
+  if (target?.type === 'desktop') {
+    const process = target.processName ? ` · ${target.processName}` : ''
+    return `desktop:${target.app || '应用'}${process}`
+  }
+  return target?.url || ''
 }
 
 function safeCount(value) {
@@ -342,7 +351,7 @@ function summarizeRun(report, definition, source = 'json') {
     startedAt: report.startedAt || '',
     finishedAt: report.finishedAt || '',
     summary: report.summary || summarizeResults(results),
-    targetUrl: definition?.target?.url || '',
+    targetUrl: dashboardTarget(definition),
     expectedResult: report.expectedResult || definition?.expectedResult || '',
     stepCount: results.length,
     passedSteps,
@@ -378,7 +387,7 @@ export function parseLegacyMarkdownSummary(markdown, definition, runId) {
     startedAt,
     finishedAt,
     summary,
-    targetUrl: definition?.target?.url || '',
+    targetUrl: dashboardTarget(definition),
     expectedResult,
     stepCount,
     passedSteps,
@@ -593,7 +602,7 @@ const esc=v=>String(v??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'
 const fmt=t=>{if(!t)return'—';const d=new Date(t);return Number.isNaN(d.getTime())?esc(t):d.toLocaleString('zh-CN',{hour12:false})};
 const dur=(a,b)=>{const x=new Date(a).getTime(),y=new Date(b).getTime();if(!Number.isFinite(x)||!Number.isFinite(y)||y<x)return'—';const s=(y-x)/1000;return s<60?s.toFixed(1)+' 秒':Math.floor(s/60)+' 分 '+Math.round(s%60)+' 秒'};
 const pill=s=>'<span class="pill '+esc(s)+'">'+({passed:'通过',failed:'失败',waiting:'等待中',ready:'已保存',draft:'编辑中'}[s]||esc(s||'未知'))+'</span>';
-const host=u=>{try{return new URL(u).host}catch{return u||'—'}};
+const host=u=>{try{const p=new URL(u);return p.host||u||'—'}catch{return u||'—'}};
 function empty(t,s){return '<div class="card empty"><div style="font-weight:720">'+esc(t)+'</div><div class="muted" style="font-size:12px;margin-top:7px">'+esc(s||'')+'</div></div>'}
 function header(t,s,a=''){return '<div class="top"><div><div class="eyebrow">DSH PATROL</div><h1 class="title">'+esc(t)+'</h1><div class="sub">'+esc(s)+'</div></div><div class="actions">'+a+'</div></div>'}
 async function get(path,timeout=12000){const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),timeout);try{const r=await fetch(API+path,{cache:'no-store',credentials:'same-origin',signal:ctl.signal});const p=await r.json();if(!r.ok||p.ok!==true)throw new Error(p.error||'请求失败');return p}catch(e){if(e&&e.name==='AbortError')throw new Error('读取巡检数据超时。请确认 Patrol Host 已更新并重新启动。');throw e}finally{clearTimeout(timer)}}
@@ -601,9 +610,9 @@ async function boot(){try{catalog=await get('/catalog?workspace='+encodeURICompo
 function notice(){return catalog?.truncated?'<div class="notice">当前工作区历史记录很多，为保证页面秒开，每个流程最多加载最近 2000 条记录；流程总运行次数仍显示真实数量。</div>':''}
 function render(){if(!WORKSPACE){root.innerHTML=header(MODE==='flows'?'流程管理':'巡检记录','当前会话没有可识别的工作区路径。')+empty('暂无工作区','请从已打开工作区的巡检会话进入。');return}MODE==='flows'?renderFlows():renderRecords()}
 function renderFlows(){const cards=catalog.inspections||[],current=cards.find(x=>x.definition.id===selectedFlow);if(current)return renderFlowDetail(current);const runs=catalog.runs||[],ok=runs.filter(x=>x.status==='passed').length;root.innerHTML=header('流程管理','集中管理当前工作区的巡检流程，点击卡片查看流程图和历史运行。','<button class="btn" onclick="refresh()">↻ 刷新</button>')+notice()+'<div class="stats"><div class="stat"><span>流程总数</span><b>'+cards.length+'</b></div><div class="stat"><span>已保存</span><b>'+cards.filter(x=>x.definition.status==='ready').length+'</b></div><div class="stat"><span>已加载巡检</span><b>'+runs.length+'</b></div><div class="stat"><span>通过记录</span><b>'+ok+'</b></div></div>'+(cards.length?'<div class="flow-grid">'+cards.map(flowCard).join('')+'</div>':empty('还没有流程','保存第一个巡检流程后，这里会自动出现。'))}
-function flowCard(x){const d=x.definition,l=x.latestRun;return '<article class="card flow-card" onclick="openFlow(\''+esc(d.id)+'\')"><div class="flow-icon">'+esc(String((d.name||d.id).trim().charAt(0)||'流').toUpperCase())+'</div><div style="display:flex;justify-content:space-between;gap:9px"><div class="flow-name">'+esc(d.name||d.id)+'</div>'+pill(d.status)+'</div><div class="flow-desc">'+esc(d.description||'暂无流程说明')+'</div><div class="tiny muted">'+esc(host(d.target?.url||''))+'</div><div class="flow-meta"><span>'+((d.steps||[]).length)+' 个步骤 · '+x.runCount+' 次运行</span><span>'+(l?fmt(l.startedAt):'尚未运行')+'</span></div></article>'}
+function flowCard(x){const d=x.definition,l=x.latestRun;return '<article class="card flow-card" onclick="openFlow(\''+esc(d.id)+'\')"><div class="flow-icon">'+esc(String((d.name||d.id).trim().charAt(0)||'流').toUpperCase())+'</div><div style="display:flex;justify-content:space-between;gap:9px"><div class="flow-name">'+esc(d.name||d.id)+'</div>'+pill(d.status)+'</div><div class="flow-desc">'+esc(d.description||'暂无流程说明')+'</div><div class="tiny muted">'+esc(host(d.target?.type==='desktop'?('desktop:'+String(d.target.app||'应用')):(d.target?.url||'')))+'</div><div class="flow-meta"><span>'+((d.steps||[]).length)+' 个步骤 · '+x.runCount+' 次运行</span><span>'+(l?fmt(l.startedAt):'尚未运行')+'</span></div></article>'}
 function openFlow(id){selectedFlow=id;renderFlows();scrollTo(0,0)}function closeFlow(){selectedFlow='';renderFlows();scrollTo(0,0)}
-function renderFlowDetail(x){const d=x.definition,l=x.latestRun;root.innerHTML=header('流程详情','默认展示当前会话使用的流程，可返回查看当前工作区全部流程。','<button class="btn" onclick="closeFlow()">← 返回全部流程</button><button class="btn" onclick="refresh()">↻ 刷新</button>')+notice()+'<section class="card hero"><div>'+pill(d.status)+' <span class="tiny muted">'+esc(d.id)+'</span></div><h2>'+esc(d.name||d.id)+'</h2><p>'+esc(d.description||'暂无流程说明')+'</p><div class="meta-grid">'+meta('目标地址',d.target?.url||'—')+meta('预期结果',d.expectedResult||'—')+meta('最近更新',fmt(d.metadata?.updatedAt))+meta('步骤数量',String((d.steps||[]).length)+' 个')+meta('认证方式',d.auth?.mode||'none')+meta('最近运行',l?fmt(l.startedAt):'尚未运行')+'</div></section><div class="detail-grid"><section class="card panel"><h3 class="section-title">流程图</h3><div class="steps">'+diagram(d.steps||[])+'</div></section><section class="card panel"><h3 class="section-title">流程信息</h3>'+info('产物类型',(d.artifacts||[]).join('、')||'未指定')+info('计划任务',d.schedule?.enabled?(d.schedule.cron||'已启用'):'未启用')+info('工作区',d.metadata?.workspaceRoot||'—')+info('最近验证',fmt(d.metadata?.validatedAt))+'</section></div>'+recentRuns(x)}
+function renderFlowDetail(x){const d=x.definition,l=x.latestRun;root.innerHTML=header('流程详情','默认展示当前会话使用的流程，可返回查看当前工作区全部流程。','<button class="btn" onclick="closeFlow()">← 返回全部流程</button><button class="btn" onclick="refresh()">↻ 刷新</button>')+notice()+'<section class="card hero"><div>'+pill(d.status)+' <span class="tiny muted">'+esc(d.id)+'</span></div><h2>'+esc(d.name||d.id)+'</h2><p>'+esc(d.description||'暂无流程说明')+'</p><div class="meta-grid">'+meta(d.target?.type==='desktop'?'目标应用':'目标地址',d.target?.type==='desktop'?('桌面应用：'+String(d.target.app||'—')):(d.target?.url||'—'))+meta('预期结果',d.expectedResult||'—')+meta('最近更新',fmt(d.metadata?.updatedAt))+meta('步骤数量',String((d.steps||[]).length)+' 个')+meta('认证方式',d.auth?.mode||'none')+meta('最近运行',l?fmt(l.startedAt):'尚未运行')+'</div></section><div class="detail-grid"><section class="card panel"><h3 class="section-title">流程图</h3><div class="steps">'+diagram(d.steps||[])+'</div></section><section class="card panel"><h3 class="section-title">流程信息</h3>'+info('产物类型',(d.artifacts||[]).join('、')||'未指定')+info('计划任务',d.schedule?.enabled?(d.schedule.cron||'已启用'):'未启用')+info('工作区',d.metadata?.workspaceRoot||'—')+info('最近验证',fmt(d.metadata?.validatedAt))+'</section></div>'+recentRuns(x)}
 function meta(a,b){return '<div class="meta"><label>'+esc(a)+'</label><div>'+esc(b)+'</div></div>'}function info(a,b){return '<div style="padding:10px 0;border-bottom:1px solid var(--line)"><div class="tiny muted">'+esc(a)+'</div><div style="font-size:13px;font-weight:620;margin-top:4px;word-break:break-word">'+esc(b)+'</div></div>'}
 function diagram(steps){if(!steps.length)return empty('暂无步骤','该流程还没有可复用步骤。');return steps.map((s,i)=>'<div class="step"><div class="num">'+(i+1)+'</div><details class="node"><summary><div style="display:flex;justify-content:space-between;gap:10px"><div><div class="node-name">'+esc(s.name||s.id)+'</div><div class="tiny muted" style="margin-top:4px">'+esc(s.kind==='checkpoint'?'人工确认':s.tool||'自动步骤')+'</div></div><span class="chip">'+(s.kind==='checkpoint'?'检查点':'自动执行')+'</span></div></summary>'+(s.notes?'<div class="muted" style="font-size:12px;line-height:1.55;margin-top:8px">'+esc(s.notes)+'</div>':'')+(s.expectation?'<span class="chip">校验 '+esc(s.expectation.mode)+'</span>':'')+(s.when?'<span class="chip">条件分支</span>':'')+(s.artifact?'<span class="chip">产物 '+esc(s.artifact)+'</span>':'')+'</details></div>').join('')}
 function recentRuns(x){const rows=(catalog.runs||[]).filter(r=>r.inspectionId===x.definition.id).slice(0,5);return '<section class="card panel" style="margin-top:14px"><div style="display:flex;justify-content:space-between"><h3 class="section-title">最近巡检</h3><span class="tiny muted">共 '+x.runCount+' 次</span></div>'+(rows.length?'<div class="table-wrap"><table class="table"><thead><tr><th>时间</th><th>状态</th><th>概述</th><th>步骤</th><th>耗时</th></tr></thead><tbody>'+rows.map(r=>'<tr onclick="openRun(\''+esc(r.inspectionId)+'\',\''+esc(r.runId)+'\')"><td>'+fmt(r.startedAt)+'</td><td>'+pill(r.status)+'</td><td class="summary">'+esc(r.summary||'—')+'</td><td>'+r.passedSteps+'/'+r.stepCount+'</td><td>'+dur(r.startedAt,r.finishedAt)+'</td></tr>').join('')+'</tbody></table></div>':'<div class="muted" style="font-size:12px">还没有历史运行。</div>')+'</section>'}
@@ -613,7 +622,7 @@ function recordRow(r){return '<tr onclick="openRun(\''+esc(r.inspectionId)+'\',\
 async function openRun(inspectionId,runId){selectedRun={inspectionId,runId};root.innerHTML='<div class="loading"><div><div class="spinner"></div>正在读取巡检详情…</div></div>';try{runDetail=await get('/run?workspace='+encodeURIComponent(WORKSPACE)+'&inspectionId='+encodeURIComponent(inspectionId)+'&runId='+encodeURIComponent(runId),20000);detailTab='overview';renderRunDetail()}catch(e){selectedRun=null;runDetail=null;root.innerHTML=header('巡检详情读取失败','完整历史报告可能很大。')+empty('无法读取巡检详情',e.message)}}
 function closeRun(){selectedRun=null;runDetail=null;detailTab='overview';MODE==='flows'?renderFlows():renderRecords();scrollTo(0,0)}function setTab(t){detailTab=t;renderRunDetail()}
 function renderRunDetail(){const r=runDetail.report,d=runDetail.definition,a=runDetail.artifacts||[];root.innerHTML=header('巡检详情',r.inspectionName||d.name||r.inspectionId,'<button class="btn" onclick="closeRun()">← 返回</button>')+'<section class="card hero"><div>'+pill(r.status)+'</div><h2>'+esc(r.inspectionName||d.name)+'</h2><p>'+esc(r.summary||'本次巡检已完成，详细信息见下方。')+'</p><div class="tiny muted" style="margin-top:10px">'+fmt(r.startedAt)+' · '+dur(r.startedAt,r.finishedAt)+'</div></section><div class="tabs">'+[['overview','概述'],['steps','步骤'],['artifacts','产物'],['logs','日志']].map(x=>'<button class="tab '+(detailTab===x[0]?'active':'')+'" onclick="setTab(\''+x[0]+'\')">'+x[1]+'</button>').join('')+'</div>'+detailContent(r,d,a)}
-function detailContent(r,d,a){if(detailTab==='steps')return stepsView(r);if(detailTab==='artifacts')return artifactsView(a);if(detailTab==='logs')return logsView(r,d);const rows=r.results||[],passed=rows.filter(x=>x.status==='passed').length;return '<div class="detail-grid"><section class="card panel"><h3 class="section-title">本次巡检概述</h3><div style="line-height:1.75;font-size:13px">'+esc(r.summary||'没有额外摘要。')+'</div><div class="muted" style="font-size:12px;margin-top:12px">步骤完成 '+passed+'/'+rows.length+'</div></section><section class="card panel"><h3 class="section-title">关键信息</h3>'+info('目标地址',d.target?.url||'—')+info('预期结果',r.expectedResult||d.expectedResult||'—')+info('开始时间',fmt(r.startedAt))+info('结束时间',fmt(r.finishedAt))+info('产物数量',String(a.length))+'</section></div>'}
+function detailContent(r,d,a){if(detailTab==='steps')return stepsView(r);if(detailTab==='artifacts')return artifactsView(a);if(detailTab==='logs')return logsView(r,d);const rows=r.results||[],passed=rows.filter(x=>x.status==='passed').length;return '<div class="detail-grid"><section class="card panel"><h3 class="section-title">本次巡检概述</h3><div style="line-height:1.75;font-size:13px">'+esc(r.summary||'没有额外摘要。')+'</div><div class="muted" style="font-size:12px;margin-top:12px">步骤完成 '+passed+'/'+rows.length+'</div></section><section class="card panel"><h3 class="section-title">关键信息</h3>'+info(d.target?.type==='desktop'?'目标应用':'目标地址',d.target?.type==='desktop'?('桌面应用：'+String(d.target.app||'—')):(d.target?.url||'—'))+info('预期结果',r.expectedResult||d.expectedResult||'—')+info('开始时间',fmt(r.startedAt))+info('结束时间',fmt(r.finishedAt))+info('产物数量',String(a.length))+'</section></div>'}
 function stepsView(r){const rows=r.results||[];if(!rows.length)return empty('暂无步骤结果','本次巡检没有可展示的步骤记录。');return '<section class="card panel"><div class="timeline">'+rows.map(x=>'<div class="row '+esc(x.status)+'"><div class="dot"></div><div class="runbox"><div style="display:flex;justify-content:space-between;gap:10px"><div><b>'+esc(x.name||x.stepId)+'</b><div class="tiny muted">'+esc(x.tool||x.kind||'步骤')+'</div></div>'+pill(x.status)+'</div><div class="tiny muted" style="margin-top:7px">'+fmt(x.startedAt)+' · '+dur(x.startedAt,x.finishedAt)+'</div>'+(x.error?'<div class="output" style="color:var(--danger)">'+esc(x.error)+'</div>':x.output?'<div class="output">'+esc(x.output)+'</div>':'')+'</div></div>').join('')+'</div></section>'}
 function artifactsView(a){if(!a.length)return empty('暂无产物','本次巡检没有保存可预览产物。');return '<div class="artifact-grid">'+a.map(x=>'<article class="card artifact"><div class="preview">'+(x.preview==='image'?'<img loading="lazy" src="'+esc(x.url)+'" alt="'+esc(x.name)+'">':'<div style="font-size:28px">▤</div>')+'</div><div class="artifact-info"><b>'+esc(x.name)+'</b><div class="tiny muted" style="margin-top:4px">'+esc(x.kind)+' · '+bytes(x.size)+'</div><button class="btn" style="margin-top:10px" onclick="previewArtifact(event,\''+esc(x.token)+'\')">'+(x.preview==='download'?'打开':'预览')+'</button></div></article>').join('')+'</div>'}
 function logsView(r,d){const byId=new Map((d.steps||[]).map(x=>[x.id,x]));return (r.results||[]).map(x=>{const def=byId.get(x.stepId)||{};return '<details class="log"><summary><span>'+esc(x.name||x.stepId)+'</span>'+pill(x.status)+'</summary><pre class="code">工具: '+esc(x.tool||def.tool||x.kind||'')+'\n\n参数:\n'+esc(JSON.stringify(def.arguments||{},null,2))+'\n\n输出:\n'+esc(x.output||'')+(x.error?'\n\n错误:\n'+esc(x.error):'')+'</pre></details>'}).join('')||empty('暂无日志','本次巡检没有步骤日志。')}

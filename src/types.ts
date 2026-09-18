@@ -92,16 +92,25 @@ export interface FlowHealth {
   checkedAt: string
 }
 
+export type InspectionTarget =
+  | {
+      type: 'browser'
+      url: string
+    }
+  | {
+      type: 'desktop'
+      app: string
+      processName?: string
+      titleContains?: string
+    }
+
 export interface InspectionDefinition {
   schemaVersion: InspectionSchemaVersion
   id: string
   name: string
   description: string
   status: InspectionStatus
-  target: {
-    type: 'browser'
-    url: string
-  }
+  target: InspectionTarget
   expectedResult: string
   artifacts: InspectionArtifact[]
   auth: {

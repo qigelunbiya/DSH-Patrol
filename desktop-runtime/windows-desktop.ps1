@@ -170,7 +170,10 @@ function Get-Snapshot($args) {
     if ($null -eq $record) { continue }
     if (-not $includeOffscreen -and $record.offscreen) { continue }
     if ($record.rect.width -le 0 -or $record.rect.height -le 0) { continue }
-    if ([string]::IsNullOrWhiteSpace($record.name) -and [string]::IsNullOrWhiteSpace($record.automationId)) { continue }
+    if ([string]::IsNullOrWhiteSpace($record.name) -and [string]::IsNullOrWhiteSpace($record.automationId)) {
+      $interactiveTypes = @('Button','Edit','ListItem','MenuItem','TabItem','TreeItem','Hyperlink','CheckBox','RadioButton','ComboBox','DataItem')
+      if ($interactiveTypes -notcontains $record.controlType) { continue }
+    }
     $items += $record
   }
   return [ordered]@{
@@ -186,10 +189,11 @@ function Find-TargetElement($args) {
   $name = [string](Get-Prop $args 'name' '')
   $automationId = [string](Get-Prop $args 'automationId' '')
   $controlType = [string](Get-Prop $args 'controlType' '')
+  $className = [string](Get-Prop $args 'className' '')
   $match = [string](Get-Prop $args 'match' 'exact')
   $indexValue = Get-Prop $args 'index' $null
-  if ([string]::IsNullOrWhiteSpace($name) -and [string]::IsNullOrWhiteSpace($automationId)) {
-    throw 'desktop_click_target requires name or automationId'
+  if ([string]::IsNullOrWhiteSpace($name) -and [string]::IsNullOrWhiteSpace($automationId) -and [string]::IsNullOrWhiteSpace($controlType) -and [string]::IsNullOrWhiteSpace($className)) {
+    throw 'desktop_click_target requires at least one of name, automationId, controlType, className'
   }
 
   $all = $resolved.Root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
@@ -201,6 +205,7 @@ function Find-TargetElement($args) {
     if ($record.rect.width -le 0 -or $record.rect.height -le 0) { continue }
     if (-not [string]::IsNullOrWhiteSpace($automationId) -and $record.automationId -ine $automationId) { continue }
     if (-not [string]::IsNullOrWhiteSpace($controlType) -and $record.controlType -ine $controlType) { continue }
+    if (-not [string]::IsNullOrWhiteSpace($className) -and $record.className -ine $className) { continue }
     if (-not [string]::IsNullOrWhiteSpace($name)) {
       $matched = if ($match -ieq 'contains') {
         $record.name.IndexOf($name, [StringComparison]::OrdinalIgnoreCase) -ge 0
@@ -217,7 +222,7 @@ function Find-TargetElement($args) {
     if ($index -lt 0 -or $index -ge $matches.Count) { throw "desktop target index $index is out of range; matches=$($matches.Count)" }
     return $matches[$index]
   }
-  if ($matches.Count -eq 0) { throw "desktop target not found: name='$name' automationId='$automationId' controlType='$controlType'" }
+  if ($matches.Count -eq 0) { throw "desktop target not found: name='$name' automationId='$automationId' controlType='$controlType' className='$className'" }
   if ($matches.Count -ne 1) {
     $sample = ($matches | Select-Object -First 6 | ForEach-Object { "$($_.Record.controlType):$($_.Record.name):$($_.Record.automationId)" }) -join ' | '
     throw "desktop target is ambiguous ($($matches.Count) matches): $sample"
@@ -320,7 +325,7 @@ function Capture-Screenshot($args) {
     $graphics.Dispose()
     $bitmap.Dispose()
   }
-  return [ordered]@{ ok=$true; path=$path; width=[int]$width; height=[int]$height }
+  return [ordered]@{ ok=$true; path=$path; x=[int]$x; y=[int]$y; width=[int]$width; height=[int]$height }
 }
 
 $args = Decode-Payload $Payload
@@ -355,10 +360,12 @@ try {
       Get-Snapshot $args
     }
     'click-target' {
+      $process = Resolve-Window $args $true
+      Activate-Window $process
       $target = Find-TargetElement $args
       $method = Invoke-Target $target
       Start-Sleep -Milliseconds 100
-      [ordered]@{ ok=$true; method=$method; target=$target.Record }
+      [ordered]@{ ok=$true; method=$method; target=$target.Record; window=(Window-Record $process) }
     }
     'click-coordinates' {
       $x = [int](Get-Prop $args 'x' 0); $y = [int](Get-Prop $args 'y' 0)

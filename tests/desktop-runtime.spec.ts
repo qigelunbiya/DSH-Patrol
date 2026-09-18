@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { WindowsDesktopDriver } from '../desktop-runtime/windows-driver.js'
+import { normalizeOcrObservations, WindowsDesktopDriver } from '../desktop-runtime/windows-driver.js'
 
 describe('Desktop Automation runtime foundation', () => {
   it('exposes an explicit unrestricted Windows desktop strategy without affecting non-Windows CI', () => {
@@ -26,6 +26,95 @@ describe('Desktop Automation runtime foundation', () => {
     expect(wechat.content).toContain('${artifact:last-screenshot}')
   })
 
+  it('converts normalized OCR lines into CURRENT absolute screen coordinates', () => {
+    const lines = normalizeOcrObservations([
+      {
+        language: 'zh-CN',
+        result: {
+          lines: [
+            {
+              text: '测试联系人',
+              confidence: 1,
+              boundingBox: { x: 0.1, y: 0.2, width: 0.4, height: 0.1 },
+            },
+          ],
+        },
+      },
+      {
+        language: 'en-US',
+        result: {
+          lines: [
+            {
+              text: '测试联系人',
+              confidence: 1,
+              boundingBox: { x: 0.101, y: 0.201, width: 0.4, height: 0.1 },
+            },
+            {
+              text: 'Search',
+              confidence: 1,
+              boundingBox: { x: 0.5, y: 0.05, width: 0.2, height: 0.08 },
+            },
+          ],
+        },
+      },
+    ], { x: 100, y: 200, width: 1000, height: 800 })
+
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toMatchObject({
+      text: '测试联系人',
+      language: 'zh-CN',
+      rect: { x: 200, y: 360, width: 400, height: 80 },
+      center: { x: 400, y: 400 },
+    })
+    expect(lines[1]).toMatchObject({
+      text: 'Search',
+      rect: { x: 600, y: 240, width: 200, height: 64 },
+      center: { x: 700, y: 272 },
+    })
+  })
+
+  it('clicks one unique CURRENT OCR text match and rejects ambiguity', async () => {
+    const driver = new WindowsDesktopDriver()
+    const clicks: any[] = []
+    driver.ocr = async () => ({
+      ok: true,
+      status: 'recognized',
+      lines: [
+        { text: '测试联系人', center: { x: 420, y: 310 } },
+        { text: '其他联系人', center: { x: 420, y: 360 } },
+      ],
+      screenshotPath: 'current.png',
+      screenshotBounds: { x: 0, y: 0, width: 1000, height: 800 },
+      languagesTried: ['zh-CN'],
+    })
+    driver.run = async (action: string, args: any) => {
+      clicks.push({ action, args })
+      return { ok: true }
+    }
+
+    const result = await driver.clickOcrText({ text: '测试联系人', match: 'exact' })
+    expect(result).toMatchObject({
+      ok: true,
+      method: 'ocr-line-center',
+      query: '测试联系人',
+      target: { text: '测试联系人', center: { x: 420, y: 310 } },
+    })
+    expect(clicks).toEqual([{
+      action: 'click-coordinates',
+      args: { x: 420, y: 310, button: 'left' },
+    }])
+
+    driver.ocr = async () => ({
+      ok: true,
+      status: 'recognized',
+      lines: [
+        { text: '测试联系人', center: { x: 420, y: 310 } },
+        { text: '测试联系人', center: { x: 420, y: 500 } },
+      ],
+    })
+    await expect(driver.clickOcrText({ text: '测试联系人' })).rejects.toThrow(/ambiguous \(2 matches\)/i)
+  })
+
   it('registers UIA, keyboard, OCR, coordinate, clipboard, message-enabling and delete primitives', () => {
     const source = readFileSync(join(process.cwd(), 'desktop-runtime', 'tools-plugin.js'), 'utf8')
     for (const tool of [
@@ -33,6 +122,7 @@ describe('Desktop Automation runtime foundation', () => {
       'desktop_activate_window',
       'desktop_snapshot',
       'desktop_click_target',
+      'desktop_click_ocr_text',
       'desktop_click_coordinates',
       'desktop_type_text',
       'desktop_hotkey',
