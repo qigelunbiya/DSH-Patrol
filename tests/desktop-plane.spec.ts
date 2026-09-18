@@ -58,7 +58,7 @@ describe('desktop agent plane', () => {
     expect(status).toBeDefined()
     const value = await status.execute({}, {})
     expect(value.permissionMode).toBe('unrestricted')
-    expect(value.strategy).toEqual(['ocr', 'keyboard', 'uia', 'coordinates'])
+    expect(value.strategy).toEqual(['vision', 'keyboard', 'ocr', 'uia', 'visual-point', 'coordinates'])
     expect(value.supported).toBe(process.platform === 'win32')
   })
 

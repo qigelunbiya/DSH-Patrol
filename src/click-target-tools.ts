@@ -134,7 +134,9 @@ export function registerPatrolClickTargetTool(
           // trustworthy selector hint, probe the exact title directly. The
           // browser_click content layer promotes the titled leaf to its own
           // clickable Ant-tree wrapper.
-          if (selector === undefined && locator.text) {
+          const atomicFailure = String(atomic.error ?? atomic.text ?? '').toLocaleLowerCase()
+          const atomicWasAmbiguous = atomicFailure.includes('ambiguous')
+          if (selector === undefined && locator.text && !atomicWasAmbiguous) {
             const titleSelector = exactTitleSelector(locator.text)
             const countedTitle = await runner.dispatch('browser_count', compactObject({
               selector: titleSelector,
