@@ -4,12 +4,18 @@ import { describe, expect, it } from 'vitest'
 import { findUiaTargetMatches, normalizeOcrObservations, WindowsDesktopDriver } from '../desktop-runtime/windows-driver.js'
 
 describe('Desktop Automation runtime foundation', () => {
-  it('exposes an explicit unrestricted Windows desktop strategy without affecting non-Windows CI', () => {
+  it('exposes an explicit unrestricted Windows desktop strategy without affecting non-Windows CI', async () => {
     const driver = new WindowsDesktopDriver()
-    const status = driver.status()
+    if (process.platform === 'win32') {
+      driver.run = async action => action === 'list-windows'
+        ? { ok: true, windows: [{ title: 'fixture' }] }
+        : { ok: true }
+    }
+    const status = await driver.status()
     expect(status.permissionMode).toBe('unrestricted')
     expect(status.strategy).toEqual(['uia', 'keyboard', 'ocr', 'coordinates'])
     expect(status.supported).toBe(process.platform === 'win32')
+    expect(status.backendReachable).toBe(process.platform === 'win32')
   })
 
   it('ships application knowledge guides including the first WeChat workflow', async () => {
