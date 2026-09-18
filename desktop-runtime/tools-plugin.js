@@ -103,6 +103,25 @@ export function apply(ctx, config = {}) {
       execute: async (args, exec) => await driver.run('click-target', compact(args), exec),
     }),
     defineTool({
+      name: 'desktop_click_ocr_text',
+      description: 'OCR semantic fallback: capture the CURRENT window/screen, find one unique OCR line by text, and click that line center. This stores semantic text rather than historical absolute coordinates and is preferred over desktop_click_coordinates when UI Automation cannot expose the target.',
+      parameters: {
+        text: reqStr,
+        match: { type: 'string', enum: ['exact', 'contains'] },
+        caseSensitive: bool,
+        index: int,
+        button: { type: 'string', enum: ['left', 'right'] },
+        scope: { type: 'string', enum: ['active-window', 'screen'] },
+        processName: str,
+        title: str,
+        titleContains: str,
+        languages: { type: 'array', items: { type: 'string' } },
+        fileName: str,
+      },
+      output: jsonOutput('Desktop OCR text clicked'),
+      execute: async (args, exec) => await driver.clickOcrText(compact(args), exec),
+    }),
+    defineTool({
       name: 'desktop_click_coordinates',
       description: 'Coordinate-click fallback for desktop UI when UI Automation cannot expose the target. Use only after screenshot/OCR/current evidence provides the coordinates.',
       parameters: {
