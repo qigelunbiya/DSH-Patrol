@@ -19,12 +19,16 @@ export function registerPatrolCreationTools(ctx: Context, store: PatrolStore): (
   const captchaConstraints = new Map<string, ImageCodeConstraint>()
   const createInspection = defineTool({
     name: 'patrol_create_inspection',
-    description: 'Create or reuse a Patrol DRAFT using only non-secret metadata. inspectionId may be human-friendly input; Patrol normalizes it to the supported ASCII id format before storage. Triggering this tool for a DRAFT also starts an in-progress patrol history record immediately, before the browser workflow is finished.',
+    description: 'Create or reuse a browser or Windows-desktop Patrol DRAFT using only non-secret metadata. inspectionId may be human-friendly input; Patrol normalizes it to the supported ASCII id format before storage. targetType defaults to browser for backward compatibility. Triggering this tool for a DRAFT also starts an in-progress patrol history record immediately, before teaching is finished.',
     parameters: {
       inspectionId: { type: 'string', required: true, description: 'Stable short id. ASCII letters/digits/dot/underscore/hyphen are preserved; unsupported characters are normalized automatically.' },
       name: { type: 'string', required: true },
       description: { type: 'string', required: true },
-      targetUrl: { type: 'string', required: true },
+      targetType: { type: 'string', enum: ['browser', 'desktop'], description: 'Defaults to browser. Use desktop for app-only Patrol flows such as WeChat.' },
+      targetUrl: { type: 'string', description: 'Required when targetType=browser.' },
+      desktopApp: { type: 'string', description: 'Required when targetType=desktop, for example 微信.' },
+      desktopProcessName: { type: 'string', description: 'Optional stable process name hint, for example WeChat or Weixin.' },
+      desktopTitleContains: { type: 'string', description: 'Optional stable window-title substring.' },
       expectedResult: { type: 'string', required: true },
       authMode: { type: 'string', required: true, enum: ['none', 'existing-session', 'manual-checkpoint', 'secret-ref'] },
       artifacts: { type: 'array', items: { type: 'string', enum: [...INSPECTION_ARTIFACTS] } },
@@ -50,7 +54,10 @@ export function registerPatrolCreationTools(ctx: Context, store: PatrolStore): (
       assertSafePersistentText(args.name, 'inspection.name')
       assertSafePersistentText(args.description, 'inspection.description')
       assertSafePersistentText(args.expectedResult, 'inspection.expectedResult')
-      assertSafeForStorage({ url: args.targetUrl })
+      const targetType = args.targetType === 'desktop' ? 'desktop' : 'browser'
+      const target: InspectionDefinition['target'] = targetType === 'desktop'
+        ? desktopTarget(args.desktopApp, args.desktopProcessName, args.desktopTitleContains)
+        : browserTarget(args.targetUrl)
 
       const now = new Date().toISOString()
       const definition: InspectionDefinition = {
@@ -59,7 +66,7 @@ export function registerPatrolCreationTools(ctx: Context, store: PatrolStore): (
         name: args.name,
         description: args.description,
         status: 'draft',
-        target: { type: 'browser', url: args.targetUrl },
+        target,
         expectedResult: args.expectedResult,
         artifacts: (args.artifacts ?? ['markdown-report', 'json-report']) as InspectionArtifact[],
         auth: { mode: args.authMode as AuthMode },
@@ -73,7 +80,7 @@ export function registerPatrolCreationTools(ctx: Context, store: PatrolStore): (
       }
       await store.create(definition)
       await beginInteractivePatrol(store, definition.id, workspaceRoot)
-      return `Created DRAFT ${definition.id} without persisting any auth notes or plaintext secret.${normalizedNotice} An in-progress patrol history record was created immediately. User-visible run outputs will default to the current Harness workspace${workspaceRoot === undefined ? '' : `: ${workspaceRoot}`}. Next run patrol_doctor, then teach with the flat patrol_* action tools.`
+      return `Created DRAFT ${definition.id} with ${definition.target.type} target without persisting any auth notes or plaintext secret.${normalizedNotice} An in-progress patrol history record was created immediately. User-visible run outputs will default to the current Harness workspace${workspaceRoot === undefined ? '' : `: ${workspaceRoot}`}. Next run patrol_doctor, then teach with the flat patrol_* action tools${definition.target.type === 'desktop' ? ' (desktop_* for CURRENT exploration, patrol_desktop_action for reusable desktop steps)' : ''}.`
     },
   })
 
@@ -109,6 +116,30 @@ export function registerPatrolCreationTools(ctx: Context, store: PatrolStore): (
   }
 
   return () => { for (const dispose of disposers) dispose() }
+}
+
+function browserTarget(value: unknown): InspectionDefinition['target'] {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error('targetUrl is required when targetType=browser')
+  }
+  assertSafeForStorage({ url: value })
+  return { type: 'browser', url: value }
+}
+
+function desktopTarget(appValue: unknown, processValue: unknown, titleValue: unknown): InspectionDefinition['target'] {
+  const app = typeof appValue === 'string' ? appValue.trim() : ''
+  if (!app) throw new Error('desktopApp is required when targetType=desktop')
+  assertSafePersistentText(app, 'inspection.target.app')
+  const processName = typeof processValue === 'string' ? processValue.trim() : ''
+  const titleContains = typeof titleValue === 'string' ? titleValue.trim() : ''
+  if (processName) assertSafePersistentText(processName, 'inspection.target.processName')
+  if (titleContains) assertSafePersistentText(titleContains, 'inspection.target.titleContains')
+  return {
+    type: 'desktop',
+    app,
+    ...(processName ? { processName } : {}),
+    ...(titleContains ? { titleContains } : {}),
+  }
 }
 
 async function beginInteractivePatrol(store: PatrolStore, inspectionId: string, workspaceRoot?: string): Promise<void> {
