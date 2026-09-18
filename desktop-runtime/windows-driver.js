@@ -136,6 +136,55 @@ export class WindowsDesktopDriver {
     }
   }
 
+  async clickOcrText(args = {}, exec) {
+    const text = String(args.text ?? '').trim()
+    if (!text) throw new Error('desktop_click_ocr_text requires text')
+    const match = args.match === 'contains' ? 'contains' : 'exact'
+    const caseSensitive = args.caseSensitive === true
+    const ocr = await this.ocr(args, exec)
+    const normalize = value => caseSensitive ? String(value ?? '') : String(value ?? '').toLocaleLowerCase()
+    const needle = normalize(text)
+    const candidates = (ocr.lines ?? []).filter(line => {
+      const haystack = normalize(line.text)
+      return match === 'contains' ? haystack.includes(needle) : haystack === needle
+    })
+
+    let target
+    if (args.index !== undefined) {
+      const index = Number(args.index)
+      if (!Number.isInteger(index) || index < 0 || index >= candidates.length) {
+        throw new Error(`desktop OCR target index ${args.index} is out of range; matches=${candidates.length}`)
+      }
+      target = candidates[index]
+    } else {
+      if (candidates.length === 0) {
+        throw new Error(`desktop OCR text target not found: ${JSON.stringify(text)}`)
+      }
+      if (candidates.length !== 1) {
+        const sample = candidates.slice(0, 8).map(item => `${item.text}@(${item.center.x},${item.center.y})`).join(' | ')
+        throw new Error(`desktop OCR text target is ambiguous (${candidates.length} matches): ${sample}`)
+      }
+      target = candidates[0]
+    }
+
+    await this.run('click-coordinates', {
+      x: target.center.x,
+      y: target.center.y,
+      button: args.button === 'right' ? 'right' : 'left',
+    }, exec)
+    return {
+      ok: true,
+      method: 'ocr-line-center',
+      match,
+      query: text,
+      matchCount: candidates.length,
+      target,
+      screenshotPath: ocr.screenshotPath,
+      screenshotBounds: ocr.screenshotBounds,
+      languagesTried: ocr.languagesTried,
+    }
+  }
+
   async listGuides(exec) {
     const roots = guideRoots(exec)
     const names = new Set()
