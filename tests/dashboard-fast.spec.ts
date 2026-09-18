@@ -189,6 +189,55 @@ describe('fast Patrol dashboard catalog', () => {
     expect(catalog.inspections[0]?.runCount).toBe(1)
   })
 
+  it('indexes desktop-only inspection targets without requiring a URL', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-dashboard-desktop-'))
+    roots.push(root)
+    const storageRoot = join(root, '.dsh-patrol')
+    const workspace = join(root, 'workspace')
+    const inspectionId = 'wechat-desktop'
+    const runId = '2026-09-18T02-00-00-000Z-wechat'
+    await mkdir(join(storageRoot, 'inspections', inspectionId), { recursive: true })
+    await mkdir(join(storageRoot, 'runs', inspectionId, runId), { recursive: true })
+    await mkdir(workspace, { recursive: true })
+    const definition = {
+      schemaVersion: '0.2',
+      id: inspectionId,
+      name: '微信桌面巡检',
+      description: 'desktop target fixture',
+      status: 'ready',
+      target: { type: 'desktop', app: '微信', processName: 'WeChat', titleContains: '微信' },
+      expectedResult: '消息发送成功',
+      artifacts: ['markdown-report'],
+      auth: { mode: 'none' },
+      schedule: null,
+      steps: [{ id: 'step-001', kind: 'tool', name: '激活微信', tool: 'desktop_activate_window', arguments: { processName: 'WeChat' }, recordedAt: '2026-09-18T02:00:00.000Z' }],
+      metadata: { createdAt: '2026-09-18T02:00:00.000Z', updatedAt: '2026-09-18T02:00:00.000Z', workspaceRoot: workspace },
+    }
+    await writeFile(join(storageRoot, 'inspections', inspectionId, 'inspection.json'), JSON.stringify(definition))
+    await writeFile(join(storageRoot, 'runs', inspectionId, runId, 'summary.json'), JSON.stringify({
+      schemaVersion: 1,
+      runId,
+      inspectionId,
+      inspectionName: '微信桌面巡检',
+      status: 'passed',
+      purpose: 'patrol',
+      startedAt: '2026-09-18T02:00:00.000Z',
+      finishedAt: '2026-09-18T02:00:02.000Z',
+      expectedResult: '消息发送成功',
+      summary: 'desktop passed',
+      stepCount: 1,
+      passedSteps: 1,
+      failedSteps: 0,
+      waitingSteps: 0,
+      artifactCount: 2,
+    }))
+
+    const catalog = await buildPatrolDashboardCatalog(storageRoot, workspace)
+
+    expect(catalog.inspections[0]?.definition.target).toEqual(definition.target)
+    expect(catalog.runs[0]?.targetUrl).toBe('desktop:微信 · WeChat')
+  })
+
   it('parses the bounded markdown report format used by historical runs', async () => {
     const value = await fixture()
     const runId = '2026-09-02T08-00-00-000Z-cafebabe'
