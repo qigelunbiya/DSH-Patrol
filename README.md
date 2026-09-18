@@ -120,6 +120,8 @@ desktop_paste
 
 首个桌面实际验证目标为 Windows 微信。
 
+更完整的 Desktop Automation 架构、纯桌面/跨应用流程说明以及微信首轮联调步骤见 [`docs/desktop-automation.md`](docs/desktop-automation.md)。
+
 ## 快速开始
 
 ### 当前推荐：GitHub 源码安装
