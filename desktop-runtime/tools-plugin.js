@@ -88,11 +88,12 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_click_target',
-      description: 'Click one unique Windows UI Automation element by semantic name/automationId/controlType. Prefer this over coordinate clicking. If multiple targets match, the tool fails unless an explicit index is supplied.',
+      description: 'Click one unique Windows UI Automation element by semantic name/automationId/controlType/className. Unnamed interactive controls such as Edit are included in snapshots, so controlType/className-only targeting is allowed when unique. Prefer this over OCR/coordinate clicking.'
       parameters: {
         name: str,
         automationId: str,
         controlType: str,
+        className: str,
         match: { type: 'string', enum: ['exact', 'contains'] },
         index: int,
         processName: str,
