@@ -355,10 +355,12 @@ try {
       Get-Snapshot $args
     }
     'click-target' {
+      $process = Resolve-Window $args $true
+      Activate-Window $process
       $target = Find-TargetElement $args
       $method = Invoke-Target $target
       Start-Sleep -Milliseconds 100
-      [ordered]@{ ok=$true; method=$method; target=$target.Record }
+      [ordered]@{ ok=$true; method=$method; target=$target.Record; window=(Window-Record $process) }
     }
     'click-coordinates' {
       $x = [int](Get-Prop $args 'x' 0); $y = [int](Get-Prop $args 'y' 0)
