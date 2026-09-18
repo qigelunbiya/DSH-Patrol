@@ -196,6 +196,12 @@ describe('Desktop Automation runtime foundation', () => {
     await expect(driver.clickOcrText({ text: '测试联系人' })).rejects.toThrow(/ambiguous \(2 matches\)/i)
   })
 
+  it('does not shadow PowerShell automatic $args with desktop request payloads', () => {
+    const source = readFileSync(join(process.cwd(), 'desktop-runtime', 'windows-desktop.ps1'), 'utf8')
+    expect(source).not.toMatch(/\$args\b/)
+    expect(source).toContain('$request = Decode-Payload $Payload')
+  })
+
   it('registers UIA, keyboard, OCR, coordinate, clipboard, message-enabling and delete primitives', () => {
     const source = readFileSync(join(process.cwd(), 'desktop-runtime', 'tools-plugin.js'), 'utf8')
     for (const tool of [
