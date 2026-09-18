@@ -59,6 +59,46 @@ describe('native desktop inspection targets', () => {
     })).toThrow(/ephemeral desktop hwnd\/processId/i)
   })
 
+  it('allows stable UIA controlType/className selectors for unnamed interactive controls', () => {
+    const base = {
+      schemaVersion: '0.2' as const,
+      id: 'wechat-edit-target',
+      name: '微信输入区',
+      description: 'UIA unnamed edit control',
+      status: 'draft' as const,
+      target: { type: 'desktop' as const, app: '微信' },
+      expectedResult: '聚焦输入区',
+      artifacts: [],
+      auth: { mode: 'none' as const },
+      schedule: null,
+      metadata: { createdAt: '2026-09-18T01:00:00.000Z', updatedAt: '2026-09-18T01:00:00.000Z' },
+    }
+
+    expect(() => assertInspectionDefinition({
+      ...base,
+      steps: [{
+        id: 'step-001',
+        kind: 'tool',
+        name: '聚焦唯一输入区',
+        tool: 'desktop_click_target',
+        arguments: { controlType: 'Edit' },
+        recordedAt: '2026-09-18T01:00:00.000Z',
+      }],
+    })).not.toThrow()
+
+    expect(() => assertInspectionDefinition({
+      ...base,
+      steps: [{
+        id: 'step-001',
+        kind: 'tool',
+        name: '缺少定位条件',
+        tool: 'desktop_click_target',
+        arguments: {},
+        recordedAt: '2026-09-18T01:00:00.000Z',
+      }],
+    })).toThrow(/name, automationId, controlType, or className/i)
+  })
+
   it('creates a desktop-only draft without inventing targetUrl', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-desktop-target-'))
     roots.push(root)
