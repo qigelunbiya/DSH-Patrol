@@ -274,6 +274,43 @@ function assertDesktopToolArgumentPolicy(stepId: string, tool: string, args: Jso
     const milliseconds = requireInteger('milliseconds')
     if (milliseconds < 0 || milliseconds > 600000) throw new Error(`step ${stepId} desktop_wait milliseconds must be between 0 and 600000`)
   }
+  if (tool === 'desktop_wait_for_target') {
+    const selectors = [args.name, args.automationId, args.controlType, args.className, args.text]
+    if (selectors.every(value => typeof value !== 'string' || value.trim() === '')) {
+      throw new Error(`step ${stepId} desktop_wait_for_target requires text or a UI Automation selector`)
+    }
+    if (args.source !== undefined && args.source !== 'auto' && args.source !== 'uia' && args.source !== 'ocr') {
+      throw new Error(`step ${stepId} desktop_wait_for_target source must be auto, uia, or ocr`)
+    }
+    if (args.source === 'ocr') requireString('text')
+    if (args.match !== undefined && args.match !== 'exact' && args.match !== 'contains') {
+      throw new Error(`step ${stepId} desktop_wait_for_target match must be exact or contains`)
+    }
+    if (args.caseSensitive !== undefined && typeof args.caseSensitive !== 'boolean') {
+      throw new Error(`step ${stepId} desktop_wait_for_target caseSensitive must be boolean`)
+    }
+    if (args.requireUnique !== undefined && typeof args.requireUnique !== 'boolean') {
+      throw new Error(`step ${stepId} desktop_wait_for_target requireUnique must be boolean`)
+    }
+    if (args.timeoutMs !== undefined) {
+      const timeoutMs = requireInteger('timeoutMs')
+      if (timeoutMs < 100 || timeoutMs > 120000) {
+        throw new Error(`step ${stepId} desktop_wait_for_target timeoutMs must be between 100 and 120000`)
+      }
+    }
+    if (args.pollMs !== undefined) {
+      const pollMs = requireInteger('pollMs')
+      if (pollMs < 100 || pollMs > 5000) {
+        throw new Error(`step ${stepId} desktop_wait_for_target pollMs must be between 100 and 5000`)
+      }
+    }
+    if (args.maxElements !== undefined) {
+      const maxElements = requireInteger('maxElements')
+      if (maxElements < 1 || maxElements > 1000) {
+        throw new Error(`step ${stepId} desktop_wait_for_target maxElements must be between 1 and 1000`)
+      }
+    }
+  }
   if (tool === 'desktop_set_clipboard_files') {
     const paths = args.paths
     if (!Array.isArray(paths) || paths.length === 0 || paths.some(item => typeof item !== 'string' || item.trim() === '')) {
