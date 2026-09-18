@@ -169,6 +169,23 @@ try {
     throw new Error(`desktop screenshot returned invalid bounds: ${JSON.stringify(shot)}`)
   }
 
+  const ocr = await driver.ocr({
+    title: TITLE,
+    languages: ['en-US'],
+    fileName: 'windows-ocr-integration',
+  })
+  if (ocr.status !== 'recognized' || !Array.isArray(ocr.lines) || ocr.lines.length === 0) {
+    throw new Error(`desktop OCR did not recognize fixture text: ${JSON.stringify(ocr)}`)
+  }
+  const recognizable = ocr.lines.find(line => /apply|smoke input|dsh patrol/i.test(String(line.text ?? '')))
+  if (!recognizable
+    || !Number.isFinite(recognizable.center?.x)
+    || !Number.isFinite(recognizable.center?.y)
+    || !(recognizable.rect?.width > 0)
+    || !(recognizable.rect?.height > 0)) {
+    throw new Error(`desktop OCR did not return usable line geometry: ${JSON.stringify(ocr.lines.slice(0, 20))}`)
+  }
+
   console.log(JSON.stringify({
     ok: true,
     selector,
@@ -183,6 +200,12 @@ try {
       pressWindow: pressed.window?.title,
     },
     screenshot: { width: shot.width, height: shot.height },
+    ocr: {
+      status: ocr.status,
+      languagesSucceeded: ocr.languagesSucceeded,
+      matchedText: recognizable.text,
+      center: recognizable.center,
+    },
   }, null, 2))
 } finally {
   if (!child.killed) child.kill()
