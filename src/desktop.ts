@@ -43,6 +43,8 @@ export const REPLAYABLE_DESKTOP_TOOLS = [
   'desktop_drag',
   'desktop_type_text',
   'desktop_type_target',
+  'desktop_paste_target',
+  'desktop_press_target',
   'desktop_hotkey',
   'desktop_press',
   'desktop_wait',
