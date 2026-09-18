@@ -31,6 +31,11 @@ describe('resilient browser snapshot layer', () => {
     expect(source).toContain('path.unshift')
   })
 
+  it('emits unique title-backed selectors for custom tree labels', () => {
+    expect(source).toContain("const title = element.getAttribute?.('title')")
+    expect(source).toContain('[title="')
+  })
+
   it('filters hidden/offscreen duplicates before semantic click resolution', () => {
     expect(source).toContain("style.display === 'none'")
     expect(source).toContain('getBoundingClientRect')
