@@ -169,6 +169,36 @@ try {
     throw new Error(`desktop screenshot returned invalid bounds: ${JSON.stringify(shot)}`)
   }
 
+  const OCR_CLICK_TEXT = 'OCR click verification'
+  await driver.run('type-target', {
+    title: TITLE,
+    ...selector,
+    text: OCR_CLICK_TEXT,
+    clear: true,
+  })
+  const ocrClicked = await driver.clickOcrText({
+    title: TITLE,
+    text: 'Apply',
+    match: 'exact',
+    languages: ['en-US'],
+    fileName: 'windows-ocr-click',
+  })
+  if (ocrClicked.method !== 'ocr-line-center' || ocrClicked.matchCount !== 1) {
+    throw new Error(`semantic OCR click did not resolve one CURRENT line: ${JSON.stringify(ocrClicked)}`)
+  }
+  const ocrApplied = await driver.waitForTarget({
+    source: 'uia',
+    title: TITLE,
+    name: `applied:${OCR_CLICK_TEXT}`,
+    match: 'exact',
+    requireUnique: true,
+    timeoutMs: 5000,
+    pollMs: 200,
+  })
+  if (ocrApplied.method !== 'uia') {
+    throw new Error(`OCR click did not produce expected UI state: ${JSON.stringify(ocrApplied)}`)
+  }
+
   const ocr = await driver.ocr({
     title: TITLE,
     languages: ['en-US'],
@@ -205,6 +235,9 @@ try {
       languagesSucceeded: ocr.languagesSucceeded,
       matchedText: recognizable.text,
       center: recognizable.center,
+      clickMethod: ocrClicked.method,
+      clickTarget: ocrClicked.target?.text,
+      clickCenter: ocrClicked.target?.center,
     },
   }, null, 2))
 } finally {
