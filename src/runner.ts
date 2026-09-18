@@ -66,7 +66,7 @@ export class PatrolRunner {
       return { ok: false, text: '', error: `tool ${tool} is not in DSH Patrol's exact browser/desktop allowlist` }
     }
 
-    if (this.ctx.tools.get(tool, exec.agent) === undefined) {
+    if (typeof this.ctx.tools.get === 'function' && this.ctx.tools.get(tool, exec.agent) === undefined) {
       return missingProviderResult(tool)
     }
 
