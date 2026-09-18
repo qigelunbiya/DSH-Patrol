@@ -72,6 +72,10 @@ export function registerPatrolDesktopActionTools(
       key: { type: 'string' },
       milliseconds: { type: 'integer' },
       scope: { type: 'string', enum: ['active-window', 'screen'] },
+      minXRatio: { type: 'number' },
+      maxXRatio: { type: 'number' },
+      minYRatio: { type: 'number' },
+      maxYRatio: { type: 'number' },
       fileName: { type: 'string' },
       languages: { type: 'array', items: { type: 'string' }, description: 'Optional OCR language passes for action=ocr, click-ocr-text, or wait-for-target.' },
       paths: { type: 'array', items: { type: 'string' } },
@@ -199,7 +203,9 @@ function desktopArguments(action: DesktopAction, args: Record<string, unknown>, 
     case 'click-ocr-text':
       add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
       add('text', args.text); add('match', args.match); add('caseSensitive', args.caseSensitive); add('index', args.index)
-      add('button', args.button); add('scope', args.scope); add('languages', args.languages); add('fileName', args.fileName); break
+      add('button', args.button); add('scope', args.scope); add('languages', args.languages)
+      add('minXRatio', args.minXRatio); add('maxXRatio', args.maxXRatio); add('minYRatio', args.minYRatio); add('maxYRatio', args.maxYRatio)
+      add('fileName', args.fileName); break
     case 'click-coordinates':
       add('x', args.x); add('y', args.y); add('button', args.button); break
     case 'drag':
@@ -231,7 +237,9 @@ function desktopArguments(action: DesktopAction, args: Record<string, unknown>, 
       add('source', args.source); add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
       add('name', args.name); add('automationId', args.automationId); add('controlType', args.controlType); add('className', args.className); add('value', args.value)
       add('text', args.text); add('match', args.match); add('caseSensitive', args.caseSensitive); add('requireUnique', args.requireUnique)
-      add('scope', args.scope); add('languages', args.languages); add('maxElements', args.maxElements); add('timeoutMs', args.timeoutMs); add('pollMs', args.pollMs); break
+      add('scope', args.scope); add('languages', args.languages)
+      add('minXRatio', args.minXRatio); add('maxXRatio', args.maxXRatio); add('minYRatio', args.minYRatio); add('maxYRatio', args.maxYRatio)
+      add('maxElements', args.maxElements); add('timeoutMs', args.timeoutMs); add('pollMs', args.pollMs); break
     case 'screenshot':
       add('scope', args.scope); add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
       add('fileName', args.fileName); break

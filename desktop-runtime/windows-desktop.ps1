@@ -117,12 +117,19 @@ function Resolve-Window($request, [bool]$allowForeground = $true) {
 
 function Activate-Window($process) {
   if ($null -eq $process -or $process.MainWindowHandle -eq 0) { throw 'window has no main handle' }
-  [void][PatrolDesktop.Native]::ShowWindowAsync([IntPtr]$process.MainWindowHandle, 9)
+  $target = [IntPtr]$process.MainWindowHandle
+  [void][PatrolDesktop.Native]::ShowWindowAsync($target, 9)
   Start-Sleep -Milliseconds 80
-  if (-not [PatrolDesktop.Native]::SetForegroundWindow([IntPtr]$process.MainWindowHandle)) {
-    throw "failed to activate desktop window $($process.MainWindowTitle)"
+  for ($attempt = 0; $attempt -lt 3; $attempt++) {
+    [void][PatrolDesktop.Native]::SetForegroundWindow($target)
+    Start-Sleep -Milliseconds 120
+    $foreground = [PatrolDesktop.Native]::GetForegroundWindow()
+    if ($foreground -eq $target) { return }
   }
-  Start-Sleep -Milliseconds 120
+  $foreground = [PatrolDesktop.Native]::GetForegroundWindow()
+  $actual = Get-Process | Where-Object { $_.MainWindowHandle -eq [int64]$foreground } | Select-Object -First 1
+  $actualLabel = if ($null -eq $actual) { [string][int64]$foreground } else { "$($actual.ProcessName):$($actual.MainWindowTitle)" }
+  throw "failed to verify foreground desktop window $($process.ProcessName):$($process.MainWindowTitle); actual=$actualLabel"
 }
 
 function Get-Root($request) {

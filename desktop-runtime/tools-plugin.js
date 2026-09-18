@@ -8,6 +8,7 @@ const str = { type: 'string' }
 const reqStr = { type: 'string', required: true }
 const int = { type: 'integer' }
 const reqInt = { type: 'integer', required: true }
+const num = { type: 'number' }
 const bool = { type: 'boolean' }
 const textOutput = {
   schema: { type: 'string' },
@@ -123,6 +124,10 @@ export function apply(ctx, config = {}) {
         title: str,
         titleContains: str,
         languages: { type: 'array', items: { type: 'string' } },
+        minXRatio: num,
+        maxXRatio: num,
+        minYRatio: num,
+        maxYRatio: num,
         fileName: str,
       },
       output: jsonOutput('Desktop OCR text clicked'),
@@ -236,7 +241,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_wait_for_target',
-      description: 'Wait for a semantic desktop target to become available instead of sleeping a fixed duration. source=auto checks UI Automation first and then OCR text when text is available. By default the target must be unique; set requireUnique=false only when mere presence is enough.',
+      description: 'Wait for a semantic desktop target instead of sleeping. OCR matching can be constrained to a CURRENT window-relative region with min/max X/Y ratios (0..1), which is useful when the same text appears in both a navigation/search list and the main content/header. By default the filtered target must be unique; set requireUnique=false when presence inside that region is sufficient.',
       parameters: {
         source: { type: 'string', enum: ['auto', 'uia', 'ocr'] },
         name: str,
@@ -253,6 +258,10 @@ export function apply(ctx, config = {}) {
         titleContains: str,
         scope: { type: 'string', enum: ['active-window', 'screen'] },
         languages: { type: 'array', items: { type: 'string' } },
+        minXRatio: num,
+        maxXRatio: num,
+        minYRatio: num,
+        maxYRatio: num,
         maxElements: int,
         timeoutMs: int,
         pollMs: int,
@@ -348,7 +357,7 @@ export function apply(ctx, config = {}) {
   ]
 
   const disposers = definitions.map(definition => ctx.tools.register(definition))
-  ctx.logger.info(`[dsh-patrol/desktop] desktop tools registered; platform=${process.platform}; permission-mode=unrestricted; strategy=UIA>keyboard>OCR>coordinates`)
+  ctx.logger.info(`[dsh-patrol/desktop] desktop tools registered; platform=${process.platform}; permission-mode=unrestricted; strategy=OCR>keyboard>UIA>coordinates`)
   return () => { for (const dispose of disposers) dispose() }
 }
 

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { findOcrTextMatches, findUiaTargetMatches, normalizeOcrObservations, WindowsDesktopDriver } from '../desktop-runtime/windows-driver.js'
+import { filterOcrMatchesByRegion, findOcrTextMatches, findUiaTargetMatches, normalizeOcrObservations, WindowsDesktopDriver } from '../desktop-runtime/windows-driver.js'
 import { PATROL_DESKTOP_PROMPT } from '../src/desktop-prompt.js'
 
 describe('Desktop Automation runtime foundation', () => {
@@ -33,7 +33,9 @@ describe('Desktop Automation runtime foundation', () => {
     expect(wechat.content).toContain('目标聊天确认')
     expect(wechat.content).toContain('source=ocr')
     expect(wechat.content).toContain('scope=active-window')
-    expect(wechat.content).toContain('禁止因为一次 OCR/点击判断不确定就关闭/重开微信')
+    expect(wechat.content).toContain('minXRatio=0.33')
+    expect(wechat.content).toContain('右侧聊天标题区')
+    expect(wechat.content).toContain('禁止自动点击“返回上一页”')
     expect(wechat.content).toContain('${artifact:last-screenshot}')
   })
 
@@ -43,13 +45,19 @@ describe('Desktop Automation runtime foundation', () => {
     expect(capture).toContain('Activate-Window $process')
     expect(capture.indexOf('Activate-Window $process')).toBeLessThan(capture.indexOf('$graphics.CopyFromScreen'))
     expect(capture).toContain('scope=$scope; window=$windowRecord')
+    const activation = source.slice(source.indexOf('function Activate-Window'), source.indexOf('function Get-Root'))
+    expect(activation).toContain('GetForegroundWindow()')
+    expect(activation).toContain('if ($foreground -eq $target) { return }')
+    expect(activation).toContain('failed to verify foreground desktop window')
   })
 
   it('requires Patrol desktop flows to record business actions and keeps WeChat OCR window-scoped', () => {
     expect(PATROL_DESKTOP_PROMPT).toMatch(/成功业务动作必须改用 patrol_desktop_action/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/不能一边显示“巡检流程”一边只调用 raw desktop_\*/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/scope=active-window/)
-    expect(PATROL_DESKTOP_PROMPT).toMatch(/禁止再次点击该联系人/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/minXRatio=0\.33/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/右侧聊天标题区域/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/禁止再次点联系人/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/只有 desktop_list_windows 明确确认微信窗口已经不存在时才允许重新 launch/)
   })
 
@@ -60,6 +68,25 @@ describe('Desktop Automation runtime foundation', () => {
     ]
     expect(findOcrTextMatches(lines, { text: '文件传输助手', match: 'exact' })).toEqual([lines[0]])
     expect(findOcrTextMatches(lines, { text: '传输助手', match: 'contains' })).toEqual([lines[0]])
+  })
+
+  it('filters duplicate OCR text by CURRENT window-relative region for chat-title verification', () => {
+    const lines = [
+      { text: '文件传输助手', center: { x: 180, y: 170 } },
+      { text: '文件传输助手', center: { x: 560, y: 90 } },
+      { text: '其他内容', center: { x: 700, y: 400 } },
+    ]
+    const filtered = filterOcrMatchesByRegion(lines, { x: 0, y: 0, width: 1000, height: 800 }, {
+      minXRatio: 0.33,
+      maxXRatio: 0.90,
+      minYRatio: 0,
+      maxYRatio: 0.20,
+    })
+    expect(filtered).toEqual([lines[1]])
+    expect(() => filterOcrMatchesByRegion(lines, { x: 0, y: 0, width: 1000, height: 800 }, {
+      minXRatio: 0.8,
+      maxXRatio: 0.2,
+    })).toThrow(/minimum ratios/)
   })
 
   it('converts normalized OCR lines into CURRENT absolute screen coordinates', () => {

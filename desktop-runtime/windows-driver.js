@@ -168,7 +168,8 @@ export class WindowsDesktopDriver {
       await this.run('activate-window', windowArgs, exec)
     }
     const ocr = await this.ocr(args, exec)
-    const candidates = findOcrTextMatches(ocr.lines, { text, match, caseSensitive })
+    const textMatches = findOcrTextMatches(ocr.lines, { text, match, caseSensitive })
+    const candidates = filterOcrMatchesByRegion(textMatches, ocr.screenshotBounds, args)
 
     let target
     if (args.index !== undefined) {
@@ -278,11 +279,12 @@ export class WindowsDesktopDriver {
       if (source !== 'uia' && text) {
         try {
           const ocr = await this.ocr({ ...args, fileName: waitCaptureName }, exec)
-          const matches = findOcrTextMatches(ocr.lines, {
+          const textMatches = findOcrTextMatches(ocr.lines, {
             text,
             match: args.match,
             caseSensitive: args.caseSensitive,
           })
+          const matches = filterOcrMatchesByRegion(textMatches, ocr.screenshotBounds, args)
           lastOcrCount = matches.length
           if (matches.length > 0 && (!requireUnique || matches.length === 1)) {
             return {
@@ -294,6 +296,9 @@ export class WindowsDesktopDriver {
               target: matches[0],
               screenshotPath: ocr.screenshotPath,
               screenshotBounds: ocr.screenshotBounds,
+              scope: ocr.scope,
+              window: ocr.window,
+              region: ocrRegionDescriptor(args),
               languagesTried: ocr.languagesTried,
             }
           }
@@ -477,6 +482,50 @@ export function findUiaTargetMatches(elements, args = {}) {
     && compare(row?.controlType, requestedControlType)
     && compare(row?.className, requestedClassName)
     && compare(row?.value, requestedValue, match))
+}
+
+export function filterOcrMatchesByRegion(lines, bounds, args = {}) {
+  const rows = Array.isArray(lines) ? lines : []
+  const region = ocrRegionDescriptor(args)
+  if (region === undefined) return rows
+  const originX = finiteNumber(bounds?.x, 0)
+  const originY = finiteNumber(bounds?.y, 0)
+  const width = finiteNumber(bounds?.width, 0)
+  const height = finiteNumber(bounds?.height, 0)
+  if (width <= 0 || height <= 0) throw new Error('OCR region filtering requires valid CURRENT screenshot bounds')
+  return rows.filter(line => {
+    const x = finiteNumber(line?.center?.x, Number.NaN)
+    const y = finiteNumber(line?.center?.y, Number.NaN)
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return false
+    const rx = (x - originX) / width
+    const ry = (y - originY) / height
+    return rx >= region.minXRatio && rx <= region.maxXRatio
+      && ry >= region.minYRatio && ry <= region.maxYRatio
+  })
+}
+
+export function ocrRegionDescriptor(args = {}) {
+  const keys = ['minXRatio', 'maxXRatio', 'minYRatio', 'maxYRatio']
+  if (!keys.some(key => args[key] !== undefined)) return undefined
+  const region = {
+    minXRatio: ratioValue(args.minXRatio, 0, 'minXRatio'),
+    maxXRatio: ratioValue(args.maxXRatio, 1, 'maxXRatio'),
+    minYRatio: ratioValue(args.minYRatio, 0, 'minYRatio'),
+    maxYRatio: ratioValue(args.maxYRatio, 1, 'maxYRatio'),
+  }
+  if (region.minXRatio > region.maxXRatio || region.minYRatio > region.maxYRatio) {
+    throw new Error('OCR region minimum ratios must not exceed maximum ratios')
+  }
+  return region
+}
+
+function ratioValue(value, fallback, name) {
+  if (value === undefined) return fallback
+  const number = Number(value)
+  if (!Number.isFinite(number) || number < 0 || number > 1) {
+    throw new Error(`OCR region ${name} must be a finite number between 0 and 1`)
+  }
+  return number
 }
 
 export function findOcrTextMatches(lines, args = {}) {
