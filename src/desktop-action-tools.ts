@@ -121,13 +121,14 @@ async function executeAndRecordDesktopAction(
     return `Desktop teaching action failed and was NOT recorded. ${dispatched.error ?? dispatched.text ?? 'Unknown desktop error'}`
   }
 
+  const artifact = desktopArtifactForTool(tool)
   const step: ToolStep = {
     id: nextStepId(definition.steps),
     kind: 'tool',
     name: stepName,
     tool,
     arguments: storedArgs,
-    ...(desktopArtifactForTool(tool) === undefined ? {} : { artifact: desktopArtifactForTool(tool) }),
+    ...(artifact === undefined ? {} : { artifact }),
     ...(notes === undefined ? {} : { notes }),
     recordedAt: new Date().toISOString(),
   }
