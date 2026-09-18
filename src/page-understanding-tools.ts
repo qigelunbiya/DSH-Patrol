@@ -137,14 +137,19 @@ export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = 
 
 function alignBusinessState(state: PlanningGuardState, key: string): void {
   if (!key || state.businessKey === key) return
+  if (state.businessKey && (state.businessKey.includes(key) || key.includes(state.businessKey))) return
   state.businessKey = key
   state.analyzed = false
   state.strategyAttempts = 0
 }
 
 function businessKey(primary: unknown, locator: unknown): string {
-  const raw = cleanString(primary) || cleanString(locator) || 'click'
-  return normalize(raw).replace(/\d{6,}/g, '#').slice(0, 220)
+  const raw = cleanString(locator) || cleanString(primary) || 'click'
+  return normalize(raw)
+    .replace(/^(?:请)?(?:点击|打开|选择|进入|查看|访问|尝试)+/g, '')
+    .replace(/(?:节点|菜单项|菜单|选项)$/g, '')
+    .replace(/\d{6,}/g, '#')
+    .slice(0, 220)
 }
 
 function strategyHardStop(reason = '同一业务点击的两种定位/执行策略都已用完'): string {
