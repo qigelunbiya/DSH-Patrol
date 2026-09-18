@@ -211,6 +211,42 @@ describe('recordable desktop actions', () => {
     })
   })
 
+  it('rejects secret-like targeted desktop text before dispatching or recording', async () => {
+    const { store, action, exec, dispatched } = await setup()
+
+    await expect(action.execute({
+      inspectionId: 'wechat-semantic-wait',
+      stepName: '不应持久化的敏感输入',
+      action: 'type-target',
+      processName: 'WeChat',
+      controlType: 'Edit',
+      className: 'MessageInput',
+      text: 'demo@1234',
+      clear: true,
+    }, exec)).rejects.toThrow(/secret-like/i)
+
+    expect(dispatched).toEqual([])
+    expect((await store.load('wechat-semantic-wait')).steps).toEqual([])
+  })
+
+  it('rejects code-like UIA value selectors before dispatching or recording', async () => {
+    const { store, action, exec, dispatched } = await setup()
+
+    await expect(action.execute({
+      inspectionId: 'wechat-semantic-wait',
+      stepName: '不应保存验证码值',
+      action: 'wait-for-target',
+      source: 'uia',
+      processName: 'WeChat',
+      controlType: 'Edit',
+      value: '123456',
+      timeoutMs: 5000,
+    }, exec)).rejects.toThrow(/code-like/i)
+
+    expect(dispatched).toEqual([])
+    expect((await store.load('wechat-semantic-wait')).steps).toEqual([])
+  })
+
   it('rejects invalid wait bounds before dispatching or recording', async () => {
     const { store, action, exec, dispatched } = await setup()
 

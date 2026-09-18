@@ -101,7 +101,9 @@ desktop_type_target
 
 它会完成“激活窗口 → 唯一定位控件 → 聚焦 → 可选清空 → 粘贴文本”，避免把输入正确性寄托在上一步是否仍保持键盘焦点。需要写入 Runbook 时使用 `patrol_desktop_action(action=type-target)`。
 
-`desktop_snapshot` 对支持 UIA `ValuePattern` 的**非密码控件**会返回最多 2000 字符的 `value`，并返回 `isPassword`。密码控件不会读取或输出 `value`。因此普通文本可以通过 `desktop_wait_for_target(source=uia, value=<非敏感片段>, match=contains)` 做 CURRENT 验证；密码、Token、验证码等敏感值不得这样保存或验证。
+`desktop_snapshot` 对**非密码控件**优先读取 UIA `ValuePattern`，没有 ValuePattern 时再尝试 `TextPattern`（例如某些 Document/RichEdit 编辑区），返回最多 2000 字符的 `value`、`valueSource` 与 `isPassword`。密码控件不会读取或输出 `value`。因此普通文本可以通过 `desktop_wait_for_target(source=uia, value=<非敏感片段>, match=contains)` 做 CURRENT 验证。
+
+可重放的 `desktop_type_text`、`desktop_type_target`、`desktop_set_clipboard_text` 与 `wait-for-target.value` 会拒绝数字验证码、JWT 和明显密码/Token 形态，且在真正执行桌面动作之前拒绝。当前版本没有专用 Desktop credential 引用输入时，敏感桌面输入应走人工 checkpoint / 瞬时操作，不得进入 Runbook。
 
 ## 两种流程类型
 

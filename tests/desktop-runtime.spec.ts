@@ -90,6 +90,9 @@ describe('Desktop Automation runtime foundation', () => {
     expect(source).toContain('$isPassword = [bool]$current.IsPassword')
     expect(source).toContain('if (-not $isPassword)')
     expect(source).toContain('ValuePattern')
+    expect(source).toContain('TextPattern')
+    expect(source).toContain("valueSource = 'text-pattern'")
+    expect(source).toContain("'Document'")
   })
 
   it('waits for semantic desktop targets through UIA first and OCR fallback second', async () => {
@@ -219,5 +222,6 @@ describe('Desktop Automation runtime foundation', () => {
       expect(source).toContain(`name: '${tool}'`)
     }
     expect(source).toContain('permission policy is intentionally unrestricted')
+    expect(source).not.toMatch(/\\$args\\b/i)
   })
 })

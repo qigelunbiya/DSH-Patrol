@@ -1,7 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { DESKTOP_ACTIONS, desktopArtifactForTool, desktopToolForAction, type DesktopAction } from './desktop.js'
-import { assertSafeForStorage, assertSafePersistentText } from './security.js'
+import { assertSafeForStorage, assertSafePersistentText, assertSafePublicInputText } from './security.js'
 import { PatrolRunner } from './runner.js'
 import { assertPersistedTaskChecklist, PatrolStore } from './store.js'
 import type { InspectionDefinition, InspectionStep, JsonObject, RunArtifact, ToolStep } from './types.js'
@@ -264,13 +264,20 @@ function validateRequiredDesktopArguments(action: DesktopAction, args: JsonObjec
         throw new Error('click-target requires name, automationId, controlType, or className')
       }
       break
-    case 'click-ocr-text': requireText('text'); break
+    case 'click-ocr-text':
+      requireText('text')
+      assertSafePersistentText(args.text as string, 'desktop OCR target text')
+      break
     case 'click-coordinates': requireNumber('x'); requireNumber('y'); break
     case 'drag': requireNumber('fromX'); requireNumber('fromY'); requireNumber('toX'); requireNumber('toY'); break
     case 'type-text':
-    case 'set-clipboard-text': requireText('text'); break
+    case 'set-clipboard-text':
+      requireText('text')
+      assertSafePublicInputText(args.text as string)
+      break
     case 'type-target':
       requireText('text')
+      assertSafePublicInputText(args.text as string)
       if (![args.name, args.automationId, args.controlType, args.className]
         .some(value => typeof value === 'string' && value.trim() !== '')) {
         throw new Error('type-target requires name, automationId, controlType, or className')
@@ -280,6 +287,8 @@ function validateRequiredDesktopArguments(action: DesktopAction, args: JsonObjec
     case 'press': requireText('key'); break
     case 'wait': requireNumber('milliseconds'); break
     case 'wait-for-target':
+      if (typeof args.text === 'string') assertSafePersistentText(args.text, 'desktop wait target text')
+      if (typeof args.value === 'string') assertSafePublicInputText(args.value)
       if (![args.name, args.automationId, args.controlType, args.className, args.value, args.text]
         .some(value => typeof value === 'string' && value.trim() !== '')) {
         throw new Error('wait-for-target requires text or a UI Automation selector')

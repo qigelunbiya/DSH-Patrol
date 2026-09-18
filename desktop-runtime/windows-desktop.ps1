@@ -71,12 +71,12 @@ function Get-Windows {
   return $items
 }
 
-function Resolve-Window($args, [bool]$allowForeground = $true) {
-  $processId = Get-Prop $args 'processId'
-  $hwnd = Get-Prop $args 'hwnd'
-  $processName = [string](Get-Prop $args 'processName' '')
-  $title = [string](Get-Prop $args 'title' '')
-  $titleContains = [string](Get-Prop $args 'titleContains' '')
+function Resolve-Window($request, [bool]$allowForeground = $true) {
+  $processId = Get-Prop $request 'processId'
+  $hwnd = Get-Prop $request 'hwnd'
+  $processName = [string](Get-Prop $request 'processName' '')
+  $title = [string](Get-Prop $request 'title' '')
+  $titleContains = [string](Get-Prop $request 'titleContains' '')
 
   if ($null -ne $hwnd -and [int64]$hwnd -ne 0) {
     $p = Get-Process | Where-Object { $_.MainWindowHandle -eq [int64]$hwnd } | Select-Object -First 1
@@ -125,8 +125,8 @@ function Activate-Window($process) {
   Start-Sleep -Milliseconds 120
 }
 
-function Get-Root($args) {
-  $process = Resolve-Window $args $true
+function Get-Root($request) {
+  $process = Resolve-Window $request $true
   $root = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$process.MainWindowHandle)
   if ($null -eq $root) { throw "UI Automation root unavailable for $($process.MainWindowTitle)" }
   return [pscustomobject]@{ Process = $process; Root = $root }
@@ -140,13 +140,25 @@ function Element-Record($element) {
     if ($control.StartsWith('ControlType.')) { $control = $control.Substring(12) }
     $isPassword = [bool]$current.IsPassword
     $value = $null
+    $valueSource = $null
     if (-not $isPassword) {
       $valuePattern = $null
       if ($element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$valuePattern)) {
         try {
           $rawValue = [string]([System.Windows.Automation.ValuePattern]$valuePattern).Current.Value
           $value = if ($rawValue.Length -le 2000) { $rawValue } else { $rawValue.Substring(0, 2000) + '…' }
+          $valueSource = 'value-pattern'
         } catch {}
+      }
+      if ($null -eq $value) {
+        $textPattern = $null
+        if ($element.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$textPattern)) {
+          try {
+            $rawText = [string]([System.Windows.Automation.TextPattern]$textPattern).DocumentRange.GetText(2000)
+            $value = $rawText
+            $valueSource = 'text-pattern'
+          } catch {}
+        }
       }
     }
     return [ordered]@{
@@ -156,6 +168,7 @@ function Element-Record($element) {
       className = [string]$current.ClassName
       isPassword = $isPassword
       value = $value
+      valueSource = $valueSource
       enabled = [bool]$current.IsEnabled
       offscreen = [bool]$current.IsOffscreen
       rect = [ordered]@{
@@ -170,12 +183,12 @@ function Element-Record($element) {
   }
 }
 
-function Get-Snapshot($args) {
-  $resolved = Get-Root $args
-  $maxElements = [int](Get-Prop $args 'maxElements' 300)
+function Get-Snapshot($request) {
+  $resolved = Get-Root $request
+  $maxElements = [int](Get-Prop $request 'maxElements' 300)
   if ($maxElements -lt 1) { $maxElements = 1 }
   if ($maxElements -gt 1000) { $maxElements = 1000 }
-  $includeOffscreen = [bool](Get-Prop $args 'includeOffscreen' $false)
+  $includeOffscreen = [bool](Get-Prop $request 'includeOffscreen' $false)
   $all = $resolved.Root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
   $items = @()
   for ($i = 0; $i -lt $all.Count -and $items.Count -lt $maxElements; $i++) {
@@ -184,7 +197,7 @@ function Get-Snapshot($args) {
     if (-not $includeOffscreen -and $record.offscreen) { continue }
     if ($record.rect.width -le 0 -or $record.rect.height -le 0) { continue }
     if ([string]::IsNullOrWhiteSpace($record.name) -and [string]::IsNullOrWhiteSpace($record.automationId)) {
-      $interactiveTypes = @('Button','Edit','ListItem','MenuItem','TabItem','TreeItem','Hyperlink','CheckBox','RadioButton','ComboBox','DataItem')
+      $interactiveTypes = @('Button','Edit','Document','ListItem','MenuItem','TabItem','TreeItem','Hyperlink','CheckBox','RadioButton','ComboBox','DataItem')
       if ($interactiveTypes -notcontains $record.controlType) { continue }
     }
     $items += $record
@@ -197,14 +210,14 @@ function Get-Snapshot($args) {
   }
 }
 
-function Find-TargetElement($args) {
-  $resolved = Get-Root $args
-  $name = [string](Get-Prop $args 'name' '')
-  $automationId = [string](Get-Prop $args 'automationId' '')
-  $controlType = [string](Get-Prop $args 'controlType' '')
-  $className = [string](Get-Prop $args 'className' '')
-  $match = [string](Get-Prop $args 'match' 'exact')
-  $indexValue = Get-Prop $args 'index' $null
+function Find-TargetElement($request) {
+  $resolved = Get-Root $request
+  $name = [string](Get-Prop $request 'name' '')
+  $automationId = [string](Get-Prop $request 'automationId' '')
+  $controlType = [string](Get-Prop $request 'controlType' '')
+  $className = [string](Get-Prop $request 'className' '')
+  $match = [string](Get-Prop $request 'match' 'exact')
+  $indexValue = Get-Prop $request 'index' $null
   if ([string]::IsNullOrWhiteSpace($name) -and [string]::IsNullOrWhiteSpace($automationId) -and [string]::IsNullOrWhiteSpace($controlType) -and [string]::IsNullOrWhiteSpace($className)) {
     throw 'desktop target requires at least one of name, automationId, controlType, className'
   }
@@ -328,15 +341,15 @@ function Send-Hotkey([string]$combo) {
   [System.Windows.Forms.SendKeys]::SendWait("$prefix$encoded")
 }
 
-function Capture-Screenshot($args) {
-  $path = [string](Get-Prop $args 'path' '')
+function Capture-Screenshot($request) {
+  $path = [string](Get-Prop $request 'path' '')
   if ([string]::IsNullOrWhiteSpace($path)) { throw 'desktop screenshot path is required' }
-  $scope = [string](Get-Prop $args 'scope' 'active-window')
+  $scope = [string](Get-Prop $request 'scope' 'active-window')
   if ($scope -ieq 'screen') {
     $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
     $x = $bounds.X; $y = $bounds.Y; $width = $bounds.Width; $height = $bounds.Height
   } else {
-    $process = Resolve-Window $args $true
+    $process = Resolve-Window $request $true
     $rect = New-Object PatrolDesktop.Native+RECT
     if (-not [PatrolDesktop.Native]::GetWindowRect([IntPtr]$process.MainWindowHandle, [ref]$rect)) { throw 'GetWindowRect failed' }
     $x = $rect.Left; $y = $rect.Top; $width = $rect.Right - $rect.Left; $height = $rect.Bottom - $rect.Top
@@ -356,17 +369,17 @@ function Capture-Screenshot($args) {
   return [ordered]@{ ok=$true; path=$path; x=[int]$x; y=[int]$y; width=[int]$width; height=[int]$height }
 }
 
-$args = Decode-Payload $Payload
+$request = Decode-Payload $Payload
 try {
   $result = switch ($Action) {
     'list-windows' {
       [ordered]@{ ok=$true; windows=@(Get-Windows) }
     }
     'launch-app' {
-      $file = [string](Get-Prop $args 'file' '')
+      $file = [string](Get-Prop $request 'file' '')
       if ([string]::IsNullOrWhiteSpace($file)) { throw 'launch-app requires file' }
-      $argumentList = @(Get-Prop $args 'arguments' @())
-      $workingDirectory = [string](Get-Prop $args 'workingDirectory' '')
+      $argumentList = @(Get-Prop $request 'arguments' @())
+      $workingDirectory = [string](Get-Prop $request 'workingDirectory' '')
       $parameters = @{ FilePath=$file; PassThru=$true }
       if ($argumentList.Count -gt 0) { $parameters.ArgumentList = $argumentList }
       if (-not [string]::IsNullOrWhiteSpace($workingDirectory)) { $parameters.WorkingDirectory = $workingDirectory }
@@ -374,37 +387,37 @@ try {
       [ordered]@{ ok=$true; processId=[int]$p.Id; file=$file }
     }
     'open-path' {
-      $path = [string](Get-Prop $args 'path' '')
+      $path = [string](Get-Prop $request 'path' '')
       if ([string]::IsNullOrWhiteSpace($path)) { throw 'open-path requires path' }
       Start-Process -FilePath $path | Out-Null
       [ordered]@{ ok=$true; path=$path }
     }
     'activate-window' {
-      $p = Resolve-Window $args $false
+      $p = Resolve-Window $request $false
       Activate-Window $p
       [ordered]@{ ok=$true; window=(Window-Record $p) }
     }
     'snapshot' {
-      Get-Snapshot $args
+      Get-Snapshot $request
     }
     'click-target' {
-      $process = Resolve-Window $args $true
+      $process = Resolve-Window $request $true
       Activate-Window $process
-      $target = Find-TargetElement $args
+      $target = Find-TargetElement $request
       $method = Invoke-Target $target
       Start-Sleep -Milliseconds 100
       [ordered]@{ ok=$true; method=$method; target=$target.Record; window=(Window-Record $process) }
     }
     'click-coordinates' {
-      $x = [int](Get-Prop $args 'x' 0); $y = [int](Get-Prop $args 'y' 0)
-      $buttonName = [string](Get-Prop $args 'button' 'left')
+      $x = [int](Get-Prop $request 'x' 0); $y = [int](Get-Prop $request 'y' 0)
+      $buttonName = [string](Get-Prop $request 'button' 'left')
       Click-Point $x $y ($(if ($buttonName -ieq 'right') { 1 } else { 0 }))
       [ordered]@{ ok=$true; x=$x; y=$y; button=$buttonName }
     }
     'drag' {
-      $fromX=[int](Get-Prop $args 'fromX' 0); $fromY=[int](Get-Prop $args 'fromY' 0)
-      $toX=[int](Get-Prop $args 'toX' 0); $toY=[int](Get-Prop $args 'toY' 0)
-      $durationMs=[int](Get-Prop $args 'durationMs' 350)
+      $fromX=[int](Get-Prop $request 'fromX' 0); $fromY=[int](Get-Prop $request 'fromY' 0)
+      $toX=[int](Get-Prop $request 'toX' 0); $toY=[int](Get-Prop $request 'toY' 0)
+      $durationMs=[int](Get-Prop $request 'durationMs' 350)
       [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($fromX,$fromY)
       [PatrolDesktop.Native]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero)
       $steps=[Math]::Max(2,[Math]::Min(30,[Math]::Ceiling($durationMs/30)))
@@ -417,20 +430,20 @@ try {
       [ordered]@{ok=$true;fromX=$fromX;fromY=$fromY;toX=$toX;toY=$toY}
     }
     'type-text' {
-      $text = [string](Get-Prop $args 'text' '')
-      $clear = [bool](Get-Prop $args 'clear' $false)
+      $text = [string](Get-Prop $request 'text' '')
+      $clear = [bool](Get-Prop $request 'clear' $false)
       if ($clear) { [System.Windows.Forms.SendKeys]::SendWait('^a'); Start-Sleep -Milliseconds 40 }
       [System.Windows.Forms.Clipboard]::SetText($text)
       [System.Windows.Forms.SendKeys]::SendWait('^v')
       [ordered]@{ ok=$true; chars=$text.Length }
     }
     'type-target' {
-      $text = [string](Get-Prop $args 'text' '')
-      $process = Resolve-Window $args $true
+      $text = [string](Get-Prop $request 'text' '')
+      $process = Resolve-Window $request $true
       Activate-Window $process
-      $target = Find-TargetElement $args
+      $target = Find-TargetElement $request
       $focusMethod = Focus-Target $target
-      $clear = [bool](Get-Prop $args 'clear' $false)
+      $clear = [bool](Get-Prop $request 'clear' $false)
       if ($clear) { [System.Windows.Forms.SendKeys]::SendWait('^a'); Start-Sleep -Milliseconds 40 }
       [System.Windows.Forms.Clipboard]::SetText($text)
       [System.Windows.Forms.SendKeys]::SendWait('^v')
@@ -445,33 +458,33 @@ try {
     }
 
     'hotkey' {
-      $combo=[string](Get-Prop $args 'combo' '')
+      $combo=[string](Get-Prop $request 'combo' '')
       if ([string]::IsNullOrWhiteSpace($combo)) { throw 'hotkey requires combo' }
       Send-Hotkey $combo
       [ordered]@{ok=$true;combo=$combo}
     }
     'press' {
-      $key=[string](Get-Prop $args 'key' '')
+      $key=[string](Get-Prop $request 'key' '')
       if ([string]::IsNullOrWhiteSpace($key)) { throw 'press requires key' }
       Send-Key $key
       [ordered]@{ok=$true;key=$key}
     }
     'wait' {
-      $milliseconds=[int](Get-Prop $args 'milliseconds' 500)
+      $milliseconds=[int](Get-Prop $request 'milliseconds' 500)
       if($milliseconds -lt 0 -or $milliseconds -gt 600000){throw 'wait milliseconds must be between 0 and 600000'}
       Start-Sleep -Milliseconds $milliseconds
       [ordered]@{ok=$true;milliseconds=$milliseconds}
     }
     'screenshot' {
-      Capture-Screenshot $args
+      Capture-Screenshot $request
     }
     'set-clipboard-text' {
-      $text=[string](Get-Prop $args 'text' '')
+      $text=[string](Get-Prop $request 'text' '')
       [System.Windows.Forms.Clipboard]::SetText($text)
       [ordered]@{ok=$true;chars=$text.Length}
     }
     'set-clipboard-files' {
-      $paths=@(Get-Prop $args 'paths' @())
+      $paths=@(Get-Prop $request 'paths' @())
       if($paths.Count -eq 0){throw 'set-clipboard-files requires at least one path'}
       $collection=New-Object System.Collections.Specialized.StringCollection
       foreach($path in $paths){
@@ -487,16 +500,16 @@ try {
       [ordered]@{ok=$true}
     }
     'close-window' {
-      $p=Resolve-Window $args $false
+      $p=Resolve-Window $request $false
       [void][PatrolDesktop.Native]::PostMessage([IntPtr]$p.MainWindowHandle,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)
       [ordered]@{ok=$true;window=(Window-Record $p)}
     }
     'delete-path' {
-      $path=[string](Get-Prop $args 'path' '')
+      $path=[string](Get-Prop $request 'path' '')
       if([string]::IsNullOrWhiteSpace($path)){throw 'delete-path requires path'}
       $resolved=[IO.Path]::GetFullPath($path)
       if(-not (Test-Path -LiteralPath $resolved)){throw "path does not exist: $resolved"}
-      $recursive=[bool](Get-Prop $args 'recursive' $false)
+      $recursive=[bool](Get-Prop $request 'recursive' $false)
       Remove-Item -LiteralPath $resolved -Force -Recurse:$recursive
       [ordered]@{ok=$true;path=$resolved;recursive=$recursive}
     }
