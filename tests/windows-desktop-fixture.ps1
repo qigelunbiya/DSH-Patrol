@@ -3,61 +3,65 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Drawing
-Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName PresentationCore
+Add-Type -AssemblyName PresentationFramework
+Add-Type -AssemblyName WindowsBase
 
-$form = New-Object System.Windows.Forms.Form
-$form.Text = $Title
-$form.Width = 560
-$form.Height = 260
-$form.StartPosition = 'CenterScreen'
-$form.TopMost = $false
+$window = New-Object System.Windows.Window
+$window.Title = $Title
+$window.Width = 560
+$window.Height = 260
+$window.WindowStartupLocation = 'CenterScreen'
+$window.Topmost = $false
 
-$label = New-Object System.Windows.Forms.Label
+$panel = New-Object System.Windows.Controls.StackPanel
+$panel.Margin = '20'
+
+$label = New-Object System.Windows.Controls.TextBlock
 $label.Text = 'Smoke input'
-$label.Left = 20
-$label.Top = 25
-$label.Width = 120
-$label.Height = 24
+$label.Margin = '0,0,0,8'
 
-$input = New-Object System.Windows.Forms.TextBox
+$input = New-Object System.Windows.Controls.TextBox
 $input.Name = 'SmokeInput'
-$input.AccessibleName = 'Smoke Input'
-$input.Left = 20
-$input.Top = 55
-$input.Width = 480
-$input.Height = 28
+$input.Height = 30
+$input.Margin = '0,0,0,12'
+[System.Windows.Automation.AutomationProperties]::SetAutomationId($input, 'SmokeInput')
+[System.Windows.Automation.AutomationProperties]::SetName($input, 'Smoke Input')
 
-$button = New-Object System.Windows.Forms.Button
+$button = New-Object System.Windows.Controls.Button
 $button.Name = 'SmokeButton'
-$button.AccessibleName = 'Apply Smoke'
-$button.Text = 'Apply'
-$button.Left = 20
-$button.Top = 100
+$button.Content = 'Apply'
 $button.Width = 100
 $button.Height = 32
+$button.HorizontalAlignment = 'Left'
+$button.Margin = '0,0,0,12'
+[System.Windows.Automation.AutomationProperties]::SetAutomationId($button, 'SmokeButton')
+[System.Windows.Automation.AutomationProperties]::SetName($button, 'Apply Smoke')
 
-$status = New-Object System.Windows.Forms.Label
+$status = New-Object System.Windows.Controls.TextBlock
 $status.Name = 'SmokeStatus'
-$status.AccessibleName = 'Smoke Status'
 $status.Text = 'idle'
-$status.Left = 145
-$status.Top = 105
-$status.Width = 350
-$status.Height = 24
+[System.Windows.Automation.AutomationProperties]::SetAutomationId($status, 'SmokeStatus')
+[System.Windows.Automation.AutomationProperties]::SetName($status, 'idle')
 
 $button.Add_Click({
-  $status.Text = "applied:$($input.Text)"
-})
+  $next = "applied:$($input.Text)"
+  $status.Text = $next
+  [System.Windows.Automation.AutomationProperties]::SetName($status, $next)
+}.GetNewClosure())
 
-$form.Controls.AddRange(@($label, $input, $button, $status))
-$form.Add_Shown({
-  $form.Activate()
-  $input.Focus()
-})
+[void]$panel.Children.Add($label)
+[void]$panel.Children.Add($input)
+[void]$panel.Children.Add($button)
+[void]$panel.Children.Add($status)
+$window.Content = $panel
+
+$window.Add_ContentRendered({
+  [void]$input.Focus()
+}.GetNewClosure())
 
 try {
-  [void]$form.ShowDialog()
+  [void]$window.ShowDialog()
 } finally {
-  $form.Dispose()
+  $window.Close()
 }
