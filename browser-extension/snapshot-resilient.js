@@ -148,7 +148,9 @@ function snapshotMainWorld(args = {}) {
     if (tag === 'button') return 'button'
     if (tag === 'a' && element.getAttribute('href')) return 'link'
     if (element instanceof HTMLInputElement && ['button', 'submit', 'reset'].includes(element.type)) return 'button'
-    if (likelyClickable(element)) return 'button'
+    // Custom clickable nodes keep their real DOM role (often none). Inventing
+    // role=button would make a later semantic click reject the same CURRENT
+    // span/div because MAIN-world role resolution sees no such role.
     return undefined
   }
   const unique = selector => {
