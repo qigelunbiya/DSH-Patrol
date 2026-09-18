@@ -30,6 +30,19 @@ describe('Patrol page understanding planner', () => {
     expect(plans[0]).toMatchObject({ kind: 'semantic', selector: 'top-frame::#workbench', locatorText: '我的工作台' })
   })
 
+  it('prefers a unique exact title-backed tree target over nested same-text wrappers', () => {
+    const plans = analyzePageEvidence('点击主机下的未分组', '未分组', '', [
+      { tag: 'span', role: 'button', text: '未分组', selector: 'top-frame::span[title="未分组"]' },
+      { tag: 'span', role: 'button', text: '未分组', selector: 'top-frame::div:nth-of-type(2) > span:nth-of-type(2)' },
+      { tag: 'div', role: 'button', text: '主机 未分组', selector: 'top-frame::.ant-tree-list-holder-inner' },
+    ])
+    expect(plans[0]).toMatchObject({
+      kind: 'semantic',
+      selector: 'top-frame::span[title="未分组"]',
+      locatorText: '未分组',
+    })
+  })
+
   it('refuses to pretend an ambiguous same-text target is unique', () => {
     const plans = analyzePageEvidence('点击 RDP', 'RDP', '', [
       { tag: 'span', role: 'button', text: 'RDP', selector: '#a' },
