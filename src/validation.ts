@@ -141,7 +141,12 @@ function assertStep(value: unknown): asserts value is InspectionStep {
   if (step.kind !== 'tool') throw new Error(`step ${step.id} kind is invalid`)
   if (typeof step.tool !== 'string' || step.tool.length === 0) throw new Error(`tool step ${step.id} tool is required`)
   if (!isReplayableBrowserTool(step.tool) && !isReplayableDesktopTool(step.tool)) {
-    throw new Error(`tool step ${step.id} uses non-replayable Patrol tool ${step.tool}`)
+    const family = step.tool.startsWith('browser_')
+      ? 'browser'
+      : step.tool.startsWith('desktop_')
+        ? 'desktop'
+        : 'Patrol'
+    throw new Error(`tool step ${step.id} uses non-replayable ${family} tool ${step.tool}`)
   }
   if (step.arguments === undefined) throw new Error(`tool step ${step.id} arguments are required`)
   assertSafeForStorage(step.arguments)
