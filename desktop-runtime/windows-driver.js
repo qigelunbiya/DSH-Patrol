@@ -46,6 +46,7 @@ export class WindowsDesktopDriver {
       const result = await execFileAsync(this.powerShell, [
         '-NoProfile',
         '-NonInteractive',
+        '-STA',
         '-ExecutionPolicy', 'Bypass',
         '-File', SCRIPT_PATH,
         '-Action', action,
