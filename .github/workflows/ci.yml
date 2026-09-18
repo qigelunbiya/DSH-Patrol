@@ -148,6 +148,7 @@ jobs:
           if ($null -eq $value.windows) { throw "desktop runtime smoke did not return windows array: $output" }
 
       - name: Execute real Desktop UI Automation smoke
+        timeout-minutes: 2
         shell: pwsh
         run: .\scripts\smoke-desktop-ui.ps1
 
