@@ -49,12 +49,28 @@ describe('atomic semantic click extension layer', () => {
     expect(source).toContain("'[title]'")
     expect(source).toContain("'aria-label', 'title'")
     expect(source).toContain('titleText === wantedText')
+    expect(source).toContain("const globalExactTitleCandidates = wantedText")
+    expect(source).toContain("document.querySelectorAll('[title]')")
+    expect(source).toContain('const uniqueExactTitleTarget = globalExactTitleCandidates.length === 1')
     expect(source).toContain('const exactTitleCandidates = wantedText')
-    expect(source).toContain('const candidatePool = exactTitleCandidates.length > 0 ? exactTitleCandidates : candidates')
+    expect(source).toContain('const candidatePool = uniqueExactTitleTarget !== null')
+    expect(source).toContain("[uniqueExactTitleTarget]")
+    expect(source).toContain("'unique-exact-title->ant-tree-wrapper'")
     expect(source).toContain('const scored = candidatePool.map(element =>')
     expect(source).toContain('const physicalClickTarget = element =>')
     expect(source).toContain("element.closest?.('.ant-tree-node-content-wrapper,[role=\"treeitem\"]')")
     expect(source).toContain('const clickTarget = physicalClickTarget(element)')
+  })
+
+  it('matches the observed enterprise Ant-tree shape: one titled leaf drives its click-listener wrapper', () => {
+    const source = readFileSync(join(root, 'browser-extension', 'semantic-click.js'), 'utf8')
+    // Observed DOM:
+    // span.name[title="未分组"] -> ... -> span.ant-tree-node-content-wrapper
+    // with the click listener on the wrapper.
+    expect(source).toContain("normalize(element.getAttribute?.('title') || '') !== wantedText")
+    expect(source).toContain("element.closest?.('.ant-tree-node-content-wrapper,[role=\"treeitem\"]')")
+    expect(source).toContain('const clickTarget = physicalClickTarget(element)')
+    expect(source).toContain("typeof clickTarget.click === 'function'")
   })
 
   it('replays a persisted titled Ant-tree leaf through its clickable wrapper without broad ancestor promotion', () => {

@@ -167,6 +167,28 @@ async function semanticClickPageCommand(mode, spec) {
     const treeWrapper = element.closest?.('.ant-tree-node-content-wrapper,[role="treeitem"]')
     return treeWrapper instanceof Element && visible(treeWrapper) ? treeWrapper : element
   }
+  const wantedText = normalize(spec.locatorText || '')
+  const wantedRole = normalize(spec.locatorRole || '')
+  const wantedTag = normalize(spec.locatorTag || '')
+  const globalExactTitleCandidates = wantedText
+    ? [...document.querySelectorAll('[title]')].filter(element => {
+        if (!visible(element) || disabled(element)) return false
+        if (normalize(element.getAttribute?.('title') || '') !== wantedText) return false
+        if (wantedRole && normalize(roleOf(element)) !== wantedRole) return false
+        if (wantedTag && normalize(element.tagName.toLowerCase()) !== wantedTag) return false
+        return true
+      })
+    : []
+  // A globally unique CURRENT [title] is authoritative business evidence.
+  // Enterprise Ant trees often render one logical row through many nested
+  // elements carrying the same innerText. Resolve the unique titled leaf
+  // before modal/root scoping so those ancestors cannot become duplicate
+  // semantic candidates. The physical click is still promoted only to this
+  // leaf's own Ant-tree content wrapper below.
+  const uniqueExactTitleTarget = globalExactTitleCandidates.length === 1
+    ? globalExactTitleCandidates[0]
+    : null
+
   const modalSelectors = ['[role="dialog"][aria-modal="true"]', '.ant-modal-content', '.el-dialog', '.ivu-modal-content', '.arco-modal', '.semi-modal']
   const modal = modalSelectors.flatMap(selector => [...document.querySelectorAll(selector)]).find(visible)
   const root = modal || document
@@ -178,16 +200,17 @@ async function semanticClickPageCommand(mode, spec) {
     'img', 'svg', '[id*="logo" i]', '[class*="logo" i]',
   ].join(',')
   const candidates = [...new Set([...root.querySelectorAll(selector)])].filter(element => visible(element) && !disabled(element))
-  const wantedText = normalize(spec.locatorText || '')
   const exactTitleCandidates = wantedText
     ? candidates.filter(element => normalize(element.getAttribute?.('title') || '') === wantedText)
     : []
-  // A CURRENT exact title is stronger evidence than nested innerText copies of
-  // the same Ant-tree item. Prefer it before scoring so one physical tree node
-  // cannot appear as 5-6 equally ranked wrapper/child candidates.
-  const candidatePool = exactTitleCandidates.length > 0 ? exactTitleCandidates : candidates
-  const wantedRole = normalize(spec.locatorRole || '')
-  const wantedTag = normalize(spec.locatorTag || '')
+  // If F12/DOM evidence shows exactly one visible exact-title leaf in the
+  // document, do not let a visible modal root or nested innerText wrappers hide
+  // it from the semantic resolver. Otherwise preserve the normal scoped logic.
+  const candidatePool = uniqueExactTitleTarget !== null
+    ? [uniqueExactTitleTarget]
+    : exactTitleCandidates.length > 0
+      ? exactTitleCandidates
+      : candidates
   const task = normalize(spec.task || '')
   const selectorHint = String(spec.selectorHint || '').replace(/^top-frame::/, '').replace(/^frame-url\([^)]*\)::/, '')
   const ipTokens = String(spec.task || '').match(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g) || []
@@ -263,6 +286,7 @@ async function semanticClickPageCommand(mode, spec) {
         tag: item.tag,
         fingerprint: fingerprint(item.element),
         context: compact(item.context).slice(0, 240),
+        evidence: uniqueExactTitleTarget === item.element ? 'unique-exact-title' : 'semantic-score',
       })),
     }
   }
@@ -295,5 +319,12 @@ async function semanticClickPageCommand(mode, spec) {
   else clickTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0 }))
   // Persist the stable semantic leaf selector, not the generic wrapper. Replay
   // promotes only this titled Ant-tree descendant back to its clickable wrapper.
-  return { ok: true, selector: stableSelector(element), text: chosen.text, role: chosen.role, tag: chosen.tag }
+  return {
+    ok: true,
+    selector: stableSelector(element),
+    text: chosen.text,
+    role: chosen.role,
+    tag: chosen.tag,
+    evidence: uniqueExactTitleTarget === element ? 'unique-exact-title->ant-tree-wrapper' : 'semantic-score',
+  }
 }
