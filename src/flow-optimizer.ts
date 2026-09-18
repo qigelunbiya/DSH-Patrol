@@ -185,8 +185,8 @@ function assertCausalBusinessPath(steps: readonly InspectionStep[]): void {
   const advancesAfterInput = steps.slice(lastInput + 1).some(step =>
     step.kind === 'tool' && [
       'browser_click', 'browser_press', 'browser_select', 'browser_navigate',
-      'desktop_click_target', 'desktop_click_ocr_text', 'desktop_click_coordinates', 'desktop_press', 'desktop_hotkey',
-      'desktop_paste', 'desktop_drag', 'desktop_launch_app', 'desktop_open_path', 'desktop_activate_window',
+      'desktop_click_target', 'desktop_click_ocr_text', 'desktop_click_coordinates', 'desktop_press', 'desktop_press_target', 'desktop_hotkey',
+      'desktop_paste', 'desktop_paste_target', 'desktop_drag', 'desktop_launch_app', 'desktop_open_path', 'desktop_activate_window',
     ].includes(step.tool),
   )
   if (!advancesAfterInput) {
@@ -306,8 +306,10 @@ function flowActionForStep(step: ToolStep): ChecklistAction | undefined {
     || step.tool === 'desktop_click_ocr_text'
     || step.tool === 'desktop_click_coordinates'
     || step.tool === 'desktop_press'
+    || step.tool === 'desktop_press_target'
     || step.tool === 'desktop_hotkey'
     || step.tool === 'desktop_paste'
+    || step.tool === 'desktop_paste_target'
     || step.tool === 'desktop_drag'
     || step.tool === 'desktop_close_window'
     || step.tool === 'desktop_delete_path') return 'click'
@@ -452,6 +454,7 @@ function isInteractionBoundary(step: InspectionStep): boolean {
     || step.tool === 'desktop_click_ocr_text'
     || step.tool === 'desktop_click_coordinates'
     || step.tool === 'desktop_press'
+    || step.tool === 'desktop_press_target'
     || step.tool === 'desktop_hotkey'
     || step.tool === 'desktop_paste'
     || step.tool === 'desktop_type_target'
