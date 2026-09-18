@@ -71,40 +71,58 @@ function createDefinitions(ctx: Context, store: PatrolStore, runner: PatrolRunne
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
+      const requestedInspectionId = typeof args.inspectionId === 'string' ? args.inspectionId : undefined
+      const definition = requestedInspectionId !== undefined && await store.exists(requestedInspectionId)
+        ? await store.load(requestedInspectionId)
+        : undefined
+      const browserRequired = definition === undefined ? true : inspectionUsesPlane(definition, 'browser')
+      const desktopRequired = definition === undefined ? true : inspectionUsesPlane(definition, 'desktop')
+
       const missing = SAFE_BROWSER_TOOLS.filter(name => ctx.tools.get(name, exec.agent) === undefined)
       const lines = [
         'DSH Patrol doctor',
+        definition === undefined
+          ? 'inspection scope: not resolved; checking both browser and desktop providers'
+          : `inspection scope: ${definition.target.type} target; browser=${browserRequired ? 'required' : 'optional'}; desktop=${desktopRequired ? 'required' : 'optional'}`,
         'browser provisioning: automatic managed Chromium profile + bundled extension',
         `expected browser tools: ${SAFE_BROWSER_TOOLS.join(', ')}`,
       ]
       if (missing.length > 0) {
-        lines.push(`browser provider: MISSING (${missing.join(', ')})`)
-        lines.push('Fix: restart Harness after installing/updating DSH Patrol. The host must load dsh-patrol/browser-bridge-host and Patrol mode must load dsh-patrol/browser-tools. Do not install the extension manually.')
-      } else {
-        const status = await runner.dispatch('browser_status', {}, exec)
-        if (!status.ok) {
-          lines.push(`browser provider: installed but unavailable: ${status.error ?? status.text}`)
+        if (browserRequired) {
+          lines.push(`browser provider: MISSING (${missing.join(', ')})`)
+          lines.push('Fix: restart Harness after installing/updating DSH Patrol. The host must load dsh-patrol/browser-bridge-host and Patrol mode must load dsh-patrol/browser-tools. Do not install the extension manually.')
         } else {
-          lines.push(`browser provider: ${status.text}`)
+          lines.push(`browser provider: optional for this saved flow; unavailable tools=(${missing.join(', ')})`)
         }
+      } else if (browserRequired) {
+        const status = await runner.dispatch('browser_status', {}, exec)
+        if (!status.ok) lines.push(`browser provider: installed but unavailable: ${status.error ?? status.text}`)
+        else lines.push(`browser provider: ${status.text}`)
+      } else {
+        lines.push('browser provider: installed; not required by this saved flow')
       }
 
       const missingDesktop = SAFE_DESKTOP_TOOLS.filter(name => ctx.tools.get(name, exec.agent) === undefined)
       lines.push(`expected desktop tools: ${SAFE_DESKTOP_TOOLS.join(', ')}`)
       if (missingDesktop.length > 0) {
-        lines.push(`desktop provider: MISSING (${missingDesktop.join(', ')})`)
-        lines.push('Fix: restart Harness after updating DSH Patrol. Patrol mode must load dsh-patrol/desktop-tools from the managed preset.')
-      } else {
+        if (desktopRequired) {
+          lines.push(`desktop provider: MISSING (${missingDesktop.join(', ')})`)
+          lines.push('Fix: restart Harness after updating DSH Patrol. Patrol mode must load dsh-patrol/desktop-tools from the managed preset.')
+        } else {
+          lines.push(`desktop provider: optional for this saved flow; unavailable tools=(${missingDesktop.join(', ')})`)
+        }
+      } else if (desktopRequired) {
         const desktop = await runner.dispatch('desktop_status', {}, exec)
         if (!desktop.ok) lines.push(`desktop provider: installed but unavailable: ${desktop.error ?? desktop.text}`)
         else lines.push(`desktop provider: ${desktop.text}`)
+      } else {
+        lines.push('desktop provider: installed; not required by this saved flow')
       }
 
-      if (args.inspectionId !== undefined) {
-        if (!(await store.exists(args.inspectionId))) {
-          lines.push(`inspection ${args.inspectionId}: not found; browser diagnosis above is still valid`)
+      if (requestedInspectionId !== undefined) {
+        if (definition === undefined) {
+          lines.push(`inspection ${requestedInspectionId}: not found; provider diagnosis above is still valid`)
         } else {
-          const definition = await store.load(args.inspectionId)
           const refs = collectInspectionCredentialRefs(definition)
           if (refs.size === 0) {
             lines.push('credentials: no credential references used by this inspection')
@@ -760,6 +778,12 @@ function assertRequiredArtifactsRepresented(definition: InspectionDefinition): v
     && !definition.steps.some(step => step.kind === 'tool' && step.tool === 'browser_read_page')) {
     throw new Error('inspection requests page-summary but the runbook has no read-page step')
   }
+}
+
+function inspectionUsesPlane(definition: InspectionDefinition, plane: 'browser' | 'desktop'): boolean {
+  if (definition.target.type === plane) return true
+  const prefix = `${plane}_`
+  return definition.steps.some(step => step.kind === 'tool' && step.tool.startsWith(prefix))
 }
 
 function collectInspectionCredentialRefs(definition: InspectionDefinition): Set<string> {
