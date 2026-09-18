@@ -141,6 +141,14 @@ export class WindowsDesktopDriver {
     if (!text) throw new Error('desktop_click_ocr_text requires text')
     const match = args.match === 'contains' ? 'contains' : 'exact'
     const caseSensitive = args.caseSensitive === true
+    const windowArgs = Object.fromEntries(
+      ['processName', 'title', 'titleContains']
+        .filter(key => typeof args[key] === 'string' && args[key].trim() !== '')
+        .map(key => [key, args[key]]),
+    )
+    if (Object.keys(windowArgs).length > 0) {
+      await this.run('activate-window', windowArgs, exec)
+    }
     const ocr = await this.ocr(args, exec)
     const normalize = value => caseSensitive ? String(value ?? '') : String(value ?? '').toLocaleLowerCase()
     const needle = normalize(text)
