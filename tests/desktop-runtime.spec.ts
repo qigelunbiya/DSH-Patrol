@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { findOcrTextMatches, findUiaTargetMatches, normalizeOcrObservations, WindowsDesktopDriver } from '../desktop-runtime/windows-driver.js'
+import { PATROL_DESKTOP_PROMPT } from '../src/desktop-prompt.js'
 
 describe('Desktop Automation runtime foundation', () => {
   it('exposes an explicit unrestricted Windows desktop strategy without affecting non-Windows CI', async () => {
@@ -31,7 +32,25 @@ describe('Desktop Automation runtime foundation', () => {
     expect(wechat.content).toContain('desktop_ocr')
     expect(wechat.content).toContain('目标聊天确认')
     expect(wechat.content).toContain('source=ocr')
+    expect(wechat.content).toContain('scope=active-window')
+    expect(wechat.content).toContain('禁止因为一次 OCR/点击判断不确定就关闭/重开微信')
     expect(wechat.content).toContain('${artifact:last-screenshot}')
+  })
+
+  it('forces selected-window screenshots to the foreground before CopyFromScreen', () => {
+    const source = readFileSync(join(process.cwd(), 'desktop-runtime', 'windows-desktop.ps1'), 'utf8')
+    const capture = source.slice(source.indexOf('function Capture-Screenshot'), source.indexOf('function Resolve-AppLaunchSpec'))
+    expect(capture).toContain('Activate-Window $process')
+    expect(capture.indexOf('Activate-Window $process')).toBeLessThan(capture.indexOf('$graphics.CopyFromScreen'))
+    expect(capture).toContain('scope=$scope; window=$windowRecord')
+  })
+
+  it('requires Patrol desktop flows to record business actions and keeps WeChat OCR window-scoped', () => {
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/成功业务动作必须改用 patrol_desktop_action/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/不能一边显示“巡检流程”一边只调用 raw desktop_\*/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/scope=active-window/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/禁止再次点击该联系人/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/只有 desktop_list_windows 明确确认微信窗口已经不存在时才允许重新 launch/)
   })
 
   it('matches OCR text despite recognition-inserted whitespace', () => {

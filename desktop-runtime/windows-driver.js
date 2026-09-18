@@ -145,6 +145,8 @@ export class WindowsDesktopDriver {
       ...(failures.length === 0 ? {} : { languageErrors: failures }),
       screenshotPath: shot.path,
       screenshotBounds: screenshotBounds(shot),
+      scope: shot.scope ?? args.scope ?? 'active-window',
+      window: shot.window,
       x: shot.x,
       y: shot.y,
       width: shot.width,

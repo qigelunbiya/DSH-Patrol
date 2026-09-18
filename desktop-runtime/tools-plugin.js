@@ -262,7 +262,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_screenshot',
-      description: 'Capture the active desktop window or the whole virtual screen as a PNG under the current Harness workspace patrol-results/desktop-captures.',
+      description: 'Capture one selected/active desktop window or, only when scope=screen is explicitly requested, the whole virtual screen. Window-scoped capture raises the selected process/title window before CopyFromScreen so background apps cannot contaminate the image.',
       parameters: {
         scope: { type: 'string', enum: ['active-window', 'screen'] },
         processName: str,
@@ -275,7 +275,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_ocr',
-      description: 'Capture the active desktop window/screen and run bundled Windows system OCR. Returns recognized line text plus absolute screen rect/center coordinates so coordinate fallback can use CURRENT OCR evidence when UI Automation is unavailable.',
+      description: 'Run bundled Windows system OCR on a CURRENT capture. Default scope is active-window; with processName/title/titleContains the backend raises that exact window before capture and returns capture window metadata. Use scope=screen only for an explicitly whole-desktop task.',
       parameters: {
         scope: { type: 'string', enum: ['active-window', 'screen'] },
         processName: str,

@@ -51,6 +51,10 @@ describe('atomic semantic click extension layer', () => {
     expect(source).toContain('titleText === wantedText')
     expect(source).toContain('const physicalClickTarget = element =>')
     expect(source).toContain("element.closest?.('.ant-tree-node-content-wrapper,[role=\"treeitem\"]')")
+    expect(source).toContain("const taskContextTokens = String(spec.task || '')")
+    expect(source).toContain('const treeContext = element =>')
+    expect(source).toContain("path.join(' > ')")
+    expect(source).toContain('for (const token of taskContextTokens)')
     expect(source).toContain('const clickTarget = physicalClickTarget(element)')
   })
 

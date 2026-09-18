@@ -345,11 +345,18 @@ function Capture-Screenshot($request) {
   $path = [string](Get-Prop $request 'path' '')
   if ([string]::IsNullOrWhiteSpace($path)) { throw 'desktop screenshot path is required' }
   $scope = [string](Get-Prop $request 'scope' 'active-window')
+  $windowRecord = $null
   if ($scope -ieq 'screen') {
     $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
     $x = $bounds.X; $y = $bounds.Y; $width = $bounds.Width; $height = $bounds.Height
   } else {
+    $scope = 'active-window'
     $process = Resolve-Window $request $true
+    # CopyFromScreen captures visible pixels rather than an off-screen window
+    # surface. Raise the requested window first so overlapping apps cannot
+    # contaminate a window-scoped OCR capture.
+    Activate-Window $process
+    $windowRecord = Window-Record $process
     $rect = New-Object PatrolDesktop.Native+RECT
     if (-not [PatrolDesktop.Native]::GetWindowRect([IntPtr]$process.MainWindowHandle, [ref]$rect)) { throw 'GetWindowRect failed' }
     $x = $rect.Left; $y = $rect.Top; $width = $rect.Right - $rect.Left; $height = $rect.Bottom - $rect.Top
@@ -366,7 +373,7 @@ function Capture-Screenshot($request) {
     $graphics.Dispose()
     $bitmap.Dispose()
   }
-  return [ordered]@{ ok=$true; path=$path; x=[int]$x; y=[int]$y; width=[int]$width; height=[int]$height }
+  return [ordered]@{ ok=$true; path=$path; scope=$scope; window=$windowRecord; x=[int]$x; y=[int]$y; width=[int]$width; height=[int]$height }
 }
 
 function Resolve-AppLaunchSpec($request) {

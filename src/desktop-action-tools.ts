@@ -31,7 +31,7 @@ export function registerPatrolDesktopActionTools(
 ): () => void {
   const desktopAction = defineTool({
     name: 'patrol_desktop_action',
-    description: 'Execute and record one Windows Desktop Automation action using flat parameters. Desktop strategy is UI Automation > keyboard > OCR > CURRENT coordinate fallback. Current permission policy is intentionally unrestricted in both TEST and NORMAL modes. Use raw desktop_* tools for live exploration; use this patrol_* tool when the action should become part of a reusable Runbook.',
+    description: 'Execute and record one Windows Desktop Automation action using flat parameters. Desktop strategy is CURRENT OCR/keyboard > proven UI Automation > CURRENT coordinate fallback. Current permission policy is intentionally unrestricted in both TEST and NORMAL modes. Once a desktop Patrol inspection/checklist exists, successful business actions must use this tool so the Runbook and visual flow diagram are populated; raw desktop_* tools remain live exploration/diagnostic helpers.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
