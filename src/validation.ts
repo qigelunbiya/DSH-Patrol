@@ -78,13 +78,37 @@ export function assertInspectionDefinition(value: unknown): asserts value is Ins
   if (metadataRecord.validatedAt !== undefined && typeof metadataRecord.validatedAt !== 'string') throw new Error('inspection.metadata.validatedAt must be a string')
 
   const target = candidate.target as unknown
-  if (target === null || typeof target !== 'object' || Array.isArray(target)) throw new Error('inspection.target must be a browser target with url')
-  const targetRecord = target as Record<string, unknown>
-  if (targetRecord.type !== 'browser' || typeof targetRecord.url !== 'string' || targetRecord.url.length === 0) {
-    throw new Error('inspection.target must be a browser target with url')
+  if (target === null || typeof target !== 'object' || Array.isArray(target)) {
+    throw new Error('inspection.target must be a browser or desktop target')
   }
-  assertHttpUrl(targetRecord.url)
-  assertSafeForStorage({ url: targetRecord.url })
+  const targetRecord = target as Record<string, unknown>
+  if (targetRecord.type === 'browser') {
+    if (typeof targetRecord.url !== 'string' || targetRecord.url.length === 0) {
+      throw new Error('browser inspection target requires url')
+    }
+    assertHttpUrl(targetRecord.url)
+    assertSafeForStorage({ url: targetRecord.url })
+  } else if (targetRecord.type === 'desktop') {
+    if (typeof targetRecord.app !== 'string' || targetRecord.app.trim().length === 0) {
+      throw new Error('desktop inspection target requires app')
+    }
+    assertSafePersistentText(targetRecord.app, 'inspection.target.app')
+    if (targetRecord.processName !== undefined) {
+      if (typeof targetRecord.processName !== 'string' || targetRecord.processName.trim().length === 0) {
+        throw new Error('inspection.target.processName must be a non-empty string')
+      }
+      assertSafePersistentText(targetRecord.processName, 'inspection.target.processName')
+    }
+    if (targetRecord.titleContains !== undefined) {
+      if (typeof targetRecord.titleContains !== 'string' || targetRecord.titleContains.trim().length === 0) {
+        throw new Error('inspection.target.titleContains must be a non-empty string')
+      }
+      assertSafePersistentText(targetRecord.titleContains, 'inspection.target.titleContains')
+    }
+    if ('url' in targetRecord) throw new Error('desktop inspection target must not contain url')
+  } else {
+    throw new Error('inspection.target.type must be browser or desktop')
+  }
 
   const seen = new Set<string>()
   for (const rawStep of candidate.steps) {
