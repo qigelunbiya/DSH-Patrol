@@ -66,6 +66,10 @@ export class PatrolRunner {
       return { ok: false, text: '', error: `tool ${tool} is not in DSH Patrol's exact browser/desktop allowlist` }
     }
 
+    if (this.ctx.tools.get(tool, exec.agent) === undefined) {
+      return missingProviderResult(tool)
+    }
+
     this.authorize(exec.token)
     let result: Awaited<ReturnType<typeof this.ctx.tools.execute>>
     try {
@@ -732,6 +736,32 @@ async function observeChecklistClickTargetWithSettle(
   }
 
   return { snapshot, attempts: STRUCTURAL_RECOVERY_SETTLE_DELAYS_MS.length, error: lastError }
+}
+
+function missingProviderResult(tool: string): DispatchResult {
+  if (tool.startsWith('desktop_')) {
+    return {
+      ok: false,
+      text: '',
+      error: [
+        `Desktop Automation provider is not mounted; requested tool ${tool} is valid but unavailable in this agent session.`,
+        'This is a generic Patrol preset/provider loading problem, not an application-specific incompatibility.',
+        'Do not substitute launch-app/open-path/pwsh or mutate the Runbook to work around it.',
+        'Reinstall/update DSH Patrol so the Patrol agent preset contains dsh-patrol/desktop-tools, restart Harness, open a NEW Patrol session, then run patrol_doctor again.',
+      ].join(' '),
+    }
+  }
+  if (tool.startsWith('browser_')) {
+    return {
+      ok: false,
+      text: '',
+      error: [
+        `Browser provider is not mounted; requested tool ${tool} is valid but unavailable in this agent session.`,
+        'Reinstall/update DSH Patrol, restart Harness, open a NEW Patrol session, then run patrol_doctor again.',
+      ].join(' '),
+    }
+  }
+  return { ok: false, text: '', error: `tool ${tool} is unavailable in this agent session` }
 }
 
 function prepareRuntimeArguments(step: ToolStep, previousResults: readonly StepRunResult[]): JsonObject {
