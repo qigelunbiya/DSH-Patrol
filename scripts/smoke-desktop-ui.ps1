@@ -60,12 +60,12 @@ $form.Width = 640
 $form.Height = 360
 $form.StartPosition = 'CenterScreen'
 
-$input = New-Object System.Windows.Forms.TextBox
-$input.Name = 'PatrolSmokeInput'
-$input.AccessibleName = 'PatrolSmokeInput'
-$input.Multiline = $true
-$input.Location = New-Object System.Drawing.Point(20, 20)
-$input.Size = New-Object System.Drawing.Size(580, 180)
+$textBox = New-Object System.Windows.Forms.TextBox
+$textBox.Name = 'PatrolSmokeInput'
+$textBox.AccessibleName = 'PatrolSmokeInput'
+$textBox.Multiline = $true
+$textBox.Location = New-Object System.Drawing.Point(20, 20)
+$textBox.Size = New-Object System.Drawing.Size(580, 180)
 
 $button = New-Object System.Windows.Forms.Button
 $button.Name = 'PatrolSmokeButton'
@@ -86,10 +86,10 @@ $button.Add_Click({
   $status.AccessibleName = 'PatrolSmokeStatus clicked'
 })
 
-$form.Controls.Add($input)
+$form.Controls.Add($textBox)
 $form.Controls.Add($button)
 $form.Controls.Add($status)
-$form.Add_Shown({ $input.Focus() })
+$form.Add_Shown({ $textBox.Focus() })
 [void]$form.ShowDialog()
 '@
 
@@ -116,13 +116,13 @@ try {
     includeOffscreen = $false
   }
 
-  $input = @($snapshot.elements | Where-Object {
+  $inputElement = @($snapshot.elements | Where-Object {
     $_.enabled -eq $true -and
     $_.offscreen -ne $true -and
     $_.isPassword -ne $true -and
     [string]$_.controlType -eq 'Edit'
   }) | Sort-Object @{ Expression = { [int64]$_.rect.width * [int64]$_.rect.height }; Descending = $true } | Select-Object -First 1
-  if ($null -eq $input) {
+  if ($null -eq $inputElement) {
     $observed = @($snapshot.elements | Select-Object -First 20 | ForEach-Object {
       "$($_.controlType):$($_.name):$($_.automationId):$($_.className)"
     }) -join ' | '
@@ -136,12 +136,12 @@ try {
     text = $message
     clear = $true
   }
-  if (-not [string]::IsNullOrWhiteSpace([string]$input.automationId)) {
-    $typeArgs.automationId = [string]$input.automationId
-  } elseif (-not [string]::IsNullOrWhiteSpace([string]$input.name)) {
-    $typeArgs.name = [string]$input.name
-  } elseif (-not [string]::IsNullOrWhiteSpace([string]$input.className)) {
-    $typeArgs.className = [string]$input.className
+  if (-not [string]::IsNullOrWhiteSpace([string]$inputElement.automationId)) {
+    $typeArgs.automationId = [string]$inputElement.automationId
+  } elseif (-not [string]::IsNullOrWhiteSpace([string]$inputElement.name)) {
+    $typeArgs.name = [string]$inputElement.name
+  } elseif (-not [string]::IsNullOrWhiteSpace([string]$inputElement.className)) {
+    $typeArgs.className = [string]$inputElement.className
   } else {
     $typeArgs.index = 0
   }
