@@ -213,11 +213,10 @@ export class WindowsDesktopDriver {
         .filter(key => typeof args[key] === 'string' && args[key].trim() !== '')
         .map(key => [key, args[key]]),
     )
-    if (Object.keys(windowArgs).length > 0) {
-      await this.run('activate-window', windowArgs, exec)
-    }
-
     const startedAt = Date.now()
+    const waitCaptureName = typeof args.fileName === 'string' && args.fileName.trim() !== ''
+      ? args.fileName
+      : `desktop-wait-${randomUUID().slice(0, 8)}`
     let attempts = 0
     let lastUiaCount = 0
     let lastOcrCount = 0
@@ -225,6 +224,14 @@ export class WindowsDesktopDriver {
 
     while (true) {
       attempts += 1
+
+      if (Object.keys(windowArgs).length > 0) {
+        try {
+          await this.run('activate-window', windowArgs, exec)
+        } catch (error) {
+          lastError = `window activation: ${String(error?.message ?? error)}`
+        }
+      }
 
       if (source !== 'ocr') {
         try {
@@ -257,7 +264,7 @@ export class WindowsDesktopDriver {
 
       if (source !== 'uia' && text) {
         try {
-          const ocr = await this.ocr(args, exec)
+          const ocr = await this.ocr({ ...args, fileName: waitCaptureName }, exec)
           const matches = findOcrTextMatches(ocr.lines, {
             text,
             match: args.match,
