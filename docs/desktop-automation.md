@@ -84,6 +84,8 @@ titleContains
 
 如果输入框本身可以被 UI Automation 唯一定位，继续优先 `desktop_type_target`；window-targeted `desktop_type_text` 只是比纯粹依赖当前前台焦点更安全的后备。
 
+同理，文件/图片粘贴优先 `desktop_paste_target`，需要 Enter/Tab/Delete 作用于明确控件时优先 `desktop_press_target`。这两个动作把“激活窗口 → 唯一定位控件 → 聚焦 → 粘贴/按键”做成一个原子步骤，特别适合浏览器截图转发到微信。
+
 ### 语义等待
 
 当下一状态有明确控件或文字时，优先：
