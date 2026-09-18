@@ -9,6 +9,8 @@ import { PATROL_BEHAVIOR_PROMPT } from './behavior-prompt.js'
 import { registerPatrolClickTargetTool } from './click-target-tools.js'
 import { registerPatrolCreationTools } from './creation-tools.js'
 import { registerPatrolCredentialTools } from './credential-tools.js'
+import { registerPatrolDesktopActionTools } from './desktop-action-tools.js'
+import { PATROL_DESKTOP_PROMPT } from './desktop-prompt.js'
 import { registerPatrolEditTools } from './edit-tools.js'
 import { PATROL_EXCEL_PROMPT } from './excel-tools.js'
 import { PATROL_EXCEL_V5_PROMPT, registerPatrolExcelToolsV5 } from './excel-tools-v5.js'
@@ -51,6 +53,9 @@ export * from './flow-mutation-consent.js'
 export * from './task-checklist-tools.js'
 export * from './creation-tools.js'
 export * from './credential-tools.js'
+export * from './desktop.js'
+export * from './desktop-action-tools.js'
+export * from './desktop-prompt.js'
 export * from './excel-tools.js'
 export * from './excel-tools-v2.js'
 export * from './excel-tools-v3.js'
@@ -80,7 +85,7 @@ export const inject = ['tools', 'userQuestions']
 const DEFAULT_STORAGE_PATH = resolve(process.cwd(), '.dsh-patrol')
 const DEFAULT_MAX_STEPS = 200
 const DEFAULT_REPORT_MAX_CHARS = 30_000
-const TEST_MODE_BUILD_MARKER = 'test-bypass-v9-authenticated-prefix-fast-forward'
+const TEST_MODE_BUILD_MARKER = 'test-bypass-v10-desktop-automation'
 const TEST_MODE_DIRECT_BROWSER_ALLOWED = new Set([
   'browser_status',
   'browser_list_tabs',
@@ -169,6 +174,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   ctx.effect(() => registerPatrolFlowTools(ctx, store), 'dsh-patrol: current-flow selection and successful-path finalization')
   ctx.effect(() => registerPatrolCredentialTools(ctx, store), 'dsh-patrol: credential setup guidance')
   ctx.effect(
+    () => registerPatrolDesktopActionTools(ctx, store, runner, { maxSteps: resolved.maxSteps }),
+    'dsh-patrol: recordable Windows desktop automation actions',
+  )
+  ctx.effect(
     () => registerPatrolActionTools(ctx, store, runner, { maxSteps: resolved.maxSteps }),
     'dsh-patrol: flat browser action tools',
   )
@@ -226,6 +235,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       `guards=${runtimePolicy.installGuards ? 'enabled' : 'operational-click-fallbacks'}`,
       `strictPrompts=${runtimePolicy.injectStrictWorkflowPrompt ? 'enabled' : 'disabled'}`,
       `visualCaptchaFallback=${runtimePolicy.testMode ? 'enabled' : 'disabled'}`,
+      'desktopAutomation=windows-uia+keyboard+ocr+coordinates',
+      'desktopPermissions=unrestricted',
       `build=${TEST_MODE_BUILD_MARKER}`,
     ].join('; '),
   })
@@ -324,6 +335,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       order: 134.5,
       text: PATROL_TOTP_PROMPT,
     }), 'dsh-patrol: configured TOTP profile workflow prompt')
+    ctx.effect(() => systemPrompt.section({
+      name: 'agent:dsh-patrol-desktop',
+      order: 134.7,
+      text: PATROL_DESKTOP_PROMPT,
+    }), 'dsh-patrol: Windows desktop automation prompt')
 
     if (runtimePolicy.injectStrictRecoveryPrompt) {
       ctx.effect(() => systemPrompt.section({
@@ -367,5 +383,5 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
   const guardMode = runtimePolicy.testMode ? 'test-operational-click-fallbacks' : 'normal-strict'
   const plannerMode = runtimePolicy.testMode ? 'advisory' : 'strict'
-  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; guard-mode=${guardMode}; build=${TEST_MODE_BUILD_MARKER}; scheduler=enabled; credential helper=optional; transient sensitive replay=enabled; encrypted TOTP profile replay=enabled; semantic click resolver=enabled; page-understanding-planner=${plannerMode}; native select=enabled; task-checklist=required; secret-safe creation=enabled; flat action tools=enabled; OpenXML Excel v5 tools=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled`)
+  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; guard-mode=${guardMode}; build=${TEST_MODE_BUILD_MARKER}; scheduler=enabled; credential helper=optional; transient sensitive replay=enabled; encrypted TOTP profile replay=enabled; semantic click resolver=enabled; page-understanding-planner=${plannerMode}; native select=enabled; task-checklist=required; secret-safe creation=enabled; flat action tools=enabled; OpenXML Excel v5 tools=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled; desktop automation=enabled; desktop permissions=unrestricted`)
 }
