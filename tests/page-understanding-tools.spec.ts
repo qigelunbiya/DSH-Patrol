@@ -72,6 +72,26 @@ describe('Patrol page understanding planner', () => {
     })).toMatch(/HARD STOP/)
   })
 
+  it('does not reset a stalled selector budget just because the same target is renamed cosmetically', () => {
+    const guard = createPatrolPlanningGuard()
+    expect(guard({
+      name: 'patrol_click_target',
+      arguments: { inspectionId: 'demo', stepName: '点击主机下的未分组', locatorText: '未分组' },
+    })).toBeUndefined()
+    expect(guard({
+      name: 'patrol_analyze_step',
+      arguments: { inspectionId: 'demo', task: '点击未分组节点', locatorText: '未分组' },
+    })).toBeUndefined()
+    expect(guard({
+      name: 'patrol_click',
+      arguments: { inspectionId: 'demo', stepName: '点击未分组', selector: 'span[title="未分组"]' },
+    })).toBeUndefined()
+    expect(guard({
+      name: 'patrol_click',
+      arguments: { inspectionId: 'demo', stepName: '尝试未分组菜单项', selector: '.ant-tree-node-content-wrapper' },
+    })).toMatch(/HARD STOP/)
+  })
+
   it('counts a raw selector recovery as the second and final strategy', () => {
     const guard = createPatrolPlanningGuard()
     expect(guard({
