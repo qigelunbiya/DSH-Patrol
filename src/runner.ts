@@ -39,7 +39,7 @@ export interface PatrolRunOptions {
   purpose?: RunPurpose
 }
 
-const STRUCTURAL_RECOVERY_SETTLE_DELAYS_MS = [0, 250, 750, 1500, 2500] as const
+const STRUCTURAL_RECOVERY_SETTLE_DELAYS_MS = [0, 150, 350, 700, 1500, 2500] as const
 
 export class PatrolRunner {
   private readonly authorizedParents = new Map<ToolRunContext['token'], number>()
