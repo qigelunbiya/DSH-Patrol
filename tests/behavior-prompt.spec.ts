@@ -6,6 +6,8 @@ describe('current Patrol behavior prompt', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/跟随用户最近一条自然语言消息/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/用户用中文就必须用简体中文/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/流程名称、description、expectedResult、stepName/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/draft.*“编辑中”.*ready.*“已保存”/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/禁止只抛出 DRAFT\/READY/s)
   })
 
   it('uses automatic local OCR first for ordinary image-code and keeps human handoff disabled', () => {
