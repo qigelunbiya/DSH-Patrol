@@ -42,14 +42,20 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_launch_app',
-      description: 'Launch a Windows application by executable path/name. This is a direct desktop action; no permission tier is currently applied.',
+      description: 'Launch a Windows application. Provide file for an executable/path, or app for a friendly installed application name. app resolution uses Windows command/App Paths/Start Apps discovery and is generic across applications.',
       parameters: {
-        file: reqStr,
+        file: str,
+        app: str,
         arguments: { type: 'array', items: { type: 'string' } },
         workingDirectory: str,
       },
       output: jsonOutput('Application launched'),
-      execute: async (args, exec) => await driver.run('launch-app', compact(args), exec),
+      execute: async (args, exec) => {
+        if (![args.file, args.app].some(value => typeof value === 'string' && value.trim())) {
+          throw new Error('desktop_launch_app requires file or app')
+        }
+        return await driver.run('launch-app', compact(args), exec)
+      },
     }),
     defineTool({
       name: 'desktop_open_path',
