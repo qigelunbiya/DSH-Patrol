@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { WindowsDesktopDriver } from '../desktop-runtime/windows-driver.js'
+import { normalizeOcrObservations, WindowsDesktopDriver } from '../desktop-runtime/windows-driver.js'
 
 describe('Desktop Automation runtime foundation', () => {
   it('exposes an explicit unrestricted Windows desktop strategy without affecting non-Windows CI', () => {
@@ -24,6 +24,53 @@ describe('Desktop Automation runtime foundation', () => {
     expect(wechat.content).toContain('desktop_snapshot')
     expect(wechat.content).toContain('desktop_ocr')
     expect(wechat.content).toContain('${artifact:last-screenshot}')
+  })
+
+  it('converts normalized OCR lines into CURRENT absolute screen coordinates', () => {
+    const lines = normalizeOcrObservations([
+      {
+        language: 'zh-CN',
+        result: {
+          lines: [
+            {
+              text: '测试联系人',
+              confidence: 1,
+              boundingBox: { x: 0.1, y: 0.2, width: 0.4, height: 0.1 },
+            },
+          ],
+        },
+      },
+      {
+        language: 'en-US',
+        result: {
+          lines: [
+            {
+              text: '测试联系人',
+              confidence: 1,
+              boundingBox: { x: 0.101, y: 0.201, width: 0.4, height: 0.1 },
+            },
+            {
+              text: 'Search',
+              confidence: 1,
+              boundingBox: { x: 0.5, y: 0.05, width: 0.2, height: 0.08 },
+            },
+          ],
+        },
+      },
+    ], { x: 100, y: 200, width: 1000, height: 800 })
+
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toMatchObject({
+      text: '测试联系人',
+      language: 'zh-CN',
+      rect: { x: 200, y: 360, width: 400, height: 80 },
+      center: { x: 400, y: 400 },
+    })
+    expect(lines[1]).toMatchObject({
+      text: 'Search',
+      rect: { x: 600, y: 240, width: 200, height: 64 },
+      center: { x: 700, y: 272 },
+    })
   })
 
   it('registers UIA, keyboard, OCR, coordinate, clipboard, message-enabling and delete primitives', () => {
