@@ -4,7 +4,7 @@ import { CallId } from '@deepseek-ai/dsh-llm'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { findAdaptiveClickRecovery, findAdaptiveSelectorRecovery, isSelectorUnavailable } from './adaptive-recovery.js'
 import { findUniqueHealingSelector, isPageReadStep, isScreenshotStep, isSafeBrowserTool, isSelectorBoundToCurrentSnapshot } from './browser.js'
-import { isSafeDesktopTool } from './desktop.js'
+import { applyDesktopTargetDefaults, isSafeDesktopTool } from './desktop.js'
 import { verifyPostClickExpectation } from './post-click-verification.js'
 import { renderRunReport } from './report.js'
 import { credentialReferenceName, redactLikelySecrets, untrustedPageData } from './security.js'
@@ -363,7 +363,11 @@ export class PatrolRunner {
 
     let runtimeArguments: JsonObject
     try {
-      runtimeArguments = prepareRuntimeArguments(step, previousResults)
+      runtimeArguments = applyDesktopTargetDefaults(
+        definition,
+        step.tool,
+        prepareRuntimeArguments(step, previousResults),
+      )
     } catch (error: unknown) {
       return failedResult(step, startedAt, errorMessage(error))
     }
