@@ -47,6 +47,7 @@ desktop_type_text
 desktop_hotkey
 desktop_press
 desktop_wait
+desktop_wait_for_target
 desktop_screenshot
 desktop_ocr
 desktop_set_clipboard_text
@@ -67,6 +68,22 @@ patrol_desktop_action
 ```
 
 raw `desktop_*` 成功只代表 CURRENT 操作成功，并不等于该动作已经进入 Runbook。
+
+### 语义等待
+
+当下一状态有明确控件或文字时，优先：
+
+```text
+desktop_wait_for_target
+  source=auto
+  text=<稳定文字>
+  requireUnique=true
+  timeoutMs=10000
+```
+
+`source=auto` 会先读取 CURRENT UI Automation tree；如果提供了 `text` 且 UIA 没命中，再回退 CURRENT OCR。它只在匹配满足条件时返回成功，因此比固定 `desktop_wait` 更适合可重放流程。
+
+固定 `desktop_wait` 保留给没有可观察语义状态的短动画、系统对话框过渡或应用自身延迟。需要保存进 Runbook 时使用 `patrol_desktop_action(action=wait-for-target)`。
 
 ## 两种流程类型
 
@@ -152,13 +169,14 @@ patrol-desktop-knowledge/微信.md
 4. desktop_snapshot 观察 UIA 是否能看到搜索框/联系人列表
 5. desktop_hotkey 发送 Ctrl+F
 6. desktop_type_text 输入一个明确且唯一的联系人名称
-7. desktop_snapshot 再次观察
-8. UIA 能唯一定位联系人时 desktop_click_target
-9. 如果 UIA 看不到结果，优先 desktop_click_ocr_text 按联系人名称做唯一语义匹配；失败后再 desktop_ocr 查看文字与坐标
-10. 确认聊天标题正确
-11. desktop_type_text 输入一条测试消息
-12. desktop_press Enter
-13. desktop_snapshot / desktop_ocr 确认消息已出现在当前聊天
+7. desktop_wait_for_target 等待联系人结果出现（source=auto，text=联系人名称）
+8. desktop_snapshot 再次观察
+9. UIA 能唯一定位联系人时 desktop_click_target
+10. 如果 UIA 看不到结果，优先 desktop_click_ocr_text 按联系人名称做唯一语义匹配；失败后再 desktop_ocr 查看文字与坐标
+11. desktop_wait_for_target 等待聊天标题/输入区进入可操作状态
+12. desktop_type_text 输入一条测试消息
+13. desktop_press Enter
+14. desktop_wait_for_target 或 desktop_snapshot / desktop_ocr 确认消息已出现在当前聊天
 ```
 
 这条链路跑通后，再测试：
