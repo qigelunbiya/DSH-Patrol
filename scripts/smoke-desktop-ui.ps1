@@ -96,6 +96,7 @@ $form.Add_Shown({ $input.Focus() })
 $hostRunspace = $null
 $hostPowerShell = $null
 $hostAsync = $null
+$processId = [int]$PID
 try {
   $hostRunspace = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
   $hostRunspace.ApartmentState = [System.Threading.ApartmentState]::STA
@@ -107,8 +108,7 @@ try {
   [void]$hostPowerShell.AddScript($hostSource).AddArgument($windowTitle)
   $hostAsync = $hostPowerShell.BeginInvoke()
 
-  $windowProcess = Wait-SmokeWindow -ProcessId $PID
-  $processId = [int]$windowProcess.Id
+  $windowProcess = Wait-SmokeWindow -ProcessId $processId
 
   $snapshot = Invoke-PatrolDesktopAction -Action 'snapshot' -Arguments @{
     processId = $processId
@@ -241,11 +241,29 @@ try {
     throw "desktop screenshot is empty: $($shot.path)"
   }
 
-  Write-Host "Desktop UI Automation smoke passed: snapshot + targeted type + value verification + click + screenshot."
+  [void](Invoke-PatrolDesktopAction -Action 'close-window' -Arguments @{ processId = $processId })
+  $closeDeadline = [DateTime]::UtcNow.AddSeconds(5)
+  while ($null -ne $hostAsync -and -not $hostAsync.IsCompleted -and [DateTime]::UtcNow -lt $closeDeadline) {
+    Start-Sleep -Milliseconds 100
+  }
+  if ($null -ne $hostAsync -and -not $hostAsync.IsCompleted) {
+    throw 'Smoke form did not close after desktop_close_window.'
+  }
+
+  Write-Host "Desktop UI Automation smoke passed: snapshot + targeted type + value verification + click + screenshot + close."
 }
 finally {
+  if ($null -ne $hostAsync -and -not $hostAsync.IsCompleted) {
+    try { [void](Invoke-PatrolDesktopAction -Action 'close-window' -Arguments @{ processId = $processId }) } catch {}
+    $cleanupDeadline = [DateTime]::UtcNow.AddSeconds(3)
+    while (-not $hostAsync.IsCompleted -and [DateTime]::UtcNow -lt $cleanupDeadline) {
+      Start-Sleep -Milliseconds 100
+    }
+  }
   if ($null -ne $hostPowerShell) {
-    try { $hostPowerShell.Stop() } catch {}
+    if ($null -ne $hostAsync -and $hostAsync.IsCompleted) {
+      try { [void]$hostPowerShell.EndInvoke($hostAsync) } catch {}
+    }
     $hostPowerShell.Dispose()
   }
   if ($null -ne $hostRunspace) {
