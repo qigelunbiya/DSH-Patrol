@@ -426,6 +426,7 @@ function isInteractionBoundary(step: InspectionStep): boolean {
     || step.tool === 'desktop_press'
     || step.tool === 'desktop_hotkey'
     || step.tool === 'desktop_paste'
+    || step.tool === 'desktop_type_target'
     || step.tool === 'desktop_launch_app'
     || step.tool === 'desktop_activate_window'
 }
@@ -436,6 +437,7 @@ function isTypingTool(tool: string): boolean {
     || tool === 'browser_type_transient_ref'
     || tool === 'browser_type_totp_profile'
     || tool === 'desktop_type_text'
+    || tool === 'desktop_type_target'
 }
 
 function rewriteSteps(definition: InspectionDefinition, kept: readonly InspectionStep[], stripTeaching: boolean): void {
