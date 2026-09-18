@@ -150,11 +150,13 @@ jobs:
       - name: Resolve friendly Start Apps without launching
         shell: pwsh
         run: |
-          $entry = Get-StartApps | Where-Object {
-            -not [string]::IsNullOrWhiteSpace([string]$_.AppID) -and
-            -not [string]::IsNullOrWhiteSpace([string]$_.Name)
-          } | Select-Object -First 1
-          if ($null -eq $entry) { throw 'Get-StartApps returned no resolvable applications' }
+          # Select the fixture through the same Windows PowerShell 5.1 process
+          # used by the runtime. PowerShell 7 and 5.1 can expose different
+          # Get-StartApps AppID representations on hosted runners.
+          $probe = '$entry = Get-StartApps | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.AppID) -and -not [string]::IsNullOrWhiteSpace([string]$_.Name) } | Select-Object -First 1; if ($null -eq $entry) { exit 3 }; $entry | Select-Object Name,AppID | ConvertTo-Json -Compress'
+          $entryJson = & powershell.exe -NoProfile -NonInteractive -Command $probe
+          if ($LASTEXITCODE -ne 0) { throw "Windows PowerShell Get-StartApps probe exited with $LASTEXITCODE" }
+          $entry = $entryJson | ConvertFrom-Json
           $json = @{ app = [string]$entry.AppID } | ConvertTo-Json -Compress
           $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
           $output = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File desktop-runtime/windows-desktop.ps1 -Action resolve-app -Payload $payload

@@ -299,7 +299,7 @@ async function runExistingFlowReadOnly(
 ): Promise<{ report: RunReport; paths: SavedRunPaths }> {
   const beforeSteps = JSON.stringify(definition.steps)
   const beforeUpdatedAt = definition.metadata.updatedAt
-  const executionDefinition = cloneDefinition(definition)
+  const executionDefinition = cloneForReadOnlyReplay(definition, exec.agent?.session.header.cwd)
   const result = resume
     ? await runner.resume(executionDefinition, exec)
     : await runner.run(executionDefinition, exec)
@@ -640,6 +640,16 @@ function requireUniqueResolution(query: string, result: FlowReferenceResult): In
     ].join(' '))
   }
   return result.definition
+}
+
+export function cloneForReadOnlyReplay(definition: InspectionDefinition, workspaceRoot?: string): InspectionDefinition {
+  const cloned = cloneDefinition(definition)
+  // PatrolRunner normally remembers the interactive workspace through
+  // store.save(). During patrol_run_flow/patrol_resume_flow that write can pass
+  // through the DRAFT teaching filter and prune steps after a checklist edit,
+  // violating replay's read-only contract. Seed only the execution clone.
+  if (workspaceRoot !== undefined && workspaceRoot.trim() !== '') cloned.metadata.workspaceRoot = workspaceRoot
+  return cloned
 }
 
 function cloneDefinition(definition: InspectionDefinition): InspectionDefinition {

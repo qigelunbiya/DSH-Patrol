@@ -30,7 +30,7 @@ export class WindowsDesktopDriver {
       supported: this.supported,
       backend: this.supported ? 'windows-uia+powershell' : 'unsupported',
       permissionMode: 'unrestricted',
-      strategy: ['uia', 'keyboard', 'ocr', 'coordinates'],
+      strategy: ['ocr', 'keyboard', 'uia', 'coordinates'],
     }
     if (!this.supported) return { ok: true, ...base, backendReachable: false }
     try {
@@ -166,12 +166,7 @@ export class WindowsDesktopDriver {
       await this.run('activate-window', windowArgs, exec)
     }
     const ocr = await this.ocr(args, exec)
-    const normalize = value => caseSensitive ? String(value ?? '') : String(value ?? '').toLocaleLowerCase()
-    const needle = normalize(text)
-    const candidates = (ocr.lines ?? []).filter(line => {
-      const haystack = normalize(line.text)
-      return match === 'contains' ? haystack.includes(needle) : haystack === needle
-    })
+    const candidates = findOcrTextMatches(ocr.lines, { text, match, caseSensitive })
 
     let target
     if (args.index !== undefined) {
@@ -440,7 +435,7 @@ export function normalizeOcrObservations(observations, shot, maxLines = 240) {
         y: Math.round(y + lineHeight / 2),
       }
       if (out.some(existing =>
-        existing.text.toLocaleLowerCase() === text.toLocaleLowerCase()
+        ocrMatchKey(existing.text) === ocrMatchKey(text)
         && Math.abs(existing.center.x - center.x) <= 8
         && Math.abs(existing.center.y - center.y) <= 8)) {
         continue
@@ -488,12 +483,25 @@ export function findOcrTextMatches(lines, args = {}) {
   if (!text) return []
   const match = args.match === 'contains' ? 'contains' : 'exact'
   const caseSensitive = args.caseSensitive === true
-  const normalize = value => caseSensitive ? String(value ?? '') : String(value ?? '').toLocaleLowerCase()
-  const needle = normalize(text)
+  const needle = ocrMatchVariants(text, caseSensitive)
   return rows.filter(line => {
-    const haystack = normalize(line?.text)
-    return match === 'contains' ? haystack.includes(needle) : haystack === needle
+    const haystack = ocrMatchVariants(line?.text, caseSensitive)
+    if (match === 'contains') {
+      return haystack.spaced.includes(needle.spaced) || haystack.compact.includes(needle.compact)
+    }
+    return haystack.spaced === needle.spaced || haystack.compact === needle.compact
   })
+}
+
+function ocrMatchVariants(value, caseSensitive = false) {
+  const nfkc = String(value ?? '').normalize('NFKC').replace(/\u00a0/g, ' ')
+  const spaced = nfkc.replace(/\s+/g, ' ').trim()
+  const cased = caseSensitive ? spaced : spaced.toLocaleLowerCase()
+  return { spaced: cased, compact: cased.replace(/\s+/g, '') }
+}
+
+function ocrMatchKey(value) {
+  return ocrMatchVariants(value, false).compact
 }
 
 function boundedInteger(value, fallback, min, max) {

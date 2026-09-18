@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { findUiaTargetMatches, normalizeOcrObservations, WindowsDesktopDriver } from '../desktop-runtime/windows-driver.js'
+import { findOcrTextMatches, findUiaTargetMatches, normalizeOcrObservations, WindowsDesktopDriver } from '../desktop-runtime/windows-driver.js'
 
 describe('Desktop Automation runtime foundation', () => {
   it('exposes an explicit unrestricted Windows desktop strategy without affecting non-Windows CI', async () => {
@@ -13,7 +13,7 @@ describe('Desktop Automation runtime foundation', () => {
     }
     const status = await driver.status()
     expect(status.permissionMode).toBe('unrestricted')
-    expect(status.strategy).toEqual(['uia', 'keyboard', 'ocr', 'coordinates'])
+    expect(status.strategy).toEqual(['ocr', 'keyboard', 'uia', 'coordinates'])
     expect(status.supported).toBe(process.platform === 'win32')
     expect(status.backendReachable).toBe(process.platform === 'win32')
   })
@@ -29,7 +29,18 @@ describe('Desktop Automation runtime foundation', () => {
     expect(wechat.content).toContain('Ctrl+F')
     expect(wechat.content).toContain('desktop_snapshot')
     expect(wechat.content).toContain('desktop_ocr')
+    expect(wechat.content).toContain('目标聊天确认')
+    expect(wechat.content).toContain('source=ocr')
     expect(wechat.content).toContain('${artifact:last-screenshot}')
+  })
+
+  it('matches OCR text despite recognition-inserted whitespace', () => {
+    const lines = [
+      { text: '文 件 传 输 助 手', center: { x: 300, y: 240 } },
+      { text: '其他联系人', center: { x: 300, y: 300 } },
+    ]
+    expect(findOcrTextMatches(lines, { text: '文件传输助手', match: 'exact' })).toEqual([lines[0]])
+    expect(findOcrTextMatches(lines, { text: '传输助手', match: 'contains' })).toEqual([lines[0]])
   })
 
   it('converts normalized OCR lines into CURRENT absolute screen coordinates', () => {

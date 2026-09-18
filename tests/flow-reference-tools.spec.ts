@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeFlowReference, resolveBatchFlowReferences, resolveFlowReference } from '../src/flow-reference-tools.js'
+import { cloneForReadOnlyReplay, normalizeFlowReference, resolveBatchFlowReferences, resolveFlowReference } from '../src/flow-reference-tools.js'
 import type { InspectionDefinition } from '../src/types.js'
 
 function flow(id: string, name: string, updatedAt = '2026-09-04T00:00:00.000Z', workspaceRoot = 'E:\\temp\\test'): InspectionDefinition {
@@ -67,6 +67,20 @@ describe('flow reference resolver', () => {
       flow('local', 'ADBBA 登录巡检', '2026-09-04T00:00:00.000Z', 'E:\\temp\\test'),
     ], 'ADBBA 登录巡检', 'E:\\temp\\test')
     expect(result).toMatchObject({ kind: 'exact-name', definition: { id: 'local' } })
+  })
+})
+
+describe('read-only flow replay preparation', () => {
+  it('pre-seeds the execution clone workspace without mutating steps or semantic updatedAt', () => {
+    const original = flow('draft-flow', 'Draft flow', '2026-09-18T00:00:00.000Z', 'D:\\old')
+    const before = JSON.stringify(original)
+    const execution = cloneForReadOnlyReplay(original, 'E:\\current')
+
+    expect(execution).not.toBe(original)
+    expect(execution.metadata.workspaceRoot).toBe('E:\\current')
+    expect(execution.metadata.updatedAt).toBe(original.metadata.updatedAt)
+    expect(execution.steps).toEqual(original.steps)
+    expect(JSON.stringify(original)).toBe(before)
   })
 })
 

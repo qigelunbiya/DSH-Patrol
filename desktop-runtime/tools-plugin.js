@@ -79,7 +79,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_snapshot',
-      description: 'Read the current Windows UI Automation tree for the active or selected application. This is the desktop equivalent of a browser DOM snapshot and should be preferred before OCR/coordinate guessing.',
+      description: 'Read the current Windows UI Automation tree for the active or selected application. Use it as a quick capability probe: when the app exposes only a sparse tree or the target is absent, switch promptly to CURRENT OCR + keyboard instead of repeatedly probing UIA.',
       parameters: {
         processName: str,
         title: str,
@@ -94,7 +94,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_click_target',
-      description: 'Click one unique Windows UI Automation element by semantic name/automationId/controlType/className. Unnamed interactive controls such as Edit are included in snapshots, so controlType/className-only targeting is allowed when unique. Prefer this over OCR/coordinate clicking.',
+      description: 'Click one unique Windows UI Automation element by semantic name/automationId/controlType/className. Use this when CURRENT snapshot proves a stable unique UIA target; visually rendered apps with sparse UIA should prefer desktop_click_ocr_text + keyboard.',
       parameters: {
         name: str,
         automationId: str,
@@ -111,7 +111,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_click_ocr_text',
-      description: 'OCR semantic fallback: capture the CURRENT window/screen, find one unique OCR line by text, and click that line center. This stores semantic text rather than historical absolute coordinates and is preferred over desktop_click_coordinates when UI Automation cannot expose the target.',
+      description: 'CURRENT OCR semantic click: capture the current window/screen, find one unique OCR line with whitespace-tolerant text matching, and click its line center. For visually rendered desktop apps with sparse UIA this is a primary targeting path together with keyboard shortcuts, and is preferred over historical coordinates.',
       parameters: {
         text: reqStr,
         match: { type: 'string', enum: ['exact', 'contains'] },
