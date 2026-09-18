@@ -4,6 +4,12 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 $runtime = (Resolve-Path (Join-Path $PSScriptRoot '..\desktop-runtime\windows-desktop.ps1')).Path
+$token = [Guid]::NewGuid().ToString('N').Substring(0, 8)
+$windowTitle = "DSH Patrol UI Smoke $token"
+$tempRoot = Join-Path ([IO.Path]::GetTempPath()) "dsh-patrol-ui-smoke-$token"
+$hostScript = Join-Path $tempRoot 'host.ps1'
+$screenshotPath = Join-Path $tempRoot 'smoke.png'
+[IO.Directory]::CreateDirectory($tempRoot) | Out-Null
 
 function Invoke-PatrolDesktopAction {
   param(
@@ -27,123 +33,193 @@ function Invoke-PatrolDesktopAction {
   return $value
 }
 
-function Wait-NotepadWindow {
-  param([int]$PreferredProcessId)
+function Wait-SmokeWindow {
+  param([int]$ProcessId)
 
   $deadline = [DateTime]::UtcNow.AddSeconds(15)
   while ([DateTime]::UtcNow -lt $deadline) {
-    $preferred = Get-Process -Id $PreferredProcessId -ErrorAction SilentlyContinue
-    if ($null -ne $preferred -and $preferred.MainWindowHandle -ne 0) { return $preferred }
-
-    $fallback = Get-Process -Name notepad -ErrorAction SilentlyContinue |
-      Where-Object { $_.MainWindowHandle -ne 0 } |
-      Sort-Object StartTime -Descending |
-      Select-Object -First 1
-    if ($null -ne $fallback) { return $fallback }
-    Start-Sleep -Milliseconds 250
+    $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if ($null -ne $process -and $process.MainWindowHandle -ne 0 -and $process.MainWindowTitle -eq $windowTitle) {
+      return $process
+    }
+    Start-Sleep -Milliseconds 200
   }
-  throw 'Notepad did not expose a top-level window within 15 seconds.'
+  throw "Smoke WinForms host did not expose window '$windowTitle' within 15 seconds."
 }
 
-$started = $null
-$windowProcess = $null
+$hostSource = @"
+\$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+\$form = New-Object System.Windows.Forms.Form
+\$form.Text = '$windowTitle'
+\$form.Name = 'PatrolSmokeWindow'
+\$form.Width = 640
+\$form.Height = 360
+\$form.StartPosition = 'CenterScreen'
+
+\$input = New-Object System.Windows.Forms.TextBox
+\$input.Name = 'PatrolSmokeInput'
+\$input.AccessibleName = 'PatrolSmokeInput'
+\$input.Multiline = \$true
+\$input.Location = New-Object System.Drawing.Point(20, 20)
+\$input.Size = New-Object System.Drawing.Size(580, 180)
+
+\$button = New-Object System.Windows.Forms.Button
+\$button.Name = 'PatrolSmokeButton'
+\$button.AccessibleName = 'PatrolSmokeButton'
+\$button.Text = 'Apply'
+\$button.Location = New-Object System.Drawing.Point(20, 220)
+\$button.Size = New-Object System.Drawing.Size(100, 36)
+
+\$status = New-Object System.Windows.Forms.Label
+\$status.Name = 'PatrolSmokeStatus'
+\$status.AccessibleName = 'PatrolSmokeStatus'
+\$status.Text = 'waiting'
+\$status.Location = New-Object System.Drawing.Point(150, 228)
+\$status.AutoSize = \$true
+
+\$button.Add_Click({
+  \$status.Text = 'clicked'
+  \$status.AccessibleName = 'PatrolSmokeStatus clicked'
+})
+
+\$form.Controls.Add(\$input)
+\$form.Controls.Add(\$button)
+\$form.Controls.Add(\$status)
+\$form.Add_Shown({ \$input.Focus() })
+[void]\$form.ShowDialog()
+"@
+Set-Content -LiteralPath $hostScript -Value $hostSource -Encoding UTF8
+
+$hostProcess = $null
 try {
-  $started = Start-Process notepad.exe -PassThru
-  $windowProcess = Wait-NotepadWindow -PreferredProcessId $started.Id
+  $hostProcess = Start-Process powershell.exe -ArgumentList @(
+    '-NoProfile',
+    '-STA',
+    '-ExecutionPolicy', 'Bypass',
+    '-File', ('"' + $hostScript + '"')
+  ) -WindowStyle Hidden -PassThru
 
-  $snapshot = $null
-  $editors = @()
-  $editorDeadline = [DateTime]::UtcNow.AddSeconds(12)
-  while ([DateTime]::UtcNow -lt $editorDeadline) {
-    $snapshot = Invoke-PatrolDesktopAction -Action 'snapshot' -Arguments @{
-      processId = [int]$windowProcess.Id
-      maxElements = 1000
-      includeOffscreen = $false
-    }
+  $windowProcess = Wait-SmokeWindow -ProcessId $hostProcess.Id
+  $processId = [int]$windowProcess.Id
 
-    $editors = @($snapshot.elements | Where-Object {
-      $_.enabled -eq $true -and
-      $_.offscreen -ne $true -and
-      $_.isPassword -ne $true -and
-      @('Edit', 'Document') -contains [string]$_.controlType -and
-      [int]$_.rect.width -gt 0 -and
-      [int]$_.rect.height -gt 0
-    })
-    if ($editors.Count -gt 0) { break }
-    Start-Sleep -Milliseconds 300
+  $snapshot = Invoke-PatrolDesktopAction -Action 'snapshot' -Arguments @{
+    processId = $processId
+    maxElements = 1000
+    includeOffscreen = $false
   }
 
-  if ($editors.Count -eq 0) {
+  $input = @($snapshot.elements | Where-Object {
+    $_.enabled -eq $true -and
+    $_.offscreen -ne $true -and
+    $_.isPassword -ne $true -and
+    [string]$_.controlType -eq 'Edit'
+  }) | Sort-Object @{ Expression = { [int64]$_.rect.width * [int64]$_.rect.height }; Descending = $true } | Select-Object -First 1
+  if ($null -eq $input) {
     $observed = @($snapshot.elements | Select-Object -First 20 | ForEach-Object {
-      "$($_.controlType):$($_.name):$($_.automationId):$($_.className):$($_.valueSource)"
+      "$($_.controlType):$($_.name):$($_.automationId):$($_.className)"
     }) -join ' | '
-    throw "Notepad snapshot exposed no editable UIA Edit/Document control after waiting for the app content. observed=$observed"
+    throw "Smoke form exposed no UIA Edit control. observed=$observed"
   }
 
-  $target = $editors |
-    Sort-Object @{ Expression = { [int64]$_.rect.width * [int64]$_.rect.height }; Descending = $true } |
-    Select-Object -First 1
-
+  $message = "DSH Patrol desktop UI smoke $token"
   $typeArgs = @{
-    processId = [int]$windowProcess.Id
-    controlType = [string]$target.controlType
-    text = "DSH Patrol desktop UI smoke $([Guid]::NewGuid().ToString('N').Substring(0, 8))"
+    processId = $processId
+    controlType = 'Edit'
+    text = $message
     clear = $true
   }
-  if (-not [string]::IsNullOrWhiteSpace([string]$target.automationId)) {
-    $typeArgs.automationId = [string]$target.automationId
-  } elseif (-not [string]::IsNullOrWhiteSpace([string]$target.className)) {
-    $typeArgs.className = [string]$target.className
-  } elseif (-not [string]::IsNullOrWhiteSpace([string]$target.name)) {
-    $typeArgs.name = [string]$target.name
+  if (-not [string]::IsNullOrWhiteSpace([string]$input.automationId)) {
+    $typeArgs.automationId = [string]$input.automationId
+  } elseif (-not [string]::IsNullOrWhiteSpace([string]$input.name)) {
+    $typeArgs.name = [string]$input.name
+  } elseif (-not [string]::IsNullOrWhiteSpace([string]$input.className)) {
+    $typeArgs.className = [string]$input.className
   } else {
-    $same = @($editors | Where-Object { [string]$_.controlType -eq [string]$target.controlType })
-    $index = [Array]::IndexOf($same, $target)
-    if ($index -lt 0) { throw 'Could not calculate UIA target index for Notepad editor.' }
-    $typeArgs.index = $index
+    $typeArgs.index = 0
   }
 
   $typed = Invoke-PatrolDesktopAction -Action 'type-target' -Arguments $typeArgs
-  if ([int]$typed.chars -ne $typeArgs.text.Length) {
-    throw "type-target reported chars=$($typed.chars), expected=$($typeArgs.text.Length)"
+  if ([int]$typed.chars -ne $message.Length) {
+    throw "type-target reported chars=$($typed.chars), expected=$($message.Length)"
   }
 
-  $verified = $false
-  $lastSnapshot = $null
-  $deadline = [DateTime]::UtcNow.AddSeconds(10)
+  $verifiedInput = $false
+  $deadline = [DateTime]::UtcNow.AddSeconds(8)
   while ([DateTime]::UtcNow -lt $deadline) {
-    $lastSnapshot = Invoke-PatrolDesktopAction -Action 'snapshot' -Arguments @{
-      processId = [int]$windowProcess.Id
+    $snapshot = Invoke-PatrolDesktopAction -Action 'snapshot' -Arguments @{
+      processId = $processId
       maxElements = 1000
       includeOffscreen = $false
     }
-    $matching = @($lastSnapshot.elements | Where-Object {
+    $matching = @($snapshot.elements | Where-Object {
       $_.isPassword -ne $true -and
       $null -ne $_.value -and
-      ([string]$_.value).Contains([string]$typeArgs.text)
+      ([string]$_.value).Contains($message)
     })
     if ($matching.Count -gt 0) {
-      $verified = $true
-      $source = [string]$matching[0].valueSource
-      Write-Host "Desktop UI smoke verified typed text via UIA $source on controlType=$($matching[0].controlType)."
+      $verifiedInput = $true
+      Write-Host "Desktop UI smoke verified type-target via $($matching[0].valueSource)."
       break
     }
-    Start-Sleep -Milliseconds 250
+    Start-Sleep -Milliseconds 200
   }
-
-  if (-not $verified) {
-    $observed = @($lastSnapshot.elements |
+  if (-not $verifiedInput) {
+    $observed = @($snapshot.elements |
       Where-Object { $null -ne $_.valueSource } |
       Select-Object -First 12 |
       ForEach-Object { "$($_.controlType):$($_.className):$($_.valueSource):$([string]$_.value)" }) -join ' | '
-    throw "Notepad type-target completed but CURRENT UIA snapshot did not expose the typed text through ValuePattern/TextPattern. observed=$observed"
+    throw "type-target completed but CURRENT UIA snapshot did not expose typed text. observed=$observed"
   }
+
+  $clicked = Invoke-PatrolDesktopAction -Action 'click-target' -Arguments @{
+    processId = $processId
+    name = 'Apply'
+    controlType = 'Button'
+    match = 'exact'
+  }
+  if ([string]::IsNullOrWhiteSpace([string]$clicked.method)) {
+    throw 'click-target returned no invocation method.'
+  }
+
+  $verifiedClick = $false
+  $deadline = [DateTime]::UtcNow.AddSeconds(5)
+  while ([DateTime]::UtcNow -lt $deadline) {
+    $snapshot = Invoke-PatrolDesktopAction -Action 'snapshot' -Arguments @{
+      processId = $processId
+      maxElements = 1000
+      includeOffscreen = $false
+    }
+    if (@($snapshot.elements | Where-Object { [string]$_.name -eq 'clicked' }).Count -gt 0) {
+      $verifiedClick = $true
+      Write-Host "Desktop UI smoke verified click-target state change."
+      break
+    }
+    Start-Sleep -Milliseconds 150
+  }
+  if (-not $verifiedClick) {
+    throw 'click-target completed but CURRENT UIA snapshot never exposed the clicked status.'
+  }
+
+  $shot = Invoke-PatrolDesktopAction -Action 'screenshot' -Arguments @{
+    processId = $processId
+    scope = 'active-window'
+    path = $screenshotPath
+  }
+  if (-not (Test-Path -LiteralPath $shot.path)) {
+    throw "desktop screenshot did not create $($shot.path)"
+  }
+  if ((Get-Item -LiteralPath $shot.path).Length -le 0) {
+    throw "desktop screenshot is empty: $($shot.path)"
+  }
+
+  Write-Host "Desktop UI Automation smoke passed: snapshot + targeted type + value verification + click + screenshot."
 }
 finally {
-  if ($null -ne $windowProcess) {
-    Stop-Process -Id $windowProcess.Id -Force -ErrorAction SilentlyContinue
+  if ($null -ne $hostProcess) {
+    Stop-Process -Id $hostProcess.Id -Force -ErrorAction SilentlyContinue
   }
-  if ($null -ne $started -and ($null -eq $windowProcess -or $started.Id -ne $windowProcess.Id)) {
-    Stop-Process -Id $started.Id -Force -ErrorAction SilentlyContinue
-  }
+  Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
