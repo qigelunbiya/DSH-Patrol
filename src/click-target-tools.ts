@@ -93,8 +93,15 @@ export function registerPatrolClickTargetTool(
       if (args.conditionExpectedText !== undefined) assertSafePersistentText(args.conditionExpectedText, 'conditionExpectedText')
       if (args.locatorText !== undefined) assertSafePersistentText(args.locatorText, 'locatorText')
 
-      const selector = cleanString(args.selector)
+      const rawSelector = cleanString(args.selector)
       const locator = normalizeLocator(args.locatorText, args.locatorRole, args.locatorTag)
+      // selector is only an optional hint when a semantic locator is present.
+      // Do not let a model-invented Playwright/jQuery/XPath dialect suppress a
+      // valid locatorText path; the always-on planning guard still rejects such
+      // selectors when no semantic locator is available.
+      const selector = locator !== undefined && rawSelector !== undefined && unsupportedSelectorHint(rawSelector)
+        ? undefined
+        : rawSelector
       if (selector === undefined && locator === undefined) {
         throw new Error('patrol_click_target requires selector or at least one semantic locator field')
       }
@@ -120,18 +127,48 @@ export function registerPatrolClickTargetTool(
           tabId: args.tabId,
         }), exec)
         if (!atomic.ok) {
+          // F12 evidence from Ant Design enterprise trees shows a common shape:
+          // one exact [title] business leaf is wrapped by many same-text DOM
+          // ancestors, with the real click listener on its tree content wrapper.
+          // If semantic MAIN-world resolution misses and the model supplied no
+          // trustworthy selector hint, probe the exact title directly. The
+          // browser_click content layer promotes the titled leaf to its own
+          // clickable Ant-tree wrapper.
+          if (selector === undefined && locator.text) {
+            const titleSelector = exactTitleSelector(locator.text)
+            const countedTitle = await runner.dispatch('browser_count', compactObject({
+              selector: titleSelector,
+              visibleOnly: true,
+              tabId: args.tabId,
+            }), exec)
+            const titleCount = objectNumber(countedTitle.value, 'count')
+            if (countedTitle.ok && titleCount === 1) {
+              const clickedTitle = await runner.dispatch('browser_click', compactObject({
+                selector: titleSelector,
+                tabId: args.tabId,
+              }), exec)
+              if (clickedTitle.ok) {
+                physicalClickExecuted = true
+                resolvedSelector = titleSelector
+                clickedText = clickedTitle.text
+                resolutionSummary = `selector=${JSON.stringify(titleSelector)}, transport=unique-exact-title-direct`
+              }
+            }
+          }
+
           // The planner may already have supplied a selector from the same
           // CURRENT snapshot (for example a lone logo anchor). If the atomic
           // MAIN-world transport is unavailable, use that selector only after
           // re-counting visible matches. This keeps the fallback safe and
           // avoids forcing the model into a second business-click attempt.
-          if (selector === undefined) {
+          if (!physicalClickExecuted && selector === undefined) {
             return [
               'Reliable semantic click failed and was NOT recorded.',
               atomic.error ?? atomic.text ?? 'Unknown atomic semantic click error',
-              'The CURRENT target had no selector hint for a safe fallback; observe/analyze once for new evidence instead of looping the same click.',
+              'No unique CURRENT exact-title fallback was available. Observe/analyze once for new evidence instead of looping guessed selectors.',
             ].join('\n')
           }
+          if (!physicalClickExecuted) {
           const currentSnapshot = await runner.dispatch('browser_snapshot', compactObject({
             maxElements: 180,
             includeHidden: false,
@@ -167,6 +204,7 @@ export function registerPatrolClickTargetTool(
           resolvedSelector = selector
           clickedText = fallback.text
           resolutionSummary = `selector=${JSON.stringify(selector)}, transport=selector-compatible fallback`
+          }
         } else {
           physicalClickExecuted = true
           resolvedSelector = objectString(atomic.value, 'selector')
@@ -373,6 +411,17 @@ function normalizeLocator(text: unknown, role: unknown, tag: unknown): SemanticL
   if (cleanRole !== undefined) locator.role = cleanRole.toLowerCase()
   if (cleanTag !== undefined) locator.tag = cleanTag.toLowerCase()
   return Object.keys(locator).length === 0 ? undefined : locator
+}
+
+function unsupportedSelectorHint(selector: string): boolean {
+  return /:(?:contains|has-text)\s*\(/i.test(selector)
+    || /^text\s*=/i.test(selector)
+    || /^(?:xpath\s*=|\/\/|\.\/\/)/i.test(selector)
+}
+
+function exactTitleSelector(text: string): string {
+  const escaped = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\r\n]+/g, ' ')
+  return `top-frame::[title="${escaped}"]`
 }
 
 function cleanString(value: unknown): string | undefined {

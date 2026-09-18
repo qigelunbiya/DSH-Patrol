@@ -131,6 +131,21 @@ describe('Patrol page understanding planner', () => {
     })).toMatch(/HARD STOP/)
   })
 
+  it('does not let an invalid optional selector hint block patrol_click_target when locatorText is valid', () => {
+    const guard = createPatrolPlanningGuard()
+    expect(guard({
+      name: 'patrol_click_target',
+      arguments: {
+        inspectionId: 'demo',
+        stepName: '点击主机 - 未分组',
+        locatorText: '未分组',
+        selector: 'top-frame::span:has-text("未分组")',
+      },
+    })).toBeUndefined()
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/优先只传 locatorText 给 patrol_click_target/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/丢弃这个可选 hint/)
+  })
+
   it('also blocks raw browser selector dialects before dispatch', () => {
     const guard = createPatrolPlanningGuard()
     expect(guard({

@@ -165,6 +165,48 @@ describe('semantic Patrol click target', () => {
     })
   })
 
+  it('recovers an Ant-tree click through one exact title and ignores an invalid optional selector hint', async () => {
+    let clicked = false
+    const calls: Array<{ tool: string; args: JsonObject }> = []
+    const { store, tool, exec } = await setup(async (name, args) => {
+      calls.push({ tool: name, args })
+      if (name === 'browser_semantic_click') return { ok: false, text: '', error: 'atomic semantic target not found' }
+      if (name === 'browser_count') {
+        expect(args.selector).toBe('top-frame::[title="未分组"]')
+        return { ok: true, text: '1', value: { ok: true, count: 1 } }
+      }
+      if (name === 'browser_click') {
+        expect(args.selector).toBe('top-frame::[title="未分组"]')
+        clicked = true
+        return { ok: true, text: 'clicked Ant-tree wrapper', value: { ok: true } }
+      }
+      if (name === 'browser_read_page') return page(clicked ? '服务器 A 服务器 B 服务器 C' : '最近运维 10.192.3.174')
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    const result = await tool.execute({
+      inspectionId: 'click-target',
+      stepName: '点击主机 - 未分组',
+      locatorText: '未分组',
+      selector: 'top-frame::span:has-text("未分组")',
+      expectedText: '服务器 A',
+    }, exec)
+
+    expect(result).toContain('unique-exact-title-direct')
+    expect(calls.map(call => call.tool)).toEqual([
+      'browser_semantic_click',
+      'browser_count',
+      'browser_click',
+      'browser_read_page',
+    ])
+    expect((await store.load('click-target')).steps[0]).toMatchObject({
+      tool: 'browser_click',
+      arguments: { selector: 'top-frame::[title="未分组"]' },
+      locator: { text: '未分组' },
+      teaching: { status: 'verified', method: 'expected-text' },
+    })
+  })
+
   it('falls back to a unique CURRENT selector when atomic semantic click is unavailable', async () => {
     let clicked = false
     const calls: string[] = []

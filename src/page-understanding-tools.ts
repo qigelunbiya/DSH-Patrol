@@ -61,7 +61,7 @@ export const PATROL_PAGE_UNDERSTANDING_PROMPT = `DSH Patrol 页面理解与执�
 - taskChecklist 只描述业务动作；真正执行页面动作前，要根据 CURRENT DOM/iframe/modal/structured table 判断该业务动作对应的真实前端结构，不要把用户文字直接翻译成 nth-of-type 后盲点。
 - 唯一且明显的文本目标可直接 patrol_click_target。第一次定位失败、出现 ambiguous、同名控件有多个、目标位于表格行/弹窗/iframe 时，必须先 patrol_analyze_step，再执行一次有新证据支持的恢复方案；同一业务点击总共最多两种策略，第二种仍失败就停止并报告具体阻塞。
 - patrol_analyze_step 永远不写 Runbook。它优先把“行身份 + 行内动作”绑定，例如“目标地址 + RDP”，避免只按 [RDP] 命中多行。不要把分析器给出的 selector 再扩写成更长的 nth-of-type，也不要在分析失败后继续 browser_count/snapshot/read_page 猜选择器。
-- selector 参数只接受当前浏览器 querySelector 层支持的 CSS。严禁使用 jQuery/Playwright/XPath 方言：:contains(...)、:has-text(...)、text=...、//...、.//...、xpath=...。title-backed 树节点优先使用 CURRENT snapshot/analyze 给出的 [title="..."] 稳定 CSS；不要把“第 N 个搜索结果”误写成全局 :nth-of-type(N)。非法 selector 会在执行前被拒绝且不消耗点击策略预算。
+- selector 参数只接受当前浏览器 querySelector 层支持的 CSS。严禁使用 jQuery/Playwright/XPath 方言：:contains(...)、:has-text(...)、text=...、//...、.//...、xpath=...。当 locatorText 已知时，优先只传 locatorText 给 patrol_click_target，不要额外猜 selector；patrol_click_target 会在 atomic semantic 失败时自动检查唯一 exact [title="..."]。如果 locatorText 已提供但 selector hint 是这些非法方言，运行时会丢弃这个可选 hint 而继续语义定位，不能让坏 hint 阻塞正确点击。title-backed 树节点若直接调用 selector，则只使用 CURRENT snapshot/analyze 给出的原生 CSS。
 - 业务点击优先 patrol_click_target；它会在一次调用内完成语义定位、唯一 selector fallback、结果验证与成功记录。若物理点击已发生但结果未验证，必须先刷新 CURRENT 证据并 analyze，最多再恢复一次；两次物理点击均未验证就停止，避免重复提交。定位阶段同样受两策略上限约束，ambiguous/not-found 不能无限重试。
 - 运行时若返回“策略预算已耗尽/HARD STOP”，必须立即结束这个点击的 selector 探索；禁止继续 patrol_analyze_step、patrol_click、patrol_click_target 或低层 browser_count 去换一种说法重复同一件事。只用一条自然语言说明缺少什么证据。HARD STOP 后必须直接结束当前 assistant turn，不得继续生成“让我再尝试/换一个 selector/从截图看”等计划段落。
 - 不要为每个内部工具调用向用户重复“我再观察一下/我再试一下/让我换个选择器”。只有需要用户输入/确认、遇到不可恢复阻塞、或任务最终完成时才发自然语言说明。任何没有新工具结果或新页面证据支持的 selector 推测最多写一次；禁止在同一回复里复述相同句式、相同 DOM 猜测或相同“尝试更具体 selector”计划。
@@ -150,6 +150,10 @@ function unsupportedSelectorSyntax(name: string, args: Record<string, unknown>):
     || /^text\s*=/i.test(selector)
     || /^(?:xpath\s*=|\/\/|\.\/\/)/i.test(selector)
   if (!unsupported) return undefined
+  // patrol_click_target treats selector as an optional hint when locatorText is
+  // present. Let the tool discard a bad hint and continue through semantic /
+  // exact-title resolution instead of blocking the whole business click.
+  if (name === 'patrol_click_target' && cleanString(args.locatorText)) return undefined
   return [
     'DSH Patrol selector 语法保护：本次调用未执行。',
     `当前浏览器 selector 层只接受 CSS，拒绝不支持的 selector ${JSON.stringify(selector)}。`,
@@ -195,19 +199,34 @@ export function registerPatrolPageUnderstandingTools(ctx: Context, store: Patrol
       if (args.locatorText !== undefined) assertSafePersistentText(args.locatorText, 'page understanding locatorText')
       await store.load(args.inspectionId)
       const base = args.tabId === undefined ? {} : { tabId: args.tabId }
-      const [snapshot, page] = await Promise.all([
+      const [snapshot, page, exactTitle] = await Promise.all([
         runner.dispatch('browser_snapshot', { ...base, maxElements: 500, includeHidden: false }, exec),
         runner.dispatch('browser_read_page', { ...base, maxChars: 24000 }, exec),
+        args.locatorText
+          ? runner.dispatch('browser_count', {
+              ...base,
+              selector: exactTitleSelector(args.locatorText),
+              visibleOnly: true,
+            }, exec)
+          : Promise.resolve(undefined),
       ])
       if (!snapshot.ok && !page.ok) {
         throw new Error(`CURRENT page analysis failed: snapshot=${snapshot.error ?? 'unavailable'}; readPage=${page.error ?? 'unavailable'}`)
       }
-      const plans = analyzePageEvidence(
-        args.task,
-        args.locatorText,
-        objectString(page.value, 'text') ?? page.text ?? '',
-        snapshotElements(snapshot.value),
-      )
+      const exactCount = exactTitle?.ok ? objectNumber(exactTitle.value, 'count') : undefined
+      const plans = exactCount === 1 && args.locatorText
+        ? [{
+            kind: 'semantic' as const,
+            selector: exactTitleSelector(args.locatorText),
+            locatorText: args.locatorText,
+            evidence: `CURRENT top-frame exact title is uniquely visible: ${JSON.stringify(args.locatorText)}. Click the titled leaf; browser_click will promote it to its own Ant-tree content wrapper when applicable.`,
+          }]
+        : analyzePageEvidence(
+            args.task,
+            args.locatorText,
+            objectString(page.value, 'text') ?? page.text ?? '',
+            snapshotElements(snapshot.value),
+          )
       return renderUnderstanding(
         args.task,
         objectString(snapshot.value, 'url') ?? objectString(page.value, 'url') ?? '',
@@ -393,6 +412,11 @@ function objectBoolean(value: unknown, key: string): boolean | undefined {
   return isRecord(value) && typeof value[key] === 'boolean' ? value[key] : undefined
 }
 function cleanString(value: unknown): string { return typeof value === 'string' ? value.trim() : '' }
+function exactTitleSelector(text: string): string {
+  const escaped = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\r\n]+/g, ' ')
+  return `top-frame::[title="${escaped}"]`
+}
+
 function normalize(value: string): string { return value.replace(/\s+/g, '').toLocaleLowerCase() }
 function short(value: string, limit: number): string {
   const text = String(value || '').replace(/\s+/g, ' ').trim()
