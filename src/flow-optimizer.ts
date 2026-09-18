@@ -10,7 +10,7 @@ export interface FlowSelectionResult extends FlowCompactionResult {
   autoKeptDependencies: number
 }
 
-type ChecklistAction = 'navigate' | 'click' | 'type' | 'read' | 'screenshot'
+type ChecklistAction = 'navigate' | 'click' | 'type' | 'read' | 'screenshot' | 'wait'
 
 /**
  * Select the semantically successful route from a full conversational teaching
@@ -245,12 +245,12 @@ export function bindChecklistTasks(definition: InspectionDefinition): void {
   if (checklist.length === 0) return
 
   const tasksByAction = Object.fromEntries(
-    (['navigate', 'click', 'type', 'read', 'screenshot'] as ChecklistAction[]).map(action => [
+    (['navigate', 'click', 'type', 'read', 'screenshot', 'wait'] as ChecklistAction[]).map(action => [
       action,
       checklist.filter(item => checklistMatchesAction(item, action)),
     ]),
   ) as Record<ChecklistAction, string[]>
-  const cursors: Record<ChecklistAction, number> = { navigate: 0, click: 0, type: 0, read: 0, screenshot: 0 }
+  const cursors: Record<ChecklistAction, number> = { navigate: 0, click: 0, type: 0, read: 0, screenshot: 0, wait: 0 }
 
   definition.steps = definition.steps.map(step => {
     if (step.kind !== 'tool') return step
@@ -264,7 +264,7 @@ export function bindChecklistTasks(definition: InspectionDefinition): void {
 }
 
 function checklistActionCounts(checklist: readonly string[]): Record<ChecklistAction, number> {
-  const counts: Record<ChecklistAction, number> = { navigate: 0, click: 0, type: 0, read: 0, screenshot: 0 }
+  const counts: Record<ChecklistAction, number> = { navigate: 0, click: 0, type: 0, read: 0, screenshot: 0, wait: 0 }
   for (const raw of checklist) {
     const text = String(raw || '')
     for (const action of Object.keys(counts) as ChecklistAction[]) {
@@ -279,11 +279,12 @@ function checklistMatchesAction(text: string, action: ChecklistAction): boolean 
   if (action === 'click') return /(点击|点开|进入|选择|发送|关闭|删除|粘贴|打开.*(?:入口|菜单|工单|详情)|click|select|send|close|delete|paste|open .*?(?:menu|item|detail))/i.test(text)
   if (action === 'type') return /(输入|填写|填入|复制到剪贴板|放入剪贴板|type|enter|fill|clipboard)/i.test(text)
   if (action === 'read') return /(读取|整理|查看.*(?:信息|列表|内容)|识别|OCR|read|summar|inspect.*(?:list|content|info)|ocr)/i.test(text)
+  if (action === 'wait') return /(等待|等到|出现|可见|加载完成|ready|wait|visible|appear)/i.test(text)
   return /(截图|screenshot|capture)/i.test(text)
 }
 
 function flowActionCounts(steps: readonly InspectionStep[]): Record<ChecklistAction, number> {
-  const counts: Record<ChecklistAction, number> = { navigate: 0, click: 0, type: 0, read: 0, screenshot: 0 }
+  const counts: Record<ChecklistAction, number> = { navigate: 0, click: 0, type: 0, read: 0, screenshot: 0, wait: 0 }
   for (const step of steps) {
     if (step.kind !== 'tool') continue
     const action = flowActionForStep(step)
@@ -313,6 +314,7 @@ function flowActionForStep(step: ToolStep): ChecklistAction | undefined {
     || step.tool === 'desktop_set_clipboard_text'
     || step.tool === 'desktop_set_clipboard_files') return 'type'
   if (step.tool === 'browser_read_page' || step.tool === 'desktop_snapshot' || step.tool === 'desktop_ocr') return 'read'
+  if (step.tool === 'browser_wait' || step.tool === 'desktop_wait' || step.tool === 'desktop_wait_for_target') return 'wait'
   if (step.tool === 'browser_screenshot' || step.tool === 'desktop_screenshot') return 'screenshot'
   return undefined
 }
@@ -324,6 +326,7 @@ function actionLabel(key: ChecklistAction): string {
     type: '输入步骤',
     read: '读取/整理步骤',
     screenshot: '截图步骤',
+    wait: '等待/就绪步骤',
   } as const)[key]
 }
 
