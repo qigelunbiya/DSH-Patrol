@@ -9,6 +9,7 @@ const reqStr = { type: 'string', required: true }
 const int = { type: 'integer' }
 const reqInt = { type: 'integer', required: true }
 const num = { type: 'number' }
+const reqNum = { type: 'number', required: true }
 const bool = { type: 'boolean' }
 const textOutput = {
   schema: { type: 'string' },
@@ -80,7 +81,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_snapshot',
-      description: 'Read the current Windows UI Automation tree for the active or selected application. Use it as a quick capability probe: when the app exposes only a sparse tree or the target is absent, switch promptly to CURRENT OCR + keyboard instead of repeatedly probing UIA.',
+      description: 'Read the current Windows UI Automation tree for the active or selected application. This is a secondary precision probe after visual understanding; when the app exposes a sparse tree, return to CURRENT screenshot + model vision instead of repeatedly guessing UIA.',
       parameters: {
         processName: str,
         title: str,
@@ -112,7 +113,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_click_ocr_text',
-      description: 'CURRENT OCR semantic click: capture the current window/screen, find one unique OCR line with whitespace-tolerant text matching, and click its line center. For visually rendered desktop apps with sparse UIA this is a primary targeting path together with keyboard shortcuts, and is preferred over historical coordinates.',
+      description: 'CURRENT Windows OCR precision aid: capture the current window/screen, find one unique OCR line with whitespace-tolerant text matching, and click its line center. For application patrols, use model vision to understand the whole UI first; use OCR only when exact visible text geometry is reliable enough to refine the click.',
       parameters: {
         text: reqStr,
         match: { type: 'string', enum: ['exact', 'contains'] },
@@ -135,8 +136,23 @@ export function apply(ctx, config = {}) {
       execute: async (args, exec) => await driver.clickOcrText(compact(args), exec),
     }),
     defineTool({
+      name: 'desktop_click_visual_point',
+      description: 'Click a point identified from a CURRENT active-window screenshot by model vision. xRatio/yRatio are normalized to the selected window (0..1), so cropped screenshot coordinates are never confused with absolute desktop coordinates. The top-right window-control zone is rejected by default to prevent accidental closes.',
+      parameters: {
+        xRatio: reqNum,
+        yRatio: reqNum,
+        button: { type: 'string', enum: ['left', 'right'] },
+        processName: str,
+        title: str,
+        titleContains: str,
+        allowWindowChrome: bool,
+      },
+      output: jsonOutput('Desktop visual point clicked'),
+      execute: async (args, exec) => await driver.run('click-visual-point', compact(args), exec),
+    }),
+    defineTool({
       name: 'desktop_click_coordinates',
-      description: 'Coordinate-click fallback for desktop UI when UI Automation cannot expose the target. Use only after screenshot/OCR/current evidence provides the coordinates.',
+      description: 'Absolute SCREEN-coordinate click fallback only. Never feed screenshot-local pixels from read_image into this tool; for model-vision clicks use desktop_click_visual_point with window-relative xRatio/yRatio.',
       parameters: {
         x: reqInt,
         y: reqInt,
@@ -287,7 +303,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_ocr',
-      description: 'Run bundled Windows system OCR on a CURRENT capture. Default scope is active-window; with processName/title/titleContains the backend raises that exact window before capture and returns capture window metadata. Use scope=screen only for an explicitly whole-desktop task.',
+      description: 'Run bundled Windows system OCR on a CURRENT capture as a text-extraction/geometry aid. It does not understand whole-application layout or state and must not be the primary UI-understanding source for desktop application patrols; prefer screenshot + read_image first.',
       parameters: {
         scope: { type: 'string', enum: ['active-window', 'screen'] },
         captureMethod: { type: 'string', enum: ['auto', 'print-window', 'screen'] },
@@ -361,7 +377,7 @@ export function apply(ctx, config = {}) {
   ]
 
   const disposers = definitions.map(definition => ctx.tools.register(definition))
-  ctx.logger.info(`[dsh-patrol/desktop] desktop tools registered; platform=${process.platform}; permission-mode=unrestricted; strategy=OCR>keyboard>UIA>coordinates`)
+  ctx.logger.info(`[dsh-patrol/desktop] desktop tools registered; platform=${process.platform}; permission-mode=unrestricted; strategy=vision>keyboard>OCR/UIA>visual-point>coordinates`)
   return () => { for (const dispose of disposers) dispose() }
 }
 

@@ -30,7 +30,7 @@ export class WindowsDesktopDriver {
       supported: this.supported,
       backend: this.supported ? 'windows-uia+powershell' : 'unsupported',
       permissionMode: 'unrestricted',
-      strategy: ['ocr', 'keyboard', 'uia', 'coordinates'],
+      strategy: ['vision', 'keyboard', 'ocr', 'uia', 'visual-point', 'coordinates'],
     }
     if (!this.supported) return { ok: true, ...base, backendReachable: false }
     try {

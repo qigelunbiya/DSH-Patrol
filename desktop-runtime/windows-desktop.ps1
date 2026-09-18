@@ -566,6 +566,27 @@ try {
       Click-Point $x $y ($(if ($buttonName -ieq 'right') { 1 } else { 0 }))
       [ordered]@{ ok=$true; x=$x; y=$y; button=$buttonName }
     }
+    'click-visual-point' {
+      $process = Resolve-Window $request $true
+      Activate-Window $process
+      $xRatio = [double](Get-Prop $request 'xRatio' -1)
+      $yRatio = [double](Get-Prop $request 'yRatio' -1)
+      if ($xRatio -lt 0 -or $xRatio -gt 1 -or $yRatio -lt 0 -or $yRatio -gt 1) {
+        throw 'click-visual-point requires xRatio/yRatio between 0 and 1'
+      }
+      $allowWindowChrome = [bool](Get-Prop $request 'allowWindowChrome' $false)
+      if (-not $allowWindowChrome -and $xRatio -ge 0.90 -and $yRatio -le 0.08) {
+        throw 'click-visual-point rejected the top-right window-control zone; use desktop_close_window for closing windows'
+      }
+      $record = Window-Record $process
+      $rect = $record.rect
+      if ($rect.width -le 0 -or $rect.height -le 0) { throw 'click-visual-point target window has invalid bounds' }
+      $x = [int][Math]::Round($rect.x + (($rect.width - 1) * $xRatio))
+      $y = [int][Math]::Round($rect.y + (($rect.height - 1) * $yRatio))
+      $buttonName = [string](Get-Prop $request 'button' 'left')
+      Click-Point $x $y ($(if ($buttonName -ieq 'right') { 1 } else { 0 }))
+      [ordered]@{ ok=$true; method='window-relative-visual-point'; x=$x; y=$y; xRatio=$xRatio; yRatio=$yRatio; button=$buttonName; window=$record }
+    }
     'drag' {
       $fromX=[int](Get-Prop $request 'fromX' 0); $fromY=[int](Get-Prop $request 'fromY' 0)
       $toX=[int](Get-Prop $request 'toX' 0); $toY=[int](Get-Prop $request 'toY' 0)

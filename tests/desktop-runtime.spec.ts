@@ -14,7 +14,7 @@ describe('Desktop Automation runtime foundation', () => {
     }
     const status = await driver.status()
     expect(status.permissionMode).toBe('unrestricted')
-    expect(status.strategy).toEqual(['ocr', 'keyboard', 'uia', 'coordinates'])
+    expect(status.strategy).toEqual(['vision', 'keyboard', 'ocr', 'uia', 'visual-point', 'coordinates'])
     expect(status.supported).toBe(process.platform === 'win32')
     expect(status.backendReachable).toBe(process.platform === 'win32')
   })
@@ -64,6 +64,26 @@ describe('Desktop Automation runtime foundation', () => {
     expect(PATROL_DESKTOP_PROMPT).toMatch(/右侧聊天标题区域/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/禁止再次点联系人/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/只有 desktop_list_windows 明确确认微信窗口(?:已经)?不存在时才允许重新 launch/)
+  })
+
+  it('makes desktop application patrol visual-first and provides a safe window-relative visual click primitive', () => {
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/视觉模型优先/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/desktop_screenshot.*read_image/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/Windows OCR 只负责文字提取\/几何精修/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/desktop_click_visual_point/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/绝对禁止把 read_image 看到的裁剪截图像素直接传给 desktop_click_coordinates/)
+
+    const tools = readFileSync(join(process.cwd(), 'desktop-runtime', 'tools-plugin.js'), 'utf8')
+    expect(tools).toContain("name: 'desktop_click_visual_point'")
+    expect(tools).toContain('xRatio: reqNum')
+    expect(tools).toContain('yRatio: reqNum')
+    expect(tools).toContain('Never feed screenshot-local pixels from read_image')
+
+    const backend = readFileSync(join(process.cwd(), 'desktop-runtime', 'windows-desktop.ps1'), 'utf8')
+    expect(backend).toContain("'click-visual-point' {")
+    expect(backend).toContain("method='window-relative-visual-point'")
+    expect(backend).toContain('top-right window-control zone')
+    expect(backend).toContain('Resolve-Window $request $true')
   })
 
   it('matches OCR text despite recognition-inserted whitespace', () => {
@@ -338,6 +358,7 @@ describe('Desktop Automation runtime foundation', () => {
       'desktop_snapshot',
       'desktop_click_target',
       'desktop_click_ocr_text',
+      'desktop_click_visual_point',
       'desktop_click_coordinates',
       'desktop_wait_for_target',
       'desktop_type_text',

@@ -31,7 +31,7 @@ export function registerPatrolDesktopActionTools(
 ): () => void {
   const desktopAction = defineTool({
     name: 'patrol_desktop_action',
-    description: 'Execute and record one Windows Desktop Automation action using flat parameters. Desktop strategy is CURRENT OCR/keyboard > proven UI Automation > CURRENT coordinate fallback. Current permission policy is intentionally unrestricted in both TEST and NORMAL modes. Once a desktop Patrol inspection/checklist exists, successful business actions must use this tool so the Runbook and visual flow diagram are populated; raw desktop_* tools remain live exploration/diagnostic helpers.',
+    description: 'Execute and record one Windows Desktop Automation action using flat parameters. Desktop strategy is CURRENT model vision + keyboard > OCR/UIA precision aids > window-relative visual point > absolute-coordinate fallback. Current permission policy is intentionally unrestricted in both TEST and NORMAL modes. Once a desktop Patrol inspection/checklist exists, successful business actions must use this tool so the Runbook and visual flow diagram are populated; raw desktop_* tools remain live exploration/diagnostic helpers.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
@@ -59,6 +59,9 @@ export function registerPatrolDesktopActionTools(
       index: { type: 'integer' },
       x: { type: 'integer' },
       y: { type: 'integer' },
+      xRatio: { type: 'number' },
+      yRatio: { type: 'number' },
+      allowWindowChrome: { type: 'boolean' },
       button: { type: 'string', enum: ['left', 'right'] },
       fromX: { type: 'integer' },
       fromY: { type: 'integer' },
@@ -207,6 +210,9 @@ function desktopArguments(action: DesktopAction, args: Record<string, unknown>, 
       add('button', args.button); add('scope', args.scope); add('captureMethod', args.captureMethod); add('languages', args.languages)
       add('minXRatio', args.minXRatio); add('maxXRatio', args.maxXRatio); add('minYRatio', args.minYRatio); add('maxYRatio', args.maxYRatio)
       add('fileName', args.fileName); break
+    case 'click-visual-point':
+      add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
+      add('xRatio', args.xRatio); add('yRatio', args.yRatio); add('button', args.button); add('allowWindowChrome', args.allowWindowChrome); break
     case 'click-coordinates':
       add('x', args.x); add('y', args.y); add('button', args.button); break
     case 'drag':
@@ -281,6 +287,13 @@ function validateRequiredDesktopArguments(action: DesktopAction, args: JsonObjec
       break
     case 'open-path':
     case 'delete-path': requireText('path'); break
+    case 'click-visual-point': {
+      const xRatio = args.xRatio
+      const yRatio = args.yRatio
+      if (typeof xRatio !== 'number' || !Number.isFinite(xRatio) || xRatio < 0 || xRatio > 1) throw new Error('click-visual-point requires xRatio between 0 and 1')
+      if (typeof yRatio !== 'number' || !Number.isFinite(yRatio) || yRatio < 0 || yRatio > 1) throw new Error('click-visual-point requires yRatio between 0 and 1')
+      break
+    }
     case 'click-target':
       if (typeof args.name !== 'string'
         && typeof args.automationId !== 'string'
