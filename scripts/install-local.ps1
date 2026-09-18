@@ -297,6 +297,7 @@ $PatrolIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "lib
 $BridgeHostIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "browser-bridge-runtime\index.js")))).AbsoluteUri
 $ClientHostRoot = [System.IO.Path]::GetFullPath((Join-Path $ProjectRoot "client-host-runtime"))
 $BrowserToolsIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "browser-bridge-runtime\tools-plugin.js")))).AbsoluteUri
+$DesktopToolsIndex = (New-Object System.Uri((Resolve-Path (Join-Path $ProjectRoot "desktop-runtime\tools-plugin.js")))).AbsoluteUri
 $SafeStoragePath = ConvertTo-YamlSingleQuoted -Value $PatrolStorage
 
 # Newer Harness versions resolve client rows from the profile's dependency
@@ -335,6 +336,11 @@ $AgentYaml = @"
   config:
     commandTimeoutMs: 60000
 
+- id: desktop-tools
+  name: '$DesktopToolsIndex'
+  config:
+    commandTimeoutMs: 30000
+
 - id: dsh-patrol
   name: '$PatrolIndex'
   config:
@@ -342,7 +348,21 @@ $AgentYaml = @"
     maxSteps: 200
     reportMaxChars: 30000
 "@
-Write-Utf8NoBom -Path (Join-Path $PresetDir "agent.cordis.yml") -Content $AgentYaml
+$AgentPresetPath = Join-Path $PresetDir "agent.cordis.yml"
+Write-Utf8NoBom -Path $AgentPresetPath -Content $AgentYaml
+$InstalledAgentYaml = [System.IO.File]::ReadAllText($AgentPresetPath)
+foreach ($requiredRow in @(
+    "id: browser-tools",
+    "name: '$BrowserToolsIndex'",
+    "id: desktop-tools",
+    "name: '$DesktopToolsIndex'",
+    "id: dsh-patrol",
+    "name: '$PatrolIndex'"
+)) {
+    if (-not $InstalledAgentYaml.Contains($requiredRow)) {
+        throw "Patrol agent preset is incomplete after local install; missing row: $requiredRow"
+    }
+}
 Write-Utf8NoBom -Path (Join-Path $PresetDir ".managed-by-dsh-patrol") -Content "managed by dsh-patrol local installer`n"
 
 # Copy a self-contained cleanup plugin outside the source checkout. If the
@@ -382,6 +402,8 @@ Write-Host "Lifecycle cleanup coordinator installed: $CleanupTarget" -Foreground
 Write-Host "Patrol workspace storage: $PatrolStorage" -ForegroundColor Green
 Write-Host "Patrol screenshot temp storage: $PatrolScreenshotDir" -ForegroundColor Green
 Write-Host "Patrol credential helper: $CredentialHelperTarget" -ForegroundColor Green
+Write-Host "Browser provider: installed in Patrol preset from $BrowserToolsIndex" -ForegroundColor Green
+Write-Host "Desktop provider: installed in Patrol preset from $DesktopToolsIndex" -ForegroundColor Green
 Write-Host "Browser provisioning: automatic managed Chromium profile; no manual extension installation is required." -ForegroundColor Green
 if ($HarnessRoot) {
     Write-Host "Start Harness with:" -ForegroundColor Cyan
