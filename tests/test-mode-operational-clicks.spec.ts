@@ -9,7 +9,7 @@ describe('TEST MODE operational click fallbacks', () => {
     expect(strictBlock).toContain('planningGuard(execution)')
     expect(source.indexOf('planningGuard(execution)')).toBeGreaterThan(source.indexOf('if (runtimePolicy.installGuards)'))
     expect(source).toContain("build=${TEST_MODE_BUILD_MARKER}")
-    expect(source).toContain("test-bypass-v9-authenticated-prefix-fast-forward")
+    expect(source).toContain("test-bypass-v10-desktop-automation")
   })
 
   it('allows non-secret low-level interaction fallbacks in TEST MODE', () => {
@@ -20,6 +20,16 @@ describe('TEST MODE operational click fallbacks', () => {
     expect(source).toContain("'browser_scroll'")
     expect(source).toContain("'browser_select'")
     expect(source).toContain('TEST_MODE_DIRECT_BROWSER_ALLOWED.has(execution.name)')
+  })
+
+  it('keeps Desktop Automation directly available in TEST MODE without permission tiers', () => {
+    const prompt = readFileSync(join(process.cwd(), 'src', 'test-mode.ts'), 'utf8')
+    const index = readFileSync(join(process.cwd(), 'src', 'index.ts'), 'utf8')
+    expect(prompt).toContain('desktop_* 原语可以直接操作当前桌面应用')
+    expect(prompt).toContain('发消息、删除文件、关闭窗口等当前都允许直接执行')
+    expect(prompt).toContain('NORMAL MODE 现阶段同样不分级')
+    expect(index).toContain('desktopPermissions=unrestricted')
+    expect(index).toContain('registerPatrolDesktopActionTools')
   })
 
   it('keeps secret-bearing direct browser mutations behind Patrol tools', () => {
