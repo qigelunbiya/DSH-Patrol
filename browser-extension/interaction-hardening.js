@@ -633,6 +633,8 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     const tag = element.tagName?.toLowerCase?.() || ''
     if (tag === 'button') return 'button'
     if (tag === 'a' && element.getAttribute?.('href')) return 'link'
+    if (element instanceof HTMLTextAreaElement || element?.isContentEditable === true) return 'textbox'
+    if (element instanceof HTMLInputElement && !['button', 'submit', 'reset'].includes(String(element.type || '').toLowerCase())) return 'textbox'
     return ''
   }
   const visible = element => {
