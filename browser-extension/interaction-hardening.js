@@ -1432,6 +1432,7 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
 async function interactionDispatchTrustedMouseClick(tabId, clientX, clientY) {
   const target = { tabId }
   let attached = false
+  let mousePressed = false
   try {
     await chrome.debugger.attach(target, '1.3')
     attached = true
@@ -1441,9 +1442,16 @@ async function interactionDispatchTrustedMouseClick(tabId, clientX, clientY) {
     await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
       type: 'mousePressed', x: clientX, y: clientY, button: 'left', buttons: 1, clickCount: 1,
     })
+    mousePressed = true
     await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
       type: 'mouseReleased', x: clientX, y: clientY, button: 'left', buttons: 0, clickCount: 1,
     })
+    return { physicalClickDispatched: true }
+  } catch (error) {
+    if (mousePressed && error && typeof error === 'object') {
+      try { error.physicalClickDispatched = true } catch {}
+    }
+    throw error
   } finally {
     if (attached) {
       try { await chrome.debugger.detach(target) } catch {}
@@ -1452,6 +1460,18 @@ async function interactionDispatchTrustedMouseClick(tabId, clientX, clientY) {
 }
 
 function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transport) {
+  const captureLeft = Number.isFinite(Number(viewport.captureClientLeft)) ? Number(viewport.captureClientLeft) : Number(viewport.offsetLeft || 0)
+  const captureTop = Number.isFinite(Number(viewport.captureClientTop)) ? Number(viewport.captureClientTop) : Number(viewport.offsetTop || 0)
+  const captureWidth = Number.isFinite(Number(viewport.captureWidth)) ? Number(viewport.captureWidth) : Number(viewport.width || 0)
+  const captureHeight = Number.isFinite(Number(viewport.captureHeight)) ? Number(viewport.captureHeight) : Number(viewport.height || 0)
+  const resolvedX = Number.isFinite(Number(clicked.clickX)) ? Number(clicked.clickX) : undefined
+  const resolvedY = Number.isFinite(Number(clicked.clickY)) ? Number(clicked.clickY) : undefined
+  const effectiveXRatio = resolvedX !== undefined && captureWidth > 0
+    ? Math.max(0, Math.min(1, (resolvedX - captureLeft) / captureWidth))
+    : xRatio
+  const effectiveYRatio = resolvedY !== undefined && captureHeight > 0
+    ? Math.max(0, Math.min(1, (resolvedY - captureTop) / captureHeight))
+    : yRatio
   const rawSelector = typeof clicked.selector === 'string' ? clicked.selector.trim() : ''
   const selectorHint = rawSelector
     ? (rawSelector.startsWith(INTERACTION_TOP_FRAME_PREFIX) ? rawSelector : `${INTERACTION_TOP_FRAME_PREFIX}${rawSelector}`)
@@ -1463,8 +1483,10 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
       : transport
   return {
     ok: true,
-    xRatio,
-    yRatio,
+    xRatio: effectiveXRatio,
+    yRatio: effectiveYRatio,
+    requestedXRatio: xRatio,
+    requestedYRatio: yRatio,
     transport: effectiveTransport,
     ...(selectorHint ? { selectorHint } : {}),
     urlIdentity: viewport.urlIdentity,
@@ -1497,6 +1519,7 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
     cdpPiercedActivator: clicked.cdpPiercedActivator === true,
     cdpPiercedFollowupEditor: clicked.cdpPiercedFollowupEditor === true,
     cdpPiercedAction: clicked.cdpPiercedAction === true,
+    physicalClickUncertain: clicked.physicalClickUncertain === true,
     ...(Number.isFinite(Number(clicked.snapDistance)) ? { snapDistance: Number(clicked.snapDistance) } : {}),
   }
 }
