@@ -216,7 +216,7 @@ export function registerTools(ctx, bridge, config = {}) {
             ok: reqBool, xRatio: reqNum, yRatio: reqNum, selectorHint: str, urlIdentity: str,
             scrollX: optNum, scrollY: optNum, viewportWidth: optNum, viewportHeight: optNum, viewportScale: optNum,
             targetTag: str, targetRole: str, targetText: str, targetTitle: str, targetAriaLabel: str,
-            targetId: str, targetClassName: str, targetStateChanged: bool, stateEvidence: str, transport: str,
+            targetId: str, targetClassName: str, targetStateChanged: bool, targetFocusedEditable: bool, stateEvidence: str, transport: str,
           },
         },
         render: (_args, value) => [{ type: 'text', text: `Visual browser click executed at (${Number(value.xRatio).toFixed(4)}, ${Number(value.yRatio).toFixed(4)}) via ${value.transport || 'visual'}${value.selectorHint ? `; reusable selector=${value.selectorHint}` : ''}.` }],
@@ -237,7 +237,8 @@ export function registerTools(ctx, bridge, config = {}) {
           targetTag: value.targetTag, targetRole: value.targetRole, targetText: value.targetText,
           targetTitle: value.targetTitle, targetAriaLabel: value.targetAriaLabel,
           targetId: value.targetId, targetClassName: value.targetClassName,
-          targetStateChanged: value.targetStateChanged, stateEvidence: value.stateEvidence, transport: value.transport,
+          targetStateChanged: value.targetStateChanged, targetFocusedEditable: value.targetFocusedEditable,
+          stateEvidence: value.stateEvidence, transport: value.transport,
         })
       },
     }),

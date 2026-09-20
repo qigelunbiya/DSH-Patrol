@@ -67,6 +67,8 @@ async function semanticClickCommand(args) {
     frameId: chosen.frame.frameId,
     frameUrl: chosen.frame.url || '',
     transport: 'atomic-main-world-semantic-click',
+    targetStateChanged: clicked.targetStateChanged === true,
+    ...(typeof clicked.stateEvidence === 'string' && clicked.stateEvidence ? { stateEvidence: clicked.stateEvidence } : {}),
   }
 }
 
@@ -125,7 +127,7 @@ async function semanticClickPageCommand(mode, spec) {
   }
   const disabled = element => element.matches?.(':disabled,[aria-disabled="true"]') === true
   const actionText = element => {
-    const parts = [element.getAttribute?.('aria-label'), element.getAttribute?.('title')]
+    const parts = [element.getAttribute?.('aria-label'), element.getAttribute?.('title'), element.getAttribute?.('placeholder')]
     if (element instanceof HTMLInputElement && ['button', 'submit', 'reset'].includes(String(element.type || '').toLowerCase())) parts.push(element.value)
     if (element instanceof HTMLImageElement) parts.push(element.getAttribute('alt'), element.getAttribute('src'))
     parts.push(element.innerText, element.textContent)
@@ -161,6 +163,20 @@ async function semanticClickPageCommand(mode, spec) {
     return path.join(' > ')
   }
   const fingerprint = element => `${stableSelector(element)}|${normalize(actionText(element))}|${normalize(roleOf(element))}|${element.tagName.toLowerCase()}`
+  const stateSignature = element => {
+    if (!(element instanceof Element)) return ''
+    return [
+      element.tagName.toLowerCase(),
+      compact(element.getAttribute?.('class') || ''),
+      compact(element.getAttribute?.('aria-pressed') || ''),
+      compact(element.getAttribute?.('aria-checked') || ''),
+      compact(element.getAttribute?.('aria-expanded') || ''),
+      compact(element.getAttribute?.('data-state') || ''),
+      compact(element.getAttribute?.('title') || ''),
+      compact(element.getAttribute?.('value') || ''),
+      compact(element.innerText || element.textContent || '').slice(0, 320),
+    ].join('|')
+  }
   const physicalClickTarget = element => {
     const title = compact(element.getAttribute?.('title') || '')
     if (!title) return element
@@ -196,6 +212,7 @@ async function semanticClickPageCommand(mode, spec) {
     'a', 'button', 'input[type="button"]', 'input[type="submit"]', 'input[type="reset"]',
     '[role="button"]', '[role="link"]', '[role="menuitem"]', '[role="tab"]',
     '[onclick]', '[bg-click]', '[ng-click]', '[data-action]', '[tabindex]:not([tabindex="-1"])',
+    'textarea', 'input:not([type="hidden"])', '[contenteditable="true"]',
     '[role="treeitem"]', '.ant-tree-node-content-wrapper', '[title]',
     'img', 'svg', '[id*="logo" i]', '[class*="logo" i]',
   ].join(',')
@@ -310,6 +327,7 @@ async function semanticClickPageCommand(mode, spec) {
   const y = Math.max(after.top + 1, Math.min(after.top + after.height / 2, after.bottom - 1))
   const hit = document.elementFromPoint(x, y)
   if (hit && hit !== clickTarget && !clickTarget.contains(hit)) throw new Error(`semantic target is intercepted by <${hit.tagName.toLowerCase()}>`)
+  const beforeState = stateSignature(clickTarget)
   clickTarget.focus?.({ preventScroll: true })
   if (typeof PointerEvent !== 'undefined') {
     for (const type of ['pointerover', 'pointermove', 'pointerdown', 'pointerup']) clickTarget.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0 }))
@@ -317,6 +335,13 @@ async function semanticClickPageCommand(mode, spec) {
   for (const type of ['mouseover', 'mousemove', 'mousedown', 'mouseup']) clickTarget.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0 }))
   if (typeof clickTarget.click === 'function') clickTarget.click()
   else clickTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0 }))
+  await new Promise(resolve => setTimeout(resolve, 260))
+  const targetStateChanged = !clickTarget.isConnected || stateSignature(clickTarget) !== beforeState
+  const stateEvidence = !clickTarget.isConnected
+    ? 'semantic click target detached/re-rendered'
+    : targetStateChanged
+      ? 'semantic click target DOM state changed'
+      : ''
   // Persist the stable semantic leaf selector, not the generic wrapper. Replay
   // promotes only this titled Ant-tree descendant back to its clickable wrapper.
   return {
@@ -325,6 +350,8 @@ async function semanticClickPageCommand(mode, spec) {
     text: chosen.text,
     role: chosen.role,
     tag: chosen.tag,
+    targetStateChanged,
+    stateEvidence,
     evidence: uniqueExactTitleTarget === element ? 'unique-exact-title->ant-tree-wrapper' : 'semantic-score',
   }
 }

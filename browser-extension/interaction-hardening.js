@@ -311,14 +311,35 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
     if (!hasExpectedFingerprint || (probe && typeof probe === 'object' && probe.ok !== false)) {
       try {
         await interactionDispatchTrustedMouseClick(tabId, clientX, clientY)
-        await new Promise(resolve => setTimeout(resolve, 180))
+        await new Promise(resolve => setTimeout(resolve, 260))
+        let afterProbe
+        try {
+          const afterResults = await chrome.scripting.executeScript({
+            target: { tabId, frameIds: [0] },
+            world: 'MAIN',
+            func: interactionMainWorldVisualClick,
+            args: [clientX, clientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, true],
+          })
+          afterProbe = Array.isArray(afterResults) ? afterResults[0]?.result : undefined
+        } catch {}
+        const targetStateChanged = Boolean(
+          probe && afterProbe
+          && typeof probe.stateSignature === 'string'
+          && typeof afterProbe.stateSignature === 'string'
+          && probe.stateSignature !== afterProbe.stateSignature
+        )
+        const targetFocusedEditable = afterProbe?.targetFocusedEditable === true
         return {
           ok: true,
           ...(probe && typeof probe === 'object' ? probe : {}),
-          targetStateChanged: false,
-          stateEvidence: probe
-            ? 'trusted native mouse click dispatched at CURRENT visual target'
-            : 'trusted native mouse click dispatched at CURRENT visual point without DOM fingerprint',
+          ...(afterProbe && typeof afterProbe === 'object' ? afterProbe : {}),
+          targetStateChanged,
+          targetFocusedEditable,
+          stateEvidence: targetStateChanged
+            ? 'trusted native click changed the visual target own DOM state'
+            : targetFocusedEditable
+              ? 'trusted native click focused an editable control'
+              : '',
           inputTransport: 'chrome-debugger',
         }
       } catch (error) {
@@ -396,6 +417,7 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
     scrollX: viewport.scrollX,
     scrollY: viewport.scrollY,
     targetStateChanged: clicked.targetStateChanged === true,
+    targetFocusedEditable: clicked.targetFocusedEditable === true,
     ...(typeof clicked.stateEvidence === 'string' ? { stateEvidence: clicked.stateEvidence } : {}),
     ...(typeof clicked.tag === 'string' ? { targetTag: clicked.tag } : {}),
     ...(typeof clicked.role === 'string' && clicked.role ? { targetRole: clicked.role } : {}),
@@ -488,6 +510,18 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
       compact(element.innerText || element.textContent || '').slice(0, 320),
     ].join('|')
   }
+  const deepActiveElement = () => {
+    let active = document.activeElement
+    let guard = 0
+    while (active instanceof Element && active.shadowRoot?.activeElement instanceof Element && guard < 8) {
+      active = active.shadowRoot.activeElement
+      guard += 1
+    }
+    return active
+  }
+  const editable = element => element instanceof HTMLInputElement
+    || element instanceof HTMLTextAreaElement
+    || element?.isContentEditable === true
 
   const hit = document.elementFromPoint(clientX, clientY)
   if (!(hit instanceof Element)) throw new Error('visual click point does not hit a DOM element')
@@ -519,6 +553,8 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     id: compact(target.id || ''),
     className: compact([...(target.classList || [])].slice(0, 8).join(' ')),
     targetStateChanged: false,
+    targetFocusedEditable: editable(deepActiveElement()),
+    stateSignature: signature(target),
     stateEvidence: '',
   }
   if (probeOnly) return descriptor
@@ -549,6 +585,8 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
   return {
     ...descriptor,
     targetStateChanged,
+    targetFocusedEditable: editable(deepActiveElement()),
+    stateSignature: signature(target),
     stateEvidence,
   }
 }

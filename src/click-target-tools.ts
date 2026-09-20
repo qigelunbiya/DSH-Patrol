@@ -118,7 +118,7 @@ export function registerPatrolClickTargetTool(
       let physicalClickExecuted = false
 
       if (locator !== undefined) {
-        const atomic = await runner.dispatch('browser_semantic_click', compactObject({
+        let atomic = await runner.dispatch('browser_semantic_click', compactObject({
           locatorText: locator.text,
           locatorRole: locator.role,
           locatorTag: locator.tag,
@@ -126,6 +126,21 @@ export function registerPatrolClickTargetTool(
           task: args.stepName,
           tabId: args.tabId,
         }), exec)
+
+        // UI libraries frequently expose a clickable div/span with a useful
+        // title/placeholder but no literal role=button. If the model guessed a
+        // role/tag that made semantic resolution fail, retry once with text
+        // only. The atomic resolver still requires one globally best CURRENT
+        // target, so this is stricter than switching to coordinates.
+        if (!atomic.ok && locator.text && (locator.role || locator.tag)) {
+          const relaxed = await runner.dispatch('browser_semantic_click', compactObject({
+            locatorText: locator.text,
+            selectorHint: selector,
+            task: args.stepName,
+            tabId: args.tabId,
+          }), exec)
+          if (relaxed.ok) atomic = relaxed
+        }
         if (!atomic.ok) {
           // F12 evidence from Ant Design enterprise trees shows a common shape:
           // one exact [title] business leaf is wrapped by many same-text DOM
@@ -267,19 +282,27 @@ export function registerPatrolClickTargetTool(
         verificationMethod = 'expected-text'
         verificationEvidence = `${expectation.expectation.mode} ${JSON.stringify(expectation.expectation.value)}`
       } else if (locator !== undefined) {
-        const verified = await verifyAutomaticStateChange(runner, exec, beforeState, args.tabId)
-        verificationAttempts = verified.attempts
-        if (!verified.ok) {
-          if (physicalClickExecuted) options.clickOutcomes?.recordUnverifiedPhysicalClick(args)
-          return [
-            'Semantic click executed but was NOT recorded because no meaningful post-click page/DOM state change could be verified.',
-            `Resolved target: ${resolutionSummary}`,
-            clickedText,
-            'Do not mark this checklist item complete. Observe the CURRENT state once; only retry with new evidence or a concrete expectedText.',
-          ].filter(Boolean).join('\n')
+        const atomicTargetStateChanged = objectBoolean(atomic?.value, 'targetStateChanged') === true
+        const atomicStateEvidence = objectString(atomic?.value, 'stateEvidence')
+        if (atomicTargetStateChanged) {
+          verificationAttempts = 1
+          verificationMethod = 'state-change'
+          verificationEvidence = atomicStateEvidence ?? 'semantic target changed its own CURRENT DOM state'
+        } else {
+          const verified = await verifyAutomaticStateChange(runner, exec, beforeState, args.tabId)
+          verificationAttempts = verified.attempts
+          if (!verified.ok) {
+            if (physicalClickExecuted) options.clickOutcomes?.recordUnverifiedPhysicalClick(args)
+            return [
+              'Semantic click executed but was NOT recorded because neither the target itself nor the page URL changed.',
+              `Resolved target: ${resolutionSummary}`,
+              clickedText,
+              'Dynamic text/DOM churn elsewhere on the page is deliberately ignored and cannot prove this business click succeeded.',
+            ].filter(Boolean).join('\n')
+          }
+          verificationMethod = 'state-change'
+          verificationEvidence = verified.evidence
         }
-        verificationMethod = 'state-change'
-        verificationEvidence = verified.evidence
       }
 
       if (resolvedSelector === undefined) throw new Error('resolved click target has no reusable selector')
@@ -377,14 +400,10 @@ function stateChangeEvidence(before: PageState, after: PageState): string | unde
   if (before.url && after.url && before.url !== after.url) {
     return `URL changed from ${safeStateUrl(before.url)} to ${safeStateUrl(after.url)}`
   }
-  const added = [...after.elementSignatures].filter(signature => !before.elementSignatures.has(signature))
-  if (added.length > 0) return `new interactive DOM: ${shortStateEvidence(added[0]!)}`
-  if (before.text !== after.text) {
-    const lengthDelta = Math.abs(before.text.length - after.text.length)
-    if (lengthDelta >= 12 || !before.text || !after.text) {
-      return `visible page text changed (${before.text.length} -> ${after.text.length} chars)`
-    }
-  }
+  // Dynamic pages (video players, feeds, clocks, comment counters) mutate DOM
+  // continuously. Those unrelated changes must never certify a business click.
+  // Target-local state is reported by browser_semantic_click above; this
+  // fallback accepts navigation only.
   return undefined
 }
 
@@ -436,6 +455,12 @@ function objectString(value: unknown, key: string): string | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
   const child = (value as Record<string, unknown>)[key]
   return typeof child === 'string' && child.trim() !== '' ? child : undefined
+}
+
+function objectBoolean(value: unknown, key: string): boolean | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const child = (value as Record<string, unknown>)[key]
+  return typeof child === 'boolean' ? child : undefined
 }
 
 function objectNumber(value: unknown, key: string): number | undefined {

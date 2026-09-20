@@ -141,6 +141,7 @@ describe('Patrol screenshot tab readiness', () => {
         if (request.func?.name === 'interactionMainWorldViewportState') return [{ result: { ...viewport } }]
         if (request.func?.name === 'interactionMainWorldVisualClick') {
           expect(request.args?.[6]).toBe(true)
+          const after = debuggerCalls.length > 0
           return [{
             result: {
               ok: true,
@@ -151,8 +152,10 @@ describe('Patrol screenshot tab readiness', () => {
               title: '点赞（Q）',
               ariaLabel: '',
               id: '',
-              className: 'video-like',
+              className: after ? 'video-like active' : 'video-like',
               targetStateChanged: false,
+              targetFocusedEditable: false,
+              stateSignature: after ? 'div|video-like active' : 'div|video-like',
               stateEvidence: '',
             },
           }]
@@ -180,6 +183,8 @@ describe('Patrol screenshot tab readiness', () => {
     })
     expect(clicked.transport).toContain('trusted-native-mouse')
     expect(clicked.selectorHint).toBe('top-frame::div[title="点赞（Q）"]')
+    expect(clicked.targetStateChanged).toBe(true)
+    expect(clicked.stateEvidence).toMatch(/own DOM state/)
     expect(debuggerCalls.map(call => call.method)).toEqual([
       'Input.dispatchMouseEvent',
       'Input.dispatchMouseEvent',

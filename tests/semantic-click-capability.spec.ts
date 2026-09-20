@@ -34,4 +34,21 @@ describe('semantic click capability gate', () => {
       .resolves.toMatchObject({ ok: true, selector: '#login' })
     expect(requests).toEqual(['semanticClick'])
   })
+
+  it('passes target-local state verification through the runtime tool', async () => {
+    const definitions = []
+    const ctx = { tools: { register(tool) { definitions.push(tool); return () => {} } } }
+    const bridge = {
+      status: () => ({ extension: { version: '0.3.3', capabilities: ['semanticClick'] } }),
+      async request() {
+        return { ok: true, selector: 'div[title="点赞（Q）"]', targetStateChanged: true, stateEvidence: 'own target changed' }
+      },
+    }
+    registerSemanticClickTool(ctx, bridge)
+    const tool = definitions.find(item => item.name === 'browser_semantic_click')
+    await expect(tool.execute({ locatorText: '点赞' }, {})).resolves.toMatchObject({
+      targetStateChanged: true,
+      stateEvidence: 'own target changed',
+    })
+  })
 })

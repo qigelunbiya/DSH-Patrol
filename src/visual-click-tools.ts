@@ -95,6 +95,17 @@ export function registerPatrolVisualClickTool(
       }
       outcomes.recordVisualPhysicalClick(args)
 
+      const mismatch = visualTargetMismatch(args.targetHint, clicked.value)
+      if (mismatch !== undefined) {
+        outcomes.recordUnverifiedPhysicalClick(args)
+        return [
+          'Visual physical click executed but was NOT recorded because it hit a target inconsistent with the requested business control.',
+          mismatch,
+          clicked.text,
+          'Do not report this checklist item as completed. Return to CURRENT DOM evidence or capture one fresh visual frame only after the DOM fallback is genuinely exhausted.',
+        ].filter(Boolean).join('\n')
+      }
+
       let verificationMethod: NonNullable<ToolStep['teaching']>['method']
       let verificationEvidence = ''
       let verificationAttempts = 1
@@ -119,6 +130,9 @@ export function registerPatrolVisualClickTool(
       } else if (objectBoolean(clicked.value, 'targetStateChanged') === true) {
         verificationMethod = 'state-change'
         verificationEvidence = objectString(clicked.value, 'stateEvidence') ?? 'clicked visual target changed its own CURRENT DOM state'
+      } else if (objectBoolean(clicked.value, 'targetFocusedEditable') === true) {
+        verificationMethod = 'state-change'
+        verificationEvidence = objectString(clicked.value, 'stateEvidence') ?? 'clicked visual target focused an editable control'
       } else {
         const verified = await verifyAutomaticStateChange(runner, exec, beforeState, args.tabId)
         verificationAttempts = verified.attempts
@@ -232,12 +246,9 @@ async function verifyAutomaticStateChange(runner: PatrolRunner, exec: ToolRunCon
 }
 function stateChangeEvidence(before: PageState, after: PageState): string | undefined {
   if (before.url && after.url && before.url !== after.url) return `URL changed from ${safeStateUrl(before.url)} to ${safeStateUrl(after.url)}`
-  const added = [...after.elementSignatures].filter(signature => !before.elementSignatures.has(signature))
-  if (added.length > 0) return `new interactive DOM: ${shortStateEvidence(added[0]!)}`
-  if (before.text !== after.text) {
-    const lengthDelta = Math.abs(before.text.length - after.text.length)
-    if (lengthDelta >= 12 || !before.text || !after.text) return `visible page text changed (${before.text.length} -> ${after.text.length} chars)`
-  }
+  // Global dynamic DOM/text churn is not evidence that a visual business target
+  // was hit. The provider reports target-local state/focus above; this fallback
+  // accepts navigation only.
   return undefined
 }
 function snapshotElementSignatures(value: unknown): Set<string> {
@@ -257,6 +268,29 @@ function snapshotElementSignatures(value: unknown): Set<string> {
   }
   return out
 }
+function visualTargetMismatch(targetHint: string | undefined, value: unknown): string | undefined {
+  const hint = normalizePageText(targetHint ?? '')
+  if (!hint) return undefined
+  const haystack = normalizePageText([
+    objectString(value, 'selectorHint') ?? '',
+    objectString(value, 'targetText') ?? '',
+    objectString(value, 'targetTitle') ?? '',
+    objectString(value, 'targetAriaLabel') ?? '',
+    objectString(value, 'targetId') ?? '',
+    objectString(value, 'targetClassName') ?? '',
+  ].join(' '))
+
+  const groups: Array<{ hint: RegExp; evidence: RegExp; label: string }> = [
+    { hint: /点赞|大拇指|\blike\b|thumb/, evidence: /点赞|\blike\b|thumb|video-like|aria-pressed/, label: '点赞/like' },
+    { hint: /评论|回复|\bcomment\b|\breply\b/, evidence: /评论|回复|comment|reply|editor|textarea|placeholder/, label: '评论/comment' },
+    { hint: /搜索|\bsearch\b/, evidence: /搜索|search/, label: '搜索/search' },
+    { hint: /发送|提交|\bsend\b|\bsubmit\b/, evidence: /发送|提交|send|submit/, label: '发送/send' },
+  ]
+  const expected = groups.find(group => group.hint.test(hint))
+  if (expected === undefined || expected.evidence.test(haystack)) return undefined
+  return `targetHint expects ${expected.label}, but CURRENT clicked DOM evidence was ${JSON.stringify(haystack.slice(0, 320) || '(empty)')}`
+}
+
 async function loadEditable(store: PatrolStore, inspectionId: string, maxSteps: number): Promise<InspectionDefinition> {
   const definition = await store.load(inspectionId)
   if (definition.status !== 'draft') throw new Error(`inspection ${definition.id} is ${definition.status}, not draft; call patrol_begin_edit before teaching a visual click`)

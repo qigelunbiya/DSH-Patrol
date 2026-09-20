@@ -154,6 +154,45 @@ describe('browser visual fallback click teaching', () => {
     ])
   })
 
+  it('rejects unrelated dynamic-page false positives such as clicking the Bilibili sending bar for a like target', async () => {
+    const outcomes = createPatrolClickOutcomeTracker()
+    const { store, tool, exec } = await setup(async (name) => {
+      if (name === 'browser_read_page') return { ok: true, text: 'video', value: { ok: true, url: 'https://www.bilibili.com/video/BV-test', text: 'video' } }
+      if (name === 'browser_snapshot') return { ok: true, text: 'snapshot', value: { ok: true, url: 'https://www.bilibili.com/video/BV-test', elements: [] } }
+      if (name === 'browser_visual_click') return {
+        ok: true,
+        text: 'clicked sending bar',
+        value: {
+          ok: true,
+          selectorHint: 'top-frame::div.bpx-player-sending-bar',
+          targetTag: 'div',
+          targetClassName: 'bpx-player-sending-bar',
+          targetStateChanged: false,
+          urlIdentity: 'https://www.bilibili.com/video/BV-test',
+          viewportWidth: 1280,
+          viewportHeight: 720,
+          scrollX: 0,
+          scrollY: 0,
+        },
+      }
+      throw new Error(`unexpected tool ${name}`)
+    }, outcomes)
+
+    const args = {
+      inspectionId: 'visual-click',
+      stepName: '给视频点赞',
+      targetHint: '大拇指点赞按钮',
+      frameId: 'browser-visual-current',
+      xRatio: 0.15,
+      yRatio: 0.85,
+    }
+    const result = await tool.execute(args, exec)
+    expect(result).toMatch(/NOT recorded/)
+    expect(result).toMatch(/点赞\/like/)
+    expect((await store.load('visual-click')).steps).toHaveLength(0)
+    expect(outcomes.unverifiedPhysicalClicks(args)).toBe(1)
+  })
+
   it('does not consume visual physical-click budget when browser_visual_click fails before clicking', async () => {
     const outcomes = createPatrolClickOutcomeTracker()
     const { tool, exec } = await setup(async (name) => {

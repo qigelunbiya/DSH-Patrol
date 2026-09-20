@@ -4,6 +4,7 @@ const reqBool = { type: 'boolean', required: true }
 const reqStr = { type: 'string', required: true }
 const optStr = { type: 'string' }
 const optInt = { type: 'integer' }
+const bool = { type: 'boolean' }
 
 export function registerSemanticClickTool(ctx, bridge, config = {}) {
   const timeoutMs = config.commandTimeoutMs ?? 60000
@@ -31,6 +32,8 @@ export function registerSemanticClickTool(ctx, bridge, config = {}) {
           frameId: optInt,
           frameUrl: optStr,
           transport: optStr,
+          targetStateChanged: bool,
+          stateEvidence: optStr,
         },
       },
       render: (_args, result) => [{ type: 'text', text: `Atomically clicked ${result.selector}${result.text ? ` (${result.text})` : ''}.` }],
@@ -64,6 +67,8 @@ export function registerSemanticClickTool(ctx, bridge, config = {}) {
         ...(Number.isInteger(result.frameId) ? { frameId: result.frameId } : {}),
         ...(typeof result.frameUrl === 'string' ? { frameUrl: result.frameUrl } : {}),
         ...(typeof result.transport === 'string' ? { transport: result.transport } : {}),
+        ...(typeof result.targetStateChanged === 'boolean' ? { targetStateChanged: result.targetStateChanged } : {}),
+        ...(typeof result.stateEvidence === 'string' ? { stateEvidence: result.stateEvidence } : {}),
       }
     },
   })
