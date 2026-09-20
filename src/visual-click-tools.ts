@@ -94,10 +94,19 @@ export function registerPatrolVisualClickTool(
         return [
           'Visual fallback failed before Patrol could confirm a physical click, so this attempt does NOT consume the visual physical-click budget.',
           clicked.error ?? clicked.text ?? 'Unknown browser visual click error',
-          'Capture a fresh patrol_observe(includeImage=true) and retry with its new visualFrameId if useful. There is no fixed visual-screenshot count ceiling; older bulky visual/tool payloads are pruned before new image attachments.',
+          'Capture a fresh patrol_observe(includeImage=true) and retry with its new visualFrameId if useful. There is no fixed visual-screenshot count ceiling; older model-visible image blocks are offloaded and oversized text tool results are pruned before new visual attachments.',
         ].filter(Boolean).join('\n')
       }
       outcomes.recordVisualPhysicalClick(args)
+
+      if (objectBoolean(clicked.value, 'physicalClickUncertain') === true) {
+        outcomes.recordUnverifiedPhysicalClick(args)
+        return [
+          'A trusted physical click may already have been dispatched, but its final outcome is uncertain, so Patrol deliberately did NOT issue a synthetic duplicate and did NOT record the step.',
+          objectString(clicked.value, 'stateEvidence') ?? clicked.text,
+          'Observe the CURRENT page state before deciding whether another click is necessary. Never blindly retry the same visual frame after an uncertain physical click.',
+        ].filter(Boolean).join('\n')
+      }
 
       const mismatch = visualTargetMismatch(args.targetHint, clicked.value)
       if (mismatch !== undefined) {
@@ -169,9 +178,14 @@ export function registerPatrolVisualClickTool(
         return 'Visual click reached a verified state but returned incomplete replay geometry, so it was NOT persisted. Capture a fresh visual observation and reteach the target.'
       }
 
+      const effectiveXRatio = objectNumber(clicked.value, 'xRatio') ?? args.xRatio
+      const effectiveYRatio = objectNumber(clicked.value, 'yRatio') ?? args.yRatio
       const stepArguments = compactObject({
-        xRatio: args.xRatio,
-        yRatio: args.yRatio,
+        // Persist the point that was ACTUALLY clicked after DOM/CDP correction,
+        // not the model's rough screenshot guess. Coordinate replay therefore
+        // reproduces teaching even when the live click snapped to a better point.
+        xRatio: effectiveXRatio,
+        yRatio: effectiveYRatio,
         selectorHint,
         urlIdentity,
         viewportWidth,
@@ -224,7 +238,7 @@ export function registerPatrolVisualClickTool(
 
       return [
         `Executed and recorded ${step.id} (browser_visual_click) after CURRENT visual-state verification.`,
-        `Visual point: xRatio=${args.xRatio.toFixed(4)}, yRatio=${args.yRatio.toFixed(4)}; capture=${captureWidth ?? viewportWidth}x${captureHeight ?? viewportHeight} CSS px at (${captureClientLeft ?? 0}, ${captureClientTop ?? 0}).`,
+        `Visual point saved for replay: xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; model-requested=(${args.xRatio.toFixed(4)}, ${args.yRatio.toFixed(4)}); capture=${captureWidth ?? viewportWidth}x${captureHeight ?? viewportHeight} CSS px at (${captureClientLeft ?? 0}, ${captureClientTop ?? 0}).`,
         objectBoolean(clicked.value, 'visualSnapped') === true
           ? `Coordinate corrected before click: requested=(${objectNumber(clicked.value, 'requestedClickX') ?? '?'}, ${objectNumber(clicked.value, 'requestedClickY') ?? '?'}), resolved=(${objectNumber(clicked.value, 'resolvedClickX') ?? '?'}, ${objectNumber(clicked.value, 'resolvedClickY') ?? '?'}), delta=${objectNumber(clicked.value, 'snapDistance')?.toFixed(1) ?? '?'} CSS px${objectBoolean(clicked.value, 'cdpPiercedFollowupEditor') === true
             ? ' via CDP comment-editor activation + mounted textbox focus'
