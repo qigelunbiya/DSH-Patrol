@@ -703,7 +703,9 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
           snapDistance,
           cdpPiercedTarget: piercedEditable?.source === 'cdp-pierced-shadow-editor',
           stateEvidence: targetStateChanged
-            ? 'trusted native click changed the visual target own DOM state'
+            ? piercedEditable?.source === 'cdp-pierced-shadow-editor'
+              ? 'trusted native click changed the visual target own DOM state after pierced Shadow DOM resolution'
+              : 'trusted native click changed the visual target own DOM state'
             : targetFocusedEditable
               ? piercedEditable?.source === 'cdp-pierced-shadow-editor'
                 ? 'trusted native click focused an editor resolved through pierced Shadow DOM'
