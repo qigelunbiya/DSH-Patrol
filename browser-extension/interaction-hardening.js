@@ -607,9 +607,15 @@ async function interactionResolvePiercedActionPoint(tabId, targetHint, originalX
   try {
     await chrome.debugger.attach(target, '1.3')
     attached = true
-    const documentResult = await chrome.debugger.sendCommand(target, 'DOM.getDocument', { depth: -1, pierce: true })
+    const [documentResult, layoutMetrics] = await Promise.all([
+      chrome.debugger.sendCommand(target, 'DOM.getDocument', { depth: -1, pierce: true }),
+      chrome.debugger.sendCommand(target, 'Page.getLayoutMetrics').catch(() => undefined),
+    ])
     const root = documentResult?.root
     if (!root || typeof root !== 'object') return undefined
+    const viewport = layoutMetrics?.cssVisualViewport || layoutMetrics?.visualViewport
+    const viewportWidth = Number(viewport?.clientWidth)
+    const viewportHeight = Number(viewport?.clientHeight)
     const candidates = []
     const stack = [root]
     let scanned = 0
@@ -660,7 +666,8 @@ async function interactionResolvePiercedActionPoint(tabId, targetHint, originalX
         if (!rect) continue
         const left = Number(rect.left), top = Number(rect.top), width = Number(rect.width), height = Number(rect.height)
         if (![left, top, width, height].every(Number.isFinite) || width < 24 || height < 16) continue
-        if (width > Number(globalThis.innerWidth || 5000) * 0.55 || height > Number(globalThis.innerHeight || 5000) * 0.28) continue
+        if (Number.isFinite(viewportWidth) && width > viewportWidth * 0.55) continue
+        if (Number.isFinite(viewportHeight) && height > viewportHeight * 0.28) continue
         const x = left + width / 2
         const y = top + height / 2
         const distance = Number.isFinite(Number(originalX)) && Number.isFinite(Number(originalY))
