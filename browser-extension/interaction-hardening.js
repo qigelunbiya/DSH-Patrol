@@ -867,6 +867,7 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
   const editable = element => element instanceof HTMLInputElement
     || element instanceof HTMLTextAreaElement
     || element?.isContentEditable === true
+    || compact(element?.getAttribute?.('role') || '').toLowerCase() === 'textbox'
 
   const hit = deepElementFromPoint(clientX, clientY)
   if (!(hit instanceof Element)) throw new Error('visual click point does not hit a DOM element')
