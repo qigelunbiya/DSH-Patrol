@@ -287,4 +287,91 @@ describe('browser visual fallback click teaching', () => {
     }, exec)).rejects.toThrow(/forbidden.*CAPTCHA|Windows\/local OCR/i)
     expect(calls).toEqual([])
   })
+
+  it('rejects the whole bili-comments shell when the requested target is the comment input and no editor focus exists', async () => {
+    const outcomes = createPatrolClickOutcomeTracker()
+    const { store, tool, exec } = await setup(async (name) => {
+      if (name === 'browser_read_page') return { ok: true, text: '评论 23', value: { ok: true, url: 'https://www.bilibili.com/video/BV-test', text: '评论 23' } }
+      if (name === 'browser_snapshot') return { ok: true, text: 'snapshot', value: { ok: true, url: 'https://www.bilibili.com/video/BV-test', elements: [] } }
+      if (name === 'browser_visual_click') return {
+        ok: true,
+        text: 'clicked comments shell',
+        value: {
+          ok: true,
+          selectorHint: 'top-frame::bili-comments',
+          targetTag: 'bili-comments',
+          targetText: '评论 23',
+          targetFocusedEditable: false,
+          targetStateChanged: false,
+          urlIdentity: 'https://www.bilibili.com/video/BV-test',
+          viewportWidth: 1425, viewportHeight: 709, scrollX: 0, scrollY: 1956,
+        },
+      }
+      throw new Error(`unexpected tool ${name}`)
+    }, outcomes)
+
+    const args = {
+      inspectionId: 'visual-click',
+      stepName: '点击评论输入框',
+      targetHint: '评论输入框',
+      frameId: 'browser-visual-current',
+      xRatio: 0.4,
+      yRatio: 0.9,
+    }
+    const result = await tool.execute(args, exec)
+    expect(result).toMatch(/NOT recorded/)
+    expect(result).toMatch(/whole bili-comments container|bili-comments/)
+    expect((await store.load('visual-click')).steps).toHaveLength(0)
+    expect(outcomes.unverifiedPhysicalClicks(args)).toBe(1)
+  })
+
+  it('never accepts navigation to another video as success for a publish-comment visual click', async () => {
+    let reads = 0
+    const { store, tool, exec } = await setup(async (name) => {
+      if (name === 'browser_read_page') {
+        reads += 1
+        const url = reads === 1
+          ? 'https://www.bilibili.com/video/BV-original'
+          : 'https://www.bilibili.com/video/BV-recommended'
+        return { ok: true, text: '评论页', value: { ok: true, url, text: '评论页' } }
+      }
+      if (name === 'browser_snapshot') {
+        const url = reads <= 1
+          ? 'https://www.bilibili.com/video/BV-original'
+          : 'https://www.bilibili.com/video/BV-recommended'
+        return { ok: true, text: 'snapshot', value: { ok: true, url, elements: [] } }
+      }
+      if (name === 'browser_visual_click') return {
+        ok: true,
+        text: 'visual clicked publish-like control',
+        value: {
+          ok: true,
+          selectorHint: 'top-frame::button.comment-publish',
+          targetTag: 'button',
+          targetRole: 'button',
+          targetText: '发布',
+          targetClassName: 'comment-publish',
+          targetFocusedEditable: false,
+          targetStateChanged: false,
+          urlIdentity: 'https://www.bilibili.com/video/BV-original',
+          viewportWidth: 1425, viewportHeight: 709, scrollX: 0, scrollY: 1956,
+        },
+      }
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    const result = await tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '发布大拇指评论',
+      targetHint: '蓝色发布按钮',
+      frameId: 'browser-visual-current',
+      xRatio: 0.75,
+      yRatio: 0.62,
+    }, exec)
+
+    expect(result).toMatch(/NOT recorded/)
+    expect(result).toMatch(/unexpected navigation for in-page control/)
+    expect((await store.load('visual-click')).steps).toHaveLength(0)
+  })
+
 })

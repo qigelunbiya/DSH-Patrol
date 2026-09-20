@@ -109,4 +109,14 @@ describe('current Patrol behavior prompt', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/绝不能用于密码、token、OTP 或验证码/)
   })
 
+
+  it('uses strategy-neutral browser clicking and Desktop-style exact visual frame ratios', () => {
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/不要强制固定 DOM-first 或 vision-last/)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/Desktop Automation.*frame-bound/)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/xRatio=centerX\/imageWidth/)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/yRatio=centerY\/imageHeight/)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/可点击控件内部的几何中心点/)
+    expect(PATROL_BEHAVIOR_PROMPT).not.toMatch(/浏览器点击必须坚持 DOM-first/)
+  })
+
 })

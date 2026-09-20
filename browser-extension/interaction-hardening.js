@@ -154,18 +154,23 @@ async function interactionScreenshot(args) {
   let dataUrl
   let captureScale = 1
   let compactVisual = false
+  let targetPixelWidth
+  let captureDevicePixelRatio
   let captureGeometry = interactionVisibleTabCaptureGeometry(before)
 
+  const estimatedPhysicalWidth = Number(before?.width || 0) * Math.max(1, Number(before?.devicePixelRatio || 1))
   if (format === 'jpeg'
     && Number.isFinite(requestedMaxWidth)
     && requestedMaxWidth >= 480
-    && before?.width > requestedMaxWidth) {
+    && estimatedPhysicalWidth > requestedMaxWidth) {
     try {
       const compact = await interactionCaptureCompactScreenshot(tabId, requestedMaxWidth, quality, before)
       if (compact?.dataUrl) {
         dataUrl = compact.dataUrl
         captureScale = compact.scale
         compactVisual = true
+        targetPixelWidth = compact.targetPixelWidth
+        captureDevicePixelRatio = compact.devicePixelRatio
         captureGeometry = compact.captureGeometry
       }
     } catch {
@@ -188,6 +193,8 @@ async function interactionScreenshot(args) {
     bytes: Math.floor(dataUrl.length * 0.75),
     compactVisual,
     captureScale,
+    ...(Number.isFinite(Number(targetPixelWidth)) ? { targetPixelWidth: Number(targetPixelWidth) } : {}),
+    ...(Number.isFinite(Number(captureDevicePixelRatio)) ? { captureDevicePixelRatio: Number(captureDevicePixelRatio) } : {}),
     ...(visualFrame || {}),
   }
 }
@@ -204,7 +211,13 @@ async function interactionCaptureCompactScreenshot(tabId, maxWidth, quality, bef
     const width = Number(viewport?.clientWidth)
     const height = Number(viewport?.clientHeight)
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return undefined
-    const scale = Math.max(0.1, Math.min(1, maxWidth / width))
+    const devicePixelRatio = Math.max(1, Number(before?.devicePixelRatio || 1))
+    // Page.captureScreenshot applies clip.scale in CSS space and then rasterizes
+    // at the page device scale. Treat maxWidth as the final encoded-pixel
+    // budget (like Desktop Automation's geometry-faithful frame), otherwise a
+    // DPR=2 page requested at maxWidth=1024 still becomes a ~2048px model image.
+    const estimatedPhysicalWidth = width * devicePixelRatio
+    const scale = Math.max(0.1, Math.min(1, maxWidth / estimatedPhysicalWidth))
     if (scale >= 0.995) return undefined
     const shot = await chrome.debugger.sendCommand(target, 'Page.captureScreenshot', {
       format: 'jpeg',
@@ -231,7 +244,13 @@ async function interactionCaptureCompactScreenshot(tabId, maxWidth, quality, bef
       captureHeight: height,
       captureMode: 'cdp-css-visual-viewport',
     }
-    return { dataUrl: `data:image/jpeg;base64,${shot.data}`, scale, captureGeometry }
+    return {
+      dataUrl: `data:image/jpeg;base64,${shot.data}`,
+      scale,
+      devicePixelRatio,
+      targetPixelWidth: maxWidth,
+      captureGeometry,
+    }
   } finally {
     if (attached) {
       try { await chrome.debugger.detach(target) } catch {}
@@ -537,6 +556,152 @@ function interactionCdpEditableHintScore(targetHint, context) {
   return score
 }
 
+
+function interactionWantsPublishTarget(targetHint) {
+  return /发布|发表|发送|提交|\bpost\b|\bsend\b|\bsubmit\b/i.test(String(targetHint || ''))
+}
+
+function interactionCdpNodeText(node, maxChars = 420) {
+  const out = []
+  const stack = [node]
+  let scanned = 0
+  while (stack.length && scanned < 80 && out.join(' ').length < maxChars) {
+    const current = stack.pop()
+    if (!current || typeof current !== 'object') continue
+    scanned += 1
+    if (current.nodeType === 3 && typeof current.nodeValue === 'string') out.push(current.nodeValue)
+    if (typeof current.nodeValue === 'string' && current.nodeValue.trim()) out.push(current.nodeValue)
+    const attrs = interactionCdpNodeAttributes(current)
+    out.push(
+      String(current.nodeName || '').toLowerCase(),
+      attrs.id || '', attrs.class || '', attrs.role || '',
+      attrs['aria-label'] || '', attrs.title || '', attrs.value || '',
+      attrs.placeholder || '', attrs['data-placeholder'] || '',
+    )
+    const children = [
+      ...(Array.isArray(current.children) ? current.children : []),
+      ...(Array.isArray(current.shadowRoots) ? current.shadowRoots : []),
+    ]
+    for (let index = children.length - 1; index >= 0; index -= 1) stack.push(children[index])
+  }
+  return out.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().slice(0, maxChars)
+}
+
+function interactionCdpActionNode(node, attrs) {
+  const name = String(node?.nodeName || '').toLowerCase()
+  const role = String(attrs.role || '').toLowerCase()
+  const type = String(attrs.type || '').toLowerCase()
+  if (name === 'button') return true
+  if (name === 'input' && ['button', 'submit'].includes(type)) return true
+  if (role === 'button') return true
+  const evidence = [
+    name, attrs.id, attrs.class, attrs.name, attrs['aria-label'], attrs.title,
+  ].filter(Boolean).join(' ').toLowerCase()
+  if (name === 'a' && !/(?:btn|button|send|submit|publish|post|comment-action)/i.test(evidence)) return false
+  return /(?:btn|button|send|submit|publish|post|comment-action)/i.test(evidence)
+}
+
+async function interactionResolvePiercedActionPoint(tabId, targetHint, originalX, originalY) {
+  if (!interactionWantsPublishTarget(targetHint)) return undefined
+  if (!chrome.debugger?.attach || !chrome.debugger?.sendCommand || !chrome.debugger?.detach) return undefined
+  const target = { tabId }
+  let attached = false
+  try {
+    await chrome.debugger.attach(target, '1.3')
+    attached = true
+    const [documentResult, layoutMetrics] = await Promise.all([
+      chrome.debugger.sendCommand(target, 'DOM.getDocument', { depth: -1, pierce: true }),
+      chrome.debugger.sendCommand(target, 'Page.getLayoutMetrics').catch(() => undefined),
+    ])
+    const root = documentResult?.root
+    if (!root || typeof root !== 'object') return undefined
+    const viewport = layoutMetrics?.cssVisualViewport || layoutMetrics?.visualViewport
+    const viewportWidth = Number(viewport?.clientWidth)
+    const viewportHeight = Number(viewport?.clientHeight)
+    const candidates = []
+    const stack = [root]
+    let scanned = 0
+    while (stack.length && scanned < 22000 && candidates.length < 100) {
+      const node = stack.pop()
+      if (!node || typeof node !== 'object') continue
+      scanned += 1
+      const attrs = interactionCdpNodeAttributes(node)
+      if (interactionCdpActionNode(node, attrs) && Number.isInteger(node.backendNodeId)) {
+        const evidence = interactionCdpNodeText(node)
+        const normalized = evidence.toLowerCase()
+        if (/发布|发表|发送|提交|\bpost\b|\bsend\b|\bsubmit\b/i.test(normalized)) {
+          let score = 300
+          if (/^(?:button|input)$/i.test(String(node.nodeName || ''))) score += 80
+          if (String(attrs.role || '').toLowerCase() === 'button') score += 60
+          const compactEvidence = normalized.replace(/\s+/g, '')
+          if (/发布|发表|发送|提交/.test(compactEvidence)) score += 180
+          candidates.push({
+            backendNodeId: node.backendNodeId,
+            tag: String(node.nodeName || '').toLowerCase(),
+            role: String(attrs.role || '').toLowerCase(),
+            evidence,
+            score,
+          })
+        }
+      }
+      const children = [
+        ...(Array.isArray(node.children) ? node.children : []),
+        ...(Array.isArray(node.shadowRoots) ? node.shadowRoots : []),
+        ...(node.contentDocument && typeof node.contentDocument === 'object' ? [node.contentDocument] : []),
+      ]
+      for (let index = children.length - 1; index >= 0; index -= 1) stack.push(children[index])
+    }
+    if (!candidates.length) return undefined
+
+    const measured = []
+    for (const candidate of candidates) {
+      try {
+        const resolved = await chrome.debugger.sendCommand(target, 'DOM.resolveNode', { backendNodeId: candidate.backendNodeId })
+        const objectId = resolved?.object?.objectId
+        if (!objectId) continue
+        const rectResult = await chrome.debugger.sendCommand(target, 'Runtime.callFunctionOn', {
+          objectId,
+          functionDeclaration: 'function(){const r=this.getBoundingClientRect();return {left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:r.width,height:r.height};}',
+          returnByValue: true,
+        })
+        const rect = rectResult?.result?.value
+        if (!rect) continue
+        const left = Number(rect.left), top = Number(rect.top), width = Number(rect.width), height = Number(rect.height)
+        if (![left, top, width, height].every(Number.isFinite) || width < 24 || height < 16) continue
+        if (Number.isFinite(viewportWidth) && width > viewportWidth * 0.55) continue
+        if (Number.isFinite(viewportHeight) && height > viewportHeight * 0.28) continue
+        const x = left + width / 2
+        const y = top + height / 2
+        const distance = Number.isFinite(Number(originalX)) && Number.isFinite(Number(originalY))
+          ? Math.hypot(x - Number(originalX), y - Number(originalY))
+          : 0
+        measured.push({ ...candidate, x, y, width, height, distance })
+      } catch {}
+    }
+    if (!measured.length) return undefined
+    measured.sort((left, right) => right.score - left.score || left.distance - right.distance)
+    const best = measured[0]
+    const runnerUp = measured[1]
+    if (runnerUp && runnerUp.score === best.score && Math.abs(runnerUp.distance - best.distance) < 10) return undefined
+    return {
+      x: best.x,
+      y: best.y,
+      tag: best.tag,
+      role: best.role || 'button',
+      backendNodeId: best.backendNodeId,
+      evidence: best.evidence,
+      distance: best.distance,
+      source: 'cdp-pierced-publish-action',
+    }
+  } catch {
+    return undefined
+  } finally {
+    if (attached) {
+      try { await chrome.debugger.detach(target) } catch {}
+    }
+  }
+}
+
 async function interactionResolvePiercedEditablePoint(tabId, targetHint, originalX, originalY) {
   if (!interactionWantsEditableTarget(targetHint)) return undefined
   if (!chrome.debugger?.attach || !chrome.debugger?.sendCommand || !chrome.debugger?.detach) return undefined
@@ -650,8 +815,10 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
   const clientX = captureLeft + Math.max(1, Math.min(captureWidth - 1, captureWidth * xRatio))
   const clientY = captureTop + Math.max(1, Math.min(captureHeight - 1, captureHeight * yRatio))
   const piercedEditable = await interactionResolvePiercedEditablePoint(tabId, targetHint, clientX, clientY)
-  const probeClientX = Number.isFinite(Number(piercedEditable?.x)) ? Number(piercedEditable.x) : clientX
-  const probeClientY = Number.isFinite(Number(piercedEditable?.y)) ? Number(piercedEditable.y) : clientY
+  const piercedAction = piercedEditable ? undefined : await interactionResolvePiercedActionPoint(tabId, targetHint, clientX, clientY)
+  const preResolved = piercedEditable || piercedAction
+  const probeClientX = Number.isFinite(Number(preResolved?.x)) ? Number(preResolved.x) : clientX
+  const probeClientY = Number.isFinite(Number(preResolved?.y)) ? Number(preResolved.y) : clientY
 
   let nativeError = ''
   if (chrome.debugger?.attach && chrome.debugger?.sendCommand && chrome.debugger?.detach) {
@@ -733,12 +900,15 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
           clickY: resolvedY,
           visualSnapped: snapDistance > 0.5,
           snapDistance,
-          cdpPiercedTarget: Boolean(piercedEditable),
+          cdpPiercedTarget: Boolean(preResolved),
           cdpPiercedActivator: piercedEditable?.kind === 'activator',
           cdpPiercedFollowupEditor: activatedEditor?.kind === 'editable',
+          cdpPiercedAction: piercedAction?.source === 'cdp-pierced-publish-action',
           stateEvidence: targetStateChanged
-            ? piercedEditable
-              ? 'trusted native click changed the visual target own DOM state after pierced Shadow DOM/editor resolution'
+            ? preResolved
+              ? piercedAction
+                ? 'trusted native click changed the publish/send control state after pierced action resolution'
+                : 'trusted native click changed the visual target own DOM state after pierced Shadow DOM/editor resolution'
               : 'trusted native click changed the visual target own DOM state'
             : targetFocusedEditable
               ? activatedEditor?.kind === 'editable'
@@ -846,6 +1016,7 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
     cdpPiercedTarget: clicked.cdpPiercedTarget === true,
     cdpPiercedActivator: clicked.cdpPiercedActivator === true,
     cdpPiercedFollowupEditor: clicked.cdpPiercedFollowupEditor === true,
+    cdpPiercedAction: clicked.cdpPiercedAction === true,
     ...(Number.isFinite(Number(clicked.snapDistance)) ? { snapDistance: Number(clicked.snapDistance) } : {}),
   }
 }
@@ -1051,7 +1222,7 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
       return isBroadShellTarget(element) ? 0 : 120
     }
     if (/搜索|\bsearch\b/i.test(rawHint)) return /搜索|search/.test(evidence) ? 220 : 0
-    if (/发送|提交|\bsend\b|\bsubmit\b/i.test(rawHint)) return /发送|提交|send|submit/.test(evidence) ? 220 : 0
+    if (/发布|发表|发送|提交|\bpost\b|\bsend\b|\bsubmit\b/i.test(rawHint)) return /发布|发表|发送|提交|post|send|submit/.test(evidence) ? 320 : 0
     if (hintCore.length < 3) return 0
     if (evidence.includes(hintCore)) return 180 + Math.min(80, hintCore.length)
     if (evidence.length >= 4 && hintCore.includes(evidence)) return 80
@@ -1060,7 +1231,7 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
   const resolveHintTarget = (initialTarget, originalX, originalY) => {
     const rawHint = compact(targetHint)
     const hintCore = hintCoreOf(rawHint)
-    const hasIntent = /点赞|大拇指|\blike\b|thumb|评论|回复|\bcomment\b|\breply\b|搜索|\bsearch\b|发送|提交|\bsend\b|\bsubmit\b/i.test(rawHint)
+    const hasIntent = /点赞|大拇指|\blike\b|thumb|评论|回复|\bcomment\b|\breply\b|搜索|\bsearch\b|发布|发表|发送|提交|\bpost\b|\bsend\b|\bsubmit\b/i.test(rawHint)
     const wantsEditable = /评论.*(?:输入|编辑)|回复.*(?:输入|编辑)|输入框|编辑框|comment.*(?:input|editor)|reply.*(?:input|editor)/i.test(rawHint)
     if (!rawHint || (!hasIntent && hintCore.length < 3)) return { target: initialTarget, clickX: originalX, clickY: originalY, snapped: false }
     if (hintScore(initialTarget) > 0
