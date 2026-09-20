@@ -39,6 +39,50 @@ async function semanticClickCommand(args) {
   }
 
   if (candidates.length === 0) {
+    const intent = [spec.locatorText, spec.task].filter(Boolean).join(' ')
+    if (typeof interactionWantsEditableTarget === 'function'
+      && interactionWantsEditableTarget(intent)
+      && typeof interactionResolvePiercedEditablePoint === 'function'
+      && semanticTrustedMouseAvailable()) {
+      let viewport
+      try {
+        if (typeof interactionViewportState === 'function') viewport = await interactionViewportState(tabId)
+      } catch {}
+      const originX = Number.isFinite(Number(viewport?.width)) ? Number(viewport.width) / 2 : undefined
+      const originY = Number.isFinite(Number(viewport?.height)) ? Number(viewport.height) / 2 : undefined
+      const pierced = await interactionResolvePiercedEditablePoint(tabId, intent, originX, originY)
+      if (pierced && Number.isFinite(Number(pierced.x)) && Number.isFinite(Number(pierced.y))) {
+        const native = await semanticTrustedMouseClick(tabId, Number(pierced.x), Number(pierced.y))
+        if (native.partial) {
+          throw new Error(`trusted pierced semantic click partially dispatched; refusing a second click: ${native.error || 'unknown native input failure'}`)
+        }
+        if (native.ok) {
+          await new Promise(resolve => setTimeout(resolve, 180))
+          let focusUsable = false
+          try {
+            if (typeof interactionFocusedEditorProbe === 'function') {
+              const focused = await interactionFocusedEditorProbe(tabId, false)
+              focusUsable = focused?.focusUsable === true
+            }
+          } catch {}
+          return {
+            ok: true,
+            selector: 'cdp-pierced::textbox',
+            text: spec.locatorText || '',
+            role: pierced.role || 'textbox',
+            tag: pierced.tag || 'div',
+            replaySelectorSafe: false,
+            frameId: 0,
+            frameUrl: frames.find(frame => frame.frameId === 0)?.url || '',
+            transport: 'atomic-semantic+cdp-pierced-shadow+trusted-native-mouse',
+            targetStateChanged: focusUsable,
+            stateEvidence: focusUsable
+              ? 'trusted semantic click focused an editor resolved through pierced Shadow DOM'
+              : 'trusted semantic click used a pierced Shadow DOM editor box',
+          }
+        }
+      }
+    }
     throw new Error(`atomic semantic target not found for ${semanticDescribeSpec(spec)}`)
   }
   candidates.sort((left, right) => Number(right.candidate.score || 0) - Number(left.candidate.score || 0))
