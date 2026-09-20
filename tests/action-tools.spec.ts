@@ -139,6 +139,28 @@ describe('flat Patrol action tools', () => {
     }
   })
 
+  it('records real browser back/forward/reload navigation without inventing a URL', async () => {
+    const { store, calls, tool, exec } = await setup()
+    await tool('patrol_navigate').execute({
+      inspectionId: 'flat-actions',
+      stepName: '返回上一个页面',
+      action: 'back',
+      tabId: 12345,
+    }, exec)
+
+    expect(calls[0]).toEqual({
+      tool: 'browser_navigate',
+      args: { action: 'back', tabId: 12345 },
+    })
+    const definition = await store.load('flat-actions')
+    expect(definition.steps[0]?.kind).toBe('tool')
+    if (definition.steps[0]?.kind === 'tool') {
+      expect(definition.steps[0].arguments).toEqual({ action: 'back' })
+      expect(definition.steps[0].arguments).not.toHaveProperty('tabId')
+      expect(definition.steps[0].arguments).not.toHaveProperty('url')
+    }
+  })
+
   it('uses live tabId for teaching actions but strips it from replayable Runbook steps', async () => {
     const { store, calls, tool, exec } = await setup()
     await tool('patrol_press').execute({
