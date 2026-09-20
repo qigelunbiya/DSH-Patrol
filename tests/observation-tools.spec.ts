@@ -83,7 +83,7 @@ describe('current-page observation evidence fallback', () => {
     expect(value.imageStatus).toBe('attached')
     expect(value.image).toMatchObject({ attachmentId: 'img-1', mediaType: 'image/png' })
     expect(harness.readImageCalls).toBe(1)
-    expect(harness.screenshotArgs[0]).toMatchObject({ format: 'jpeg', maxWidth: 1024, quality: 68 })
+    expect(harness.screenshotArgs[0]).toMatchObject({ format: 'jpeg', maxWidth: 1536, quality: 72 })
     expect(harness.observed).toHaveLength(1)
   })
 
