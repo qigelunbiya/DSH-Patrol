@@ -670,6 +670,40 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     }
     return [...new Set(out)]
   }
+  const deepElementFromPoint = (x, y) => {
+    let hit = document.elementFromPoint(x, y)
+    let guard = 0
+    while (hit instanceof Element && hit.shadowRoot && guard < 8) {
+      const inner = hit.shadowRoot.elementFromPoint?.(x, y)
+      if (!(inner instanceof Element) || inner === hit) break
+      hit = inner
+      guard += 1
+    }
+    return hit
+  }
+  const shadowHostContext = element => {
+    const parts = []
+    let node = element
+    let guard = 0
+    while (node instanceof Element && guard < 5) {
+      const root = node.getRootNode?.()
+      const host = root instanceof ShadowRoot ? root.host : null
+      if (!(host instanceof Element)) break
+      parts.push(
+        host.tagName?.toLowerCase?.() || '',
+        host.id || '',
+        host.getAttribute?.('class') || '',
+        host.getAttribute?.('aria-label') || '',
+        host.getAttribute?.('title') || '',
+        host.getAttribute?.('placeholder') || '',
+        host.getAttribute?.('data-placeholder') || '',
+        host.innerText || host.textContent || '',
+      )
+      node = host
+      guard += 1
+    }
+    return compact(parts.filter(Boolean).join(' '))
+  }
   const stableSelector = element => {
     if (!(element instanceof Element)) return ''
     if (element.id) return '#' + cssEscape(element.id)
@@ -719,7 +753,6 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     || element instanceof HTMLTextAreaElement
     || element?.isContentEditable === true
     || compact(element?.getAttribute?.('role') || '').toLowerCase() === 'textbox'
-    || /(?:editor|input|textarea)/i.test(String(element?.tagName || ''))
   const normalizeHint = value => compact(value).toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
   const hintCoreOf = value => normalizeHint(value)
     .replace(/current|截图|其中|中的|页面|视频|封面|按钮|图标|控件|链接|点击|打开|进入/g, '')
@@ -730,6 +763,7 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
       element.getAttribute?.('aria-label'), element.getAttribute?.('title'), element.getAttribute?.('placeholder'),
       element.getAttribute?.('id'), element.getAttribute?.('class'), element.getAttribute?.('href'),
       element.innerText, element.textContent,
+      shadowHostContext(element),
       context !== element ? context.getAttribute?.('aria-label') : '',
       context !== element ? context.getAttribute?.('title') : '',
       context !== element ? context.getAttribute?.('href') : '',
@@ -777,20 +811,28 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
       if (rect.right <= 0 || rect.bottom <= 0 || rect.left >= innerWidth || rect.top >= innerHeight) continue
       const score = hintScore(resolved)
       if (score <= 0) continue
+      const centerX = rect.left + rect.width / 2
+      const centerY = rect.top + rect.height / 2
+      const distance = Math.hypot(centerX - originalX, centerY - originalY)
       seen.add(resolved)
-      uniqueTargets.push({ target: resolved, score, rect })
+      uniqueTargets.push({ target: resolved, score, rect, distance })
     }
-    uniqueTargets.sort((left, right) => right.score - left.score)
-    if (!uniqueTargets.length) throw new Error('visual targetHint does not match the DOM target at the requested point')
+    uniqueTargets.sort((left, right) => right.score - left.score || left.distance - right.distance)
+    if (!uniqueTargets.length) throw new Error('visual targetHint does not match any CURRENT DOM target; refusing a coordinate-only click')
     const bestScore = uniqueTargets[0].score
     const best = uniqueTargets.filter(item => item.score === bestScore)
-    if (best.length !== 1) throw new Error('visual targetHint matches multiple CURRENT DOM targets; refusing a coordinate guess')
     const chosen = best[0]
+    if (best.length > 1 && Math.abs(best[0].distance - best[1].distance) < 8) {
+      throw new Error('visual targetHint matches multiple equally-near CURRENT DOM targets; refusing a coordinate guess')
+    }
+    const clickX = Math.max(chosen.rect.left + 1, Math.min(chosen.rect.left + chosen.rect.width / 2, chosen.rect.right - 1))
+    const clickY = Math.max(chosen.rect.top + 1, Math.min(chosen.rect.top + chosen.rect.height / 2, chosen.rect.bottom - 1))
     return {
       target: chosen.target,
-      clickX: Math.max(chosen.rect.left + 1, Math.min(chosen.rect.left + chosen.rect.width / 2, chosen.rect.right - 1)),
-      clickY: Math.max(chosen.rect.top + 1, Math.min(chosen.rect.top + chosen.rect.height / 2, chosen.rect.bottom - 1)),
+      clickX,
+      clickY,
       snapped: true,
+      snapDistance: Math.hypot(clickX - originalX, clickY - originalY),
     }
   }
   const signature = element => {
@@ -818,7 +860,7 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     || element instanceof HTMLTextAreaElement
     || element?.isContentEditable === true
 
-  const hit = document.elementFromPoint(clientX, clientY)
+  const hit = deepElementFromPoint(clientX, clientY)
   if (!(hit instanceof Element)) throw new Error('visual click point does not hit a DOM element')
   const hitIsIframe = hit.tagName?.toLowerCase?.() === 'iframe'
   if (hitIsIframe && !probeOnly) throw new Error('visual click point lands on an iframe surface; synthetic MAIN-world click cannot safely enter a cross-origin frame')
@@ -855,9 +897,12 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     targetFocusedEditable: editable(deepActiveElement()),
     stateSignature: signature(target),
     stateEvidence: '',
+    requestedClickX: clientX,
+    requestedClickY: clientY,
     clickX,
     clickY,
     visualSnapped: resolved.snapped === true,
+    snapDistance: Number.isFinite(Number(resolved.snapDistance)) ? Number(resolved.snapDistance) : Math.hypot(clickX - clientX, clickY - clientY),
   }
   if (probeOnly) return descriptor
 
