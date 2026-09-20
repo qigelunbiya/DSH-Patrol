@@ -481,4 +481,26 @@ describe('Patrol screenshot tab readiness', () => {
     expect(pressed?.params.y).not.toBe(457)
   })
 
+
+  it('deep-hit-tests Shadow DOM before visual clicks and can snap an offset point to the intended editor', () => {
+    const source = readFileSync(join(root, 'browser-extension', 'interaction-hardening.js'), 'utf8')
+    expect(source).toContain('const deepElementFromPoint = (x, y) =>')
+    expect(source).toContain('hit.shadowRoot.elementFromPoint?.(x, y)')
+    expect(source).toContain('const shadowHostContext = element =>')
+    expect(source).toContain('shadowHostContext(element)')
+    expect(source).toContain("visual targetHint does not match any CURRENT DOM target; refusing a coordinate-only click")
+    expect(source).toContain('right.score - left.score || left.distance - right.distance')
+    expect(source).toContain('snapDistance: Math.hypot(clickX - originalX, clickY - originalY)')
+    expect(source).not.toContain("/(?:editor|input|textarea)/i.test(String(element?.tagName || ''))")
+  })
+
+  it('requires targetHint for live visual frames but preserves old replay compatibility', () => {
+    const source = readFileSync(join(root, 'browser-extension', 'interaction-hardening.js'), 'utf8')
+    expect(source).toContain("live visualClick requires targetHint")
+    const frameGuard = source.indexOf("live visualClick requires targetHint")
+    const replayGeometry = source.indexOf("visualClick replay requires selectorHint or recorded URL/viewport/scroll geometry")
+    expect(frameGuard).toBeGreaterThan(0)
+    expect(replayGeometry).toBeGreaterThan(frameGuard)
+  })
+
 })
