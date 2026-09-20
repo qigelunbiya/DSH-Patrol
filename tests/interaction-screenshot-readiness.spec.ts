@@ -193,6 +193,38 @@ describe('Patrol screenshot tab readiness', () => {
     expect(debuggerCalls[1]?.params).toMatchObject({ type: 'mousePressed', x: 200, y: 600, button: 'left' })
   })
 
+  it('types Unicode text through trusted CURRENT browser focus for shadow/editor fallbacks', async () => {
+    const debuggerCalls: Array<{ method: string; params: any }> = []
+    const scripting = {
+      async executeScript(request: any) {
+        if (request.func?.name === 'interactionMainWorldFocusedEditor') {
+          return [{ result: {
+            ok: true, focusUsable: true, clearedByScript: true,
+            focusedTag: 'div', focusKind: 'editable',
+            observedText: debuggerCalls.length > 0 ? '支持👍' : '',
+          } }]
+        }
+        throw new Error(`unexpected executeScript function ${request.func?.name || 'anonymous'}`)
+      },
+    }
+    const debuggerApi = {
+      async attach() {},
+      async sendCommand(_target: any, method: string, params: any) { debuggerCalls.push({ method, params }) },
+      async detach() {},
+    }
+    const sandbox = await loadInteraction({ chrome: {
+      tabs: {
+        get: async () => ({ id: 7, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
+        update: async (id: number) => ({ id, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
+        captureVisibleTab: async () => 'data:image/png;base64,AAAA',
+      },
+      scripting, debugger: debuggerApi,
+    } })
+    const typed = await sandbox.handleCommand('typeFocused', { tabId: 7, text: '支持👍', clear: true })
+    expect(typed).toMatchObject({ ok: true, textLength: 4, focusKind: 'editable', transport: 'chrome-debugger-insert-text' })
+    expect(debuggerCalls).toEqual([{ method: 'Input.insertText', params: { text: '支持👍' } }])
+  })
+
   it('waits for a newly opened blank/loading tab to obtain an HTTP URL before capture', async () => {
     let getCalls = 0
     let capturedWindow: number | undefined

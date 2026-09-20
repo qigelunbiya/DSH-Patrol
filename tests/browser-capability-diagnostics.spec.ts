@@ -121,6 +121,25 @@ describe('browser capability diagnostics', () => {
     expect(value).toEqual({ ok: true, x: 13, y: 345 })
   })
 
+  it('registers focused public typing as a browser provider primitive', async () => {
+    const fixture = fakeToolContext()
+    const calls = []
+    const bridge = {
+      status: () => ({ connected: true, extension: { capabilities: ['semanticClick', 'trustedFocusedType'] } }),
+      async request(cmd, args) {
+        calls.push({ cmd, args })
+        if (cmd === 'typeFocused') return { ok: true, textLength: 2, focusedTag: 'div', focusKind: 'editable', transport: 'chrome-debugger-insert-text' }
+        throw new Error(`unexpected ${cmd}`)
+      },
+      saveScreenshot: () => '/tmp/unused.png',
+    }
+    registerTools(fixture.ctx, bridge)
+    const tool = fixture.definitions.find(definition => definition.name === 'browser_type_focused')
+    const value = await tool.execute({ text: '支持', clear: true }, {})
+    expect(value).toMatchObject({ ok: true, textLength: 2, focusKind: 'editable' })
+    expect(calls[0]).toMatchObject({ cmd: 'typeFocused', args: { text: '支持', clear: true } })
+  })
+
   it('reports semanticClick as missing instead of treating a registered host tool as available', async () => {
     const fixture = fakeToolContext()
     const bridge = {
