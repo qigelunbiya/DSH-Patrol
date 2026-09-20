@@ -74,7 +74,7 @@ export function registerPatrolObservationTools(
 ): () => void {
   const observe = defineTool({
     name: 'patrol_observe',
-    description: 'Read-only CURRENT-page observation. Captures a screenshot for freshness/OCR, but returns a compact OCR+DOM evidence packet by default so long Patrol conversations do not accumulate image context. includeImage=true is reserved for the final visual fallback after DOM/semantic recovery is exhausted; the planning guard rejects premature image attachment. Does not record a Runbook step.',
+    description: 'Read-only CURRENT-page observation. Captures a screenshot for freshness/OCR and can attach that exact CURRENT image with includeImage=true whenever the model decides vision is useful. Visual images remain size/context bounded to protect local-model stability. Does not record a Runbook step.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       tabId: { type: 'integer' },
@@ -96,6 +96,11 @@ export function registerPatrolObservationTools(
           viewportWidth: { type: 'number' },
           viewportHeight: { type: 'number' },
           viewportScale: { type: 'number' },
+          captureClientLeft: { type: 'number' },
+          captureClientTop: { type: 'number' },
+          captureWidth: { type: 'number' },
+          captureHeight: { type: 'number' },
+          captureMode: { type: 'string' },
           scrollX: { type: 'number' },
           scrollY: { type: 'number' },
           url: { type: 'string' },
@@ -127,7 +132,7 @@ export function registerPatrolObservationTools(
         const lines = [
           `CURRENT page: ${value.title || '(untitled)'}${value.url ? ` - ${value.url}` : ''}`,
           `Fresh screenshot saved: ${value.path}`,
-          ...(value.visualFrameId ? [`Visual click frame: ${value.visualFrameId}; viewport=${value.viewportWidth ?? '?'}x${value.viewportHeight ?? '?'}; scroll=(${value.scrollX ?? '?'}, ${value.scrollY ?? '?'})`] : []),
+          ...(value.visualFrameId ? [`Visual click frame: ${value.visualFrameId}; viewport=${value.viewportWidth ?? '?'}x${value.viewportHeight ?? '?'}; capture=${value.captureWidth ?? value.viewportWidth ?? '?'}x${value.captureHeight ?? value.viewportHeight ?? '?'} at (${value.captureClientLeft ?? 0}, ${value.captureClientTop ?? 0}); scroll=(${value.scrollX ?? '?'}, ${value.scrollY ?? '?'})`] : []),
           `Evidence: ${hasImage ? 'explicit image + compact OCR/DOM' : 'compact OCR/DOM (image not attached by default)'}`,
         ]
 
@@ -216,6 +221,11 @@ export function registerPatrolObservationTools(
       const viewportWidth = objectNumber(shot.value, 'viewportWidth')
       const viewportHeight = objectNumber(shot.value, 'viewportHeight')
       const viewportScale = objectNumber(shot.value, 'viewportScale')
+      const captureClientLeft = objectNumber(shot.value, 'captureClientLeft')
+      const captureClientTop = objectNumber(shot.value, 'captureClientTop')
+      const captureWidth = objectNumber(shot.value, 'captureWidth')
+      const captureHeight = objectNumber(shot.value, 'captureHeight')
+      const captureMode = objectString(shot.value, 'captureMode')
       const scrollX = objectNumber(shot.value, 'scrollX')
       const scrollY = objectNumber(shot.value, 'scrollY')
 
@@ -234,6 +244,11 @@ export function registerPatrolObservationTools(
         ...(viewportWidth === undefined ? {} : { viewportWidth }),
         ...(viewportHeight === undefined ? {} : { viewportHeight }),
         ...(viewportScale === undefined ? {} : { viewportScale }),
+        ...(captureClientLeft === undefined ? {} : { captureClientLeft }),
+        ...(captureClientTop === undefined ? {} : { captureClientTop }),
+        ...(captureWidth === undefined ? {} : { captureWidth }),
+        ...(captureHeight === undefined ? {} : { captureHeight }),
+        ...(captureMode === undefined ? {} : { captureMode }),
         ...(scrollX === undefined ? {} : { scrollX }),
         ...(scrollY === undefined ? {} : { scrollY }),
         ...(url ? { url } : {}),
