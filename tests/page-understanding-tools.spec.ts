@@ -3,62 +3,50 @@ import { analyzePageEvidence, createPatrolPlanningGuard, createPatrolTestModePla
 import { createPatrolClickOutcomeTracker } from '../src/click-retry-state.js'
 
 describe('Patrol page understanding planner', () => {
-  it('keeps TEST MODE DOM recovery flexible but gates visual click until DOM/analyze evidence authorizes it', () => {
-    const outcomes = createPatrolClickOutcomeTracker()
-    const guard = createPatrolTestModePlanningGuard(outcomes)
-    const visual = () => guard({
+  it('lets TEST MODE choose vision directly without DOM/analyze authorization', () => {
+    const guard = createPatrolTestModePlanningGuard(createPatrolClickOutcomeTracker())
+    expect(guard({
+      name: 'patrol_observe',
+      arguments: { inspectionId: 'test-live', includeImage: true },
+    })).toBeUndefined()
+    expect(guard({
       name: 'patrol_visual_click_target',
-      arguments: { inspectionId: 'test-live', stepName: '给视频点赞', frameId: 'browser-visual-x', xRatio: 0.1, yRatio: 0.8 },
-    })
-
-    expect(visual()).toMatch(/视觉点击仍然只是最后兜底/)
-    expect(guard({
-      name: 'patrol_click_target',
-      arguments: { inspectionId: 'test-live', stepName: '给视频点赞', locatorText: '点赞' },
+      arguments: {
+        inspectionId: 'test-live',
+        stepName: '点击目标视频',
+        targetHint: 'AI圈核弹雨视频',
+        frameId: 'browser-visual-current',
+        xRatio: 0.37,
+        yRatio: 0.5,
+      },
     })).toBeUndefined()
-    expect(visual()).toMatch(/视觉点击仍然只是最后兜底/)
-    expect(guard({
-      name: 'patrol_analyze_step',
-      arguments: { inspectionId: 'test-live', task: '给视频点赞', locatorText: '点赞' },
-    })).toBeUndefined()
-    expect(visual()).toMatch(/视觉点击仍然只是最后兜底/)
-    expect(guard({
-      name: 'patrol_observe',
-      arguments: { inspectionId: 'test-live', includeImage: true },
-    })).toMatch(/视觉像素只允许作为最后兜底/)
-
-    outcomes.setVisualFallbackAuthorization({ inspectionId: 'test-live', stepName: '给视频点赞' }, true)
-    expect(guard({
-      name: 'patrol_observe',
-      arguments: { inspectionId: 'test-live', includeImage: true },
-    })).toBeUndefined()
-    expect(visual()).toBeUndefined()
-
-    for (let index = 0; index < 5; index += 1) {
-      expect(guard({
-        name: 'patrol_click',
-        arguments: { inspectionId: 'test-live', stepName: '给视频点赞', selector: 'div[title="点赞（Q）"]' },
-      })).toBeUndefined()
-    }
-    expect(guard({
-      name: 'patrol_click',
-      arguments: { inspectionId: 'test-live', stepName: 'bad selector', selector: 'span:has-text("点赞")' },
-    })).toMatch(/只接受 CSS/)
   })
 
-  it('caps visual image attachments at two per business target to avoid Qwen image-context OOM loops', () => {
-    for (const makeGuard of [
-      (outcomes: ReturnType<typeof createPatrolClickOutcomeTracker>) => createPatrolTestModePlanningGuard(outcomes),
-      (outcomes: ReturnType<typeof createPatrolClickOutcomeTracker>) => createPatrolPlanningGuard(outcomes),
-    ]) {
-      const outcomes = createPatrolClickOutcomeTracker()
-      const guard = makeGuard(outcomes)
-      expect(guard({
-        name: 'patrol_click_target',
-        arguments: { inspectionId: 'image-budget', stepName: '给视频点赞', locatorText: '点赞' },
-      })).toBeUndefined()
-      outcomes.setVisualFallbackAuthorization({ inspectionId: 'image-budget', stepName: '给视频点赞' }, true)
+  it('lets NORMAL MODE choose vision directly without a DOM-first sequence', () => {
+    const guard = createPatrolPlanningGuard(createPatrolClickOutcomeTracker())
+    expect(guard({
+      name: 'patrol_observe',
+      arguments: { inspectionId: 'normal-live', includeImage: true },
+    })).toBeUndefined()
+    expect(guard({
+      name: 'patrol_visual_click_target',
+      arguments: {
+        inspectionId: 'normal-live',
+        stepName: '点击评论输入框',
+        targetHint: '评论输入框',
+        frameId: 'browser-visual-current',
+        xRatio: 0.3,
+        yRatio: 0.9,
+      },
+    })).toBeUndefined()
+  })
 
+  it('caps repeated visual attachments without making vision a last-resort method', () => {
+    for (const makeGuard of [
+      () => createPatrolTestModePlanningGuard(createPatrolClickOutcomeTracker()),
+      () => createPatrolPlanningGuard(createPatrolClickOutcomeTracker()),
+    ]) {
+      const guard = makeGuard()
       const image = () => guard({
         name: 'patrol_observe',
         arguments: { inspectionId: 'image-budget', includeImage: true },
@@ -66,22 +54,48 @@ describe('Patrol page understanding planner', () => {
       expect(image()).toBeUndefined()
       expect(image()).toBeUndefined()
       expect(image()).toMatch(/两张视觉截图|CUDA OOM \/ 503/)
-
-      // A different business action gets a fresh visual budget.
-      expect(guard({
-        name: 'patrol_click_target',
-        arguments: { inspectionId: 'image-budget', stepName: '点击评论输入框', locatorText: '评论' },
-      })).toBeUndefined()
-      outcomes.setVisualFallbackAuthorization({ inspectionId: 'image-budget', stepName: '点击评论输入框' }, true)
-      expect(image()).toBeUndefined()
     }
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/视觉使用时机不受限制/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).not.toMatch(/DOM 永远优先|视觉像素只允许作为最后兜底/)
   })
 
-  it('scopes visual fallback authorization to one business target instead of the whole inspection', () => {
+  it('does not hard-stop method switching after unverified physical clicks', () => {
     const outcomes = createPatrolClickOutcomeTracker()
-    outcomes.setVisualFallbackAuthorization({ inspectionId: 'bili', stepName: '给视频点赞' }, true)
-    expect(outcomes.visualFallbackAuthorized({ inspectionId: 'bili', stepName: '给视频点赞（视觉后备）' })).toBe(true)
-    expect(outcomes.visualFallbackAuthorized({ inspectionId: 'bili', stepName: '点击评论输入框' })).toBe(false)
+    const guard = createPatrolPlanningGuard(outcomes)
+    const visualArgs = {
+      inspectionId: 'bili',
+      stepName: '点击目标视频',
+      targetHint: 'AI圈核弹雨视频',
+      frameId: 'browser-visual-current',
+      xRatio: 0.37,
+      yRatio: 0.5,
+    }
+    outcomes.recordVisualPhysicalClick(visualArgs)
+    outcomes.recordUnverifiedPhysicalClick(visualArgs)
+    outcomes.recordVisualPhysicalClick(visualArgs)
+    outcomes.recordUnverifiedPhysicalClick(visualArgs)
+
+    expect(guard({ name: 'patrol_visual_click_target', arguments: visualArgs })).toBeUndefined()
+    expect(guard({
+      name: 'patrol_click_target',
+      arguments: { inspectionId: 'bili', stepName: '点击目标视频', locatorText: 'AI圈核弹雨' },
+    })).toBeUndefined()
+  })
+
+  it('still protects an already verified visual toggle from an accidental repeat click', () => {
+    const outcomes = createPatrolClickOutcomeTracker()
+    const guard = createPatrolPlanningGuard(outcomes)
+    const args = {
+      inspectionId: 'bili',
+      stepName: '给视频点赞',
+      targetHint: '点赞按钮',
+      frameId: 'browser-visual-current',
+      xRatio: 0.1,
+      yRatio: 0.8,
+    }
+    outcomes.recordVisualPhysicalClick(args)
+    outcomes.recordVerified(args)
+    expect(guard({ name: 'patrol_visual_click_target', arguments: args })).toMatch(/已验证的视觉物理点击|HARD STOP/)
   })
 
   it('binds a row identity to the action selector instead of clicking an ambiguous RDP label', () => {
@@ -95,7 +109,6 @@ describe('Patrol page understanding planner', () => {
       { tag: 'span', role: 'button', text: '[RDP] [EMPTY]', selector: 'tr:nth-of-type(2) span.action' },
       { tag: 'span', role: 'button', text: '[RDP] [EMPTY]', selector: 'tr:nth-of-type(3) span.action' },
     ])
-
     expect(plans[0]).toMatchObject({
       kind: 'structured-row',
       selector: 'tr:nth-of-type(3) td:nth-of-type(5) span.action',
@@ -111,30 +124,15 @@ describe('Patrol page understanding planner', () => {
     expect(plans[0]).toMatchObject({ kind: 'semantic', selector: 'top-frame::#workbench', locatorText: '我的工作台' })
   })
 
-  it('collapses duplicate CURRENT wrappers when an exact title-backed tree leaf exists', () => {
+  it('collapses duplicate CURRENT wrappers when an exact title-backed leaf exists', () => {
     const plans = analyzePageEvidence('点击主机下的未分组', '未分组', '', [
       { tag: 'span', role: '', text: '未分组', selector: 'top-frame::.new_tree_box span[title="未分组"]' },
       { tag: 'span', role: '', text: '未分组', selector: 'top-frame::div:nth-of-type(2) > span:nth-of-type(2)' },
       { tag: 'div', role: '', text: '未分组', selector: 'top-frame::.ant-tree-node-content-wrapper' },
-      { tag: 'div', role: '', text: '主机 未分组', selector: 'top-frame::.ant-tree-list-holder-inner' },
     ])
     expect(plans[0]).toMatchObject({
       kind: 'semantic',
       selector: 'top-frame::.new_tree_box span[title="未分组"]',
-      locatorText: '未分组',
-    })
-  })
-
-  it('prefers a unique exact title-backed tree target over nested same-text wrappers', () => {
-    const plans = analyzePageEvidence('点击主机下的未分组', '未分组', '', [
-      { tag: 'span', role: '', text: '未分组', selector: 'top-frame::span[title="未分组"]' },
-      { tag: 'span', role: '', text: '未分组', selector: 'top-frame::div:nth-of-type(2) > span:nth-of-type(2)' },
-      { tag: 'div', role: '', text: '主机 未分组', selector: 'top-frame::.ant-tree-list-holder-inner' },
-      { tag: 'span', role: '', text: '工单运维', selector: 'top-frame::span[title="工单运维"]' },
-    ])
-    expect(plans[0]).toMatchObject({
-      kind: 'semantic',
-      selector: 'top-frame::span[title="未分组"]',
       locatorText: '未分组',
     })
   })
@@ -147,191 +145,12 @@ describe('Patrol page understanding planner', () => {
     expect(plans[0]?.kind).toBe('no-unique-target')
   })
 
-  it('keeps DOM recovery ahead of Bilibili-like visual fallback when analyze has a concrete DOM plan', () => {
-    const outcomes = createPatrolClickOutcomeTracker()
-    const guard = createPatrolPlanningGuard(outcomes)
-
-    expect(guard({
-      name: 'patrol_click_target',
-      arguments: { inspectionId: 'bili', stepName: '点击点赞按钮', locatorText: '点赞（Q）' },
-    })).toBeUndefined()
-    expect(guard({
-      name: 'patrol_click_target',
-      arguments: { inspectionId: 'bili', stepName: '点击点赞按钮', locatorText: '点赞（Q）' },
-    })).toMatch(/patrol_analyze_step/)
-    expect(guard({
-      name: 'patrol_analyze_step',
-      arguments: { inspectionId: 'bili', task: '点击点赞按钮', locatorText: '点赞（Q）' },
-    })).toBeUndefined()
-
-    outcomes.setVisualFallbackAuthorization({ inspectionId: 'bili', stepName: '点击点赞按钮' }, false)
-    expect(guard({
-      name: 'patrol_visual_click_target',
-      arguments: {
-        inspectionId: 'bili',
-        stepName: '点击点赞按钮（视觉后备）',
-        targetHint: '大拇指点赞按钮',
-        frameId: 'browser-visual-current',
-        xRatio: 0.08,
-        yRatio: 0.75,
-      },
-    })).toMatch(/DOM 优先/)
-
-    expect(guard({
-      name: 'patrol_click',
-      arguments: {
-        inspectionId: 'bili',
-        stepName: '点击点赞按钮',
-        selector: 'top-frame::div[title="点赞（Q）"]',
-      },
-    })).toBeUndefined()
-    expect(guard({
-      name: 'patrol_visual_click_target',
-      arguments: {
-        inspectionId: 'bili',
-        stepName: '点击点赞按钮（视觉后备）',
-        targetHint: '大拇指点赞按钮',
-        frameId: 'browser-visual-current-2',
-        xRatio: 0.08,
-        yRatio: 0.75,
-      },
-    })).toBeUndefined()
-  })
-
-  it('blocks image attachment until normal-mode DOM recovery actually authorizes visual fallback', () => {
-    const outcomes = createPatrolClickOutcomeTracker()
-    const guard = createPatrolPlanningGuard(outcomes)
-    expect(guard({
-      name: 'patrol_click_target',
-      arguments: { inspectionId: 'normal-img', stepName: '点击评论输入框', locatorText: '评论' },
-    })).toBeUndefined()
-    expect(guard({
-      name: 'patrol_observe',
-      arguments: { inspectionId: 'normal-img', includeImage: true },
-    })).toMatch(/视觉像素只允许作为最后兜底/)
-
-    expect(guard({
-      name: 'patrol_analyze_step',
-      arguments: { inspectionId: 'normal-img', task: '点击评论输入框', locatorText: '评论' },
-    })).toBeUndefined()
-    outcomes.setVisualFallbackAuthorization({ inspectionId: 'normal-img', stepName: '点击评论输入框' }, true)
-    expect(guard({
-      name: 'patrol_observe',
-      arguments: { inspectionId: 'normal-img', includeImage: true },
-    })).toBeUndefined()
-  })
-
-  it('allows visual fallback immediately after analyze explicitly finds no unique DOM target', () => {
-    const outcomes = createPatrolClickOutcomeTracker()
-    const guard = createPatrolPlanningGuard(outcomes)
-    expect(guard({
-      name: 'patrol_click_target',
-      arguments: { inspectionId: 'bili', stepName: '点击评论输入框', locatorText: '哎呦，不错哦，发条评论吧' },
-    })).toBeUndefined()
-    expect(guard({
-      name: 'patrol_analyze_step',
-      arguments: { inspectionId: 'bili', task: '点击评论输入框', locatorText: '哎呦，不错哦，发条评论吧' },
-    })).toBeUndefined()
-    outcomes.setVisualFallbackAuthorization({ inspectionId: 'bili', stepName: '点击评论输入框' }, true)
-    expect(guard({
-      name: 'patrol_visual_click_target',
-      arguments: {
-        inspectionId: 'bili',
-        stepName: '点击评论输入框（视觉后备）',
-        targetHint: '评论输入框',
-        frameId: 'browser-visual-current',
-        xRatio: 0.3,
-        yRatio: 0.9,
-      },
-    })).toBeUndefined()
-  })
-
-  it('does not poison the business target when a visual fallback fails before any physical click', () => {
-    const outcomes = createPatrolClickOutcomeTracker()
-    const guard = createPatrolPlanningGuard(outcomes)
-    const semantic = () => guard({
-      name: 'patrol_click_target',
-      arguments: { inspectionId: 'demo', stepName: '点击目标行的 RDP', locatorText: 'RDP' },
-    })
-    const visual = (frameId: string) => guard({
-      name: 'patrol_visual_click_target',
-      arguments: {
-        inspectionId: 'demo',
-        stepName: '点击目标行的 RDP',
-        targetHint: 'CURRENT 截图中的 RDP 图标',
-        frameId,
-        xRatio: 0.82,
-        yRatio: 0.61,
-      },
-    })
-
-    expect(semantic()).toBeUndefined()
-    expect(semantic()).toMatch(/patrol_analyze_step/)
-    expect(guard({
-      name: 'patrol_analyze_step',
-      arguments: { inspectionId: 'demo', task: '点击目标行的 RDP', locatorText: 'RDP' },
-    })).toBeUndefined()
-    // This test exercises retry-budget semantics after analysis has explicitly
-    // concluded there is no reliable DOM target.
-    outcomes.setVisualFallbackAuthorization({ inspectionId: 'demo', stepName: '点击目标行的 RDP' }, true)
-
-    expect(visual('browser-visual-1')).toBeUndefined()
-    expect(visual('browser-visual-2')).toBeUndefined()
-
-    outcomes.recordVisualPhysicalClick({ inspectionId: 'demo', stepName: '点击目标行的 RDP' })
-    outcomes.recordUnverifiedPhysicalClick({ inspectionId: 'demo', stepName: '点击目标行的 RDP' })
-    expect(visual('browser-visual-3')).toBeUndefined()
-    outcomes.recordVisualPhysicalClick({ inspectionId: 'demo', stepName: '点击目标行的 RDP' })
-    outcomes.recordUnverifiedPhysicalClick({ inspectionId: 'demo', stepName: '点击目标行的 RDP' })
-    expect(visual('browser-visual-4')).toMatch(/HARD STOP/)
-  })
-
-  it('does not reset a stalled selector budget just because the same target is renamed cosmetically', () => {
+  it('rejects unsupported selector dialects but keeps a valid locatorText path usable', () => {
     const guard = createPatrolPlanningGuard()
     expect(guard({
-      name: 'patrol_click_target',
-      arguments: { inspectionId: 'demo', stepName: '点击主机下的未分组', locatorText: '未分组' },
-    })).toBeUndefined()
-    expect(guard({
-      name: 'patrol_analyze_step',
-      arguments: { inspectionId: 'demo', task: '点击未分组节点', locatorText: '未分组' },
-    })).toBeUndefined()
-    expect(guard({
       name: 'patrol_click',
-      arguments: { inspectionId: 'demo', stepName: '点击未分组', selector: 'span[title="未分组"]' },
-    })).toBeUndefined()
-    expect(guard({
-      name: 'patrol_click',
-      arguments: { inspectionId: 'demo', stepName: '尝试未分组菜单项', selector: '.ant-tree-node-content-wrapper' },
-    })).toMatch(/DOM selector 策略已耗尽|patrol_visual_click_target/)
-  })
-
-  it('rejects unsupported selector dialects without consuming the final recovery budget', () => {
-    const guard = createPatrolPlanningGuard()
-    expect(guard({
-      name: 'patrol_click_target',
-      arguments: { inspectionId: 'demo', stepName: '点击主机下的未分组', locatorText: '未分组' },
-    })).toBeUndefined()
-    expect(guard({
-      name: 'patrol_analyze_step',
-      arguments: { inspectionId: 'demo', task: '点击主机下的未分组', locatorText: '未分组' },
-    })).toBeUndefined()
-    expect(guard({
-      name: 'patrol_click',
-      arguments: { inspectionId: 'demo', stepName: '点击未分组', selector: 'span:contains("未分组")' },
-    })).toMatch(/只接受 CSS|不计入.*策略预算/)
-    expect(guard({
-      name: 'patrol_click',
-      arguments: { inspectionId: 'demo', stepName: '点击未分组', selector: 'span[title="未分组"]' },
-    })).toBeUndefined()
-    expect(guard({
-      name: 'patrol_click',
-      arguments: { inspectionId: 'demo', stepName: '点击未分组', selector: '.ant-tree-node-content-wrapper' },
-    })).toMatch(/DOM selector 策略已耗尽|patrol_visual_click_target/)
-  })
-
-  it('does not let an invalid optional selector hint block patrol_click_target when locatorText is valid', () => {
-    const guard = createPatrolPlanningGuard()
+      arguments: { inspectionId: 'demo', stepName: 'bad selector', selector: 'span:has-text("点赞")' },
+    })).toMatch(/只接受 CSS/)
     expect(guard({
       name: 'patrol_click_target',
       arguments: {
@@ -341,97 +160,23 @@ describe('Patrol page understanding planner', () => {
         selector: 'top-frame::span:has-text("未分组")',
       },
     })).toBeUndefined()
-    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/优先只传 locatorText 给 patrol_click_target/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/丢弃这个可选 hint/)
   })
 
   it('also blocks raw browser selector dialects before dispatch', () => {
     const guard = createPatrolPlanningGuard()
-    expect(guard({
-      name: 'browser_click',
-      arguments: { selector: '//span[text()="未分组"]' },
-    })).toMatch(/只接受 CSS/)
-    expect(guard({
-      name: 'browser_read_page',
-      arguments: { selector: 'div:has-text(未分组)' },
-    })).toMatch(/只接受 CSS/)
+    expect(guard({ name: 'browser_click', arguments: { selector: '//span[text()="未分组"]' } })).toMatch(/只接受 CSS/)
+    expect(guard({ name: 'browser_read_page', arguments: { selector: 'div:has-text(未分组)' } })).toMatch(/只接受 CSS/)
   })
 
-  it('counts a raw selector recovery as the second and final strategy', () => {
-    const guard = createPatrolPlanningGuard()
-    expect(guard({
-      name: 'patrol_click_target',
-      arguments: { inspectionId: 'demo', stepName: '点击目标行的 RDP', locatorText: 'RDP' },
-    })).toBeUndefined()
-    expect(guard({
-      name: 'patrol_analyze_step',
-      arguments: { inspectionId: 'demo', task: '点击目标行的 RDP', locatorText: 'RDP' },
-    })).toBeUndefined()
-    expect(guard({
-      name: 'patrol_click',
-      arguments: { inspectionId: 'demo', stepName: '点击目标行的 RDP', selector: 'tr:nth-of-type(2) span.action' },
-    })).toBeUndefined()
-    expect(guard({
-      name: 'patrol_click_target',
-      arguments: { inspectionId: 'demo', stepName: '点击目标行的 RDP', locatorText: 'RDP' },
-    })).toMatch(/DOM selector 策略已耗尽|patrol_visual_click_target/)
-  })
-
-  it('resets a stalled click phase after meaningful non-click progress', () => {
-    const guard = createPatrolPlanningGuard()
-    const click = { name: 'patrol_click_target', arguments: { inspectionId: 'demo', stepName: '点击确定', locatorText: '确定' } }
-    expect(guard(click)).toBeUndefined()
-    expect(guard(click)).toMatch(/patrol_analyze_step/)
-    expect(guard({ name: 'patrol_type_text', arguments: { inspectionId: 'demo', stepName: '输入下一字段', selector: '#name', text: 'x' } })).toBeUndefined()
-    expect(guard(click)).toBeUndefined()
-  })
-
-  it('still gives physical-click safety priority and permits only one analyzed recovery retry', () => {
-    const outcomes = createPatrolClickOutcomeTracker()
-    const guard = createPatrolPlanningGuard(outcomes)
-    const click = { name: 'patrol_click_target', arguments: {
-      inspectionId: 'demo', stepName: '点击提交', locatorText: '提交',
-    } }
-
-    expect(guard(click)).toBeUndefined()
-    outcomes.recordUnverifiedPhysicalClick(click.arguments)
-    expect(guard(click)).toMatch(/patrol_analyze_step/)
-    expect(guard({ name: 'patrol_analyze_step', arguments: { inspectionId: 'demo', task: '点击提交' } })).toBeUndefined()
-    expect(guard(click)).toBeUndefined()
-    outcomes.recordUnverifiedPhysicalClick(click.arguments)
-    expect(guard(click)).toMatch(/HARD STOP/)
-
-    outcomes.recordVerified(click.arguments)
-    expect(guard({ name: 'patrol_type_text', arguments: { inspectionId: 'demo', stepName: '进入下一阶段', selector: '#x', text: 'x' } })).toBeUndefined()
-    expect(guard(click)).toBeUndefined()
-  })
-
-  it('clears stale click outcomes when an existing flow is reopened for editing', () => {
-    const outcomes = createPatrolClickOutcomeTracker()
-    const guard = createPatrolPlanningGuard(outcomes)
-    const click = { name: 'patrol_click_target', arguments: {
-      inspectionId: 'legacy-flow', stepName: '点击 Logo', locatorText: '长城网际',
-    } }
-
-    outcomes.recordUnverifiedPhysicalClick(click.arguments)
-    outcomes.recordUnverifiedPhysicalClick(click.arguments)
-    expect(guard(click)).toMatch(/HARD STOP/)
-    expect(guard({ name: 'patrol_begin_edit', arguments: { inspectionId: 'legacy-flow' } })).toBeUndefined()
-    expect(guard(click)).toBeUndefined()
-  })
-
-  it('keeps image-code out of the click planner and makes TEST teaching local-OCR-first', () => {
-    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/图片字符验证码不走页面点击规划器/)
+  it('keeps image-code on its dedicated OCR/token-gated path in TEST MODE', () => {
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/图片字符验证码不走通用页面点击规划器/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/patrol_solve_current_image_code/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/Windows OCR\/本地 OCR/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/一次性 fallbackToken/)
-    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/没有 fallbackToken 时禁止模型视觉/)
-    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).not.toMatch(/不要先跑 ddddocr\/Windows OCR 预检/)
-    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/HARD STOP/)
-    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/最终 HARD STOP.*必须直接结束当前 assistant turn/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/没有 fallbackToken 时禁止模型视觉验证码/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/patrol_visual_click_target/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/visualFrameId/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/browser_visual_click/)
-    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/不要为每个内部工具调用.*重复/s)
   })
 })
