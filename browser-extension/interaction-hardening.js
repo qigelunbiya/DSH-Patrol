@@ -739,6 +739,8 @@ async function interactionTypeFocused(args) {
   if (!chrome.scripting?.executeScript) throw new Error('typeFocused requires chrome.scripting')
   const before = await interactionFocusedEditorProbe(tabId, args.clear !== false)
   if (!before?.focusUsable) throw new Error('no focused browser editor is available; click/focus the intended input first')
+  const armed = await interactionFocusedEditorArm(tabId)
+  if (!armed?.focusUsable) throw new Error('focused browser editor lost focus before text input')
 
   let trusted = false
   let attached = false
@@ -768,13 +770,18 @@ async function interactionTypeFocused(args) {
     if (!inserted?.ok) throw new Error(inserted?.error || 'focused editor synthetic text insertion failed')
   }
   await new Promise(resolve => setTimeout(resolve, 80))
-  const after = await interactionFocusedEditorProbe(tabId, false)
+  const after = await interactionFocusedEditorVerify(tabId, text)
+  if (after?.inputVerified !== true) {
+    throw new Error('focused editor did not expose inserted text or a trusted input event; refusing to claim text input succeeded')
+  }
   return {
     ok: true,
     textLength: text.length,
     focusedTag: String(after?.focusedTag || before.focusedTag || ''),
     focusKind: String(after?.focusKind || before.focusKind || ''),
     observedText: typeof after?.observedText === 'string' ? after.observedText : '',
+    inputVerified: true,
+    verificationEvidence: String(after?.verificationEvidence || 'focused editor input event observed'),
     transport: trusted ? 'chrome-debugger-insert-text' : 'main-world-focused-editor',
   }
 }
@@ -785,6 +792,26 @@ async function interactionFocusedEditorProbe(tabId, clear) {
     world: 'MAIN',
     func: interactionMainWorldFocusedEditor,
     args: ['probe', { clear }],
+  })
+  return Array.isArray(results) ? results[0]?.result : undefined
+}
+
+async function interactionFocusedEditorArm(tabId) {
+  const results = await chrome.scripting.executeScript({
+    target: { tabId, frameIds: [0] },
+    world: 'MAIN',
+    func: interactionMainWorldFocusedEditor,
+    args: ['arm', {}],
+  })
+  return Array.isArray(results) ? results[0]?.result : undefined
+}
+
+async function interactionFocusedEditorVerify(tabId, text) {
+  const results = await chrome.scripting.executeScript({
+    target: { tabId, frameIds: [0] },
+    world: 'MAIN',
+    func: interactionMainWorldFocusedEditor,
+    args: ['verify', { text }],
   })
   return Array.isArray(results) ? results[0]?.result : undefined
 }
@@ -800,6 +827,15 @@ async function interactionFocusedEditorInsertSynthetic(tabId, text) {
 }
 
 function interactionMainWorldFocusedEditor(mode, args = {}) {
+  const PROBE_KEY = '__dshPatrolFocusedInputProbe'
+  const cleanupProbe = () => {
+    const probe = globalThis[PROBE_KEY]
+    if (probe?.listener) {
+      try { document.removeEventListener('input', probe.listener, true) } catch {}
+    }
+    try { delete globalThis[PROBE_KEY] } catch { globalThis[PROBE_KEY] = undefined }
+    return probe
+  }
   const deepActiveElement = () => {
     let active = document.activeElement
     let guard = 0
@@ -823,6 +859,20 @@ function interactionMainWorldFocusedEditor(mode, args = {}) {
   const nonBodyFocus = host instanceof Element && !['body', 'html'].includes(host.tagName.toLowerCase())
   const focusUsable = directEditable || nonBodyFocus
   if (!focusUsable) return { ok: false, focusUsable: false, error: 'document has no focused editor/control' }
+
+  if (mode === 'arm') {
+    cleanupProbe()
+    const probe = { eventSeen: false, listener: undefined }
+    probe.listener = () => { probe.eventSeen = true }
+    globalThis[PROBE_KEY] = probe
+    document.addEventListener('input', probe.listener, true)
+    return {
+      ok: true,
+      focusUsable,
+      focusedTag: active instanceof Element ? active.tagName.toLowerCase() : host?.tagName?.toLowerCase?.() || '',
+      focusKind: directEditable ? 'editable' : 'custom-focus-host',
+    }
+  }
 
   let clearedByScript = false
   if (mode === 'probe' && args.clear === true && directEditable) {
@@ -851,6 +901,28 @@ function interactionMainWorldFocusedEditor(mode, args = {}) {
   const observedText = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement
     ? String(active.value || '')
     : active?.isContentEditable === true ? String(active.textContent || '') : ''
+
+  if (mode === 'verify') {
+    const probe = cleanupProbe()
+    const wanted = String(args.text || '')
+    const textMatched = Boolean(wanted) && observedText.includes(wanted)
+    const eventSeen = probe?.eventSeen === true
+    const inputVerified = textMatched || eventSeen
+    return {
+      ok: true,
+      focusUsable,
+      focusedTag: active instanceof Element ? active.tagName.toLowerCase() : host?.tagName?.toLowerCase?.() || '',
+      focusKind: directEditable ? 'editable' : 'custom-focus-host',
+      observedText: observedText.slice(0, 500),
+      inputVerified,
+      verificationEvidence: textMatched
+        ? 'focused editor contains inserted text'
+        : eventSeen
+          ? 'trusted input event observed from focused editor'
+          : '',
+    }
+  }
+
   return {
     ok: true, focusUsable, clearedByScript,
     focusedTag: active instanceof Element ? active.tagName.toLowerCase() : host?.tagName?.toLowerCase?.() || '',

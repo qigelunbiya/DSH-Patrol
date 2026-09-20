@@ -248,7 +248,7 @@ export function registerTools(ctx, bridge, config = {}) {
       parameters: { text: reqStr, clear: optBool, tabId: optInt },
       output: {
         schema: { type: 'object', additionalProperties: false, properties: {
-          ok: reqBool, textLength: reqInt, focusedTag: str, focusKind: str, observedText: str, transport: str,
+          ok: reqBool, textLength: reqInt, focusedTag: str, focusKind: str, observedText: str, inputVerified: bool, verificationEvidence: str, transport: str,
         } },
         render: (_args, value) => [{ type: 'text', text: `Typed ${value.textLength} public character(s) into focused browser editor via ${value.transport || 'focused-input'}.` }],
       },
@@ -258,7 +258,8 @@ export function registerTools(ctx, bridge, config = {}) {
         return clean({
           ok: true,
           textLength: Number.isInteger(value.textLength) ? value.textLength : args.text.length,
-          focusedTag: value.focusedTag, focusKind: value.focusKind, observedText: value.observedText, transport: value.transport,
+          focusedTag: value.focusedTag, focusKind: value.focusKind, observedText: value.observedText,
+          inputVerified: value.inputVerified, verificationEvidence: value.verificationEvidence, transport: value.transport,
         })
       },
     }),

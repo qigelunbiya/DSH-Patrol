@@ -229,10 +229,17 @@ describe('Patrol screenshot tab readiness', () => {
     const scripting = {
       async executeScript(request: any) {
         if (request.func?.name === 'interactionMainWorldFocusedEditor') {
+          const mode = request.args?.[0]
+          if (mode === 'verify') {
+            return [{ result: {
+              ok: true, focusUsable: true, focusedTag: 'div', focusKind: 'editable',
+              observedText: '支持👍', inputVerified: true,
+              verificationEvidence: 'focused editor contains inserted text',
+            } }]
+          }
           return [{ result: {
-            ok: true, focusUsable: true, clearedByScript: true,
-            focusedTag: 'div', focusKind: 'editable',
-            observedText: debuggerCalls.length > 0 ? '支持👍' : '',
+            ok: true, focusUsable: true, clearedByScript: mode === 'probe',
+            focusedTag: 'div', focusKind: 'editable', observedText: '',
           } }]
         }
         throw new Error(`unexpected executeScript function ${request.func?.name || 'anonymous'}`)
@@ -252,8 +259,49 @@ describe('Patrol screenshot tab readiness', () => {
       scripting, debugger: debuggerApi,
     } })
     const typed = await sandbox.handleCommand('typeFocused', { tabId: 7, text: '支持👍', clear: true })
-    expect(typed).toMatchObject({ ok: true, textLength: 4, focusKind: 'editable', transport: 'chrome-debugger-insert-text' })
+    expect(typed).toMatchObject({
+      ok: true,
+      textLength: 4,
+      focusKind: 'editable',
+      inputVerified: true,
+      verificationEvidence: 'focused editor contains inserted text',
+      transport: 'chrome-debugger-insert-text',
+    })
     expect(debuggerCalls).toEqual([{ method: 'Input.insertText', params: { text: '支持👍' } }])
+  })
+
+  it('refuses to claim focused text success when neither text nor an input event can be verified', async () => {
+    const scripting = {
+      async executeScript(request: any) {
+        if (request.func?.name !== 'interactionMainWorldFocusedEditor') throw new Error('unexpected script')
+        const mode = request.args?.[0]
+        if (mode === 'verify') {
+          return [{ result: {
+            ok: true, focusUsable: true, focusedTag: 'bili-comment-editor',
+            focusKind: 'custom-focus-host', observedText: '', inputVerified: false, verificationEvidence: '',
+          } }]
+        }
+        return [{ result: {
+          ok: true, focusUsable: true, clearedByScript: false,
+          focusedTag: 'bili-comment-editor', focusKind: 'custom-focus-host', observedText: '',
+        } }]
+      },
+    }
+    const debuggerApi = {
+      async attach() {},
+      async sendCommand() {},
+      async detach() {},
+    }
+    const sandbox = await loadInteraction({ chrome: {
+      tabs: {
+        get: async () => ({ id: 7, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
+        update: async (id: number) => ({ id, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
+        captureVisibleTab: async () => 'data:image/png;base64,AAAA',
+      },
+      scripting, debugger: debuggerApi,
+    } })
+    await expect(sandbox.handleCommand('typeFocused', { tabId: 7, text: '支持', clear: true }))
+      .rejects.toThrow(/refusing to claim text input succeeded/)
   })
 
   it('downscales only explicit model-visual screenshots while preserving viewport geometry', async () => {

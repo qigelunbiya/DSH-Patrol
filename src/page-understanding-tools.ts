@@ -17,7 +17,7 @@ const CSS_SELECTOR_TOOLS = new Set([
   'browser_click', 'browser_count', 'browser_snapshot', 'browser_read_page', 'browser_wait',
 ])
 const PHASE_PROGRESS_TOOLS = new Set([
-  'patrol_navigate', 'patrol_type', 'patrol_type_text', 'patrol_type_transient',
+  'patrol_navigate', 'patrol_type', 'patrol_type_text', 'patrol_type_focused_text', 'patrol_type_transient',
   'patrol_type_credential', 'patrol_type_totp_profile', 'patrol_select', 'patrol_press',
   'patrol_resume', 'patrol_resume_validation', 'patrol_run', 'patrol_run_flow',
 ])
