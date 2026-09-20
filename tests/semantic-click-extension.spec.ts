@@ -116,4 +116,16 @@ describe('atomic semantic click extension layer', () => {
     expect(source).toContain("element instanceof HTMLImageElement")
     expect(source).toContain("querySelectorAll?.('img,svg')")
   })
+
+  it('searches open shadow DOM and prioritizes real comment editors', () => {
+    const source = readFileSync(join(root, 'browser-extension', 'semantic-click.js'), 'utf8')
+    expect(source).toContain('const deepQueryAll = (selector, startRoot = document) =>')
+    expect(source).toContain('element?.shadowRoot')
+    expect(source).toContain("'[role=\"textbox\"]'")
+    expect(source).toContain("'bili-comment-editor'")
+    expect(source).toContain('const wantsCommentEditor =')
+    expect(source).toContain('editableCandidate(element)')
+    expect(source).toContain('replaySelectorSafe: !(persistedTarget.getRootNode?.() instanceof ShadowRoot)')
+  })
+
 })
