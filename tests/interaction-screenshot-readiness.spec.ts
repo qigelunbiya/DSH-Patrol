@@ -395,4 +395,90 @@ describe('Patrol screenshot tab readiness', () => {
     expect(source).toContain('safer than sending every simple DOM command to a permanently dead id')
   })
 
+
+  it('maps compact screenshot ratios through the exact CDP capture rectangle instead of the generic viewport', async () => {
+    const viewport = {
+      urlIdentity: 'https://example.test/video/1',
+      width: 1600,
+      height: 900,
+      offsetLeft: 5,
+      offsetTop: 7,
+      scale: 1,
+      scrollX: 10,
+      scrollY: 400,
+      innerWidth: 1600,
+      innerHeight: 900,
+      devicePixelRatio: 1.25,
+    }
+    const mouseEvents: Array<{ method: string; params: any }> = []
+    const scripting = {
+      async executeScript(request: any) {
+        if (request.func?.name === 'interactionMainWorldViewportState') return [{ result: { ...viewport } }]
+        if (request.func?.name === 'interactionMainWorldVisualClick') {
+          return [{ result: {
+            ok: true,
+            selector: '#target',
+            tag: 'button',
+            role: 'button',
+            text: 'Target',
+            stateSignature: mouseEvents.length ? 'after' : 'before',
+            targetFocusedEditable: false,
+          } }]
+        }
+        throw new Error(`unexpected executeScript function ${request.func?.name || 'anonymous'}`)
+      },
+    }
+    const debuggerApi = {
+      async attach() {},
+      async sendCommand(_target: any, method: string, params: any) {
+        if (method === 'Page.getLayoutMetrics') {
+          return { cssVisualViewport: { clientWidth: 1600, clientHeight: 900, pageX: 35, pageY: 440 } }
+        }
+        if (method === 'Page.captureScreenshot') return { data: 'AAAA' }
+        if (method === 'Input.dispatchMouseEvent') {
+          mouseEvents.push({ method, params })
+          return {}
+        }
+        throw new Error(`unexpected debugger command ${method}`)
+      },
+      async detach() {},
+    }
+    const tabs = {
+      get: async () => ({ id: 7, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
+      update: async (id: number) => ({ id, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
+      captureVisibleTab: async () => { throw new Error('compact CDP capture should be used') },
+    }
+    const sandbox = await loadInteraction({ chrome: { tabs, scripting, debugger: debuggerApi } })
+
+    const shot = await sandbox.handleCommand('screenshot', {
+      tabId: 7,
+      format: 'jpeg',
+      maxWidth: 1024,
+      quality: 68,
+    })
+    expect(shot).toMatchObject({
+      compactVisual: true,
+      captureScale: 0.64,
+      captureClientLeft: 25,
+      captureClientTop: 40,
+      captureWidth: 1600,
+      captureHeight: 900,
+      captureMode: 'cdp-css-visual-viewport',
+    })
+
+    await sandbox.handleCommand('visualClick', {
+      tabId: 7,
+      frameId: shot.visualFrameId,
+      xRatio: 0.25,
+      yRatio: 0.5,
+    })
+
+    const pressed = mouseEvents.find(item => item.params?.type === 'mousePressed')
+    expect(pressed?.params).toMatchObject({ x: 425, y: 490, button: 'left' })
+    // The JS visualViewport offset was (5, 7). If the click had reused that
+    // generic viewport instead of the screenshot's CDP clip it would be (405, 457).
+    expect(pressed?.params.x).not.toBe(405)
+    expect(pressed?.params.y).not.toBe(457)
+  })
+
 })
