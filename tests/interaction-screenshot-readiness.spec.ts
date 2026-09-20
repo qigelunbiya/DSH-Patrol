@@ -664,7 +664,7 @@ describe('Patrol screenshot tab readiness', () => {
     const scripting = {
       async executeScript(request: any) {
         if (request.func?.name === 'interactionMainWorldViewportState') return [{ result: { ...viewport } }]
-        if (request.func?.name === 'interactionResizeCapturedDataUrl') {
+        if (request.func?.name === 'interactionMainWorldResizeCapturedDataUrl') {
           resizeCalls += 1
           expect(request.args?.[1]).toBe(1536)
           return [{ result: {
