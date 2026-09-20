@@ -654,6 +654,49 @@ describe('Patrol screenshot tab readiness', () => {
   })
 
 
+  it('physically resizes captureVisibleTab fallback frames so read_image cannot inherit a 2880px raster', async () => {
+    const viewport = {
+      urlIdentity: 'https://example.test/video/1',
+      width: 1425, height: 709, offsetLeft: 0, offsetTop: 0, scale: 1,
+      scrollX: 0, scrollY: 600, innerWidth: 1425, innerHeight: 709, devicePixelRatio: 2,
+    }
+    let resizeCalls = 0
+    const scripting = {
+      async executeScript(request: any) {
+        if (request.func?.name === 'interactionMainWorldViewportState') return [{ result: { ...viewport } }]
+        if (request.func?.name === 'interactionResizeCapturedDataUrl') {
+          resizeCalls += 1
+          expect(request.args?.[1]).toBe(1536)
+          return [{ result: {
+            dataUrl: 'data:image/jpeg;base64,RESIZED1536',
+            scale: 1536 / 2880,
+            width: 1536,
+            height: 756,
+            originalWidth: 2880,
+            originalHeight: 1418,
+          } }]
+        }
+        throw new Error(`unexpected script ${request.func?.name || 'anonymous'}`)
+      },
+    }
+    const tabs = {
+      get: async () => ({ id: 7, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
+      update: async (id: number) => ({ id, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
+      captureVisibleTab: async () => 'data:image/jpeg;base64,FULL2880',
+    }
+    const sandbox = await loadInteraction({ chrome: { tabs, scripting } })
+    const shot = await sandbox.handleCommand('screenshot', { tabId: 7, format: 'jpeg', maxWidth: 1536, quality: 72 })
+
+    expect(resizeCalls).toBe(1)
+    expect(shot).toMatchObject({
+      dataUrl: 'data:image/jpeg;base64,RESIZED1536',
+      compactVisual: true,
+      targetPixelWidth: 1536,
+      captureDevicePixelRatio: 2,
+    })
+    expect(shot.captureScale).toBeCloseTo(1536 / 2880)
+  })
+
   it('treats maxWidth as a final raster-pixel budget on high-DPR browser pages', async () => {
     const viewport = {
       urlIdentity: 'https://example.test/video/1',
@@ -705,6 +748,9 @@ describe('Patrol screenshot tab readiness', () => {
     expect(source).toContain('function interactionWantsPublishTarget(targetHint)')
     expect(source).toContain('async function interactionResolvePiercedActionPoint')
     expect(source).toContain("'cdp-pierced-publish-action'")
+    expect(source).toContain("'cdp-ax-publish-action'")
+    expect(source).toContain("'Accessibility.getFullAXTree'")
+    expect(source).toContain('interactionPublishLabelScore')
     expect(source).toContain('const piercedAction = piercedEditable ? undefined : await interactionResolvePiercedActionPoint')
     expect(source).toContain('cdpPiercedAction')
     expect(source).toMatch(/发布\|发表\|发送\|提交/)
