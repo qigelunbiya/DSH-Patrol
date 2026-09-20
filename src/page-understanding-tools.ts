@@ -113,16 +113,20 @@ function createStrategyNeutralPlanningGuard(outcomes: PatrolClickOutcomeTracker)
 
     if (name === 'patrol_visual_click_target') {
       alignBusinessState(state, businessKey(args.stepName, undefined))
-      if (outcomes.visualPhysicalClicks(args) >= 1 && outcomes.unverifiedPhysicalClicks(args) === 0) {
-        return strategyHardStop('这个业务目标已经有一次已验证的视觉物理点击，禁止重复点击以免把开关状态反向切回')
+      if (toggleLikeBusinessAction(args)
+        && outcomes.visualPhysicalClicks(args) >= 1
+        && outcomes.unverifiedPhysicalClicks(args) === 0) {
+        return strategyHardStop('这个开关型业务目标已经有一次已验证的视觉物理点击，禁止重复点击以免把状态反向切回')
       }
       return undefined
     }
 
     if (CLICK_TOOLS.has(name)) {
       alignBusinessState(state, businessKey(args.stepName, args.locatorText))
-      if (outcomes.visualPhysicalClicks(args) >= 1 && outcomes.unverifiedPhysicalClicks(args) === 0) {
-        return strategyHardStop('这个业务目标已经有一次已验证的视觉物理点击，禁止重复点击以免把开关状态反向切回')
+      if (toggleLikeBusinessAction(args)
+        && outcomes.visualPhysicalClicks(args) >= 1
+        && outcomes.unverifiedPhysicalClicks(args) === 0) {
+        return strategyHardStop('这个开关型业务目标已经有一次已验证的视觉物理点击，禁止重复点击以免把状态反向切回')
       }
       return undefined
     }
@@ -165,6 +169,13 @@ function alignBusinessState(state: PlanningGuardState, key: string): void {
   const carryAnonymousVisual = state.businessKey === '' && state.visualImageCaptures > 0
   state.businessKey = key
   if (!carryAnonymousVisual) state.visualImageCaptures = 0
+}
+
+function toggleLikeBusinessAction(args: Record<string, unknown>): boolean {
+  const text = [args.stepName, args.locatorText, args.targetHint]
+    .filter(value => typeof value === 'string')
+    .join(' ')
+  return /(点赞|取消点赞|收藏|取消收藏|关注|取消关注|订阅|取消订阅|开关|勾选|取消勾选|\blike\b|\bfavorite\b|\bfollow\b|\bsubscribe\b|\btoggle\b|checkbox)/i.test(text)
 }
 
 function businessKey(primary: unknown, locator: unknown): string {
