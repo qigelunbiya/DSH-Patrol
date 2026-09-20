@@ -738,13 +738,13 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
           cdpPiercedFollowupEditor: activatedEditor?.kind === 'editable',
           stateEvidence: targetStateChanged
             ? piercedEditable
-              ? 'trusted native click changed the visual target own DOM state after pierced editor resolution'
+              ? 'trusted native click changed the visual target own DOM state after pierced Shadow DOM/editor resolution'
               : 'trusted native click changed the visual target own DOM state'
             : targetFocusedEditable
               ? activatedEditor?.kind === 'editable'
                 ? 'trusted native click activated the comment editor and then focused its mounted editable control'
                 : piercedEditable
-                  ? 'trusted native click focused an editor resolved through pierced DOM'
+                  ? 'trusted native click focused an editor resolved through pierced Shadow DOM/editor targeting'
                   : 'trusted native click focused an editable control'
               : '',
           inputTransport: 'chrome-debugger',
