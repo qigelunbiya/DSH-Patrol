@@ -102,6 +102,12 @@ describe('browser visual fallback click teaching', () => {
             targetAriaLabel: '点赞',
             targetId: 'like-button',
             targetClassName: 'video-like active',
+            requestedClickX: 205,
+            requestedClickY: 583,
+            resolvedClickX: 218,
+            resolvedClickY: 576,
+            visualSnapped: true,
+            snapDistance: 14.8,
             targetStateChanged: true,
             stateEvidence: 'clicked visual target DOM state changed',
             transport: 'bound-current-visual-frame',
@@ -121,6 +127,7 @@ describe('browser visual fallback click teaching', () => {
     }, exec)
 
     expect(result).toContain('browser_visual_click')
+    expect(result).toContain('Coordinate corrected before click')
     const saved = await store.load('visual-click')
     expect(saved.steps).toHaveLength(1)
     expect(saved.steps[0]).toMatchObject({
@@ -144,6 +151,7 @@ describe('browser visual fallback click teaching', () => {
         expectedRole: 'button',
         expectedTitle: '点赞',
         expectedAriaLabel: '点赞',
+        targetHint: '播放器下方左侧的大拇指点赞按钮',
         targetTextHint: '5743',
         targetIdHint: 'like-button',
         targetClassHint: 'video-like active',
@@ -224,6 +232,23 @@ describe('browser visual fallback click teaching', () => {
     expect(result).toMatch(/does NOT consume/i)
     expect(outcomes.visualPhysicalClicks(args)).toBe(0)
     expect(outcomes.unverifiedPhysicalClicks(args)).toBe(0)
+  })
+
+  it('requires a concrete targetHint before dispatching any live visual coordinate', async () => {
+    const calls: string[] = []
+    const { tool, exec } = await setup(async (name) => {
+      calls.push(name)
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    await expect(tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '点击评论输入框',
+      frameId: 'browser-visual-current',
+      xRatio: 0.5,
+      yRatio: 0.8,
+    }, exec)).rejects.toThrow(/targetHint is required.*validate\/correct/i)
+    expect(calls).toEqual([])
   })
 
   it('rejects a screenshot file name used as frameId before dispatch', async () => {
