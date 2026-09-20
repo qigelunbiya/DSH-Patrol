@@ -105,6 +105,7 @@ async function semanticClickCommand(args) {
     text: String(clicked.text || chosen.candidate.text || ''),
     role: String(clicked.role || chosen.candidate.role || ''),
     tag: String(clicked.tag || chosen.candidate.tag || ''),
+    replaySelectorSafe: clicked.replaySelectorSafe !== false,
     frameId: chosen.frame.frameId,
     frameUrl: chosen.frame.url || '',
     transport,
@@ -240,25 +241,54 @@ async function semanticClickPageCommand(mode, spec) {
     return rect.width > 0 && rect.height > 0
   }
   const disabled = element => element.matches?.(':disabled,[aria-disabled="true"]') === true
+  const deepQueryAll = (selector, startRoot = document) => {
+    const out = []
+    const roots = [startRoot]
+    const seenRoots = new Set()
+    let scannedElements = 0
+    while (roots.length && seenRoots.size < 64 && scannedElements < 12000) {
+      const root = roots.shift()
+      if (!root || seenRoots.has(root) || typeof root.querySelectorAll !== 'function') continue
+      seenRoots.add(root)
+      try { out.push(...root.querySelectorAll(selector)) } catch { return [] }
+      let elements = []
+      try { elements = [...root.querySelectorAll('*')] } catch {}
+      scannedElements += elements.length
+      for (const element of elements) {
+        if (element?.shadowRoot && !seenRoots.has(element.shadowRoot)) roots.push(element.shadowRoot)
+      }
+    }
+    return [...new Set(out)]
+  }
   const actionText = element => {
     const parts = [element.getAttribute?.('aria-label'), element.getAttribute?.('title'), element.getAttribute?.('placeholder')]
     if (element instanceof HTMLInputElement && ['button', 'submit', 'reset'].includes(String(element.type || '').toLowerCase())) parts.push(element.value)
     if (element instanceof HTMLImageElement) parts.push(element.getAttribute('alt'), element.getAttribute('src'))
     parts.push(element.innerText, element.textContent)
-    for (const img of element.querySelectorAll?.('img') || []) parts.push(img.getAttribute('alt'), img.getAttribute('title'))
+    for (const img of deepQueryAll('img', element)) parts.push(img.getAttribute('alt'), img.getAttribute('title'))
     return compact(parts.filter(Boolean).join(' '))
   }
   const roleOf = element => compact(element.getAttribute?.('role') || (element.tagName === 'A' ? 'link' : element.tagName === 'BUTTON' ? 'button' : element instanceof HTMLInputElement && ['button', 'submit', 'reset'].includes(String(element.type || '').toLowerCase()) ? 'button' : ''))
   const stableSelector = element => {
-    if (element.id) return `#${cssEscape(element.id)}`
-    for (const attr of ['data-testid', 'data-test', 'data-cy', 'name', 'menuid', 'aria-label', 'title']) {
+    const selectorRoot = element.getRootNode?.() || document
+    const uniqueInRoot = selector => {
+      try { return typeof selectorRoot.querySelectorAll === 'function' && selectorRoot.querySelectorAll(selector).length === 1 } catch { return false }
+    }
+    if (element.id) {
+      const byId = `#${cssEscape(element.id)}`
+      if (uniqueInRoot(byId)) return byId
+    }
+    for (const attr of ['data-testid', 'data-test', 'data-cy', 'name', 'menuid', 'aria-label', 'title', 'placeholder']) {
       const value = element.getAttribute?.(attr)
-      if (value) return `${element.tagName.toLowerCase()}[${attr}="${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]`
+      if (value) {
+        const candidate = `${element.tagName.toLowerCase()}[${attr}="${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]`
+        if (uniqueInRoot(candidate)) return candidate
+      }
     }
     const classes = [...(element.classList || [])].filter(name => /^[A-Za-z_-][A-Za-z0-9_-]*$/.test(name)).slice(0, 2)
     if (classes.length) {
       const selector = `${element.tagName.toLowerCase()}.${classes.map(cssEscape).join('.')}`
-      try { if (document.querySelectorAll(selector).length === 1) return selector } catch {}
+      try { if (uniqueInRoot(selector)) return selector } catch {}
     }
     const path = []
     let node = element
@@ -271,7 +301,7 @@ async function semanticClickPageCommand(mode, spec) {
       }
       path.unshift(part)
       const candidate = path.join(' > ')
-      try { if (document.querySelectorAll(candidate).length === 1) return candidate } catch {}
+      try { if (uniqueInRoot(candidate)) return candidate } catch {}
       node = parent
     }
     return path.join(' > ')
@@ -326,7 +356,7 @@ async function semanticClickPageCommand(mode, spec) {
   const wantedRole = normalize(spec.locatorRole || '')
   const wantedTag = normalize(spec.locatorTag || '')
   const globalExactTitleCandidates = wantedText
-    ? [...document.querySelectorAll('[title]')].filter(element => {
+    ? deepQueryAll('[title]').filter(element => {
         if (!visible(element) || disabled(element)) return false
         if (normalize(element.getAttribute?.('title') || '') !== wantedText) return false
         if (wantedRole && normalize(roleOf(element)) !== wantedRole) return false
@@ -345,17 +375,18 @@ async function semanticClickPageCommand(mode, spec) {
     : null
 
   const modalSelectors = ['[role="dialog"][aria-modal="true"]', '.ant-modal-content', '.el-dialog', '.ivu-modal-content', '.arco-modal', '.semi-modal']
-  const modal = modalSelectors.flatMap(selector => [...document.querySelectorAll(selector)]).find(visible)
+  const modal = modalSelectors.flatMap(selector => deepQueryAll(selector)).find(visible)
   const root = modal || document
   const selector = [
     'a', 'button', 'input[type="button"]', 'input[type="submit"]', 'input[type="reset"]',
     '[role="button"]', '[role="link"]', '[role="menuitem"]', '[role="tab"]',
     '[onclick]', '[bg-click]', '[ng-click]', '[data-action]', '[tabindex]:not([tabindex="-1"])',
-    'textarea', 'input:not([type="hidden"])', '[contenteditable="true"]',
+    'textarea', 'input:not([type="hidden"])', '[contenteditable="true"]', '[role="textbox"]',
+    'bili-comment-editor', 'bili-comments',
     '[role="treeitem"]', '.ant-tree-node-content-wrapper', '[title]',
     'img', 'svg', '[id*="logo" i]', '[class*="logo" i]',
   ].join(',')
-  const candidates = [...new Set([...root.querySelectorAll(selector)])].filter(element => visible(element) && !disabled(element))
+  const candidates = deepQueryAll(selector, root).filter(element => visible(element) && !disabled(element))
   const exactTitleCandidates = wantedText
     ? candidates.filter(element => normalize(element.getAttribute?.('title') || '') === wantedText)
     : []
@@ -407,7 +438,7 @@ async function semanticClickPageCommand(mode, spec) {
         element.getAttribute?.('class') || '',
         element.getAttribute?.('src') || '',
         element.getAttribute?.('href') || '',
-        ...[...(element.querySelectorAll?.('img,svg') || [])].map(child => `${child.id || ''} ${child.getAttribute?.('class') || ''} ${child.getAttribute?.('src') || ''}`),
+        ...deepQueryAll('img,svg', element).map(child => `${child.id || ''} ${child.getAttribute?.('class') || ''} ${child.getAttribute?.('src') || ''}`),
       ].join(' ')
       if (/logo/i.test(logoEvidence)) score += 120
     }
@@ -470,6 +501,7 @@ async function semanticClickPageCommand(mode, spec) {
   const descriptor = {
     ok: true,
     selector: stableSelector(persistedTarget),
+    replaySelectorSafe: !(persistedTarget.getRootNode?.() instanceof ShadowRoot),
     text: chosen.text,
     role: roleOf(clickTarget) || chosen.role,
     tag: clickTarget.tagName.toLowerCase(),
