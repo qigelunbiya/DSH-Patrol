@@ -372,6 +372,8 @@ async function interactionVisualClick(args) {
   interactionPruneVisualFrames()
   const frameId = typeof args.frameId === 'string' ? args.frameId.trim() : ''
   if (frameId) {
+    const targetHint = typeof args.targetHint === 'string' ? args.targetHint.trim() : ''
+    if (targetHint.length < 2) throw new Error('live visualClick requires targetHint so CURRENT DOM can validate/correct the screenshot coordinate before physical input')
     const frame = interactionVisualFrames.get(frameId)
     if (!frame) throw new Error('browser visual frame is stale or unavailable; capture a fresh patrol_observe(includeImage=true)')
     if (frame.tabId !== tabId) throw new Error('browser visual frame belongs to a different tab; capture a fresh visual observation')
@@ -392,7 +394,7 @@ async function interactionVisualClick(args) {
       expectedRole,
       expectedTitle,
       expectedAriaLabel,
-      typeof args.targetHint === 'string' ? args.targetHint.trim() : '',
+      targetHint,
     )
     interactionVisualFrames.delete(frameId)
     return interactionVisualClickResult(clicked, frame, xRatio, yRatio, 'bound-current-visual-frame')
@@ -622,6 +624,12 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
     ...(typeof clicked.ariaLabel === 'string' && clicked.ariaLabel ? { targetAriaLabel: clicked.ariaLabel } : {}),
     ...(typeof clicked.id === 'string' && clicked.id ? { targetId: clicked.id } : {}),
     ...(typeof clicked.className === 'string' && clicked.className ? { targetClassName: clicked.className } : {}),
+    ...(Number.isFinite(Number(clicked.requestedClickX)) ? { requestedClickX: Number(clicked.requestedClickX) } : {}),
+    ...(Number.isFinite(Number(clicked.requestedClickY)) ? { requestedClickY: Number(clicked.requestedClickY) } : {}),
+    ...(Number.isFinite(Number(clicked.clickX)) ? { resolvedClickX: Number(clicked.clickX) } : {}),
+    ...(Number.isFinite(Number(clicked.clickY)) ? { resolvedClickY: Number(clicked.clickY) } : {}),
+    visualSnapped: clicked.visualSnapped === true,
+    ...(Number.isFinite(Number(clicked.snapDistance)) ? { snapDistance: Number(clicked.snapDistance) } : {}),
   }
 }
 
