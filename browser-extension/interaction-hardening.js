@@ -995,6 +995,7 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
       if (rect.right <= 0 || rect.bottom <= 0 || rect.left >= innerWidth || rect.top >= innerHeight) continue
       const score = hintScore(resolved)
       if (score <= 0) continue
+      if (wantsEditable && !isEditableTarget(resolved)) continue
       const centerX = rect.left + rect.width / 2
       const centerY = rect.top + rect.height / 2
       const distance = Math.hypot(centerX - originalX, centerY - originalY)
@@ -1002,7 +1003,18 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
       uniqueTargets.push({ target: resolved, score, rect, distance })
     }
     uniqueTargets.sort((left, right) => right.score - left.score || left.distance - right.distance)
-    if (!uniqueTargets.length) throw new Error('visual targetHint does not match any CURRENT DOM target; refusing a coordinate-only click')
+    if (!uniqueTargets.length) {
+      if (wantsEditable && hintScore(initialTarget) > 0) {
+        return {
+          target: initialTarget,
+          clickX: originalX,
+          clickY: originalY,
+          snapped: false,
+          rawPointPreserved: true,
+        }
+      }
+      throw new Error('visual targetHint does not match any CURRENT DOM target; refusing a coordinate-only click')
+    }
     const bestScore = uniqueTargets[0].score
     const best = uniqueTargets.filter(item => item.score === bestScore)
     const chosen = best[0]
@@ -1087,6 +1099,7 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     clickX,
     clickY,
     visualSnapped: resolved.snapped === true,
+    rawPointPreserved: resolved.rawPointPreserved === true,
     snapDistance: Number.isFinite(Number(resolved.snapDistance)) ? Number(resolved.snapDistance) : Math.hypot(clickX - clientX, clickY - clientY),
   }
   if (probeOnly) return descriptor
