@@ -109,7 +109,7 @@ describe('Patrol page understanding planner', () => {
         xRatio: 0.82,
         yRatio: 0.61,
       },
-    })).toMatch(/DOM selector 策略已耗尽|patrol_visual_click_target/)
+    })).toMatch(/HARD STOP/)
   })
 
   it('does not reset a stalled selector budget just because the same target is renamed cosmetically', () => {
