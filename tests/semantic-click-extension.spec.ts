@@ -58,7 +58,7 @@ describe('atomic semantic click extension layer', () => {
     expect(source).toContain("'aria-label', 'title'")
     expect(source).toContain('titleText === wantedText')
     expect(source).toContain("const globalExactTitleCandidates = wantedText")
-    expect(source).toContain("document.querySelectorAll('[title]')")
+    expect(source).toContain("deepQueryAll('[title]')")
     expect(source).toContain('const uniqueExactTitleTarget = globalExactTitleCandidates.length === 1')
     expect(source).toContain('const exactTitleCandidates = wantedText')
     expect(source).toContain('const candidatePool = uniqueExactTitleTarget !== null')
@@ -114,7 +114,7 @@ describe('atomic semantic click extension layer', () => {
     expect(source).toContain("'[id*=\"logo\" i]'")
     expect(source).toContain("'[class*=\"logo\" i]'")
     expect(source).toContain("element instanceof HTMLImageElement")
-    expect(source).toContain("querySelectorAll?.('img,svg')")
+    expect(source).toContain("deepQueryAll('img,svg', element)")
   })
 
   it('searches open shadow DOM and prioritizes real comment editors', () => {
