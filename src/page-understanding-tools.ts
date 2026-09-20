@@ -41,6 +41,7 @@ interface PlanningGuardState {
   analyzed: boolean
   businessKey: string
   strategyAttempts: number
+  visualImageCaptures: number
 }
 
 interface SnapshotElement {
@@ -63,7 +64,7 @@ export const PATROL_PAGE_UNDERSTANDING_PROMPT = `DSH Patrol 页面理解与执�
 - patrol_analyze_step 永远不写 Runbook。它优先把“行身份 + 行内动作”绑定，例如“目标地址 + RDP”，避免只按 [RDP] 命中多行。不要把分析器给出的 selector 再扩写成更长的 nth-of-type，也不要在分析失败后继续 browser_count/snapshot/read_page 猜选择器。
 - selector 参数只接受当前浏览器 querySelector 层支持的 CSS。严禁使用 jQuery/Playwright/XPath 方言：:contains(...)、:has-text(...)、text=...、//...、.//...、xpath=...。当 locatorText 已知时，优先只传 locatorText 给 patrol_click_target，不要额外猜 selector；patrol_click_target 会在 atomic semantic 失败时自动检查唯一 exact [title="..."]。如果 locatorText 已提供但 selector hint 是这些非法方言，运行时会丢弃这个可选 hint 而继续语义定位，不能让坏 hint 阻塞正确点击。title-backed 树节点若直接调用 selector，则只使用 CURRENT snapshot/analyze 给出的原生 CSS。
 - 业务点击优先 patrol_click_target；若物理点击已发生但结果未验证，最多只允许一次有新证据支持的恢复点击；两次物理点击均未验证就 HARD STOP，避免重复提交。第一次 DOM/semantic 失败后必须看 analyze 的真实结果：有具体 DOM 方案就先执行该方案；只有 no-unique-target 才可以直接视觉后备。禁止为了视觉而跳过一个已经明确可执行的 DOM selector，也禁止为了凑次数凭空编造 CSS。
-- 视觉后备不是第三种 selector。patrol_visual_click_target 必须使用 patrol_observe(includeImage=true) 刚刚返回的 visualFrameId；底层验证 tab、URL、scroll、zoom、viewport 与截图一致才点击。若视觉调用在物理点击前失败（例如 stale frame、能力缺失、viewport 已变化），这次不消耗视觉物理点击预算，必须换一张 CURRENT 截图后再试；若已经发生物理视觉点击但业务状态仍未验证，最多只允许再有一次新截图/新证据支持的物理恢复。教学成功后保存为 browser_visual_click：重放优先使用视觉命中时发现的 stable selector；若 selector 漂移，再恢复记录的 URL/scroll/viewport 并使用归一化 xRatio/yRatio。
+- 视觉后备不是第三种 selector。patrol_visual_click_target 必须使用 patrol_observe(includeImage=true) 刚刚返回的 visualFrameId；底层验证 tab、URL、scroll、zoom、viewport 与截图一致才点击。每个业务目标最多向模型附加两张视觉截图（首张 + 一次 stale/恢复重拍），禁止连续截图试错，避免把本地 Qwen 再次推到 CUDA OOM / 503。若视觉调用在物理点击前失败（例如 stale frame、能力缺失、viewport 已变化），这次不消耗视觉物理点击预算，但最多只允许再换一张 CURRENT 截图；若已经发生物理视觉点击但业务状态仍未验证，最多只允许再有一次新截图/新证据支持的物理恢复。教学成功后保存为 browser_visual_click：重放优先使用视觉命中时发现的 stable selector；若 selector 漂移，再恢复记录的 URL/scroll/viewport 并使用归一化 xRatio/yRatio。
 - 运行时若返回“DOM selector 策略已耗尽”，立即停止 patrol_analyze_step/patrol_click_target/patrol_click/browser_count/snapshot/read_page 的 selector 探索；只有 CURRENT 图片中明确可见目标时才走一次 patrol_observe(includeImage=true)+patrol_visual_click_target。视觉后备失败/未验证，或者已有两次未验证物理点击时才是最终 HARD STOP；此后必须直接结束当前 assistant turn。
 - 不要为每个内部工具调用向用户重复“我再观察一下/我再试一下/让我换个选择器”。只有需要用户输入/确认、遇到不可恢复阻塞、或任务最终完成时才发自然语言说明。任何没有新工具结果或新页面证据支持的 selector 推测最多写一次。
 - 教学轨迹不等于 Runbook。诊断 snapshot/read、失败点击、重复输入、临时等待都不是最终流程。任务完成后必须 patrol_finalize_flow，只保留真正完成 taskChecklist 的已验证业务路径，再确认流程。
@@ -89,7 +90,7 @@ export function createPatrolTestModePlanningGuard(outcomes: PatrolClickOutcomeTr
     for (const [key, value] of states) if (now - value.touchedAt > STATE_TTL_MS) states.delete(key)
     let state = states.get(inspectionId)
     if (state === undefined) {
-      state = { touchedAt: now, analyzed: false, businessKey: '', strategyAttempts: 0 }
+      state = { touchedAt: now, analyzed: false, businessKey: '', strategyAttempts: 0, visualImageCaptures: 0 }
       states.set(inspectionId, state)
     }
     state.touchedAt = now
@@ -110,6 +111,8 @@ export function createPatrolTestModePlanningGuard(outcomes: PatrolClickOutcomeTr
       const identity = { inspectionId, stepName: state.businessKey || 'click' }
       const visualEligible = outcomes.visualFallbackAuthorized(identity) || state.strategyAttempts >= 2
       if (!visualEligible) return imageFallbackNotYetAuthorized()
+      if (state.visualImageCaptures >= 2) return visualImageBudgetExhausted()
+      state.visualImageCaptures += 1
       return undefined
     }
 
@@ -160,7 +163,7 @@ export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = 
     for (const [key, value] of states) if (now - value.touchedAt > STATE_TTL_MS) states.delete(key)
     let state = states.get(inspectionId)
     if (state === undefined) {
-      state = { touchedAt: now, analyzed: false, businessKey: '', strategyAttempts: 0 }
+      state = { touchedAt: now, analyzed: false, businessKey: '', strategyAttempts: 0, visualImageCaptures: 0 }
       states.set(inspectionId, state)
     }
     state.touchedAt = now
@@ -191,6 +194,8 @@ export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = 
       const identity = { inspectionId, stepName: state.businessKey || 'click' }
       const visualEligible = outcomes.visualFallbackAuthorized(identity) || state.strategyAttempts >= 2
       if (!visualEligible) return imageFallbackNotYetAuthorized()
+      if (state.visualImageCaptures >= 2) return visualImageBudgetExhausted()
+      state.visualImageCaptures += 1
       return undefined
     }
 
@@ -278,6 +283,7 @@ function alignBusinessState(state: PlanningGuardState, key: string): void {
   state.businessKey = key
   state.analyzed = false
   state.strategyAttempts = 0
+  state.visualImageCaptures = 0
 }
 
 function businessKey(primary: unknown, locator: unknown): string {
@@ -289,6 +295,14 @@ function businessKey(primary: unknown, locator: unknown): string {
     .replace(/(?:节点|菜单项|菜单|选项)$/g, '')
     .replace(/\d{6,}/g, '#')
     .slice(0, 220)
+}
+
+function visualImageBudgetExhausted(): string {
+  return [
+    'DSH Patrol 页面规划器：这个业务目标已经附加过两张视觉截图，本次 includeImage=true 未执行。',
+    '不要继续通过重复整页截图试错；这会显著增加本地 Qwen 的视觉上下文/GPU 压力并可能触发 CUDA OOM / 503。',
+    '若两张 CURRENT 图都无法形成一次可验证视觉点击，请回到 DOM/semantic 证据或停止并报告阻塞。',
+  ].join(' ')
 }
 
 function imageFallbackNotYetAuthorized(): string {

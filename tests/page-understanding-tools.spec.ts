@@ -46,6 +46,37 @@ describe('Patrol page understanding planner', () => {
     })).toMatch(/只接受 CSS/)
   })
 
+  it('caps visual image attachments at two per business target to avoid Qwen image-context OOM loops', () => {
+    for (const makeGuard of [
+      (outcomes: ReturnType<typeof createPatrolClickOutcomeTracker>) => createPatrolTestModePlanningGuard(outcomes),
+      (outcomes: ReturnType<typeof createPatrolClickOutcomeTracker>) => createPatrolPlanningGuard(outcomes),
+    ]) {
+      const outcomes = createPatrolClickOutcomeTracker()
+      const guard = makeGuard(outcomes)
+      expect(guard({
+        name: 'patrol_click_target',
+        arguments: { inspectionId: 'image-budget', stepName: '给视频点赞', locatorText: '点赞' },
+      })).toBeUndefined()
+      outcomes.setVisualFallbackAuthorization({ inspectionId: 'image-budget', stepName: '给视频点赞' }, true)
+
+      const image = () => guard({
+        name: 'patrol_observe',
+        arguments: { inspectionId: 'image-budget', includeImage: true },
+      })
+      expect(image()).toBeUndefined()
+      expect(image()).toBeUndefined()
+      expect(image()).toMatch(/两张视觉截图|CUDA OOM \/ 503/)
+
+      // A different business action gets a fresh visual budget.
+      expect(guard({
+        name: 'patrol_click_target',
+        arguments: { inspectionId: 'image-budget', stepName: '点击评论输入框', locatorText: '评论' },
+      })).toBeUndefined()
+      outcomes.setVisualFallbackAuthorization({ inspectionId: 'image-budget', stepName: '点击评论输入框' }, true)
+      expect(image()).toBeUndefined()
+    }
+  })
+
   it('scopes visual fallback authorization to one business target instead of the whole inspection', () => {
     const outcomes = createPatrolClickOutcomeTracker()
     outcomes.setVisualFallbackAuthorization({ inspectionId: 'bili', stepName: '给视频点赞' }, true)
