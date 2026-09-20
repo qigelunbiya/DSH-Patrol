@@ -210,6 +210,14 @@ export function registerPatrolObservationTools(
       const rawOcrText = objectRawString(shot.value, 'ocrText') ?? ''
       const ocrText = captchaInputPresent ? '' : shortEvidence(rawOcrText, OCR_EVIDENCE_MAX_CHARS)
 
+      const visualFrameId = objectString(shot.value, 'visualFrameId')
+      const urlIdentity = objectString(shot.value, 'urlIdentity')
+      const viewportWidth = objectNumber(shot.value, 'viewportWidth')
+      const viewportHeight = objectNumber(shot.value, 'viewportHeight')
+      const viewportScale = objectNumber(shot.value, 'viewportScale')
+      const scrollX = objectNumber(shot.value, 'scrollX')
+      const scrollY = objectNumber(shot.value, 'scrollY')
+
       gate.markObserved(args.inspectionId, exec.rootCallId)
       return {
         ok: true,
@@ -220,13 +228,13 @@ export function registerPatrolObservationTools(
         imageStatus: imageAttempt.status,
         ...(imageAttempt.error === undefined ? {} : { imageError: imageAttempt.error }),
         path,
-        ...(objectString(shot.value, 'visualFrameId') === undefined ? {} : { visualFrameId: objectString(shot.value, 'visualFrameId') }),
-        ...(objectString(shot.value, 'urlIdentity') === undefined ? {} : { urlIdentity: objectString(shot.value, 'urlIdentity') }),
-        ...(objectNumber(shot.value, 'viewportWidth') === undefined ? {} : { viewportWidth: objectNumber(shot.value, 'viewportWidth') }),
-        ...(objectNumber(shot.value, 'viewportHeight') === undefined ? {} : { viewportHeight: objectNumber(shot.value, 'viewportHeight') }),
-        ...(objectNumber(shot.value, 'viewportScale') === undefined ? {} : { viewportScale: objectNumber(shot.value, 'viewportScale') }),
-        ...(objectNumber(shot.value, 'scrollX') === undefined ? {} : { scrollX: objectNumber(shot.value, 'scrollX') }),
-        ...(objectNumber(shot.value, 'scrollY') === undefined ? {} : { scrollY: objectNumber(shot.value, 'scrollY') }),
+        ...(visualFrameId === undefined ? {} : { visualFrameId }),
+        ...(urlIdentity === undefined ? {} : { urlIdentity }),
+        ...(viewportWidth === undefined ? {} : { viewportWidth }),
+        ...(viewportHeight === undefined ? {} : { viewportHeight }),
+        ...(viewportScale === undefined ? {} : { viewportScale }),
+        ...(scrollX === undefined ? {} : { scrollX }),
+        ...(scrollY === undefined ? {} : { scrollY }),
         ...(url ? { url } : {}),
         ...(title ? { title } : {}),
         ocrStatus: objectString(shot.value, 'ocrStatus') ?? 'unknown',
