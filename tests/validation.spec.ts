@@ -85,7 +85,7 @@ describe('inspection validation', () => {
     ] })).toThrow(/requires browser_screenshot/i)
   })
 
-  it('rejects ephemeral tab ids and history navigation in runbooks', () => {
+  it('rejects ephemeral tab ids and malformed navigation while allowing recorded browser history actions', () => {
     const base = {
       schemaVersion: '0.2' as const, id: 'x', name: 'x', description: 'x', status: 'draft' as const,
       target: { type: 'browser' as const, url: 'https://example.com/' }, expectedResult: 'x', artifacts: [],
@@ -97,7 +97,12 @@ describe('inspection validation', () => {
     ] })).toThrow(/ephemeral browser tabId/i)
     expect(() => assertInspectionDefinition({ ...base, steps: [
       { id: 'step-001', kind: 'tool', name: 'back', tool: 'browser_navigate', arguments: { action: 'back' }, recordedAt: '2026-01-01T00:00:00.000Z' },
-    ] })).toThrow(/explicit URL/i)
+      { id: 'step-002', kind: 'tool', name: 'forward', tool: 'browser_navigate', arguments: { action: 'forward' }, recordedAt: '2026-01-01T00:00:00.000Z' },
+      { id: 'step-003', kind: 'tool', name: 'reload', tool: 'browser_navigate', arguments: { action: 'reload' }, recordedAt: '2026-01-01T00:00:00.000Z' },
+    ] })).not.toThrow()
+    expect(() => assertInspectionDefinition({ ...base, steps: [
+      { id: 'step-001', kind: 'tool', name: 'bad back', tool: 'browser_navigate', arguments: { action: 'back', url: 'https://example.com/wrong' }, recordedAt: '2026-01-01T00:00:00.000Z' },
+    ] })).toThrow(/history action back must not persist url/i)
     expect(() => assertInspectionDefinition({ ...base, steps: [
       { id: 'step-001', kind: 'tool', name: 'new tab', tool: 'browser_navigate', arguments: { url: 'https://example.com/', newTab: true }, recordedAt: '2026-01-01T00:00:00.000Z' },
     ] })).toThrow(/newTab is not replay-stable/i)
