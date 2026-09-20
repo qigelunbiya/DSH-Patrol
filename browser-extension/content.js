@@ -297,6 +297,13 @@ function press(args) {
   target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
   target.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true }))
   if (key === 'Enter' && target instanceof HTMLInputElement && target.form) target.form.requestSubmit()
+  if (!args.selector) {
+    const page = Math.max(window.innerHeight * 0.85, 400)
+    if (key === 'PageDown') window.scrollBy({ top: page, left: 0, behavior: 'instant' })
+    else if (key === 'PageUp') window.scrollBy({ top: -page, left: 0, behavior: 'instant' })
+    else if (key === 'Home') window.scrollTo({ top: 0, left: window.scrollX, behavior: 'instant' })
+    else if (key === 'End') window.scrollTo({ top: document.documentElement.scrollHeight, left: window.scrollX, behavior: 'instant' })
+  }
   return { ok: true, key }
 }
 
@@ -313,7 +320,11 @@ function scroll(args) {
   else throw new Error(`unsupported scroll direction: ${direction}`)
   const x = target === window ? window.scrollX : target.scrollLeft
   const y = target === window ? window.scrollY : target.scrollTop
-  return { ok: true, x, y }
+  return {
+    ok: true,
+    x: Number.isFinite(Number(x)) ? Math.round(Number(x)) : 0,
+    y: Number.isFinite(Number(y)) ? Math.round(Number(y)) : 0,
+  }
 }
 
 async function wait(args) {

@@ -23,7 +23,7 @@ import { createManualVerificationGuard, PATROL_MANUAL_VERIFICATION_PROMPT } from
 import { registerPatrolModelRouteRecovery } from './model-route-recovery.js'
 import { createPatrolObservationGate, PATROL_OBSERVATION_PROMPT } from './observation-guard.js'
 import { registerPatrolObservationTools } from './observation-tools.js'
-import { createPatrolPlanningGuard, PATROL_PAGE_UNDERSTANDING_PROMPT, registerPatrolPageUnderstandingTools } from './page-understanding-tools.js'
+import { createPatrolPlanningGuard, createPatrolTestModePlanningGuard, PATROL_PAGE_UNDERSTANDING_PROMPT, registerPatrolPageUnderstandingTools } from './page-understanding-tools.js'
 import { createPatrolClickOutcomeTracker } from './click-retry-state.js'
 import { registerPatrolIntegrity } from './patrol-integrity.js'
 import { PATROL_SYSTEM_PROMPT } from './prompt.js'
@@ -88,7 +88,7 @@ export const inject = ['tools', 'userQuestions']
 const DEFAULT_STORAGE_PATH = resolve(process.cwd(), '.dsh-patrol')
 const DEFAULT_MAX_STEPS = 200
 const DEFAULT_REPORT_MAX_CHARS = 30_000
-const TEST_MODE_BUILD_MARKER = 'test-bypass-v10-desktop-automation'
+const TEST_MODE_BUILD_MARKER = 'test-bypass-v11-operational-browser'
 const TEST_MODE_DIRECT_BROWSER_ALLOWED = new Set([
   'browser_status',
   'browser_list_tabs',
@@ -106,6 +106,7 @@ const TEST_MODE_DIRECT_BROWSER_ALLOWED = new Set([
   // calls are live-only; patrol_* remains preferred for record/replay.
   'browser_semantic_click',
   'browser_click',
+  'browser_visual_click',
   'browser_press',
   'browser_scroll',
   'browser_select',
@@ -157,7 +158,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const recoveryGuard = createPatrolRecoveryGuard()
   const verificationGuard = createManualVerificationGuard()
   const clickOutcomes = createPatrolClickOutcomeTracker()
-  const planningGuard = createPatrolPlanningGuard(clickOutcomes)
+  const planningGuard = runtimePolicy.testMode
+    ? createPatrolTestModePlanningGuard()
+    : createPatrolPlanningGuard(clickOutcomes)
 
   ctx.effect(
     () => registerPatrolContextPressureGuard(ctx),
@@ -254,10 +257,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   })
   ctx.effect(() => ctx.tools.register(runtimeModeTool), 'dsh-patrol: runtime mode diagnostic')
 
-  // Selector/click strategy budgets are safety against model loops, not a
-  // NORMAL-mode permission tier. Keep this guard active in TEST MODE too:
-  // TEST may expose low-level browser fallbacks, but patrol_click/patrol_click_target
-  // still get at most two evidence-backed strategies for one business target.
+  // NORMAL MODE keeps the bounded selector/click strategy breaker. TEST MODE
+  // deliberately mounts only selector-syntax/URL sanity checks so live debugging
+  // cannot be deadlocked by strategy counters after fresh CURRENT evidence appears.
   ctx.effect(
     () => ctx.tools.guard(execution => planningGuard(execution)),
     'dsh-patrol: bounded page-understanding click strategy breaker',

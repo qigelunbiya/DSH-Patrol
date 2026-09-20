@@ -471,7 +471,8 @@ async function recordAction(
   if (input.expectedText !== undefined) assertSafePersistentText(input.expectedText, 'expectedText')
   if (input.conditionExpectedText !== undefined) assertSafePersistentText(input.conditionExpectedText, 'conditionExpectedText')
   if (input.locatorText !== undefined) assertSafePersistentText(input.locatorText, 'locatorText')
-  assertSafeForStorage(input.browserArgs)
+  const persistedBrowserArgs = replayStableBrowserArgs(input.browserArgs)
+  assertSafeForStorage(persistedBrowserArgs)
 
   const definition = await loadEditable(store, input.inspectionId, maxSteps)
   const tabId = typeof input.browserArgs.tabId === 'number' ? input.browserArgs.tabId : undefined
@@ -529,7 +530,7 @@ async function recordAction(
     kind: 'tool',
     name: input.stepName,
     tool: input.tool,
-    arguments: input.browserArgs,
+    arguments: persistedBrowserArgs,
     ...optionalExpectation(input.expectedText, input.expectationMode, input.caseSensitive),
     ...optionalCondition(input.conditionSourceStepId, input.conditionExpectedText, input.conditionMode),
     ...optionalLocator(input.locatorText, input.locatorRole, input.locatorTag),
@@ -537,7 +538,7 @@ async function recordAction(
     ...(teaching === undefined ? {} : { teaching }),
     notes: stepExecutionNotes({
       tool: input.tool,
-      args: input.browserArgs,
+      args: persistedBrowserArgs,
       ...optionalExpectation(input.expectedText, input.expectationMode, input.caseSensitive),
       ...optionalCondition(input.conditionSourceStepId, input.conditionExpectedText, input.conditionMode),
       ...optionalLocator(input.locatorText, input.locatorRole, input.locatorTag),
@@ -579,6 +580,12 @@ async function recordAction(
     ...(input.tool === 'browser_read_page' && input.artifact === 'page-text' ? { pageText: displayText } : {}),
   })
   return `Executed and recorded ${step.id} (${input.tool}).\n${output}`
+}
+
+function replayStableBrowserArgs(args: JsonObject): JsonObject {
+  if (!Object.prototype.hasOwnProperty.call(args, 'tabId')) return args
+  const { tabId: _ephemeralTabId, ...persisted } = args
+  return persisted
 }
 
 async function captureClickPageState(

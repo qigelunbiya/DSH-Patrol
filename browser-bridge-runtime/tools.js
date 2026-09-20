@@ -303,7 +303,9 @@ export function registerTools(ctx, bridge, config = {}) {
       presentCall: args => generic('Scroll', args),
       execute: async (args, exec) => {
         const value = requireOk(await run(bridge, exec, 'scroll', { direction: args.direction, amount: args.amount, selector: args.selector, tabId: args.tabId }, timeoutMs), 'scroll')
-        return { ok: true, x: value.x ?? 0, y: value.y ?? 0 }
+        const x = Number.isFinite(Number(value.x)) ? Math.round(Number(value.x)) : 0
+        const y = Number.isFinite(Number(value.y)) ? Math.round(Number(value.y)) : 0
+        return { ok: true, x, y }
       },
     }),
     defineTool({

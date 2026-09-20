@@ -71,6 +71,17 @@ export const PATROL_PAGE_UNDERSTANDING_PROMPT = `DSH Patrol 页面理解与执�
 - 图片字符验证码不走页面点击规划器。TEST MODE 必须先调用 patrol_solve_current_image_code，让 browser_detect_auth_challenge 走 Windows OCR/本地 OCR；只有明确 testModeFallback=true / strategy=model-visual-test 并拿到一次性 fallbackToken 时才允许 browser_capture_image_code_visual。没有 fallbackToken 时禁止模型视觉。NORMAL/无人值守重放继续使用动态本地 solver。OTP/TOTP 继续走专用工具。`
 
 /** Always-on even in TEST MODE: bound model-facing retry strategies. */
+export function createPatrolTestModePlanningGuard() {
+  return (execution: any): string | undefined => {
+    const name = String(execution?.name ?? '')
+    const args = isRecord(execution?.arguments) ? execution.arguments : {}
+    const selectorIssue = unsupportedSelectorSyntax(name, args)
+    if (selectorIssue !== undefined) return selectorIssue
+    if (!name.startsWith('patrol_')) return undefined
+    return malformedPatrolUrl(name, args)
+  }
+}
+
 export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = createPatrolClickOutcomeTracker()) {
   const states = new Map<string, PlanningGuardState>()
   return (execution: any): string | undefined => {
