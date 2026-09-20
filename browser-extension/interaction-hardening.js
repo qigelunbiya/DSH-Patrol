@@ -182,6 +182,20 @@ async function interactionScreenshot(args) {
       format,
       ...(format === 'jpeg' ? { quality } : {}),
     })
+    if (format === 'jpeg' && Number.isFinite(requestedMaxWidth) && requestedMaxWidth >= 480) {
+      try {
+        const resized = await interactionResizeCapturedDataUrl(tabId, dataUrl, requestedMaxWidth, quality)
+        if (resized?.dataUrl) {
+          dataUrl = resized.dataUrl
+          captureScale = resized.scale
+          compactVisual = resized.scale < 0.995
+          targetPixelWidth = requestedMaxWidth
+          captureDevicePixelRatio = Math.max(1, Number(before?.devicePixelRatio || 1))
+        }
+      } catch {
+        // Keep the captured frame if in-page canvas resizing is unavailable.
+      }
+    }
   }
 
   const after = await interactionViewportState(tabId)
@@ -197,6 +211,50 @@ async function interactionScreenshot(args) {
     ...(Number.isFinite(Number(captureDevicePixelRatio)) ? { captureDevicePixelRatio: Number(captureDevicePixelRatio) } : {}),
     ...(visualFrame || {}),
   }
+}
+
+async function interactionResizeCapturedDataUrl(tabId, dataUrl, maxWidth, quality) {
+  if (!chrome.scripting?.executeScript) return undefined
+  const results = await chrome.scripting.executeScript({
+    target: { tabId, frameIds: [0] },
+    world: 'MAIN',
+    func: async (source, targetWidth, jpegQuality) => {
+      const image = new Image()
+      image.decoding = 'async'
+      const loaded = new Promise((resolve, reject) => {
+        image.onload = () => resolve(true)
+        image.onerror = () => reject(new Error('captured image decode failed'))
+      })
+      image.src = source
+      await loaded
+      const originalWidth = Number(image.naturalWidth || image.width || 0)
+      const originalHeight = Number(image.naturalHeight || image.height || 0)
+      if (!Number.isFinite(originalWidth) || !Number.isFinite(originalHeight) || originalWidth <= 0 || originalHeight <= 0) return undefined
+      const scale = Math.min(1, Number(targetWidth) / originalWidth)
+      if (scale >= 0.995) {
+        return { dataUrl: source, scale: 1, width: originalWidth, height: originalHeight, originalWidth, originalHeight }
+      }
+      const width = Math.max(1, Math.round(originalWidth * scale))
+      const height = Math.max(1, Math.round(originalHeight * scale))
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const context = canvas.getContext('2d', { alpha: false })
+      if (!context) throw new Error('captured image resize canvas unavailable')
+      context.drawImage(image, 0, 0, width, height)
+      return {
+        dataUrl: canvas.toDataURL('image/jpeg', Math.max(0.25, Math.min(0.95, Number(jpegQuality) / 100))),
+        scale,
+        width,
+        height,
+        originalWidth,
+        originalHeight,
+      }
+    },
+    args: [dataUrl, maxWidth, quality],
+  })
+  const value = Array.isArray(results) ? results[0]?.result : undefined
+  return value && typeof value === 'object' ? value : undefined
 }
 
 async function interactionCaptureCompactScreenshot(tabId, maxWidth, quality, before) {
@@ -601,6 +659,38 @@ function interactionCdpActionNode(node, attrs) {
   return /(?:btn|button|send|submit|publish|post|comment-action)/i.test(evidence)
 }
 
+function interactionCdpVisibleText(node, maxChars = 160) {
+  const out = []
+  const stack = [node]
+  let scanned = 0
+  while (stack.length && scanned < 80 && out.join(' ').length < maxChars) {
+    const current = stack.pop()
+    if (!current || typeof current !== 'object') continue
+    scanned += 1
+    if (current.nodeType === 3 && typeof current.nodeValue === 'string' && current.nodeValue.trim()) out.push(current.nodeValue)
+    const children = [
+      ...(Array.isArray(current.children) ? current.children : []),
+      ...(Array.isArray(current.shadowRoots) ? current.shadowRoots : []),
+    ]
+    for (let index = children.length - 1; index >= 0; index -= 1) stack.push(children[index])
+  }
+  return out.join(' ').replace(/\s+/g, ' ').trim().slice(0, maxChars)
+}
+
+function interactionAxValue(node, key) {
+  const value = node?.[key]?.value
+  return typeof value === 'string' ? value : ''
+}
+
+function interactionPublishLabelScore(value) {
+  const text = String(value || '').replace(/\s+/g, '').toLowerCase()
+  if (!text) return 0
+  if (/^(发布|发表|发送|提交|post|send|submit)$/.test(text)) return 700
+  if (/发布|发表|发送|提交/.test(text)) return 360
+  if (/\bpost\b|\bsend\b|\bsubmit\b/i.test(String(value || ''))) return 320
+  return 0
+}
+
 async function interactionResolvePiercedActionPoint(tabId, targetHint, originalX, originalY) {
   if (!interactionWantsPublishTarget(targetHint)) return undefined
   if (!chrome.debugger?.attach || !chrome.debugger?.sendCommand || !chrome.debugger?.detach) return undefined
@@ -609,38 +699,71 @@ async function interactionResolvePiercedActionPoint(tabId, targetHint, originalX
   try {
     await chrome.debugger.attach(target, '1.3')
     attached = true
-    const [documentResult, layoutMetrics] = await Promise.all([
+    const [documentResult, layoutMetrics, axTree] = await Promise.all([
       chrome.debugger.sendCommand(target, 'DOM.getDocument', { depth: -1, pierce: true }),
       chrome.debugger.sendCommand(target, 'Page.getLayoutMetrics').catch(() => undefined),
+      chrome.debugger.sendCommand(target, 'Accessibility.getFullAXTree').catch(() => undefined),
     ])
     const root = documentResult?.root
     if (!root || typeof root !== 'object') return undefined
     const viewport = layoutMetrics?.cssVisualViewport || layoutMetrics?.visualViewport
     const viewportWidth = Number(viewport?.clientWidth)
     const viewportHeight = Number(viewport?.clientHeight)
-    const candidates = []
+    const byBackend = new Map()
+    const addCandidate = candidate => {
+      if (!Number.isInteger(candidate?.backendNodeId)) return
+      const previous = byBackend.get(candidate.backendNodeId)
+      if (!previous || Number(candidate.score || 0) > Number(previous.score || 0)) byBackend.set(candidate.backendNodeId, candidate)
+    }
+
+    for (const axNode of Array.isArray(axTree?.nodes) ? axTree.nodes : []) {
+      const backendNodeId = Number(axNode?.backendDOMNodeId)
+      if (!Number.isInteger(backendNodeId)) continue
+      const name = interactionAxValue(axNode, 'name')
+      const role = interactionAxValue(axNode, 'role').toLowerCase()
+      const labelScore = interactionPublishLabelScore(name)
+      if (labelScore <= 0) continue
+      addCandidate({
+        backendNodeId,
+        tag: '',
+        role,
+        evidence: name,
+        score: 900 + labelScore + (role === 'button' ? 180 : 0),
+        source: 'accessibility',
+      })
+    }
+
     const stack = [root]
     let scanned = 0
-    while (stack.length && scanned < 22000 && candidates.length < 100) {
+    while (stack.length && scanned < 24000 && byBackend.size < 160) {
       const node = stack.pop()
       if (!node || typeof node !== 'object') continue
       scanned += 1
       const attrs = interactionCdpNodeAttributes(node)
-      if (interactionCdpActionNode(node, attrs) && Number.isInteger(node.backendNodeId)) {
-        const evidence = interactionCdpNodeText(node)
-        const normalized = evidence.toLowerCase()
-        if (/发布|发表|发送|提交|\bpost\b|\bsend\b|\bsubmit\b/i.test(normalized)) {
-          let score = 300
-          if (/^(?:button|input)$/i.test(String(node.nodeName || ''))) score += 80
-          if (String(attrs.role || '').toLowerCase() === 'button') score += 60
-          const compactEvidence = normalized.replace(/\s+/g, '')
-          if (/发布|发表|发送|提交/.test(compactEvidence)) score += 180
-          candidates.push({
+      const tag = String(node.nodeName || '').toLowerCase()
+      const visibleText = interactionCdpVisibleText(node)
+      const evidence = interactionCdpNodeText(node)
+      const labelScore = Math.max(
+        interactionPublishLabelScore(visibleText),
+        interactionPublishLabelScore(attrs['aria-label']),
+        interactionPublishLabelScore(attrs.title),
+        interactionPublishLabelScore(attrs.value),
+      )
+      const actionish = interactionCdpActionNode(node, attrs)
+      if (Number.isInteger(node.backendNodeId) && labelScore > 0) {
+        // Ordinary recommendation anchors must never become publish controls
+        // merely because a descendant happens to mention “发布/发送”.
+        const ordinaryLink = tag === 'a' && !actionish
+        if (!ordinaryLink) {
+          addCandidate({
             backendNodeId: node.backendNodeId,
-            tag: String(node.nodeName || '').toLowerCase(),
+            tag,
             role: String(attrs.role || '').toLowerCase(),
-            evidence,
-            score,
+            evidence: visibleText || evidence,
+            score: labelScore + (actionish ? 420 : 120)
+              + (/^(?:button|input)$/i.test(tag) ? 180 : 0)
+              + (String(attrs.role || '').toLowerCase() === 'button' ? 140 : 0),
+            source: actionish ? 'dom-action' : 'dom-exact-label',
           })
         }
       }
@@ -651,31 +774,40 @@ async function interactionResolvePiercedActionPoint(tabId, targetHint, originalX
       ]
       for (let index = children.length - 1; index >= 0; index -= 1) stack.push(children[index])
     }
-    if (!candidates.length) return undefined
+    if (!byBackend.size) return undefined
 
     const measured = []
-    for (const candidate of candidates) {
+    for (const candidate of byBackend.values()) {
       try {
         const resolved = await chrome.debugger.sendCommand(target, 'DOM.resolveNode', { backendNodeId: candidate.backendNodeId })
         const objectId = resolved?.object?.objectId
         if (!objectId) continue
         const rectResult = await chrome.debugger.sendCommand(target, 'Runtime.callFunctionOn', {
           objectId,
-          functionDeclaration: 'function(){const r=this.getBoundingClientRect();return {left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:r.width,height:r.height};}',
+          functionDeclaration: `function(){
+            if (!(this instanceof Element)) return null;
+            const r=this.getBoundingClientRect();
+            const s=getComputedStyle(this);
+            return {left:r.left,top:r.top,width:r.width,height:r.height,cursor:s.cursor,display:s.display,visibility:s.visibility,opacity:s.opacity,disabled:this.matches?.(':disabled,[aria-disabled="true"]')===true,text:(this.innerText||this.textContent||'').trim(),tag:this.tagName?.toLowerCase?.()||'',role:this.getAttribute?.('role')||''};
+          }`,
           returnByValue: true,
         })
-        const rect = rectResult?.result?.value
-        if (!rect) continue
-        const left = Number(rect.left), top = Number(rect.top), width = Number(rect.width), height = Number(rect.height)
+        const info = rectResult?.result?.value
+        if (!info || info.disabled === true || info.display === 'none' || info.visibility === 'hidden' || Number(info.opacity) === 0) continue
+        const left = Number(info.left), top = Number(info.top), width = Number(info.width), height = Number(info.height)
         if (![left, top, width, height].every(Number.isFinite) || width < 24 || height < 16) continue
-        if (Number.isFinite(viewportWidth) && width > viewportWidth * 0.55) continue
-        if (Number.isFinite(viewportHeight) && height > viewportHeight * 0.28) continue
+        if (Number.isFinite(viewportWidth) && (left >= viewportWidth || left + width <= 0 || width > viewportWidth * 0.55)) continue
+        if (Number.isFinite(viewportHeight) && (top >= viewportHeight || top + height <= 0 || height > viewportHeight * 0.28)) continue
+        const exactRuntimeLabel = interactionPublishLabelScore(info.text) >= 700
+        const runtimeActionable = info.cursor === 'pointer' || info.tag === 'button' || info.role === 'button'
+        if (candidate.source === 'dom-exact-label' && !exactRuntimeLabel) continue
+        if (candidate.source === 'dom-exact-label' && !runtimeActionable) continue
         const x = left + width / 2
         const y = top + height / 2
         const distance = Number.isFinite(Number(originalX)) && Number.isFinite(Number(originalY))
           ? Math.hypot(x - Number(originalX), y - Number(originalY))
           : 0
-        measured.push({ ...candidate, x, y, width, height, distance })
+        measured.push({ ...candidate, tag: candidate.tag || info.tag, role: candidate.role || info.role, x, y, width, height, distance })
       } catch {}
     }
     if (!measured.length) return undefined
@@ -691,8 +823,76 @@ async function interactionResolvePiercedActionPoint(tabId, targetHint, originalX
       backendNodeId: best.backendNodeId,
       evidence: best.evidence,
       distance: best.distance,
-      source: 'cdp-pierced-publish-action',
+      source: best.source === 'accessibility' ? 'cdp-ax-publish-action' : 'cdp-pierced-publish-action',
     }
+  } catch {
+    return undefined
+  } finally {
+    if (attached) {
+      try { await chrome.debugger.detach(target) } catch {}
+    }
+  }
+}
+
+async function interactionResolvePiercedSemanticPoint(tabId, locatorText, locatorRole = '', originalX, originalY) {
+  const wanted = String(locatorText || '').replace(/\s+/g, '').toLocaleLowerCase()
+  if (wanted.length < 2 || !chrome.debugger?.attach || !chrome.debugger?.sendCommand || !chrome.debugger?.detach) return undefined
+  const target = { tabId }
+  let attached = false
+  try {
+    await chrome.debugger.attach(target, '1.3')
+    attached = true
+    const [axTree, layoutMetrics] = await Promise.all([
+      chrome.debugger.sendCommand(target, 'Accessibility.getFullAXTree'),
+      chrome.debugger.sendCommand(target, 'Page.getLayoutMetrics').catch(() => undefined),
+    ])
+    const viewport = layoutMetrics?.cssVisualViewport || layoutMetrics?.visualViewport
+    const viewportWidth = Number(viewport?.clientWidth)
+    const viewportHeight = Number(viewport?.clientHeight)
+    const wantedRole = String(locatorRole || '').trim().toLowerCase()
+    const candidates = []
+    for (const node of Array.isArray(axTree?.nodes) ? axTree.nodes : []) {
+      const backendNodeId = Number(node?.backendDOMNodeId)
+      if (!Number.isInteger(backendNodeId) || node?.ignored === true) continue
+      const name = interactionAxValue(node, 'name')
+      const normalizedName = name.replace(/\s+/g, '').toLocaleLowerCase()
+      if (!normalizedName) continue
+      const exact = normalizedName === wanted
+      const contains = wanted.length >= 4 && (normalizedName.includes(wanted) || wanted.includes(normalizedName))
+      if (!exact && !contains) continue
+      const role = interactionAxValue(node, 'role').toLowerCase()
+      if (wantedRole && role !== wantedRole) continue
+      candidates.push({ backendNodeId, name, role, score: exact ? 1000 : 620 })
+    }
+    if (!candidates.length) return undefined
+    const measured = []
+    for (const candidate of candidates) {
+      try {
+        const resolved = await chrome.debugger.sendCommand(target, 'DOM.resolveNode', { backendNodeId: candidate.backendNodeId })
+        const objectId = resolved?.object?.objectId
+        if (!objectId) continue
+        const result = await chrome.debugger.sendCommand(target, 'Runtime.callFunctionOn', {
+          objectId,
+          functionDeclaration: `function(){if(!(this instanceof Element))return null;const r=this.getBoundingClientRect();const s=getComputedStyle(this);return {left:r.left,top:r.top,width:r.width,height:r.height,display:s.display,visibility:s.visibility,opacity:s.opacity,disabled:this.matches?.(':disabled,[aria-disabled="true"]')===true,tag:this.tagName?.toLowerCase?.()||'',role:this.getAttribute?.('role')||''};}`,
+          returnByValue: true,
+        })
+        const info = result?.result?.value
+        if (!info || info.disabled === true || info.display === 'none' || info.visibility === 'hidden' || Number(info.opacity) === 0) continue
+        const left=Number(info.left), top=Number(info.top), width=Number(info.width), height=Number(info.height)
+        if (![left,top,width,height].every(Number.isFinite) || width <= 2 || height <= 2) continue
+        if (Number.isFinite(viewportWidth) && (left >= viewportWidth || left + width <= 0)) continue
+        if (Number.isFinite(viewportHeight) && (top >= viewportHeight || top + height <= 0)) continue
+        const x=left+width/2, y=top+height/2
+        const distance = Number.isFinite(Number(originalX)) && Number.isFinite(Number(originalY))
+          ? Math.hypot(x-Number(originalX), y-Number(originalY)) : 0
+        measured.push({ ...candidate, tag: info.tag, role: candidate.role || info.role, x, y, distance })
+      } catch {}
+    }
+    if (!measured.length) return undefined
+    measured.sort((left,right)=>right.score-left.score || left.distance-right.distance)
+    const best=measured[0], runnerUp=measured[1]
+    if (runnerUp && runnerUp.score===best.score && Math.abs(runnerUp.distance-best.distance)<8) return undefined
+    return { ...best, source: 'cdp-accessibility-semantic' }
   } catch {
     return undefined
   } finally {
@@ -870,16 +1070,35 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
           })
           afterProbe = Array.isArray(afterResults) ? afterResults[0]?.result : undefined
         } catch {}
-        const targetStateChanged = Boolean(
+        let targetStateChanged = Boolean(
           probe && afterProbe
           && typeof probe.stateSignature === 'string'
           && typeof afterProbe.stateSignature === 'string'
           && probe.stateSignature !== afterProbe.stateSignature
         )
         let focusedEditor
-        if (interactionWantsEditableTarget(targetHint)) {
+        if (interactionWantsEditableTarget(targetHint) || interactionWantsPublishTarget(targetHint)) {
           try { focusedEditor = await interactionFocusedEditorProbe(tabId, false) } catch {}
         }
+        const beforeEditorText = typeof probe?.focusedEditorText === 'string' ? probe.focusedEditorText : ''
+        const afterEditorText = typeof focusedEditor?.observedText === 'string' ? focusedEditor.observedText : ''
+        const editorClearedAfterPublish = interactionWantsPublishTarget(targetHint)
+          && beforeEditorText.trim().length > 0
+          && afterEditorText.trim().length === 0
+        if (editorClearedAfterPublish) targetStateChanged = true
+
+        let unexpectedNavigation = false
+        try {
+          const afterViewport = await interactionViewportState(tabId)
+          if ((interactionWantsPublishTarget(targetHint) || interactionWantsEditableTarget(targetHint)
+              || /点赞|投币|收藏|\blike\b|favorite/i.test(String(targetHint || '')))
+            && viewport?.urlIdentity && afterViewport?.urlIdentity
+            && viewport.urlIdentity !== afterViewport.urlIdentity) {
+            unexpectedNavigation = true
+            targetStateChanged = false
+          }
+        } catch {}
+
         const targetFocusedEditable = afterProbe?.targetFocusedEditable === true || focusedEditor?.focusUsable === true
         const resolvedX = Number.isFinite(Number(afterProbe?.clickX))
           ? Number(afterProbe.clickX)
@@ -903,14 +1122,19 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
           cdpPiercedTarget: Boolean(preResolved),
           cdpPiercedActivator: piercedEditable?.kind === 'activator',
           cdpPiercedFollowupEditor: activatedEditor?.kind === 'editable',
-          cdpPiercedAction: piercedAction?.source === 'cdp-pierced-publish-action',
-          stateEvidence: targetStateChanged
-            ? preResolved
-              ? piercedAction
-                ? 'trusted native click changed the publish/send control state after pierced action resolution'
-                : 'trusted native click changed the visual target own DOM state after pierced Shadow DOM/editor resolution'
-              : 'trusted native click changed the visual target own DOM state'
-            : targetFocusedEditable
+          cdpPiercedAction: Boolean(piercedAction),
+          unexpectedNavigation,
+          stateEvidence: unexpectedNavigation
+            ? 'in-page visual control unexpectedly navigated away; never treat this as business success'
+            : editorClearedAfterPublish
+              ? 'comment editor cleared after trusted publish/send click'
+              : targetStateChanged
+                ? preResolved
+                  ? piercedAction
+                    ? 'trusted native click changed the publish/send control state after pierced action resolution'
+                    : 'trusted native click changed the visual target own DOM state after pierced Shadow DOM/editor resolution'
+                  : 'trusted native click changed the visual target own DOM state'
+                : targetFocusedEditable
               ? activatedEditor?.kind === 'editable'
                 ? 'trusted native click activated the comment editor and then focused its mounted editable control'
                 : piercedEditable
@@ -1354,6 +1578,9 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     targetFocusedEditable: editable(deepActiveElement()),
     stateSignature: signature(target),
     stateEvidence: '',
+    focusedEditorText: editable(deepActiveElement())
+      ? compact(deepActiveElement()?.innerText || deepActiveElement()?.textContent || deepActiveElement()?.value || '').slice(0, 240)
+      : '',
     requestedClickX: clientX,
     requestedClickY: clientY,
     clickX,
