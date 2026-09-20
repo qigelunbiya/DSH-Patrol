@@ -100,7 +100,7 @@ describe('Patrol screenshot tab readiness', () => {
     })
     expect(clicked).toMatchObject({
       ok: true,
-      transport: 'bound-current-visual-frame',
+      transport: 'bound-current-visual-frame+synthetic-main-world',
       selectorHint: 'top-frame::.video-like',
       targetTag: 'div',
       targetRole: 'button',
