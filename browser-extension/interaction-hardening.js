@@ -277,12 +277,17 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
   if (!chrome.scripting?.executeScript) throw new Error('visualClick requires chrome.scripting')
   const clientX = viewport.offsetLeft + Math.max(1, Math.min(viewport.width - 1, viewport.width * xRatio))
   const clientY = viewport.offsetTop + Math.max(1, Math.min(viewport.height - 1, viewport.height * yRatio))
-  const results = await chrome.scripting.executeScript({
-    target: { tabId, frameIds: [0] },
-    world: 'MAIN',
-    func: interactionMainWorldVisualClick,
-    args: [clientX, clientY, expectedTag, expectedRole],
-  })
+  let results
+  try {
+    results = await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [0] },
+      world: 'MAIN',
+      func: interactionMainWorldVisualClick,
+      args: [clientX, clientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel],
+    })
+  } catch (error) {
+    throw new Error(`visualClick MAIN-world execution failed: ${safeError(error)}`)
+  }
   const value = Array.isArray(results) ? results[0]?.result : undefined
   if (!value || typeof value !== 'object' || value.ok === false) throw new Error(value?.error || 'visualClick MAIN-world execution returned no result')
   return value
@@ -317,7 +322,7 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
   }
 }
 
-async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, expectedRole) {
+async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel) {
   const compact = value => String(value || '').replace(/\s+/g, ' ').trim()
   const roleOf = element => {
     const explicit = compact(element.getAttribute?.('role') || '').toLowerCase()

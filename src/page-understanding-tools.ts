@@ -59,10 +59,10 @@ export interface PageUnderstandingPlan {
 
 export const PATROL_PAGE_UNDERSTANDING_PROMPT = `DSH Patrol 页面理解与执行规划（NORMAL/TEST MODE 都必须遵守）：
 - taskChecklist 只描述业务动作；真正执行页面动作前，要根据 CURRENT DOM/iframe/modal/structured table 判断该业务动作对应的真实前端结构，不要把用户文字直接翻译成 nth-of-type 后盲点。
-- 唯一且明显的文本目标可直接 patrol_click_target。第一次定位失败、出现 ambiguous、同名控件有多个、目标位于表格行/弹窗/iframe 时，调用一次 patrol_analyze_step 获取 CURRENT DOM 证据。若分析仍不能给出一个可可靠执行的唯一 DOM 目标，就不要为了凑“第二种策略”继续猜 CSS：只要已经有“一次 DOM/semantic 尝试 + 一次 CURRENT analyze”，就可以直接进入一次视觉模型后备。若分析确实给出了明确的第二种 DOM 方案，也可以先执行它；无论哪条路径，后续都禁止无限 selector 探索。视觉后备流程：patrol_observe(includeImage=true) → 读取真正的 visualFrameId → 按同一张图中控件中心给出 xRatio/yRatio → patrol_visual_click_target。
+- DOM 永远优先于浏览器视觉。唯一且明显的文本目标先直接 patrol_click_target。第一次定位失败、出现 ambiguous、同名控件有多个、目标位于表格行/弹窗/iframe 时，只调用一次 patrol_analyze_step 获取 CURRENT DOM 证据：如果 analyze 给出具体 semantic/stable-selector/structured-row 方案，必须先执行该 DOM 恢复方案，不得跳去视觉；只有 analyze 明确返回 no-unique-target，或者这第二种 DOM 方案也失败，才允许视觉模型后备。视觉后备流程：patrol_observe(includeImage=true) → 读取真正的 visualFrameId → 按同一张图中控件中心给出 xRatio/yRatio → patrol_visual_click_target。
 - patrol_analyze_step 永远不写 Runbook。它优先把“行身份 + 行内动作”绑定，例如“目标地址 + RDP”，避免只按 [RDP] 命中多行。不要把分析器给出的 selector 再扩写成更长的 nth-of-type，也不要在分析失败后继续 browser_count/snapshot/read_page 猜选择器。
 - selector 参数只接受当前浏览器 querySelector 层支持的 CSS。严禁使用 jQuery/Playwright/XPath 方言：:contains(...)、:has-text(...)、text=...、//...、.//...、xpath=...。当 locatorText 已知时，优先只传 locatorText 给 patrol_click_target，不要额外猜 selector；patrol_click_target 会在 atomic semantic 失败时自动检查唯一 exact [title="..."]。如果 locatorText 已提供但 selector hint 是这些非法方言，运行时会丢弃这个可选 hint 而继续语义定位，不能让坏 hint 阻塞正确点击。title-backed 树节点若直接调用 selector，则只使用 CURRENT snapshot/analyze 给出的原生 CSS。
-- 业务点击优先 patrol_click_target；若物理点击已发生但结果未验证，最多只允许一次有新证据支持的恢复点击；两次物理点击均未验证就 HARD STOP，避免重复提交。定位阶段只要已经完成一次 DOM/semantic 尝试并做过一次 CURRENT analyze、但仍没有可靠唯一目标，就允许进入单次视觉后备；不要求模型再编造一个 CSS 作为形式上的“第二种策略”。
+- 业务点击优先 patrol_click_target；若物理点击已发生但结果未验证，最多只允许一次有新证据支持的恢复点击；两次物理点击均未验证就 HARD STOP，避免重复提交。第一次 DOM/semantic 失败后必须看 analyze 的真实结果：有具体 DOM 方案就先执行该方案；只有 no-unique-target 才可以直接视觉后备。禁止为了视觉而跳过一个已经明确可执行的 DOM selector，也禁止为了凑次数凭空编造 CSS。
 - 视觉后备不是第三种 selector。patrol_visual_click_target 必须使用 patrol_observe(includeImage=true) 刚刚返回的 visualFrameId；底层验证 tab、URL、scroll、zoom、viewport 与截图一致才点击。若视觉调用在物理点击前失败（例如 stale frame、能力缺失、viewport 已变化），这次不消耗视觉物理点击预算，必须换一张 CURRENT 截图后再试；若已经发生物理视觉点击但业务状态仍未验证，最多只允许再有一次新截图/新证据支持的物理恢复。教学成功后保存为 browser_visual_click：重放优先使用视觉命中时发现的 stable selector；若 selector 漂移，再恢复记录的 URL/scroll/viewport 并使用归一化 xRatio/yRatio。
 - 运行时若返回“DOM selector 策略已耗尽”，立即停止 patrol_analyze_step/patrol_click_target/patrol_click/browser_count/snapshot/read_page 的 selector 探索；只有 CURRENT 图片中明确可见目标时才走一次 patrol_observe(includeImage=true)+patrol_visual_click_target。视觉后备失败/未验证，或者已有两次未验证物理点击时才是最终 HARD STOP；此后必须直接结束当前 assistant turn。
 - 不要为每个内部工具调用向用户重复“我再观察一下/我再试一下/让我换个选择器”。只有需要用户输入/确认、遇到不可恢复阻塞、或任务最终完成时才发自然语言说明。任何没有新工具结果或新页面证据支持的 selector 推测最多写一次。
@@ -131,10 +131,10 @@ export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = 
         return strategyHardStop('这个业务目标已有一次已验证的视觉物理点击，禁止再次点击以免把点赞等开关状态反向切回')
       }
       const visualEligible = state.strategyAttempts >= 2
-        || (state.strategyAttempts >= 1 && state.analyzed)
+        || outcomes.visualFallbackAuthorized(args)
         || (visualPhysical >= 1 && unverified >= 1)
       if (!visualEligible) {
-        return 'DSH Patrol 页面规划器：视觉点击需要先证明 DOM 路径无法可靠完成。至少先执行一次 patrol_click_target；若失败，再调用一次 patrol_analyze_step 获取 CURRENT DOM 证据。完成这两步后即可直接使用截图视觉后备，不需要为了凑“第二种策略”继续猜 CSS。'
+        return 'DSH Patrol 页面规划器：DOM 优先。先执行 patrol_click_target；失败后调用一次 patrol_analyze_step。若 analyze 给出具体 selector/semantic/structured-row 方案，必须先执行该 DOM 恢复方案；只有 analyze 明确判定 no-unique-target，或第二种 DOM 方案也失败后，才允许视觉后备。'
       }
       // Do NOT consume the visual budget or clear analyzed evidence here.
       // The tool may still fail before any physical click (stale frame,
@@ -221,7 +221,12 @@ function strategyHardStop(reason = '同一业务点击的安全恢复预算已�
   return `DSH Patrol 页面规划器 HARD STOP：${reason}。本次操作未继续执行。禁止继续 DOM selector 或视觉坐标尝试；请报告当前页面无法安全完成该业务目标。`
 }
 
-export function registerPatrolPageUnderstandingTools(ctx: Context, store: PatrolStore, runner: PatrolRunner): () => void {
+export function registerPatrolPageUnderstandingTools(
+  ctx: Context,
+  store: PatrolStore,
+  runner: PatrolRunner,
+  clickOutcomes?: PatrolClickOutcomeTracker,
+): () => void {
   const analyze = defineTool({
     name: 'patrol_analyze_step',
     description: 'Read-only CURRENT-page planner. Correlates DOM, iframe/modal evidence and structured table rows with one taskChecklist action and returns evidence-backed plans. Never records a Runbook step and never solves image-code CAPTCHA.',
@@ -265,6 +270,12 @@ export function registerPatrolPageUnderstandingTools(ctx: Context, store: Patrol
             objectString(page.value, 'text') ?? page.text ?? '',
             snapshotElements(snapshot.value),
           )
+      const hasConcreteDomPlan = plans.some(plan => plan.kind !== 'no-unique-target' && typeof plan.selector === 'string' && plan.selector.length > 0)
+      clickOutcomes?.setVisualFallbackAuthorization({
+        inspectionId: args.inspectionId,
+        stepName: args.task,
+        locatorText: args.locatorText,
+      }, !hasConcreteDomPlan)
       return renderUnderstanding(
         args.task,
         objectString(snapshot.value, 'url') ?? objectString(page.value, 'url') ?? '',
@@ -410,7 +421,10 @@ function renderUnderstanding(task: string, url: string, title: string, modal: bo
     lines.push(`${String.fromCharCode(65 + index)}. ${plan.kind}${plan.selector ? ` selector=${JSON.stringify(plan.selector)}` : ''}${plan.locatorText ? ` locatorText=${JSON.stringify(plan.locatorText)}` : ''}`)
     lines.push(`   证据：${redactLikelySecrets(plan.evidence)}`)
   })
-  lines.push('纪律：只执行一个最具体方案；若这是第一次失败后的恢复方案且仍失败，立即 HARD STOP，不再继续 selector 探索。')
+  const hasConcreteDomPlan = plans.some(plan => plan.kind !== 'no-unique-target' && typeof plan.selector === 'string' && plan.selector.length > 0)
+  lines.push(hasConcreteDomPlan
+    ? 'DOM 优先：CURRENT analyze 已给出具体 DOM 方案。必须先执行最具体的 DOM 恢复方案；此时不要调用视觉点击。该 DOM 恢复仍失败后，才进入视觉后备。'
+    : 'DOM 已无可靠唯一目标：CURRENT analyze 明确为 no-unique-target。此时才允许获取一张 includeImage=true 的 CURRENT 截图并执行视觉后备。')
   lines.push('验证码例外：本理解器不识别验证码；TEST MODE 先走 patrol_solve_current_image_code 本地 OCR，只有明确 fallback + 一次性 token 才允许视觉。')
   return lines.join('\n')
 }

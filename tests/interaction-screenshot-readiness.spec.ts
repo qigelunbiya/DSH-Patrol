@@ -95,6 +95,8 @@ describe('Patrol screenshot tab readiness', () => {
       frameId: shot.visualFrameId,
       xRatio: 0.2,
       yRatio: 0.8,
+      expectedTitle: '点赞',
+      expectedAriaLabel: '点赞',
     })
     expect(clicked).toMatchObject({
       ok: true,
@@ -111,6 +113,8 @@ describe('Patrol screenshot tab readiness', () => {
     })
     expect(clickedArgs?.[0]).toBeCloseTo(256)
     expect(clickedArgs?.[1]).toBeCloseTo(576)
+    expect(clickedArgs?.[4]).toBe('点赞')
+    expect(clickedArgs?.[5]).toBe('点赞')
 
     await expect(sandbox.handleCommand('visualClick', {
       tabId: 7,

@@ -207,8 +207,8 @@ function pruneOnce(
  *
  * - model-free pruning starts around 4k measured tokens;
  * - durable compaction starts around 7k measured tokens;
- * - without tokenMeter, cumulative model-step counters survive user turns and
- *   trigger the same protection early;
+ * - cumulative model-step counters survive user turns and remain active even
+ *   when tokenMeter exists, because image/vision pressure can be under-counted;
  * - after compaction, one final model-free prune runs if the measured surface is
  *   still above the safe threshold;
  * - CUDA-OOM/auth-unavailable gets exactly one bounded reduced-context retry.
@@ -218,6 +218,8 @@ export function registerPatrolContextPressureGuard(ctx: Context): () => void {
   const attemptedRecovery = new WeakMap<object, string>()
   const cudaOomAgents = new WeakSet<object>()
   const cumulativeModelSteps = new WeakMap<object, number>()
+  const lastStepPrune = new WeakMap<object, number>()
+  const lastStepCompact = new WeakMap<object, number>()
 
   const keyOf = (turn: number, step: number) => `${turn}:${step}`
 
@@ -248,18 +250,27 @@ export function registerPatrolContextPressureGuard(ctx: Context): () => void {
 
       const tokenMeter = readTokenMeter(ctx)
       let tokens = measuredTokens(tokenMeter, agent.session)
-      const shouldPrune = tokens === undefined
-        ? pressureStep >= PATROL_QWEN_NO_METER_PRUNE_STEP
-        : tokens >= PATROL_QWEN_HARDENED_PRUNE_LIMIT
+      // Vision attachments are not always represented accurately by tokenMeter.
+      // Keep a step-cadence guard active even when a meter exists, otherwise a
+      // long image-assisted patrol can look "small" in text tokens and still
+      // exhaust the local Qwen worker.
+      const lastPrunedAt = lastStepPrune.get(agentKey) ?? 0
+      const pruneDueByStep = pressureStep >= PATROL_QWEN_NO_METER_PRUNE_STEP
+        && pressureStep - lastPrunedAt >= PATROL_QWEN_NO_METER_PRUNE_STEP
+      const shouldPrune = tokens !== undefined && tokens >= PATROL_QWEN_HARDENED_PRUNE_LIMIT
+        || pruneDueByStep
       const pruner = readToolResultPruner(ctx)
       if (shouldPrune) {
+        lastStepPrune.set(agentKey, pressureStep)
         const advanced = pruneOnce(ctx, pruner, agent, 'proactive Patrol history prune')
         if (advanced) tokens = measuredTokens(tokenMeter, agent.session) ?? tokens
       }
 
-      const shouldCompact = tokens === undefined
-        ? pressureStep >= PATROL_QWEN_NO_METER_COMPACT_STEP
-        : tokens >= PATROL_QWEN_HARDENED_COMPACT_LIMIT
+      const lastCompactedAt = lastStepCompact.get(agentKey) ?? 0
+      const compactDueByStep = pressureStep >= PATROL_QWEN_NO_METER_COMPACT_STEP
+        && pressureStep - lastCompactedAt >= PATROL_QWEN_NO_METER_COMPACT_STEP
+      const shouldCompact = tokens !== undefined && tokens >= PATROL_QWEN_HARDENED_COMPACT_LIMIT
+        || compactDueByStep
       if (!shouldCompact || payload.signal.aborted) return next()
 
       const compaction = readCompaction(ctx)
@@ -272,6 +283,7 @@ export function registerPatrolContextPressureGuard(ctx: Context): () => void {
       }
 
       const before = replaceGeneration(agent.session)
+      lastStepCompact.set(agentKey, pressureStep)
       try {
         ctx.logger.warn(
           `[dsh-patrol/context-pressure] compacting Patrol before local-Qwen dispatch`

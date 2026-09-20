@@ -66,30 +66,78 @@ describe('Patrol page understanding planner', () => {
     expect(plans[0]?.kind).toBe('no-unique-target')
   })
 
-  it('allows a Bilibili-like visual fallback after one failed semantic attempt plus CURRENT analysis even when locator wording changes', () => {
-    const guard = createPatrolPlanningGuard()
+  it('keeps DOM recovery ahead of Bilibili-like visual fallback when analyze has a concrete DOM plan', () => {
+    const outcomes = createPatrolClickOutcomeTracker()
+    const guard = createPatrolPlanningGuard(outcomes)
 
     expect(guard({
       name: 'patrol_click_target',
-      arguments: { inspectionId: 'bili', stepName: '给视频点赞', locatorText: '点赞' },
+      arguments: { inspectionId: 'bili', stepName: '点击点赞按钮', locatorText: '点赞（Q）' },
     })).toBeUndefined()
     expect(guard({
       name: 'patrol_click_target',
-      arguments: { inspectionId: 'bili', stepName: '给视频点赞', locatorText: '大拇指图标' },
+      arguments: { inspectionId: 'bili', stepName: '点击点赞按钮', locatorText: '点赞（Q）' },
     })).toMatch(/patrol_analyze_step/)
     expect(guard({
       name: 'patrol_analyze_step',
-      arguments: { inspectionId: 'bili', task: '给视频点赞', locatorText: '大拇指图标' },
+      arguments: { inspectionId: 'bili', task: '点击点赞按钮', locatorText: '点赞（Q）' },
+    })).toBeUndefined()
+
+    outcomes.setVisualFallbackAuthorization({ inspectionId: 'bili', stepName: '点击点赞按钮' }, false)
+    expect(guard({
+      name: 'patrol_visual_click_target',
+      arguments: {
+        inspectionId: 'bili',
+        stepName: '点击点赞按钮（视觉后备）',
+        targetHint: '大拇指点赞按钮',
+        frameId: 'browser-visual-current',
+        xRatio: 0.08,
+        yRatio: 0.75,
+      },
+    })).toMatch(/DOM 优先/)
+
+    expect(guard({
+      name: 'patrol_click',
+      arguments: {
+        inspectionId: 'bili',
+        stepName: '点击点赞按钮',
+        selector: 'top-frame::div[title="点赞（Q）"]',
+      },
     })).toBeUndefined()
     expect(guard({
       name: 'patrol_visual_click_target',
       arguments: {
         inspectionId: 'bili',
-        stepName: '给视频点赞',
-        targetHint: '视频下方的大拇指点赞按钮',
-        frameId: 'browser-visual-current',
+        stepName: '点击点赞按钮（视觉后备）',
+        targetHint: '大拇指点赞按钮',
+        frameId: 'browser-visual-current-2',
         xRatio: 0.08,
         yRatio: 0.75,
+      },
+    })).toBeUndefined()
+  })
+
+  it('allows visual fallback immediately after analyze explicitly finds no unique DOM target', () => {
+    const outcomes = createPatrolClickOutcomeTracker()
+    const guard = createPatrolPlanningGuard(outcomes)
+    expect(guard({
+      name: 'patrol_click_target',
+      arguments: { inspectionId: 'bili', stepName: '点击评论输入框', locatorText: '哎呦，不错哦，发条评论吧' },
+    })).toBeUndefined()
+    expect(guard({
+      name: 'patrol_analyze_step',
+      arguments: { inspectionId: 'bili', task: '点击评论输入框', locatorText: '哎呦，不错哦，发条评论吧' },
+    })).toBeUndefined()
+    outcomes.setVisualFallbackAuthorization({ inspectionId: 'bili', stepName: '点击评论输入框' }, true)
+    expect(guard({
+      name: 'patrol_visual_click_target',
+      arguments: {
+        inspectionId: 'bili',
+        stepName: '点击评论输入框（视觉后备）',
+        targetHint: '评论输入框',
+        frameId: 'browser-visual-current',
+        xRatio: 0.3,
+        yRatio: 0.9,
       },
     })).toBeUndefined()
   })

@@ -81,6 +81,35 @@ describe('mounted Patrol local-Qwen hardening', () => {
     await ctx.fiber.dispose()
   })
 
+  it('still prunes and compacts by cumulative step cadence when tokenMeter under-counts image-heavy patrol pressure', async () => {
+    const ctx = new Context()
+    const current = agent()
+    const pruneSession = vi.fn(() => {
+      current.session.surface.replaceGeneration += 1
+      return { pruned: [{ callId: 'old-visual-observe' }], charsRemoved: 16_000 }
+    })
+    const compactIfNeeded = vi.fn(async () => {
+      current.session.surface.replaceGeneration += 1
+      return { shadowedSeqs: [1] }
+    })
+    ctx.provide('tokenMeter', { measure: () => ({ totalTokens: 1_500 }) })
+    ctx.provide('toolResultPruner', { pruneSession })
+    ctx.provide('compaction', { compactIfNeeded })
+    registerPatrolContextPressureGuard(ctx)
+
+    for (let turn = 1; turn <= PATROL_QWEN_NO_METER_COMPACT_STEP; turn += 1) {
+      await ctx.waterfall(
+        'agent/pre-step',
+        payload(current, 1, turn) as never,
+        async () => ({ kind: 'enter' as const, messages: [] }),
+      )
+    }
+
+    expect(pruneSession).toHaveBeenCalled()
+    expect(compactIfNeeded).toHaveBeenCalledOnce()
+    await ctx.fiber.dispose()
+  })
+
   it('prunes at 6k and avoids compaction when measurement proves pruning made enough room', async () => {
     const ctx = new Context()
     const current = agent()

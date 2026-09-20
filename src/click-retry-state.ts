@@ -7,6 +7,8 @@ export interface PatrolClickIdentity {
 export interface PatrolClickOutcomeTracker {
   unverifiedPhysicalClicks(input: PatrolClickIdentity): number
   visualPhysicalClicks(input: PatrolClickIdentity): number
+  visualFallbackAuthorized(input: PatrolClickIdentity): boolean
+  setVisualFallbackAuthorization(input: PatrolClickIdentity, allowed: boolean): void
   recordUnverifiedPhysicalClick(input: PatrolClickIdentity): void
   recordVisualPhysicalClick(input: PatrolClickIdentity): void
   recordVerified(input: PatrolClickIdentity): void
@@ -16,12 +18,21 @@ export interface PatrolClickOutcomeTracker {
 export function createPatrolClickOutcomeTracker(): PatrolClickOutcomeTracker {
   const attempts = new Map<string, number>()
   const visualPhysicalAttempts = new Map<string, number>()
+  const visualFallbackInspections = new Set<string>()
   return {
     unverifiedPhysicalClicks(input) {
       return attempts.get(clickKey(input)) ?? 0
     },
     visualPhysicalClicks(input) {
       return visualPhysicalAttempts.get(clickKey(input)) ?? 0
+    },
+    visualFallbackAuthorized(input) {
+      return visualFallbackInspections.has(inspectionKey(input))
+    },
+    setVisualFallbackAuthorization(input, allowed) {
+      const key = inspectionKey(input)
+      if (allowed) visualFallbackInspections.add(key)
+      else visualFallbackInspections.delete(key)
     },
     recordUnverifiedPhysicalClick(input) {
       const key = clickKey(input)
@@ -33,23 +44,37 @@ export function createPatrolClickOutcomeTracker(): PatrolClickOutcomeTracker {
     },
     recordVerified(input) {
       attempts.delete(clickKey(input))
+      visualFallbackInspections.delete(inspectionKey(input))
     },
     clearInspection(inspectionId) {
-      const prefix = `${normalize(inspectionId)}|`
+      const normalizedInspection = normalize(inspectionId)
+      const prefix = `${normalizedInspection}|`
       for (const key of attempts.keys()) if (key.startsWith(prefix)) attempts.delete(key)
       for (const key of visualPhysicalAttempts.keys()) if (key.startsWith(prefix)) visualPhysicalAttempts.delete(key)
+      visualFallbackInspections.delete(normalizedInspection)
     },
   }
 }
 
+function inspectionKey(input: PatrolClickIdentity): string {
+  return normalize(clean(input.inspectionId) || 'unknown')
+}
+
 function clickKey(input: PatrolClickIdentity): string {
   const inspectionId = clean(input.inspectionId) || 'unknown'
-  const business = clean(input.stepName) || clean(input.locatorText) || 'click'
-  return `${normalize(inspectionId)}|${normalize(business).replace(/\d{6,}/g, '#').slice(0, 180)}`
+  const business = normalizeBusiness(clean(input.stepName) || clean(input.locatorText) || 'click')
+  return `${normalize(inspectionId)}|${business.replace(/\d{6,}/g, '#').slice(0, 180)}`
 }
 
 function clean(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+function normalizeBusiness(value: string): string {
+  return normalize(value)
+    .replace(/^(?:请)?(?:点击|打开|选择|进入|查看|访问|尝试)+/g, '')
+    .replace(/[（(](?:视觉后备|视觉fallback|fallback|恢复|重试)[）)]$/gi, '')
+    .replace(/(?:视觉后备|视觉fallback|fallback|恢复|重试)$/gi, '')
 }
 
 function normalize(value: string): string {

@@ -198,7 +198,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     'dsh-patrol: recordable screenshot-bound browser visual click fallback',
   )
   ctx.effect(
-    () => registerPatrolPageUnderstandingTools(ctx, store, runner),
+    () => registerPatrolPageUnderstandingTools(ctx, store, runner, clickOutcomes),
     'dsh-patrol: current-page business-step understanding and planning',
   )
   ctx.effect(
