@@ -11,6 +11,7 @@ const EXTENSION_CAPABILITIES = Object.freeze([
   'directImageSource',
   'pageBridgeRetry',
   'semanticClick',
+  'visualClick',
 ])
 let socket = null
 let state = 'disconnected'
