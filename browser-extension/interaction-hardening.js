@@ -218,43 +218,45 @@ async function interactionResizeCapturedDataUrl(tabId, dataUrl, maxWidth, qualit
   const results = await chrome.scripting.executeScript({
     target: { tabId, frameIds: [0] },
     world: 'MAIN',
-    func: async (source, targetWidth, jpegQuality) => {
-      const image = new Image()
-      image.decoding = 'async'
-      const loaded = new Promise((resolve, reject) => {
-        image.onload = () => resolve(true)
-        image.onerror = () => reject(new Error('captured image decode failed'))
-      })
-      image.src = source
-      await loaded
-      const originalWidth = Number(image.naturalWidth || image.width || 0)
-      const originalHeight = Number(image.naturalHeight || image.height || 0)
-      if (!Number.isFinite(originalWidth) || !Number.isFinite(originalHeight) || originalWidth <= 0 || originalHeight <= 0) return undefined
-      const scale = Math.min(1, Number(targetWidth) / originalWidth)
-      if (scale >= 0.995) {
-        return { dataUrl: source, scale: 1, width: originalWidth, height: originalHeight, originalWidth, originalHeight }
-      }
-      const width = Math.max(1, Math.round(originalWidth * scale))
-      const height = Math.max(1, Math.round(originalHeight * scale))
-      const canvas = document.createElement('canvas')
-      canvas.width = width
-      canvas.height = height
-      const context = canvas.getContext('2d', { alpha: false })
-      if (!context) throw new Error('captured image resize canvas unavailable')
-      context.drawImage(image, 0, 0, width, height)
-      return {
-        dataUrl: canvas.toDataURL('image/jpeg', Math.max(0.25, Math.min(0.95, Number(jpegQuality) / 100))),
-        scale,
-        width,
-        height,
-        originalWidth,
-        originalHeight,
-      }
-    },
+    func: interactionMainWorldResizeCapturedDataUrl,
     args: [dataUrl, maxWidth, quality],
   })
   const value = Array.isArray(results) ? results[0]?.result : undefined
   return value && typeof value === 'object' ? value : undefined
+}
+
+async function interactionMainWorldResizeCapturedDataUrl(source, targetWidth, jpegQuality) {
+  const image = new Image()
+  image.decoding = 'async'
+  const loaded = new Promise((resolve, reject) => {
+    image.onload = () => resolve(true)
+    image.onerror = () => reject(new Error('captured image decode failed'))
+  })
+  image.src = source
+  await loaded
+  const originalWidth = Number(image.naturalWidth || image.width || 0)
+  const originalHeight = Number(image.naturalHeight || image.height || 0)
+  if (!Number.isFinite(originalWidth) || !Number.isFinite(originalHeight) || originalWidth <= 0 || originalHeight <= 0) return undefined
+  const scale = Math.min(1, Number(targetWidth) / originalWidth)
+  if (scale >= 0.995) {
+    return { dataUrl: source, scale: 1, width: originalWidth, height: originalHeight, originalWidth, originalHeight }
+  }
+  const width = Math.max(1, Math.round(originalWidth * scale))
+  const height = Math.max(1, Math.round(originalHeight * scale))
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext('2d', { alpha: false })
+  if (!context) throw new Error('captured image resize canvas unavailable')
+  context.drawImage(image, 0, 0, width, height)
+  return {
+    dataUrl: canvas.toDataURL('image/jpeg', Math.max(0.25, Math.min(0.95, Number(jpegQuality) / 100))),
+    scale,
+    width,
+    height,
+    originalWidth,
+    originalHeight,
+  }
 }
 
 async function interactionCaptureCompactScreenshot(tabId, maxWidth, quality, before) {
