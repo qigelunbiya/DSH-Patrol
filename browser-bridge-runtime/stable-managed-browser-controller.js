@@ -136,13 +136,23 @@ export function createManagedBrowserController(options = {}) {
       await configureWorker(worker)
       await waitForBridge(bridge, connectTimeoutMs, extensionId)
 
-      if (missingRequiredCapability()) {
-        logger.warn?.('[dsh-patrol/managed-browser] connected extension is stale; attempting one in-place extension refresh without closing Chromium')
-        extensionId = await refreshRuntimeExtensionInPlace(browser, extensionId)
-        options.onExtensionReady?.(extensionId)
-        const refreshedWorker = await waitForExtensionWorker(browser, extensionId, startTimeoutMs)
-        await configureWorker(refreshedWorker)
-        await waitForBridge(bridge, connectTimeoutMs, extensionId)
+      if (missingRequiredCapability() || missingRecommendedCapability()) {
+        const requiredBeforeRefresh = missingRequiredCapability()
+        logger.warn?.(
+          requiredBeforeRefresh
+            ? '[dsh-patrol/managed-browser] connected extension is stale; attempting one in-place extension refresh without closing Chromium'
+            : '[dsh-patrol/managed-browser] visual-click extension layer is stale; attempting a best-effort in-place refresh without closing Chromium',
+        )
+        try {
+          extensionId = await refreshRuntimeExtensionInPlace(browser, extensionId)
+          options.onExtensionReady?.(extensionId)
+          const refreshedWorker = await waitForExtensionWorker(browser, extensionId, startTimeoutMs)
+          await configureWorker(refreshedWorker)
+          await waitForBridge(bridge, connectTimeoutMs, extensionId)
+        } catch (error) {
+          if (requiredBeforeRefresh) throw error
+          logger.warn?.(`[dsh-patrol/managed-browser] optional trusted visual-click refresh failed; basic DOM patrol remains available: ${errorMessage(error)}`)
+        }
         if (missingRequiredCapability()) {
           throw new Error('Patrol extension connected but is still missing required semanticClick capability after in-place refresh')
         }
@@ -269,6 +279,14 @@ export function createManagedBrowserController(options = {}) {
     const extension = bridge.status?.()?.extension
     const capabilities = extension?.capabilities
     return Array.isArray(capabilities) && !capabilities.includes('semanticClick')
+  }
+
+  function missingRecommendedCapability() {
+    const extension = bridge.status?.()?.extension
+    const capabilities = extension?.capabilities
+    return Array.isArray(capabilities)
+      && capabilities.includes('visualClick')
+      && !capabilities.includes('trustedVisualClick')
   }
 
   function writeCurrentState() {

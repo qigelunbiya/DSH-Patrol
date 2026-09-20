@@ -12,6 +12,7 @@ const EXTENSION_CAPABILITIES = Object.freeze([
   'pageBridgeRetry',
   'semanticClick',
   'visualClick',
+  'trustedVisualClick',
 ])
 let socket = null
 let state = 'disconnected'

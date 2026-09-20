@@ -290,20 +290,87 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
   if (!chrome.scripting?.executeScript) throw new Error('visualClick requires chrome.scripting')
   const clientX = viewport.offsetLeft + Math.max(1, Math.min(viewport.width - 1, viewport.width * xRatio))
   const clientY = viewport.offsetTop + Math.max(1, Math.min(viewport.height - 1, viewport.height * yRatio))
+
+  let nativeError = ''
+  if (chrome.debugger?.attach && chrome.debugger?.sendCommand && chrome.debugger?.detach) {
+    let probe
+    try {
+      const probeResults = await chrome.scripting.executeScript({
+        target: { tabId, frameIds: [0] },
+        world: 'MAIN',
+        func: interactionMainWorldVisualClick,
+        args: [clientX, clientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, true],
+      })
+      probe = Array.isArray(probeResults) ? probeResults[0]?.result : undefined
+      if (probe?.ok === false) throw new Error(probe.error || 'visual target probe failed')
+    } catch (error) {
+      nativeError = `target probe failed: ${safeError(error)}`
+    }
+
+    const hasExpectedFingerprint = Boolean(expectedTag || expectedRole || expectedTitle || expectedAriaLabel)
+    if (!hasExpectedFingerprint || (probe && typeof probe === 'object' && probe.ok !== false)) {
+      try {
+        await interactionDispatchTrustedMouseClick(tabId, clientX, clientY)
+        await new Promise(resolve => setTimeout(resolve, 180))
+        return {
+          ok: true,
+          ...(probe && typeof probe === 'object' ? probe : {}),
+          targetStateChanged: false,
+          stateEvidence: probe
+            ? 'trusted native mouse click dispatched at CURRENT visual target'
+            : 'trusted native mouse click dispatched at CURRENT visual point without DOM fingerprint',
+          inputTransport: 'chrome-debugger',
+        }
+      } catch (error) {
+        nativeError = [nativeError, `trusted mouse failed: ${safeError(error)}`].filter(Boolean).join('; ')
+      }
+    }
+  }
+
   let results
   try {
     results = await chrome.scripting.executeScript({
       target: { tabId, frameIds: [0] },
       world: 'MAIN',
       func: interactionMainWorldVisualClick,
-      args: [clientX, clientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel],
+      args: [clientX, clientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, false],
     })
   } catch (error) {
-    throw new Error(`visualClick MAIN-world execution failed: ${safeError(error)}`)
+    throw new Error([
+      nativeError,
+      `visualClick MAIN-world execution failed: ${safeError(error)}`,
+    ].filter(Boolean).join('; '))
   }
   const value = Array.isArray(results) ? results[0]?.result : undefined
-  if (!value || typeof value !== 'object' || value.ok === false) throw new Error(value?.error || 'visualClick MAIN-world execution returned no result')
-  return value
+  if (!value || typeof value !== 'object' || value.ok === false) {
+    throw new Error([
+      nativeError,
+      value?.error || 'visualClick MAIN-world execution returned no result',
+    ].filter(Boolean).join('; '))
+  }
+  return { ...value, inputTransport: 'synthetic-main-world' }
+}
+
+async function interactionDispatchTrustedMouseClick(tabId, clientX, clientY) {
+  const target = { tabId }
+  let attached = false
+  try {
+    await chrome.debugger.attach(target, '1.3')
+    attached = true
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseMoved', x: clientX, y: clientY, button: 'none', buttons: 0,
+    })
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mousePressed', x: clientX, y: clientY, button: 'left', buttons: 1, clickCount: 1,
+    })
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseReleased', x: clientX, y: clientY, button: 'left', buttons: 0, clickCount: 1,
+    })
+  } finally {
+    if (attached) {
+      try { await chrome.debugger.detach(target) } catch {}
+    }
+  }
 }
 
 function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transport) {
@@ -311,11 +378,16 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
   const selectorHint = rawSelector
     ? (rawSelector.startsWith(INTERACTION_TOP_FRAME_PREFIX) ? rawSelector : `${INTERACTION_TOP_FRAME_PREFIX}${rawSelector}`)
     : ''
+  const effectiveTransport = clicked?.inputTransport === 'chrome-debugger'
+    ? `${transport}+trusted-native-mouse`
+    : clicked?.inputTransport === 'synthetic-main-world'
+      ? `${transport}+synthetic-main-world`
+      : transport
   return {
     ok: true,
     xRatio,
     yRatio,
-    transport,
+    transport: effectiveTransport,
     ...(selectorHint ? { selectorHint } : {}),
     urlIdentity: viewport.urlIdentity,
     viewportWidth: viewport.width,
@@ -335,7 +407,7 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
   }
 }
 
-async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel) {
+async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, probeOnly = false) {
   const compact = value => String(value || '').replace(/\s+/g, ' ').trim()
   const roleOf = element => {
     const explicit = compact(element.getAttribute?.('role') || '').toLowerCase()
@@ -419,8 +491,9 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
 
   const hit = document.elementFromPoint(clientX, clientY)
   if (!(hit instanceof Element)) throw new Error('visual click point does not hit a DOM element')
-  if (hit.tagName?.toLowerCase?.() === 'iframe') throw new Error('visual click point lands on an iframe surface; top-document visual click cannot safely enter a cross-origin frame')
-  const target = chooseTarget(hit)
+  const hitIsIframe = hit.tagName?.toLowerCase?.() === 'iframe'
+  if (hitIsIframe && !probeOnly) throw new Error('visual click point lands on an iframe surface; synthetic MAIN-world click cannot safely enter a cross-origin frame')
+  const target = hitIsIframe ? hit : chooseTarget(hit)
   if (!(target instanceof Element) || !visible(target) || disabled(target)) throw new Error('visual click target is not actionable')
   const tag = target.tagName.toLowerCase()
   const role = roleOf(target)
@@ -435,6 +508,21 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
   if (clientX < rect.left - 1 || clientX > rect.right + 1 || clientY < rect.top - 1 || clientY > rect.bottom + 1) throw new Error('visual click target no longer contains the recorded point')
 
   const before = signature(target)
+  const descriptor = {
+    ok: true,
+    selector: stableSelector(target),
+    tag,
+    role,
+    text: compact(target.innerText || target.textContent || target.getAttribute('aria-label') || target.getAttribute('title') || '').slice(0, 240),
+    title,
+    ariaLabel,
+    id: compact(target.id || ''),
+    className: compact([...(target.classList || [])].slice(0, 8).join(' ')),
+    targetStateChanged: false,
+    stateEvidence: '',
+  }
+  if (probeOnly) return descriptor
+
   target.focus?.({ preventScroll: true })
   const eventTarget = hit
   if (typeof PointerEvent !== 'undefined') {
@@ -459,15 +547,7 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     stateEvidence = 'clicked visual target DOM state changed'
   }
   return {
-    ok: true,
-    selector: stableSelector(target),
-    tag,
-    role,
-    text: compact(target.innerText || target.textContent || target.getAttribute('aria-label') || target.getAttribute('title') || '').slice(0, 240),
-    title,
-    ariaLabel,
-    id: compact(target.id || ''),
-    className: compact([...(target.classList || [])].slice(0, 8).join(' ')),
+    ...descriptor,
     targetStateChanged,
     stateEvidence,
   }
