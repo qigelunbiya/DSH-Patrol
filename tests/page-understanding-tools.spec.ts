@@ -82,6 +82,26 @@ describe('Patrol page understanding planner', () => {
     })).toBeUndefined()
   })
 
+  it('does not hard-stop a verified navigation click when the model needs to choose another video', () => {
+    const outcomes = createPatrolClickOutcomeTracker()
+    const guard = createPatrolPlanningGuard(outcomes)
+    const args = {
+      inspectionId: 'bili',
+      stepName: '点击目标视频',
+      targetHint: '首页视频卡片',
+      frameId: 'browser-visual-current',
+      xRatio: 0.4,
+      yRatio: 0.5,
+    }
+    outcomes.recordVisualPhysicalClick(args)
+    outcomes.recordVerified(args)
+    expect(guard({ name: 'patrol_visual_click_target', arguments: args })).toBeUndefined()
+    expect(guard({
+      name: 'patrol_click_target',
+      arguments: { inspectionId: 'bili', stepName: '点击目标视频', locatorText: '另一个视频' },
+    })).toBeUndefined()
+  })
+
   it('still protects an already verified visual toggle from an accidental repeat click', () => {
     const outcomes = createPatrolClickOutcomeTracker()
     const guard = createPatrolPlanningGuard(outcomes)

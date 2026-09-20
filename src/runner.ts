@@ -590,7 +590,7 @@ export class PatrolRunner {
     }
 
     let expectationError: string | undefined
-    if (step.expectation !== undefined && (step.tool === 'browser_click' || step.tool === 'browser_visual_click')) {
+    if (step.expectation !== undefined && (step.tool === 'browser_click' || step.tool === 'browser_visual_click' || step.tool === 'browser_semantic_click')) {
       const tabId = typeof runtimeArguments.tabId === 'number' ? runtimeArguments.tabId : undefined
       const verified = await verifyPostClickExpectation(
         (toolName, toolArgs, toolExec) => this.dispatch(toolName, toolArgs, toolExec),
@@ -893,7 +893,7 @@ function isLoginPrefixBridge(step: InspectionDefinition['steps'][number] | undef
 }
 
 export function looksLikeLoginStep(definition: InspectionDefinition, step: ToolStep): boolean {
-  if (!['browser_type', 'browser_type_credential', 'browser_type_transient_ref', 'browser_type_totp_profile', 'browser_click'].includes(step.tool)) return false
+  if (!['browser_type', 'browser_type_credential', 'browser_type_transient_ref', 'browser_type_totp_profile', 'browser_click', 'browser_semantic_click'].includes(step.tool)) return false
   const primaryLogin = /(login|log[-_ ]?in|sign[-_ ]?in|signin|password|passwd|pwd|username|user[-_ ]?name|登录|登陆|用户名|密码)/i
   const hint = loginStepHint(step)
   if (primaryLogin.test(hint)) return true

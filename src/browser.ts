@@ -38,6 +38,7 @@ export const REPLAYABLE_BROWSER_TOOLS = [
   'browser_detect_auth_challenge',
   'browser_click',
   'browser_visual_click',
+  'browser_semantic_click',
   'browser_select',
   'browser_type',
   'browser_type_focused',

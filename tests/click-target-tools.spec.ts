@@ -132,6 +132,43 @@ describe('semantic Patrol click target', () => {
     })
   })
 
+  it('records Shadow DOM targets as semantic replay instead of unreachable document CSS', async () => {
+    const { store, tool, exec } = await setup(async (name) => {
+      if (name === 'browser_read_page') return page('评论区')
+      if (name === 'browser_snapshot') return snapshot([])
+      if (name === 'browser_semantic_click') {
+        return {
+          ...atomic('div[contenteditable="true"]', '发一条友善的评论', true),
+          value: {
+            ...atomic('div[contenteditable="true"]', '发一条友善的评论', true).value,
+            role: 'textbox',
+            tag: 'div',
+            replaySelectorSafe: false,
+          },
+        }
+      }
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    const result = await tool.execute({
+      inspectionId: 'click-target',
+      stepName: '点击评论输入框',
+      locatorText: '评论输入框',
+    }, exec)
+
+    expect(result).toContain('open Shadow DOM')
+    expect((await store.load('click-target')).steps[0]).toMatchObject({
+      tool: 'browser_semantic_click',
+      arguments: {
+        locatorText: '评论输入框',
+        selectorHint: 'div[contenteditable="true"]',
+        task: '点击评论输入框',
+      },
+      locator: { text: '评论输入框' },
+      teaching: { status: 'verified', method: 'state-change' },
+    })
+  })
+
   it('treats a single click-opened child tab as verified navigation and does not retry the source tab', async () => {
     const calls: Array<{ tool: string; args: JsonObject }> = []
     const { store, tool, exec } = await setup(async (name, args) => {

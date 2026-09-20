@@ -154,17 +154,19 @@ async function interactionScreenshot(args) {
   let dataUrl
   let captureScale = 1
   let compactVisual = false
+  let captureGeometry = interactionVisibleTabCaptureGeometry(before)
 
   if (format === 'jpeg'
     && Number.isFinite(requestedMaxWidth)
     && requestedMaxWidth >= 480
     && before?.width > requestedMaxWidth) {
     try {
-      const compact = await interactionCaptureCompactScreenshot(tabId, requestedMaxWidth, quality)
+      const compact = await interactionCaptureCompactScreenshot(tabId, requestedMaxWidth, quality, before)
       if (compact?.dataUrl) {
         dataUrl = compact.dataUrl
         captureScale = compact.scale
         compactVisual = true
+        captureGeometry = compact.captureGeometry
       }
     } catch {
       // Keep the normal capture path as a safe compatibility fallback.
@@ -178,7 +180,7 @@ async function interactionScreenshot(args) {
   }
 
   const after = await interactionViewportState(tabId)
-  const visualFrame = interactionRegisterVisualFrame(tabId, before, after)
+  const visualFrame = interactionRegisterVisualFrame(tabId, before, after, captureGeometry)
 
   return {
     ok: true,
@@ -190,7 +192,7 @@ async function interactionScreenshot(args) {
   }
 }
 
-async function interactionCaptureCompactScreenshot(tabId, maxWidth, quality) {
+async function interactionCaptureCompactScreenshot(tabId, maxWidth, quality, before) {
   if (!chrome.debugger?.attach || !chrome.debugger?.sendCommand || !chrome.debugger?.detach) return undefined
   const target = { tabId }
   let attached = false
@@ -218,7 +220,18 @@ async function interactionCaptureCompactScreenshot(tabId, maxWidth, quality) {
       },
     })
     if (!shot || typeof shot.data !== 'string' || !shot.data) return undefined
-    return { dataUrl: `data:image/jpeg;base64,${shot.data}`, scale }
+    const pageX = Number(viewport?.pageX)
+    const pageY = Number(viewport?.pageY)
+    const scrollX = Number(before?.scrollX || 0)
+    const scrollY = Number(before?.scrollY || 0)
+    const captureGeometry = {
+      captureClientLeft: Number.isFinite(pageX) ? pageX - scrollX : Number(before?.offsetLeft || 0),
+      captureClientTop: Number.isFinite(pageY) ? pageY - scrollY : Number(before?.offsetTop || 0),
+      captureWidth: width,
+      captureHeight: height,
+      captureMode: 'cdp-css-visual-viewport',
+    }
+    return { dataUrl: `data:image/jpeg;base64,${shot.data}`, scale, captureGeometry }
   } finally {
     if (attached) {
       try { await chrome.debugger.detach(target) } catch {}
@@ -252,15 +265,25 @@ function interactionMainWorldViewportState() {
     scale: Number(viewport?.scale || 1),
     scrollX: Number(window.scrollX || 0),
     scrollY: Number(window.scrollY || 0),
+    innerWidth: Number(window.innerWidth || document.documentElement?.clientWidth || 0),
+    innerHeight: Number(window.innerHeight || document.documentElement?.clientHeight || 0),
+    devicePixelRatio: Number(window.devicePixelRatio || 1),
   }
 }
 
 function interactionSameViewport(left, right, tolerance = 1) {
   if (!left || !right || left.urlIdentity !== right.urlIdentity) return false
-  return ['width', 'height', 'offsetLeft', 'offsetTop', 'scale', 'scrollX', 'scrollY'].every(key =>
+  const core = ['width', 'height', 'offsetLeft', 'offsetTop', 'scale', 'scrollX', 'scrollY']
+  if (!core.every(key =>
     Number.isFinite(Number(left[key]))
     && Number.isFinite(Number(right[key]))
-    && Math.abs(Number(left[key]) - Number(right[key])) <= tolerance)
+    && Math.abs(Number(left[key]) - Number(right[key])) <= tolerance)) return false
+  for (const key of ['innerWidth', 'innerHeight', 'devicePixelRatio']) {
+    const l = Number(left[key])
+    const r = Number(right[key])
+    if (Number.isFinite(l) && Number.isFinite(r) && Math.abs(l - r) > tolerance) return false
+  }
+  return true
 }
 
 function interactionPruneVisualFrames() {
@@ -270,8 +293,30 @@ function interactionPruneVisualFrames() {
   }
 }
 
-function interactionRegisterVisualFrame(tabId, before, after) {
+function interactionVisibleTabCaptureGeometry(viewport) {
+  if (!viewport || typeof viewport !== 'object') return undefined
+  const width = Number(viewport.innerWidth || viewport.width)
+  const height = Number(viewport.innerHeight || viewport.height)
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return undefined
+  return {
+    captureClientLeft: 0,
+    captureClientTop: 0,
+    captureWidth: width,
+    captureHeight: height,
+    captureMode: 'capture-visible-tab-layout-viewport',
+  }
+}
+
+function interactionRegisterVisualFrame(tabId, before, after, captureGeometry) {
   if (!interactionSameViewport(before, after, 1)) return undefined
+  const geometry = captureGeometry || interactionVisibleTabCaptureGeometry(before)
+  if (!geometry
+    || !Number.isFinite(Number(geometry.captureClientLeft))
+    || !Number.isFinite(Number(geometry.captureClientTop))
+    || !Number.isFinite(Number(geometry.captureWidth))
+    || !Number.isFinite(Number(geometry.captureHeight))
+    || Number(geometry.captureWidth) <= 0
+    || Number(geometry.captureHeight) <= 0) return undefined
   interactionPruneVisualFrames()
   interactionVisualFrameSequence += 1
   const frameId = `browser-visual-${Date.now().toString(36)}-${interactionVisualFrameSequence.toString(36)}`
@@ -287,6 +332,11 @@ function interactionRegisterVisualFrame(tabId, before, after) {
     scale: before.scale,
     scrollX: before.scrollX,
     scrollY: before.scrollY,
+    captureClientLeft: Number(geometry.captureClientLeft),
+    captureClientTop: Number(geometry.captureClientTop),
+    captureWidth: Number(geometry.captureWidth),
+    captureHeight: Number(geometry.captureHeight),
+    captureMode: String(geometry.captureMode || 'unknown'),
   }
   interactionVisualFrames.set(frameId, frame)
   while (interactionVisualFrames.size > INTERACTION_VISUAL_FRAME_MAX) {
@@ -302,6 +352,11 @@ function interactionRegisterVisualFrame(tabId, before, after) {
     viewportScale: frame.scale,
     scrollX: frame.scrollX,
     scrollY: frame.scrollY,
+    captureClientLeft: frame.captureClientLeft,
+    captureClientTop: frame.captureClientTop,
+    captureWidth: frame.captureWidth,
+    captureHeight: frame.captureHeight,
+    captureMode: frame.captureMode,
   }
 }
 
@@ -387,6 +442,14 @@ async function interactionVisualClick(args) {
   if (widthRatio < 0.80 || widthRatio > 1.20 || heightRatio < 0.80 || heightRatio > 1.20) {
     throw new Error('visualClick replay viewport differs too much from teaching; refusing coordinate fallback')
   }
+  current = {
+    ...current,
+    captureClientLeft: Number.isFinite(Number(args.captureClientLeft)) ? Number(args.captureClientLeft) : current.offsetLeft,
+    captureClientTop: Number.isFinite(Number(args.captureClientTop)) ? Number(args.captureClientTop) : current.offsetTop,
+    captureWidth: Number.isFinite(Number(args.captureWidth)) ? Number(args.captureWidth) : current.width,
+    captureHeight: Number.isFinite(Number(args.captureHeight)) ? Number(args.captureHeight) : current.height,
+    captureMode: typeof args.captureMode === 'string' && args.captureMode.trim() ? args.captureMode.trim() : 'legacy-viewport',
+  }
 
   const expectedTag = typeof args.expectedTag === 'string' ? args.expectedTag.trim().toLowerCase() : ''
   const expectedRole = typeof args.expectedRole === 'string' ? args.expectedRole.trim().toLowerCase() : ''
@@ -408,8 +471,13 @@ async function interactionSetScroll(tabId, x, y) {
 
 async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, targetHint = '') {
   if (!chrome.scripting?.executeScript) throw new Error('visualClick requires chrome.scripting')
-  const clientX = viewport.offsetLeft + Math.max(1, Math.min(viewport.width - 1, viewport.width * xRatio))
-  const clientY = viewport.offsetTop + Math.max(1, Math.min(viewport.height - 1, viewport.height * yRatio))
+  const captureLeft = Number.isFinite(Number(viewport.captureClientLeft)) ? Number(viewport.captureClientLeft) : Number(viewport.offsetLeft || 0)
+  const captureTop = Number.isFinite(Number(viewport.captureClientTop)) ? Number(viewport.captureClientTop) : Number(viewport.offsetTop || 0)
+  const captureWidth = Number.isFinite(Number(viewport.captureWidth)) ? Number(viewport.captureWidth) : Number(viewport.width || 0)
+  const captureHeight = Number.isFinite(Number(viewport.captureHeight)) ? Number(viewport.captureHeight) : Number(viewport.height || 0)
+  if (captureWidth <= 0 || captureHeight <= 0) throw new Error('visualClick screenshot capture geometry is invalid')
+  const clientX = captureLeft + Math.max(1, Math.min(captureWidth - 1, captureWidth * xRatio))
+  const clientY = captureTop + Math.max(1, Math.min(captureHeight - 1, captureHeight * yRatio))
 
   let nativeError = ''
   if (chrome.debugger?.attach && chrome.debugger?.sendCommand && chrome.debugger?.detach) {
@@ -539,6 +607,11 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
     viewportScale: viewport.scale,
     scrollX: viewport.scrollX,
     scrollY: viewport.scrollY,
+    captureClientLeft: Number.isFinite(Number(viewport.captureClientLeft)) ? Number(viewport.captureClientLeft) : Number(viewport.offsetLeft || 0),
+    captureClientTop: Number.isFinite(Number(viewport.captureClientTop)) ? Number(viewport.captureClientTop) : Number(viewport.offsetTop || 0),
+    captureWidth: Number.isFinite(Number(viewport.captureWidth)) ? Number(viewport.captureWidth) : Number(viewport.width || 0),
+    captureHeight: Number.isFinite(Number(viewport.captureHeight)) ? Number(viewport.captureHeight) : Number(viewport.height || 0),
+    captureMode: typeof viewport.captureMode === 'string' ? viewport.captureMode : 'legacy-viewport',
     targetStateChanged: clicked.targetStateChanged === true,
     targetFocusedEditable: clicked.targetFocusedEditable === true,
     ...(typeof clicked.stateEvidence === 'string' ? { stateEvidence: clicked.stateEvidence } : {}),
@@ -560,6 +633,8 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     const tag = element.tagName?.toLowerCase?.() || ''
     if (tag === 'button') return 'button'
     if (tag === 'a' && element.getAttribute?.('href')) return 'link'
+    if (element instanceof HTMLTextAreaElement || element?.isContentEditable === true) return 'textbox'
+    if (element instanceof HTMLInputElement && !['button', 'submit', 'reset'].includes(String(element.type || '').toLowerCase())) return 'textbox'
     return ''
   }
   const visible = element => {
@@ -576,6 +651,25 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
   }
   const cssString = value => String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')
   const unique = selector => { try { return document.querySelectorAll(selector).length === 1 } catch { return false } }
+  const deepQueryAll = selector => {
+    const out = []
+    const roots = [document]
+    const seenRoots = new Set()
+    let scannedElements = 0
+    while (roots.length && seenRoots.size < 64 && scannedElements < 12000) {
+      const root = roots.shift()
+      if (!root || seenRoots.has(root) || typeof root.querySelectorAll !== 'function') continue
+      seenRoots.add(root)
+      try { out.push(...root.querySelectorAll(selector)) } catch { return [] }
+      let elements = []
+      try { elements = [...root.querySelectorAll('*')] } catch {}
+      scannedElements += elements.length
+      for (const element of elements) {
+        if (element?.shadowRoot && !seenRoots.has(element.shadowRoot)) roots.push(element.shadowRoot)
+      }
+    }
+    return [...new Set(out)]
+  }
   const stableSelector = element => {
     if (!(element instanceof Element)) return ''
     if (element.id) return '#' + cssEscape(element.id)
@@ -621,6 +715,11 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     }
     return hit
   }
+  const isEditableTarget = element => element instanceof HTMLInputElement
+    || element instanceof HTMLTextAreaElement
+    || element?.isContentEditable === true
+    || compact(element?.getAttribute?.('role') || '').toLowerCase() === 'textbox'
+    || /(?:editor|input|textarea)/i.test(String(element?.tagName || ''))
   const normalizeHint = value => compact(value).toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
   const hintCoreOf = value => normalizeHint(value)
     .replace(/current|截图|其中|中的|页面|视频|封面|按钮|图标|控件|链接|点击|打开|进入/g, '')
@@ -643,7 +742,10 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     const evidence = normalizeHint(targetEvidence(element))
     const hintCore = hintCoreOf(rawHint)
     if (/点赞|大拇指|\blike\b|thumb/i.test(rawHint)) return /点赞|like|thumb|videolike|ariapressed/.test(evidence) ? 220 : 0
-    if (/评论|回复|\bcomment\b|\breply\b/i.test(rawHint)) return /评论|回复|comment|reply|editor|textarea|placeholder/.test(evidence) ? 220 : 0
+    if (/评论|回复|\bcomment\b|\breply\b/i.test(rawHint)) {
+      if (!/评论|回复|comment|reply|editor|textarea|placeholder/.test(evidence)) return 0
+      return isEditableTarget(element) ? 360 : 220
+    }
     if (/搜索|\bsearch\b/i.test(rawHint)) return /搜索|search/.test(evidence) ? 220 : 0
     if (/发送|提交|\bsend\b|\bsubmit\b/i.test(rawHint)) return /发送|提交|send|submit/.test(evidence) ? 220 : 0
     if (hintCore.length < 3) return 0
@@ -655,15 +757,19 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     const rawHint = compact(targetHint)
     const hintCore = hintCoreOf(rawHint)
     const hasIntent = /点赞|大拇指|\blike\b|thumb|评论|回复|\bcomment\b|\breply\b|搜索|\bsearch\b|发送|提交|\bsend\b|\bsubmit\b/i.test(rawHint)
+    const wantsEditable = /评论.*(?:输入|编辑)|回复.*(?:输入|编辑)|输入框|编辑框|comment.*(?:input|editor)|reply.*(?:input|editor)/i.test(rawHint)
     if (!rawHint || (!hasIntent && hintCore.length < 3)) return { target: initialTarget, clickX: originalX, clickY: originalY, snapped: false }
-    if (hintScore(initialTarget) > 0) return { target: initialTarget, clickX: originalX, clickY: originalY, snapped: false }
+    if (hintScore(initialTarget) > 0 && (!wantsEditable || isEditableTarget(initialTarget))) {
+      return { target: initialTarget, clickX: originalX, clickY: originalY, snapped: false }
+    }
 
     const candidateSelector = [
-      actionableSelector, 'textarea', 'input:not([type="hidden"])', '[contenteditable="true"]', '[title]', '[aria-label]',
+      actionableSelector, 'textarea', 'input:not([type="hidden"])', '[contenteditable="true"]', '[role="textbox"]',
+      'bili-comment-editor', 'bili-comments', '[title]', '[aria-label]',
     ].join(',')
     const uniqueTargets = []
     const seen = new Set()
-    for (const candidate of document.querySelectorAll(candidateSelector)) {
+    for (const candidate of deepQueryAll(candidateSelector)) {
       if (!visible(candidate) || disabled(candidate)) continue
       const resolved = chooseTarget(candidate)
       if (!(resolved instanceof Element) || !visible(resolved) || disabled(resolved) || seen.has(resolved)) continue
