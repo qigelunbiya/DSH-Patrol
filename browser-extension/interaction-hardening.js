@@ -154,6 +154,8 @@ async function interactionScreenshot(args) {
   let dataUrl
   let captureScale = 1
   let compactVisual = false
+  let targetPixelWidth
+  let captureDevicePixelRatio
   let captureGeometry = interactionVisibleTabCaptureGeometry(before)
 
   if (format === 'jpeg'
@@ -166,6 +168,8 @@ async function interactionScreenshot(args) {
         dataUrl = compact.dataUrl
         captureScale = compact.scale
         compactVisual = true
+        targetPixelWidth = compact.targetPixelWidth
+        captureDevicePixelRatio = compact.devicePixelRatio
         captureGeometry = compact.captureGeometry
       }
     } catch {
@@ -188,6 +192,8 @@ async function interactionScreenshot(args) {
     bytes: Math.floor(dataUrl.length * 0.75),
     compactVisual,
     captureScale,
+    ...(Number.isFinite(Number(targetPixelWidth)) ? { targetPixelWidth: Number(targetPixelWidth) } : {}),
+    ...(Number.isFinite(Number(captureDevicePixelRatio)) ? { captureDevicePixelRatio: Number(captureDevicePixelRatio) } : {}),
     ...(visualFrame || {}),
   }
 }
@@ -204,7 +210,13 @@ async function interactionCaptureCompactScreenshot(tabId, maxWidth, quality, bef
     const width = Number(viewport?.clientWidth)
     const height = Number(viewport?.clientHeight)
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return undefined
-    const scale = Math.max(0.1, Math.min(1, maxWidth / width))
+    const devicePixelRatio = Math.max(1, Number(before?.devicePixelRatio || 1))
+    // Page.captureScreenshot applies clip.scale in CSS space and then rasterizes
+    // at the page device scale. Treat maxWidth as the final encoded-pixel
+    // budget (like Desktop Automation's geometry-faithful frame), otherwise a
+    // DPR=2 page requested at maxWidth=1024 still becomes a ~2048px model image.
+    const estimatedPhysicalWidth = width * devicePixelRatio
+    const scale = Math.max(0.1, Math.min(1, maxWidth / estimatedPhysicalWidth))
     if (scale >= 0.995) return undefined
     const shot = await chrome.debugger.sendCommand(target, 'Page.captureScreenshot', {
       format: 'jpeg',
@@ -231,7 +243,13 @@ async function interactionCaptureCompactScreenshot(tabId, maxWidth, quality, bef
       captureHeight: height,
       captureMode: 'cdp-css-visual-viewport',
     }
-    return { dataUrl: `data:image/jpeg;base64,${shot.data}`, scale, captureGeometry }
+    return {
+      dataUrl: `data:image/jpeg;base64,${shot.data}`,
+      scale,
+      devicePixelRatio,
+      targetPixelWidth: maxWidth,
+      captureGeometry,
+    }
   } finally {
     if (attached) {
       try { await chrome.debugger.detach(target) } catch {}
@@ -1051,7 +1069,7 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
       return isBroadShellTarget(element) ? 0 : 120
     }
     if (/搜索|\bsearch\b/i.test(rawHint)) return /搜索|search/.test(evidence) ? 220 : 0
-    if (/发送|提交|\bsend\b|\bsubmit\b/i.test(rawHint)) return /发送|提交|send|submit/.test(evidence) ? 220 : 0
+    if (/发布|发表|发送|提交|\bpost\b|\bsend\b|\bsubmit\b/i.test(rawHint)) return /发布|发表|发送|提交|post|send|submit/.test(evidence) ? 320 : 0
     if (hintCore.length < 3) return 0
     if (evidence.includes(hintCore)) return 180 + Math.min(80, hintCore.length)
     if (evidence.length >= 4 && hintCore.includes(evidence)) return 80
@@ -1060,7 +1078,7 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
   const resolveHintTarget = (initialTarget, originalX, originalY) => {
     const rawHint = compact(targetHint)
     const hintCore = hintCoreOf(rawHint)
-    const hasIntent = /点赞|大拇指|\blike\b|thumb|评论|回复|\bcomment\b|\breply\b|搜索|\bsearch\b|发送|提交|\bsend\b|\bsubmit\b/i.test(rawHint)
+    const hasIntent = /点赞|大拇指|\blike\b|thumb|评论|回复|\bcomment\b|\breply\b|搜索|\bsearch\b|发布|发表|发送|提交|\bpost\b|\bsend\b|\bsubmit\b/i.test(rawHint)
     const wantsEditable = /评论.*(?:输入|编辑)|回复.*(?:输入|编辑)|输入框|编辑框|comment.*(?:input|editor)|reply.*(?:input|editor)/i.test(rawHint)
     if (!rawHint || (!hasIntent && hintCore.length < 3)) return { target: initialTarget, clickX: originalX, clickY: originalY, snapped: false }
     if (hintScore(initialTarget) > 0
