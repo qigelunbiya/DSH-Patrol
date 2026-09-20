@@ -482,19 +482,32 @@ async function interactionVisualClick(args) {
   const selectorHint = typeof args.selectorHint === 'string' ? args.selectorHint.trim() : ''
   if (selectorHint) {
     try {
-      const clicked = await sendDomCommand('click', { selector: selectorHint, tabId })
-      return {
-        ok: true,
-        selectorHint,
-        xRatio,
-        yRatio,
-        transport: 'visual-selector-replay',
-        targetStateChanged: false,
-        stateEvidence: 'recorded visual selector replayed through normal browser click',
-        ...(typeof clicked?.tag === 'string' ? { targetTag: clicked.tag } : {}),
-        ...(typeof clicked?.text === 'string' ? { targetText: clicked.text } : {}),
+      const validated = await interactionValidateVisualReplaySelector(tabId, selectorHint, args)
+      if (validated?.ok === true && validated.fingerprintMatched === true) {
+        const clicked = await sendDomCommand('click', { selector: selectorHint, tabId })
+        return {
+          ok: true,
+          selectorHint,
+          xRatio,
+          yRatio,
+          transport: 'visual-selector-replay+fingerprint-verified',
+          targetStateChanged: clicked?.targetStateChanged === true,
+          ...(typeof clicked?.stateEvidence === 'string' ? { stateEvidence: clicked.stateEvidence } : {
+            stateEvidence: 'recorded visual selector replayed only after CURRENT target fingerprint verification',
+          }),
+          ...(typeof validated.tag === 'string' ? { targetTag: validated.tag } : {}),
+          ...(typeof validated.role === 'string' && validated.role ? { targetRole: validated.role } : {}),
+          ...(typeof validated.text === 'string' && validated.text ? { targetText: validated.text } : {}),
+          ...(typeof validated.title === 'string' && validated.title ? { targetTitle: validated.title } : {}),
+          ...(typeof validated.ariaLabel === 'string' && validated.ariaLabel ? { targetAriaLabel: validated.ariaLabel } : {}),
+          ...(typeof validated.id === 'string' && validated.id ? { targetId: validated.id } : {}),
+          ...(typeof validated.className === 'string' && validated.className ? { targetClassName: validated.className } : {}),
+        }
       }
-    } catch {}
+    } catch {
+      // Selector drift is expected on dynamic pages. Do not physically click an
+      // unverified match; continue into semantic/CDP/geometry replay below.
+    }
   }
 
   const urlIdentity = typeof args.urlIdentity === 'string' ? args.urlIdentity.trim() : ''
@@ -538,6 +551,88 @@ async function interactionVisualClick(args) {
   const expectedAriaLabel = typeof args.expectedAriaLabel === 'string' ? args.expectedAriaLabel.trim() : ''
   const clicked = await interactionPerformVisualClick(tabId, xRatio, yRatio, current, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, typeof args.targetHint === 'string' ? args.targetHint.trim() : '')
   return interactionVisualClickResult(clicked, current, xRatio, yRatio, 'visual-coordinate-replay')
+}
+
+async function interactionValidateVisualReplaySelector(tabId, rawSelector, args) {
+  if (!chrome.scripting?.executeScript) return undefined
+  const parsed = parseFrameSelector(rawSelector)
+  // Persisted visual selectors are deliberately limited to document-addressable
+  // targets. Shadow/CDP-only targets replay through semantic/geometry recovery.
+  if (parsed.topFrame !== true) return undefined
+  const results = await chrome.scripting.executeScript({
+    target: { tabId, frameIds: [0] },
+    world: 'MAIN',
+    func: interactionMainWorldValidateVisualReplaySelector,
+    args: [parsed.selector, {
+      expectedTag: typeof args.expectedTag === 'string' ? args.expectedTag : '',
+      expectedRole: typeof args.expectedRole === 'string' ? args.expectedRole : '',
+      expectedTitle: typeof args.expectedTitle === 'string' ? args.expectedTitle : '',
+      expectedAriaLabel: typeof args.expectedAriaLabel === 'string' ? args.expectedAriaLabel : '',
+      targetTextHint: typeof args.targetTextHint === 'string' ? args.targetTextHint : '',
+      targetIdHint: typeof args.targetIdHint === 'string' ? args.targetIdHint : '',
+      targetClassHint: typeof args.targetClassHint === 'string' ? args.targetClassHint : '',
+    }],
+  })
+  const value = Array.isArray(results) ? results[0]?.result : undefined
+  return value && typeof value === 'object' ? value : undefined
+}
+
+function interactionMainWorldValidateVisualReplaySelector(selector, fingerprint = {}) {
+  const compact = value => String(value || '').replace(/\s+/g, ' ').trim()
+  const normalize = value => compact(value).toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
+  const roleOf = element => {
+    const explicit = compact(element.getAttribute?.('role') || '').toLowerCase()
+    if (explicit) return explicit
+    const tag = element.tagName?.toLowerCase?.() || ''
+    if (tag === 'button') return 'button'
+    if (tag === 'a' && element.getAttribute?.('href')) return 'link'
+    if (element instanceof HTMLTextAreaElement || element?.isContentEditable === true) return 'textbox'
+    if (element instanceof HTMLInputElement && !['button', 'submit', 'reset'].includes(String(element.type || '').toLowerCase())) return 'textbox'
+    return ''
+  }
+  let matches
+  try { matches = [...document.querySelectorAll(selector)] } catch { return { ok: false, fingerprintMatched: false, reason: 'invalid-selector' } }
+  const visible = matches.filter(element => {
+    const style = getComputedStyle(element)
+    const rect = element.getBoundingClientRect()
+    return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0 && rect.width > 0 && rect.height > 0
+  })
+  if (visible.length !== 1) return { ok: false, fingerprintMatched: false, reason: `selector-visible-count-${visible.length}` }
+  const element = visible[0]
+  const tag = element.tagName.toLowerCase()
+  const role = roleOf(element)
+  const title = compact(element.getAttribute('title') || '')
+  const ariaLabel = compact(element.getAttribute('aria-label') || '')
+  const id = compact(element.id || '')
+  const className = compact([...(element.classList || [])].join(' '))
+  const text = compact(element.innerText || element.textContent || ariaLabel || title || '').slice(0, 240)
+
+  if (fingerprint.expectedTag && tag !== String(fingerprint.expectedTag).toLowerCase()) return { ok: false, fingerprintMatched: false, reason: 'tag-mismatch' }
+  if (fingerprint.expectedRole && role !== String(fingerprint.expectedRole).toLowerCase()) return { ok: false, fingerprintMatched: false, reason: 'role-mismatch' }
+  if (fingerprint.expectedTitle && title !== String(fingerprint.expectedTitle)) return { ok: false, fingerprintMatched: false, reason: 'title-mismatch' }
+  if (fingerprint.expectedAriaLabel && ariaLabel !== String(fingerprint.expectedAriaLabel)) return { ok: false, fingerprintMatched: false, reason: 'aria-label-mismatch' }
+  if (fingerprint.targetIdHint && id !== String(fingerprint.targetIdHint)) return { ok: false, fingerprintMatched: false, reason: 'id-mismatch' }
+
+  const classHints = compact(fingerprint.targetClassHint).split(/\s+/)
+    .filter(Boolean)
+    .filter(token => !/^(?:active|selected|current|checked|focus|focused|hover|on|off)$/i.test(token))
+  if (classHints.length > 0 && !classHints.some(token => element.classList?.contains(token))) {
+    return { ok: false, fingerprintMatched: false, reason: 'class-mismatch' }
+  }
+  const textHint = normalize(fingerprint.targetTextHint)
+  if (textHint && !/^\d+$/.test(textHint)) {
+    const actual = normalize(text)
+    if (!actual || (!actual.includes(textHint) && !textHint.includes(actual))) {
+      return { ok: false, fingerprintMatched: false, reason: 'text-mismatch' }
+    }
+  }
+
+  const strongEvidence = Boolean(
+    fingerprint.expectedRole || fingerprint.expectedTitle || fingerprint.expectedAriaLabel
+    || fingerprint.targetIdHint || classHints.length > 0 || (textHint && !/^\d+$/.test(textHint)),
+  )
+  if (!strongEvidence) return { ok: false, fingerprintMatched: false, reason: 'insufficient-fingerprint' }
+  return { ok: true, fingerprintMatched: true, tag, role, title, ariaLabel, id, className, text }
 }
 
 async function interactionSetScroll(tabId, x, y) {
