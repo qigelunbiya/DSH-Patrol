@@ -84,13 +84,14 @@ export function registerPatrolActionTools(
 function createDefinitions(store: PatrolStore, runner: PatrolRunner, options: PatrolActionToolsOptions): ToolDefinition[] {
   const navigate = defineTool({
     name: 'patrol_navigate',
-    description: 'Navigate to a URL and record the step. Prefer this over patrol_browser_step so no nested JSON arguments object is needed.',
+    description: 'Recordable browser navigation. Supports action=navigate|back|forward|reload; url is required only for navigate. Use back/forward/reload for real browser-history recovery instead of synthesizing keyboard shortcuts.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
-      url: { type: 'string', required: true },
+      action: { type: 'string', enum: ['navigate', 'back', 'forward', 'reload'] },
+      url: { type: 'string', description: 'Required only when action=navigate (default).' },
       tabId: { type: 'integer' },
-      newTab: { type: 'boolean' },
+      newTab: { type: 'boolean', description: 'Only valid for action=navigate.' },
       expectedText: { type: 'string' },
       expectationMode: { type: 'string', enum: ['contains', 'not-contains'] },
       caseSensitive: { type: 'boolean' },
@@ -101,10 +102,22 @@ function createDefinitions(store: PatrolStore, runner: PatrolRunner, options: Pa
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
+      const action = args.action ?? 'navigate'
+      if (action === 'navigate' && (typeof args.url !== 'string' || args.url.trim() === '')) {
+        throw new Error('patrol_navigate action=navigate requires url')
+      }
+      if (action !== 'navigate' && args.newTab === true) {
+        throw new Error(`patrol_navigate action=${action} cannot use newTab=true`)
+      }
       return await recordAction(store, runner, options.maxSteps, exec, {
         ...common(args),
         tool: 'browser_navigate',
-        browserArgs: compactObject({ url: args.url, action: 'navigate', tabId: args.tabId, newTab: args.newTab }),
+        browserArgs: compactObject({
+          action,
+          url: action === 'navigate' ? args.url?.trim() : undefined,
+          tabId: args.tabId,
+          newTab: action === 'navigate' ? args.newTab : undefined,
+        }),
       })
     },
   })
