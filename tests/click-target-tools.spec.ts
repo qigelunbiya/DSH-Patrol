@@ -587,4 +587,37 @@ describe('semantic Patrol click target', () => {
       arguments: { selector: '#sms-login-tab' },
     })
   })
+
+  it('never treats child-tab navigation as success for an in-page semantic publish control', async () => {
+    const outcomes = createPatrolClickOutcomeTracker()
+    const { store, tool, exec } = await setup(async (name) => {
+      if (name === 'browser_read_page') return page('评论区', 'https://www.bilibili.com/video/BV-original')
+      if (name === 'browser_snapshot') return snapshot([], 'https://www.bilibili.com/video/BV-original')
+      if (name === 'browser_semantic_click') {
+        return {
+          ...atomic('cdp-pierced::publish-action', '发布'),
+          value: {
+            ...atomic('cdp-pierced::publish-action', '发布').value,
+            replaySelectorSafe: false,
+            openedTabId: 9,
+            openedTabUrl: 'https://www.bilibili.com/video/BV-wrong',
+            transport: 'atomic-semantic+cdp-publish-action+trusted-native-mouse',
+          },
+        }
+      }
+      throw new Error(`unexpected tool ${name}`)
+    }, outcomes)
+
+    const args = {
+      inspectionId: 'click-target',
+      stepName: '点击发布按钮发送评论',
+      locatorText: '发布',
+    }
+    const result = await tool.execute(args, exec)
+    expect(result).toMatch(/NOT recorded/)
+    expect(result).toMatch(/unexpectedly opened\/navigated|navigation is evidence of a wrong target/i)
+    expect((await store.load('click-target')).steps).toHaveLength(0)
+    expect(outcomes.unverifiedPhysicalClicks(args)).toBe(1)
+  })
+
 })
