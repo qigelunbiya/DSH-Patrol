@@ -28,6 +28,15 @@ function actionHints(tool: string, args: JsonObject): string[] {
     const selector = stringArg(args, 'selector')
     return [selector === undefined ? '点击当前已解析的可见目标。' : `点击 selector ${selector}。`]
   }
+  if (tool === 'browser_visual_click') {
+    const xRatio = numberArg(args, 'xRatio')
+    const yRatio = numberArg(args, 'yRatio')
+    const selector = stringArg(args, 'selectorHint')
+    return [
+      `视觉后备点击归一化坐标 (${xRatio ?? '?'}, ${yRatio ?? '?'})。`,
+      selector === undefined ? '重放时校验 URL/滚动/viewport 后使用记录坐标。' : `重放优先尝试视觉命中时发现的 selector ${selector}，失败后才使用记录坐标。`,
+    ]
+  }
   if (tool === 'browser_type' || tool === 'browser_type_credential' || tool === 'browser_type_transient_ref' || tool === 'browser_type_totp_profile') {
     const selector = stringArg(args, 'selector')
     return [selector === undefined ? '向目标输入框填写值。' : `向 selector ${selector} 填写值。`]

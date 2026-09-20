@@ -36,7 +36,7 @@ export function selectSuccessfulTeachingPath(
   const requestedCount = keep.size
   for (const id of keep) {
     const step = byId.get(id)
-    if (step?.kind !== 'tool' || step.tool !== 'browser_click') continue
+    if (step?.kind !== 'tool' || !['browser_click', 'browser_visual_click'].includes(step.tool)) continue
     if (step.teaching?.status === 'unverified') {
       throw new Error(`successful path step ${id} (${step.name}) is explicitly unverified and cannot enter a reusable flow`)
     }
@@ -184,7 +184,7 @@ function assertCausalBusinessPath(steps: readonly InspectionStep[]): void {
   if (lastInput < 0) return
   const advancesAfterInput = steps.slice(lastInput + 1).some(step =>
     step.kind === 'tool' && [
-      'browser_click', 'browser_press', 'browser_select', 'browser_navigate',
+      'browser_click', 'browser_visual_click', 'browser_press', 'browser_select', 'browser_navigate',
       'desktop_click_target', 'desktop_click_ocr_text', 'desktop_click_coordinates', 'desktop_press', 'desktop_press_target', 'desktop_hotkey',
       'desktop_paste', 'desktop_paste_target', 'desktop_drag', 'desktop_launch_app', 'desktop_open_path', 'desktop_activate_window',
     ].includes(step.tool),
@@ -208,7 +208,7 @@ function updateStructuralFlowHealth(definition: InspectionDefinition): void {
   if (lastInput >= 0) {
     const advancesAfterInput = steps.slice(lastInput + 1).some(step =>
       step.kind === 'tool' && [
-        'browser_click', 'browser_press', 'browser_select', 'browser_navigate',
+        'browser_click', 'browser_visual_click', 'browser_press', 'browser_select', 'browser_navigate',
         'desktop_click_target', 'desktop_click_ocr_text', 'desktop_click_coordinates', 'desktop_press', 'desktop_hotkey',
         'desktop_paste', 'desktop_drag', 'desktop_launch_app', 'desktop_open_path', 'desktop_activate_window',
       ].includes(step.tool),
@@ -217,7 +217,7 @@ function updateStructuralFlowHealth(definition: InspectionDefinition): void {
       warnings.push('输入步骤之后没有任何已记录的提交/点击/选择/导航动作；该流程很可能缺少登录提交或后续业务点击。')
     }
   }
-  const unverifiedClicks = steps.filter(step => step.kind === 'tool' && step.tool === 'browser_click' && step.teaching?.status === 'unverified')
+  const unverifiedClicks = steps.filter(step => step.kind === 'tool' && ['browser_click', 'browser_visual_click'].includes(step.tool) && step.teaching?.status === 'unverified')
   if (unverifiedClicks.length > 0) warnings.push(`仍有 ${unverifiedClicks.length} 个未验证点击，不可视为可复用成功路径。`)
   warnings.push(...checklistCoverageWarnings(definition, steps))
   definition.metadata.flowHealth = {
@@ -300,6 +300,7 @@ function flowActionForStep(step: ToolStep): ChecklistAction | undefined {
     || step.tool === 'desktop_open_path'
     || step.tool === 'desktop_activate_window') return 'navigate'
   if (step.tool === 'browser_click'
+    || step.tool === 'browser_visual_click'
     || step.tool === 'browser_press'
     || step.tool === 'browser_select'
     || step.tool === 'desktop_click_target'
@@ -447,6 +448,7 @@ function typingTargetIdentity(step: ToolStep): string {
 function isInteractionBoundary(step: InspectionStep): boolean {
   if (step.kind === 'checkpoint') return true
   return step.tool === 'browser_click'
+    || step.tool === 'browser_visual_click'
     || step.tool === 'browser_press'
     || step.tool === 'browser_navigate'
     || step.tool === 'browser_detect_auth_challenge'

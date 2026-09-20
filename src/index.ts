@@ -38,6 +38,7 @@ import { PATROL_TEST_MODE_OVERRIDE_PROMPT, resolvePatrolRuntimePolicy } from './
 import { registerPatrolTools } from './tools.js'
 import { PATROL_TOTP_PROMPT, registerPatrolTotpTools } from './totp-tools.js'
 import { PATROL_TRANSIENT_INPUT_PROMPT, registerPatrolTransientInputTools } from './transient-input-tools.js'
+import { registerPatrolVisualClickTool } from './visual-click-tools.js'
 import { registerPatrolWorkspaceTools } from './workspace-tools.js'
 
 export * from './types.js'
@@ -69,6 +70,7 @@ export * from './recovery-guard.js'
 export * from './recovery-tools.js'
 export * from './totp-tools.js'
 export * from './transient-input-tools.js'
+export * from './visual-click-tools.js'
 export * from './manual-verification-guard.js'
 export * from './model-route-recovery.js'
 export * from './observation-guard.js'
@@ -190,6 +192,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   ctx.effect(
     () => registerPatrolClickTargetTool(ctx, store, runner, { maxSteps: resolved.maxSteps, clickOutcomes }),
     'dsh-patrol: semantic current-page click target resolver',
+  )
+  ctx.effect(
+    () => registerPatrolVisualClickTool(ctx, store, runner, { maxSteps: resolved.maxSteps, clickOutcomes }),
+    'dsh-patrol: recordable screenshot-bound browser visual click fallback',
   )
   ctx.effect(
     () => registerPatrolPageUnderstandingTools(ctx, store, runner),
@@ -388,5 +394,5 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
   const guardMode = runtimePolicy.testMode ? 'test-operational-click-fallbacks' : 'normal-strict'
   const plannerMode = runtimePolicy.testMode ? 'advisory' : 'strict'
-  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; guard-mode=${guardMode}; build=${TEST_MODE_BUILD_MARKER}; scheduler=enabled; credential helper=optional; transient sensitive replay=enabled; encrypted TOTP profile replay=enabled; semantic click resolver=enabled; page-understanding-planner=${plannerMode}; native select=enabled; task-checklist=required; secret-safe creation=enabled; flat action tools=enabled; OpenXML Excel v5 tools=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled; desktop automation=enabled; desktop permissions=unrestricted`)
+  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; guard-mode=${guardMode}; build=${TEST_MODE_BUILD_MARKER}; scheduler=enabled; credential helper=optional; transient sensitive replay=enabled; encrypted TOTP profile replay=enabled; semantic click resolver=enabled; browser visual fallback=enabled; page-understanding-planner=${plannerMode}; native select=enabled; task-checklist=required; secret-safe creation=enabled; flat action tools=enabled; OpenXML Excel v5 tools=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled; desktop automation=enabled; desktop permissions=unrestricted`)
 }

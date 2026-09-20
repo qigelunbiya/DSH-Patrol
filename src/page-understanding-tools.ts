@@ -41,6 +41,7 @@ interface PlanningGuardState {
   analyzed: boolean
   businessKey: string
   strategyAttempts: number
+  visualAttempted: boolean
 }
 
 interface SnapshotElement {
@@ -59,15 +60,16 @@ export interface PageUnderstandingPlan {
 
 export const PATROL_PAGE_UNDERSTANDING_PROMPT = `DSH Patrol 页面理解与执行规划（NORMAL/TEST MODE 都必须遵守）：
 - taskChecklist 只描述业务动作；真正执行页面动作前，要根据 CURRENT DOM/iframe/modal/structured table 判断该业务动作对应的真实前端结构，不要把用户文字直接翻译成 nth-of-type 后盲点。
-- 唯一且明显的文本目标可直接 patrol_click_target。第一次定位失败、出现 ambiguous、同名控件有多个、目标位于表格行/弹窗/iframe 时，必须先 patrol_analyze_step，再执行一次有新证据支持的恢复方案；同一业务点击总共最多两种策略，第二种仍失败就停止并报告具体阻塞。
+- 唯一且明显的文本目标可直接 patrol_click_target。第一次定位失败、出现 ambiguous、同名控件有多个、目标位于表格行/弹窗/iframe 时，必须先 patrol_analyze_step，再执行一次有新证据支持的 DOM/CSS 恢复方案；同一业务点击最多两种 DOM/CSS/semantic 策略。第二种仍无法定位/点击时立即停止 selector 探索；若 CURRENT 页面截图中肉眼明确可见该业务控件，则允许一次视觉模型后备：patrol_observe(includeImage=true) → 读取该次 visualFrameId → 按同一张图中控件中心给出 xRatio/yRatio → patrol_visual_click_target。
 - patrol_analyze_step 永远不写 Runbook。它优先把“行身份 + 行内动作”绑定，例如“目标地址 + RDP”，避免只按 [RDP] 命中多行。不要把分析器给出的 selector 再扩写成更长的 nth-of-type，也不要在分析失败后继续 browser_count/snapshot/read_page 猜选择器。
 - selector 参数只接受当前浏览器 querySelector 层支持的 CSS。严禁使用 jQuery/Playwright/XPath 方言：:contains(...)、:has-text(...)、text=...、//...、.//...、xpath=...。当 locatorText 已知时，优先只传 locatorText 给 patrol_click_target，不要额外猜 selector；patrol_click_target 会在 atomic semantic 失败时自动检查唯一 exact [title="..."]。如果 locatorText 已提供但 selector hint 是这些非法方言，运行时会丢弃这个可选 hint 而继续语义定位，不能让坏 hint 阻塞正确点击。title-backed 树节点若直接调用 selector，则只使用 CURRENT snapshot/analyze 给出的原生 CSS。
-- 业务点击优先 patrol_click_target；它会在一次调用内完成语义定位、唯一 selector fallback、结果验证与成功记录。若物理点击已发生但结果未验证，必须先刷新 CURRENT 证据并 analyze，最多再恢复一次；两次物理点击均未验证就停止，避免重复提交。定位阶段同样受两策略上限约束，ambiguous/not-found 不能无限重试。
-- 运行时若返回“策略预算已耗尽/HARD STOP”，必须立即结束这个点击的 selector 探索；禁止继续 patrol_analyze_step、patrol_click、patrol_click_target 或低层 browser_count 去换一种说法重复同一件事。只用一条自然语言说明缺少什么证据。HARD STOP 后必须直接结束当前 assistant turn，不得继续生成“让我再尝试/换一个 selector/从截图看”等计划段落。
-- 不要为每个内部工具调用向用户重复“我再观察一下/我再试一下/让我换个选择器”。只有需要用户输入/确认、遇到不可恢复阻塞、或任务最终完成时才发自然语言说明。任何没有新工具结果或新页面证据支持的 selector 推测最多写一次；禁止在同一回复里复述相同句式、相同 DOM 猜测或相同“尝试更具体 selector”计划。
-- 教学轨迹不等于 Runbook。诊断 snapshot/read、失败点击、重复输入、临时等待都不是最终流程。任务完成后必须 patrol_finalize_flow，只保留真正完成 taskChecklist 的已验证业务路径，再确认流程。已有非空 DRAFT 缺 checklist 时使用非破坏性 backfill，不能因此清空/重建。
+- 业务点击优先 patrol_click_target；若物理点击已发生但结果未验证，最多只允许一次有新证据支持的恢复点击；两次物理点击均未验证就 HARD STOP，避免重复提交。定位阶段两种 DOM/CSS 策略耗尽但尚未发生两次未验证物理点击时，不得继续猜 selector，而应进入单次视觉后备。
+- 视觉后备不是第三种 selector。patrol_visual_click_target 必须使用 patrol_observe(includeImage=true) 刚刚返回的 visualFrameId；底层验证 tab、URL、scroll、zoom、viewport 与截图一致才点击。教学成功后保存为 browser_visual_click：重放优先使用视觉命中时发现的 stable selector；若 selector 漂移，再恢复记录的 URL/scroll/viewport 并使用归一化 xRatio/yRatio。视觉点击成功后该 screenshot frame 立即失效，下一次必须重新截图。
+- 运行时若返回“DOM selector 策略已耗尽”，立即停止 patrol_analyze_step/patrol_click_target/patrol_click/browser_count/snapshot/read_page 的 selector 探索；只有 CURRENT 图片中明确可见目标时才走一次 patrol_observe(includeImage=true)+patrol_visual_click_target。视觉后备失败/未验证，或者已有两次未验证物理点击时才是最终 HARD STOP；此后必须直接结束当前 assistant turn。
+- 不要为每个内部工具调用向用户重复“我再观察一下/我再试一下/让我换个选择器”。只有需要用户输入/确认、遇到不可恢复阻塞、或任务最终完成时才发自然语言说明。任何没有新工具结果或新页面证据支持的 selector 推测最多写一次。
+- 教学轨迹不等于 Runbook。诊断 snapshot/read、失败点击、重复输入、临时等待都不是最终流程。任务完成后必须 patrol_finalize_flow，只保留真正完成 taskChecklist 的已验证业务路径，再确认流程。
 - targetUrl/browser_navigate 必须是纯 http/https URL。若对话渲染成 Markdown 链接 [url](url)，还原 href 后再调用工具，禁止把 Markdown 链接字符串写进 Flow JSON。
-- 图片字符验证码不走页面点击规划器。TEST MODE 必须先调用 patrol_solve_current_image_code，让 browser_detect_auth_challenge 走 Windows OCR/本地 OCR；只有明确 testModeFallback=true / strategy=model-visual-test 并拿到一次性 fallbackToken 时才允许 browser_capture_image_code_visual。没有 fallbackToken 时禁止模型视觉。NORMAL/无人值守重放继续使用动态本地 solver。OTP/TOTP 继续走专用工具。`
+- 图片字符验证码不走页面点击规划器，也绝对禁止 patrol_visual_click_target。验证码保持现有 patrol_solve_current_image_code → Windows OCR/本地 OCR 专用链路；浏览器视觉点击只用于普通业务控件，不能拿来点/猜验证码。OTP/TOTP 继续走专用工具。`
 
 /** Always-on even in TEST MODE: bound model-facing retry strategies. */
 export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = createPatrolClickOutcomeTracker()) {
@@ -88,7 +90,7 @@ export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = 
     for (const [key, value] of states) if (now - value.touchedAt > STATE_TTL_MS) states.delete(key)
     let state = states.get(inspectionId)
     if (state === undefined) {
-      state = { touchedAt: now, analyzed: false, businessKey: '', strategyAttempts: 0 }
+      state = { touchedAt: now, analyzed: false, businessKey: '', strategyAttempts: 0, visualAttempted: false }
       states.set(inspectionId, state)
     }
     state.touchedAt = now
@@ -98,7 +100,6 @@ export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = 
       states.delete(inspectionId)
       return undefined
     }
-
     if (PHASE_PROGRESS_TOOLS.has(name)) {
       outcomes.clearInspection(inspectionId)
       states.delete(inspectionId)
@@ -108,31 +109,47 @@ export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = 
     if (name === 'patrol_analyze_step') {
       const key = businessKey(args.task, args.locatorText)
       alignBusinessState(state, key)
-      if (state.strategyAttempts >= 2) return strategyHardStop()
+      if (state.visualAttempted) return strategyHardStop('这个业务目标已经执行过视觉后备')
+      if (state.strategyAttempts >= 2) return visualFallbackStop()
       if (state.analyzed) {
-        return 'DSH Patrol 页面规划器：CURRENT 分析已经为这个业务点击执行过一次。不要重复 analyze/read/snapshot/count；请执行分析给出的唯一恢复方案，若仍失败就停止。'
+        return 'DSH Patrol 页面规划器：CURRENT 分析已经为这个业务点击执行过一次。不要重复 analyze/read/snapshot/count；请执行分析给出的唯一恢复方案。'
       }
       state.analyzed = true
       return undefined
     }
-    if (!CLICK_TOOLS.has(name)) return undefined
 
+    if (name === 'patrol_visual_click_target') {
+      const key = businessKey(args.stepName, args.targetHint)
+      alignBusinessState(state, key)
+      const unverified = outcomes.unverifiedPhysicalClicks(args)
+      if (unverified >= 2) return strategyHardStop('同一业务动作已有两次未验证的物理点击')
+      if (state.strategyAttempts < 2) {
+        return 'DSH Patrol 页面规划器：视觉点击是两种 DOM/CSS/semantic 策略耗尽后的最后后备。当前不允许提前用坐标绕过 DOM。'
+      }
+      if (state.visualAttempted) return strategyHardStop('这个业务目标的一次视觉后备已经用完')
+      state.visualAttempted = true
+      state.analyzed = false
+      return undefined
+    }
+
+    if (!CLICK_TOOLS.has(name)) return undefined
     const key = businessKey(args.stepName, args.locatorText)
     alignBusinessState(state, key)
+    if (state.visualAttempted) return strategyHardStop('这个业务目标已经执行过视觉后备')
 
     if (name === 'patrol_click_target') {
       const unverified = outcomes.unverifiedPhysicalClicks(args)
       if (unverified >= 2) return strategyHardStop('同一业务动作已有两次未验证的物理点击')
-      if (state.strategyAttempts >= 2) return strategyHardStop()
+      if (state.strategyAttempts >= 2) return visualFallbackStop()
       if ((unverified === 1 || state.strategyAttempts === 1) && !state.analyzed) {
-        return 'DSH Patrol 页面规划器：这个业务点击的第一种策略已经执行但没有形成可复用成功结果。本次点击未执行；只允许先调用一次 patrol_analyze_step 获取新的 CURRENT 证据，然后执行最后一种恢复策略。'
+        return 'DSH Patrol 页面规划器：这个业务点击的第一种策略已经执行但没有形成可复用成功结果。本次点击未执行；只允许先调用一次 patrol_analyze_step 获取新的 CURRENT DOM 证据，然后执行最后一种 DOM 恢复策略。'
       }
       state.strategyAttempts += 1
       state.analyzed = false
       return undefined
     }
 
-    if (state.strategyAttempts >= 2) return strategyHardStop()
+    if (state.strategyAttempts >= 2) return visualFallbackStop()
     if (!state.analyzed) {
       return 'DSH Patrol 页面规划器：不要直接猜 CSS。先调用 patrol_analyze_step，提供 taskChecklist 中当前业务动作，再基于 CURRENT DOM/iframe/modal/structured table 方案执行；也可直接使用会自行校验的 patrol_click_target。'
     }
@@ -141,7 +158,6 @@ export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = 
     return undefined
   }
 }
-
 function unsupportedSelectorSyntax(name: string, args: Record<string, unknown>): string | undefined {
   if (!CSS_SELECTOR_TOOLS.has(name)) return undefined
   const selector = cleanString(args.selector)
@@ -168,6 +184,7 @@ function alignBusinessState(state: PlanningGuardState, key: string): void {
   state.businessKey = key
   state.analyzed = false
   state.strategyAttempts = 0
+  state.visualAttempted = false
 }
 
 function businessKey(primary: unknown, locator: unknown): string {
@@ -179,8 +196,12 @@ function businessKey(primary: unknown, locator: unknown): string {
     .slice(0, 220)
 }
 
-function strategyHardStop(reason = '同一业务点击的两种定位/执行策略都已用完'): string {
-  return `DSH Patrol 页面规划器 HARD STOP：${reason}。本次操作未继续执行。禁止再用 patrol_analyze_step、patrol_click_target、patrol_click、browser_count/snapshot/read_page 猜第三种 selector；请报告当前页面无法唯一定位该业务目标，等待新的页面证据或用户决策。`
+function visualFallbackStop(): string {
+  return 'DSH Patrol 页面规划器：DOM selector 策略已耗尽。本次 selector 操作未继续执行；禁止再猜第三种 CSS/文本定位。如果 CURRENT 页面截图中明确可见目标，只允许 patrol_observe(includeImage=true) 获取一张新截图和 visualFrameId，然后执行一次 patrol_visual_click_target；否则停止并报告缺少视觉证据。'
+}
+
+function strategyHardStop(reason = '同一业务点击的安全恢复预算已耗尽'): string {
+  return `DSH Patrol 页面规划器 HARD STOP：${reason}。本次操作未继续执行。禁止继续 DOM selector 或视觉坐标尝试；请报告当前页面无法安全完成该业务目标。`
 }
 
 export function registerPatrolPageUnderstandingTools(ctx: Context, store: PatrolStore, runner: PatrolRunner): () => void {

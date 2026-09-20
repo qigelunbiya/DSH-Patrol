@@ -1,0 +1,313 @@
+import type { Context } from '@deepseek-ai/cordis'
+import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
+import { createPatrolClickOutcomeTracker, type PatrolClickOutcomeTracker } from './click-retry-state.js'
+import { verifyPostClickExpectation } from './post-click-verification.js'
+import { assertSafePersistentText } from './security.js'
+import { stepExecutionNotes } from './step-notes.js'
+import { installTeachingRunbookFilter } from './teaching-runbook-filter.js'
+import type { PatrolRunner } from './runner.js'
+import { assertPersistedTaskChecklist, type PatrolStore } from './store.js'
+import type { InspectionDefinition, InspectionStep, JsonObject, StepCondition, TextExpectation, ToolStep } from './types.js'
+
+const TEXT_OUTPUT = {
+  schema: { type: 'string' as const },
+  render: (_args: unknown, value: string) => [{ type: 'text' as const, text: value }],
+}
+const AUTO_VERIFY_DELAYS_MS = [0, 200, 500, 1000, 2000] as const
+const IMAGE_CODE_HINT = /(captcha|image[-_ ]?code|img[-_ ]?code|验证码|校验码|图形码|图片码)/i
+
+interface PageState {
+  url: string
+  text: string
+  elementSignatures: Set<string>
+}
+interface StateChangeVerification {
+  ok: boolean
+  attempts: number
+  evidence?: string
+}
+export interface PatrolVisualClickOptions {
+  maxSteps: number
+  clickOutcomes?: PatrolClickOutcomeTracker
+}
+
+export function registerPatrolVisualClickTool(
+  ctx: Context,
+  store: PatrolStore,
+  runner: PatrolRunner,
+  options: PatrolVisualClickOptions,
+): () => void {
+  installTeachingRunbookFilter(store)
+  const outcomes = options.clickOutcomes ?? createPatrolClickOutcomeTracker()
+  const tool = defineTool({
+    name: 'patrol_visual_click_target',
+    description: 'LAST-RESORT browser click after two DOM/CSS/semantic strategies for the same business target are exhausted. First call patrol_observe(includeImage=true), inspect that CURRENT image, then pass its visualFrameId plus the visible target center as xRatio/yRatio (0..1). Patrol binds the click to exactly that screenshot viewport, verifies business state, and records a reusable browser_visual_click step. Never use for image-code/CAPTCHA.',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+      stepName: { type: 'string', required: true },
+      frameId: { type: 'string', required: true },
+      xRatio: { type: 'number', required: true },
+      yRatio: { type: 'number', required: true },
+      targetHint: { type: 'string' },
+      tabId: { type: 'integer' },
+      expectedText: { type: 'string' },
+      expectationMode: { type: 'string', enum: ['contains', 'not-contains'] },
+      caseSensitive: { type: 'boolean' },
+      conditionSourceStepId: { type: 'string' },
+      conditionExpectedText: { type: 'string' },
+      conditionMode: { type: 'string', enum: ['contains', 'not-contains'] },
+      notes: { type: 'string' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec: ToolRunContext) {
+      if (!Number.isFinite(args.xRatio) || !Number.isFinite(args.yRatio)
+        || args.xRatio < 0 || args.xRatio > 1 || args.yRatio < 0 || args.yRatio > 1) {
+        throw new Error('xRatio/yRatio must be finite numbers between 0 and 1')
+      }
+      assertSafePersistentText(args.stepName, 'stepName')
+      if (args.targetHint !== undefined) assertSafePersistentText(args.targetHint, 'targetHint')
+      if (args.expectedText !== undefined) assertSafePersistentText(args.expectedText, 'expectedText')
+      if (args.conditionExpectedText !== undefined) assertSafePersistentText(args.conditionExpectedText, 'conditionExpectedText')
+      if (args.notes !== undefined) assertSafePersistentText(args.notes, 'step notes')
+
+      if (IMAGE_CODE_HINT.test([args.stepName, args.targetHint ?? ''].join(' '))) {
+        throw new Error('browser visual click is forbidden for image-code/CAPTCHA. Keep the existing Patrol Windows/local OCR image-code solver path.')
+      }
+
+      const definition = await loadEditable(store, args.inspectionId, options.maxSteps)
+      const expectation = optionalExpectation(args.expectedText, args.expectationMode, args.caseSensitive)
+      const beforeState = expectation.expectation === undefined ? await capturePageState(runner, exec, args.tabId) : undefined
+      const clicked = await runner.dispatch('browser_visual_click', compactObject({
+        frameId: args.frameId,
+        xRatio: args.xRatio,
+        yRatio: args.yRatio,
+        tabId: args.tabId,
+      }), exec)
+      if (!clicked.ok) return `Visual fallback click failed and was NOT recorded. ${clicked.error ?? clicked.text ?? 'Unknown browser visual click error'}`
+
+      let verificationMethod: NonNullable<ToolStep['teaching']>['method']
+      let verificationEvidence = ''
+      let verificationAttempts = 1
+      if (expectation.expectation !== undefined) {
+        const verified = await verifyPostClickExpectation(
+          (toolName, toolArgs, toolExec) => runner.dispatch(toolName, toolArgs, toolExec),
+          exec,
+          expectation.expectation,
+          args.tabId,
+        )
+        verificationAttempts = verified.attempts
+        if (!verified.ok) {
+          outcomes.recordUnverifiedPhysicalClick(args)
+          return [
+            'Visual click executed but was NOT recorded because the requested business expectation was not reached.',
+            verified.error ?? 'unknown expected-text verification error',
+            clicked.text,
+          ].filter(Boolean).join('\n')
+        }
+        verificationMethod = 'expected-text'
+        verificationEvidence = `${expectation.expectation.mode} ${JSON.stringify(expectation.expectation.value)}`
+      } else if (objectBoolean(clicked.value, 'targetStateChanged') === true) {
+        verificationMethod = 'state-change'
+        verificationEvidence = objectString(clicked.value, 'stateEvidence') ?? 'clicked visual target changed its own CURRENT DOM state'
+      } else {
+        const verified = await verifyAutomaticStateChange(runner, exec, beforeState, args.tabId)
+        verificationAttempts = verified.attempts
+        if (!verified.ok) {
+          outcomes.recordUnverifiedPhysicalClick(args)
+          return [
+            'Visual click executed but was NOT recorded because no meaningful CURRENT target/page/DOM state change could be verified.',
+            clicked.text,
+            'Do not retry with the same screenshot. Capture a fresh visual observation before any further decision.',
+          ].filter(Boolean).join('\n')
+        }
+        verificationMethod = 'state-change'
+        verificationEvidence = verified.evidence ?? 'CURRENT page/DOM changed after visual click'
+      }
+
+      const selectorHint = objectString(clicked.value, 'selectorHint')
+      const urlIdentity = objectString(clicked.value, 'urlIdentity')
+      const viewportWidth = objectNumber(clicked.value, 'viewportWidth')
+      const viewportHeight = objectNumber(clicked.value, 'viewportHeight')
+      const scrollX = objectNumber(clicked.value, 'scrollX')
+      const scrollY = objectNumber(clicked.value, 'scrollY')
+      if (urlIdentity === undefined || viewportWidth === undefined || viewportHeight === undefined || scrollX === undefined || scrollY === undefined) {
+        outcomes.recordUnverifiedPhysicalClick(args)
+        return 'Visual click reached a verified state but returned incomplete replay geometry, so it was NOT persisted. Capture a fresh visual observation and reteach the target.'
+      }
+
+      const stepArguments = compactObject({
+        xRatio: args.xRatio,
+        yRatio: args.yRatio,
+        selectorHint,
+        urlIdentity,
+        viewportWidth,
+        viewportHeight,
+        viewportScale: objectNumber(clicked.value, 'viewportScale'),
+        scrollX,
+        scrollY,
+        expectedTag: objectString(clicked.value, 'targetTag'),
+        expectedRole: objectString(clicked.value, 'targetRole'),
+      })
+      const condition = optionalCondition(args.conditionSourceStepId, args.conditionExpectedText, args.conditionMode)
+      const targetNote = args.targetHint?.trim() ? `视觉目标：${args.targetHint.trim()}` : '视觉目标：来自 CURRENT screenshot 的明确控件中心点'
+      const providedNotes = [targetNote, args.notes?.trim()].filter(Boolean).join('\n')
+      const step: ToolStep = {
+        id: nextStepId(definition.steps),
+        kind: 'tool',
+        name: args.stepName,
+        tool: 'browser_visual_click',
+        arguments: stepArguments,
+        ...expectation,
+        ...condition,
+        teaching: { status: 'verified', method: verificationMethod, evidence: verificationEvidence },
+        ...(args.targetHint?.trim() ? { taskHint: args.targetHint.trim() } : {}),
+        notes: stepExecutionNotes({
+          tool: 'browser_visual_click',
+          args: stepArguments,
+          ...expectation,
+          ...condition,
+          providedNotes,
+        }),
+        recordedAt: new Date().toISOString(),
+      }
+      definition.steps.push(step)
+      definition.schemaVersion = '0.2'
+      definition.metadata.updatedAt = new Date().toISOString()
+      delete definition.metadata.flowHealth
+      await store.save(definition)
+      outcomes.recordVerified(args)
+
+      return [
+        `Executed and recorded ${step.id} (browser_visual_click) after CURRENT visual-state verification.`,
+        `Visual point: xRatio=${args.xRatio.toFixed(4)}, yRatio=${args.yRatio.toFixed(4)}.`,
+        selectorHint
+          ? `Replay prefers discovered selector ${JSON.stringify(selectorHint)}, then uses guarded normalized coordinates only if selector replay fails.`
+          : 'Replay uses the recorded normalized visual point with URL/scroll/viewport guards.',
+        `Verification: ${verificationMethod}, ${verificationEvidence}, attempts=${verificationAttempts}.`,
+        clicked.text,
+      ].filter(Boolean).join('\n')
+    },
+  })
+  return ctx.tools.register(tool)
+}
+
+async function capturePageState(runner: PatrolRunner, exec: ToolRunContext, tabId: number | undefined): Promise<PageState | undefined> {
+  const [page, snapshot] = await Promise.all([
+    runner.dispatch('browser_read_page', compactObject({ maxChars: 12000, tabId }), exec),
+    runner.dispatch('browser_snapshot', compactObject({ maxElements: 180, includeHidden: false, tabId }), exec),
+  ])
+  if (!page.ok && !snapshot.ok) return undefined
+  return {
+    url: objectString(page.value, 'url') ?? objectString(snapshot.value, 'url') ?? '',
+    text: normalizePageText(objectString(page.value, 'text') ?? page.text ?? ''),
+    elementSignatures: snapshotElementSignatures(snapshot.value),
+  }
+}
+async function verifyAutomaticStateChange(runner: PatrolRunner, exec: ToolRunContext, before: PageState | undefined, tabId: number | undefined): Promise<StateChangeVerification> {
+  if (before === undefined) return { ok: false, attempts: 0 }
+  for (let index = 0; index < AUTO_VERIFY_DELAYS_MS.length; index += 1) {
+    const delayMs = AUTO_VERIFY_DELAYS_MS[index]!
+    if (delayMs > 0) await sleep(delayMs)
+    const after = await capturePageState(runner, exec, tabId)
+    if (after === undefined) continue
+    const evidence = stateChangeEvidence(before, after)
+    if (evidence !== undefined) return { ok: true, attempts: index + 1, evidence }
+  }
+  return { ok: false, attempts: AUTO_VERIFY_DELAYS_MS.length }
+}
+function stateChangeEvidence(before: PageState, after: PageState): string | undefined {
+  if (before.url && after.url && before.url !== after.url) return `URL changed from ${safeStateUrl(before.url)} to ${safeStateUrl(after.url)}`
+  const added = [...after.elementSignatures].filter(signature => !before.elementSignatures.has(signature))
+  if (added.length > 0) return `new interactive DOM: ${shortStateEvidence(added[0]!)}`
+  if (before.text !== after.text) {
+    const lengthDelta = Math.abs(before.text.length - after.text.length)
+    if (lengthDelta >= 12 || !before.text || !after.text) return `visible page text changed (${before.text.length} -> ${after.text.length} chars)`
+  }
+  return undefined
+}
+function snapshotElementSignatures(value: unknown): Set<string> {
+  const out = new Set<string>()
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return out
+  const elements = (value as Record<string, unknown>).elements
+  if (!Array.isArray(elements)) return out
+  for (const raw of elements) {
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) continue
+    const element = raw as Record<string, unknown>
+    const selector = cleanString(element.selector) ?? ''
+    const text = cleanString(element.text) ?? ''
+    const tag = cleanString(element.tag) ?? ''
+    const role = cleanString(element.role) ?? ''
+    if (!selector && !text) continue
+    out.add(`selector=${selector}|tag=${tag}|role=${role}|text=${normalizePageText(text)}`)
+  }
+  return out
+}
+async function loadEditable(store: PatrolStore, inspectionId: string, maxSteps: number): Promise<InspectionDefinition> {
+  const definition = await store.load(inspectionId)
+  if (definition.status !== 'draft') throw new Error(`inspection ${definition.id} is ${definition.status}, not draft; call patrol_begin_edit before teaching a visual click`)
+  assertPersistedTaskChecklist(definition)
+  if (definition.steps.length >= maxSteps) throw new Error(`runbook reached maxSteps=${maxSteps}`)
+  return definition
+}
+function nextStepId(steps: readonly InspectionStep[]): string {
+  let max = 0
+  for (const step of steps) {
+    const match = /^step-(\d+)$/.exec(step.id)
+    if (match !== null) max = Math.max(max, Number.parseInt(match[1] ?? '0', 10))
+  }
+  return `step-${String(max + 1).padStart(3, '0')}`
+}
+function optionalExpectation(expectedText: string | undefined, mode: string | undefined, caseSensitive: boolean | undefined): { expectation?: TextExpectation } {
+  if (expectedText === undefined) return {}
+  return { expectation: { mode: mode === 'not-contains' ? 'not-contains' : 'contains', value: expectedText, caseSensitive: caseSensitive ?? false } }
+}
+function optionalCondition(sourceStepId: string | undefined, expectedText: string | undefined, mode: string | undefined): { when?: StepCondition } {
+  if (sourceStepId === undefined && expectedText === undefined) return {}
+  if (sourceStepId === undefined || expectedText === undefined) throw new Error('conditional steps require both conditionSourceStepId and conditionExpectedText')
+  return { when: { sourceStepId, mode: mode === 'not-contains' ? 'not-contains' : 'contains', value: expectedText, caseSensitive: false } }
+}
+function compactObject(value: Record<string, string | number | boolean | undefined>): JsonObject {
+  const out: JsonObject = {}
+  for (const [key, child] of Object.entries(value)) if (child !== undefined) out[key] = child
+  return out
+}
+function objectString(value: unknown, key: string): string | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const child = (value as Record<string, unknown>)[key]
+  return typeof child === 'string' && child.trim() !== '' ? child : undefined
+}
+function objectNumber(value: unknown, key: string): number | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const child = (value as Record<string, unknown>)[key]
+  return typeof child === 'number' && Number.isFinite(child) ? child : undefined
+}
+function objectBoolean(value: unknown, key: string): boolean | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const child = (value as Record<string, unknown>)[key]
+  return typeof child === 'boolean' ? child : undefined
+}
+function cleanString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
+}
+function normalizePageText(value: unknown): string {
+  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().toLocaleLowerCase() : ''
+}
+function safeStateUrl(value: string): string {
+  try {
+    const url = new URL(value)
+    url.username = ''
+    url.password = ''
+    url.search = ''
+    url.hash = ''
+    return url.toString()
+  } catch {
+    return value.split(/[?#]/, 1)[0] ?? value
+  }
+}
+function shortStateEvidence(value: string): string {
+  const text = value.replace(/\s+/g, ' ').trim()
+  return text.length <= 220 ? text : `${text.slice(0, 220)}…`
+}
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}

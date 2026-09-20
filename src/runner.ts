@@ -590,7 +590,7 @@ export class PatrolRunner {
     }
 
     let expectationError: string | undefined
-    if (step.expectation !== undefined && step.tool === 'browser_click') {
+    if (step.expectation !== undefined && (step.tool === 'browser_click' || step.tool === 'browser_visual_click')) {
       const tabId = typeof runtimeArguments.tabId === 'number' ? runtimeArguments.tabId : undefined
       const verified = await verifyPostClickExpectation(
         (toolName, toolArgs, toolExec) => this.dispatch(toolName, toolArgs, toolExec),
