@@ -132,6 +132,40 @@ describe('semantic Patrol click target', () => {
     })
   })
 
+  it('treats a single click-opened child tab as verified navigation and does not retry the source tab', async () => {
+    const calls: Array<{ tool: string; args: JsonObject }> = []
+    const { store, tool, exec } = await setup(async (name, args) => {
+      calls.push({ tool: name, args })
+      if (name === 'browser_read_page') return page('首页', 'https://example.test/')
+      if (name === 'browser_snapshot') return snapshot([{ tag: 'a', text: '视频 A', selector: 'top-frame::a.video' }])
+      if (name === 'browser_semantic_click') {
+        return {
+          ...atomic('top-frame::a.video', '视频 A'),
+          value: {
+            ...atomic('top-frame::a.video', '视频 A').value,
+            openedTabId: 9,
+            openedTabUrl: 'https://example.test/video/9',
+          },
+        }
+      }
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    const result = await tool.execute({
+      inspectionId: 'click-target',
+      stepName: '打开视频',
+      locatorText: '视频 A',
+    }, exec)
+
+    expect(result).toContain('opened and activated child tab 9')
+    expect(calls.filter(call => call.tool === 'browser_semantic_click')).toHaveLength(1)
+    expect((await store.load('click-target')).steps[0]).toMatchObject({
+      tool: 'browser_click',
+      arguments: { selector: 'top-frame::a.video' },
+      teaching: { status: 'verified', method: 'state-change' },
+    })
+  })
+
   it('clicks a logo atomically without invented expectedText and records only after CURRENT state changes', async () => {
     let clicked = false
     const calls: string[] = []

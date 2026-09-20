@@ -191,13 +191,13 @@ export function registerTools(ctx, bridge, config = {}) {
       description: 'Click an element by CSS selector.',
       parameters: { selector: reqStr, tabId: optInt },
       output: {
-        schema: { type: 'object', additionalProperties: false, properties: { ok: reqBool, selector: reqStr, tag: str, text: str, targetStateChanged: bool, stateEvidence: str } },
+        schema: { type: 'object', additionalProperties: false, properties: { ok: reqBool, selector: reqStr, tag: str, text: str, targetStateChanged: bool, stateEvidence: str, openedTabId: int, openedTabUrl: str } },
         render: (_args, value) => [{ type: 'text', text: `Clicked ${value.selector}${value.text ? ` ${JSON.stringify(short(value.text, 80))}` : ''}.` }],
       },
       presentCall: args => generic('Click element', args),
       execute: async (args, exec) => {
         const value = requireOk(await run(bridge, exec, 'click', { selector: args.selector, tabId: args.tabId }, timeoutMs), 'click')
-        return clean({ ok: true, selector: args.selector, tag: value.tag, text: value.text, targetStateChanged: value.targetStateChanged, stateEvidence: value.stateEvidence })
+        return clean({ ok: true, selector: args.selector, tag: value.tag, text: value.text, targetStateChanged: value.targetStateChanged, stateEvidence: value.stateEvidence, openedTabId: value.openedTabId, openedTabUrl: value.openedTabUrl })
       },
     }),
     defineTool({

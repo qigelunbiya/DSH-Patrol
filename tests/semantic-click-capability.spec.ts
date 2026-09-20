@@ -35,6 +35,23 @@ describe('semantic click capability gate', () => {
     expect(requests).toEqual(['semanticClick'])
   })
 
+  it('passes opened child-tab evidence through the runtime tool', async () => {
+    const definitions = []
+    const ctx = { tools: { register(tool) { definitions.push(tool); return () => {} } } }
+    const bridge = {
+      status: () => ({ extension: { version: '0.3.3', capabilities: ['semanticClick'] } }),
+      async request() {
+        return { ok: true, selector: 'a.video-card', openedTabId: 9, openedTabUrl: 'https://example.test/video/9' }
+      },
+    }
+    registerSemanticClickTool(ctx, bridge)
+    const tool = definitions.find(item => item.name === 'browser_semantic_click')
+    await expect(tool.execute({ locatorText: '视频' }, {})).resolves.toMatchObject({
+      openedTabId: 9,
+      openedTabUrl: 'https://example.test/video/9',
+    })
+  })
+
   it('passes target-local state verification through the runtime tool', async () => {
     const definitions = []
     const ctx = { tools: { register(tool) { definitions.push(tool); return () => {} } } }

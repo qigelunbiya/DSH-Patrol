@@ -118,6 +118,8 @@ export function registerPatrolClickTargetTool(
       let physicalClickExecuted = false
       let targetStateChanged = false
       let targetStateEvidence: string | undefined
+      let openedTabId: number | undefined
+      let openedTabUrl: string | undefined
 
       if (locator !== undefined) {
         let atomic = await runner.dispatch('browser_semantic_click', compactObject({
@@ -172,6 +174,8 @@ export function registerPatrolClickTargetTool(
                 clickedText = clickedTitle.text
                 targetStateChanged = objectBoolean(clickedTitle.value, 'targetStateChanged') === true
                 targetStateEvidence = objectString(clickedTitle.value, 'stateEvidence')
+                openedTabId = objectNumber(clickedTitle.value, 'openedTabId')
+                openedTabUrl = objectString(clickedTitle.value, 'openedTabUrl')
                 resolutionSummary = `selector=${JSON.stringify(titleSelector)}, transport=unique-exact-title-direct`
               }
             }
@@ -228,6 +232,8 @@ export function registerPatrolClickTargetTool(
           clickedText = fallback.text
           targetStateChanged = objectBoolean(fallback.value, 'targetStateChanged') === true
           targetStateEvidence = objectString(fallback.value, 'stateEvidence')
+          openedTabId = objectNumber(fallback.value, 'openedTabId')
+          openedTabUrl = objectString(fallback.value, 'openedTabUrl')
           resolutionSummary = `selector=${JSON.stringify(fallbackSelector)}, transport=selector-compatible fallback`
           }
         } else {
@@ -240,6 +246,8 @@ export function registerPatrolClickTargetTool(
           clickedText = objectString(atomic.value, 'text') ?? atomic.text ?? ''
           targetStateChanged = objectBoolean(atomic.value, 'targetStateChanged') === true
           targetStateEvidence = objectString(atomic.value, 'stateEvidence')
+          openedTabId = objectNumber(atomic.value, 'openedTabId')
+          openedTabUrl = objectString(atomic.value, 'openedTabUrl')
           resolutionSummary = [
             `selector=${JSON.stringify(resolvedSelector)}`,
             objectString(atomic.value, 'text') ? `text=${JSON.stringify(objectString(atomic.value, 'text'))}` : undefined,
@@ -263,6 +271,10 @@ export function registerPatrolClickTargetTool(
         }
         physicalClickExecuted = true
         clickedText = clicked.text
+        targetStateChanged = objectBoolean(clicked.value, 'targetStateChanged') === true
+        targetStateEvidence = objectString(clicked.value, 'stateEvidence')
+        openedTabId = objectNumber(clicked.value, 'openedTabId')
+        openedTabUrl = objectString(clicked.value, 'openedTabUrl')
         resolutionSummary = `selector=${JSON.stringify(selector)}, transport=selector-compatible`
       }
 
@@ -270,12 +282,13 @@ export function registerPatrolClickTargetTool(
       let verificationMethod: NonNullable<ToolStep['teaching']>['method'] | undefined
       let verificationEvidence: string | undefined
 
+      const verificationTabId = openedTabId ?? args.tabId
       if (expectation.expectation !== undefined) {
         const verified = await verifyPostClickExpectation(
           (toolName, toolArgs, toolExec) => runner.dispatch(toolName, toolArgs, toolExec),
           exec,
           expectation.expectation,
-          args.tabId,
+          verificationTabId,
         )
         verificationAttempts = verified.attempts
         if (!verified.ok) {
@@ -290,7 +303,11 @@ export function registerPatrolClickTargetTool(
         verificationMethod = 'expected-text'
         verificationEvidence = `${expectation.expectation.mode} ${JSON.stringify(expectation.expectation.value)}`
       } else if (locator !== undefined) {
-        if (targetStateChanged) {
+        if (openedTabId !== undefined) {
+          verificationAttempts = 1
+          verificationMethod = 'state-change'
+          verificationEvidence = `click opened and activated child tab ${openedTabId}${openedTabUrl ? ` (${safeStateUrl(openedTabUrl)})` : ''}`
+        } else if (targetStateChanged) {
           verificationAttempts = 1
           verificationMethod = 'state-change'
           verificationEvidence = targetStateEvidence ?? 'semantic target changed its own CURRENT DOM state'
@@ -309,6 +326,12 @@ export function registerPatrolClickTargetTool(
           verificationMethod = 'state-change'
           verificationEvidence = verified.evidence
         }
+      }
+
+      if (locator === undefined && expectation.expectation === undefined && openedTabId !== undefined) {
+        verificationAttempts = 1
+        verificationMethod = 'state-change'
+        verificationEvidence = `click opened and activated child tab ${openedTabId}${openedTabUrl ? ` (${safeStateUrl(openedTabUrl)})` : ''}`
       }
 
       if (resolvedSelector === undefined) throw new Error('resolved click target has no reusable selector')

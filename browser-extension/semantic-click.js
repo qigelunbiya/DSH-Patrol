@@ -50,11 +50,13 @@ async function semanticClickCommand(args) {
   }
 
   const chosen = best[0]
+  const tabsBefore = await semanticClickTabBaseline(tabId)
   const clicked = await semanticClickExecute(tabId, chosen.frame.frameId, 'click', {
     ...spec,
     expectedFingerprint: chosen.candidate.fingerprint,
   })
   if (!clicked || clicked.ok === false) throw new Error(String(clicked?.error || 'atomic semantic click failed'))
+  const opened = await semanticClickAdoptSingleOpenedTab(tabId, tabsBefore)
 
   const innerSelector = typeof clicked.selector === 'string' ? clicked.selector : String(chosen.candidate.selector || '')
   const scopedSelector = semanticScopeSelector(chosen.frame, innerSelector)
@@ -68,7 +70,11 @@ async function semanticClickCommand(args) {
     frameUrl: chosen.frame.url || '',
     transport: 'atomic-main-world-semantic-click',
     targetStateChanged: clicked.targetStateChanged === true,
-    ...(typeof clicked.stateEvidence === 'string' && clicked.stateEvidence ? { stateEvidence: clicked.stateEvidence } : {}),
+    ...(opened ? {
+      openedTabId: opened.id,
+      openedTabUrl: typeof opened.url === 'string' ? opened.url : '',
+      stateEvidence: `semantic click opened child tab ${opened.id}${opened.url ? ` (${opened.url})` : ''}`,
+    } : (typeof clicked.stateEvidence === 'string' && clicked.stateEvidence ? { stateEvidence: clicked.stateEvidence } : {})),
   }
 }
 
@@ -78,6 +84,41 @@ function semanticSerializableSpec(args) {
     if (typeof args?.[key] === 'string' && args[key].trim()) out[key] = args[key].trim()
   }
   return out
+}
+
+async function semanticClickTabBaseline(sourceTabId) {
+  if (!chrome.tabs?.query) return undefined
+  try {
+    const source = chrome.tabs.get ? await chrome.tabs.get(sourceTabId) : undefined
+    const tabs = await chrome.tabs.query({})
+    return {
+      ids: new Set((Array.isArray(tabs) ? tabs : []).map(tab => tab?.id).filter(Number.isInteger)),
+      windowId: Number.isInteger(source?.windowId) ? source.windowId : undefined,
+    }
+  } catch {
+    return undefined
+  }
+}
+
+async function semanticClickAdoptSingleOpenedTab(sourceTabId, baseline) {
+  if (!baseline?.ids || !chrome.tabs?.query) return undefined
+  for (const delayMs of [0, 80, 180, 320]) {
+    if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs))
+    let tabs
+    try { tabs = await chrome.tabs.query({}) } catch { return undefined }
+    const fresh = (Array.isArray(tabs) ? tabs : []).filter(tab => Number.isInteger(tab?.id) && !baseline.ids.has(tab.id))
+    const children = fresh.filter(tab => tab.openerTabId === sourceTabId)
+    const sameWindow = fresh.filter(tab => baseline.windowId === undefined || tab.windowId === baseline.windowId)
+    const candidates = children.length > 0 ? children : sameWindow
+    if (candidates.length !== 1) {
+      if (fresh.length > 1 || children.length > 1) return undefined
+      continue
+    }
+    const opened = candidates[0]
+    try { await chrome.tabs.update(opened.id, { active: true }) } catch {}
+    return opened
+  }
+  return undefined
 }
 
 async function semanticClickFrames(tabId) {

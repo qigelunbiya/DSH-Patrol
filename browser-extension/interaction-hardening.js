@@ -20,18 +20,24 @@ const interactionPreviousSendDomCommand = sendDomCommand
 const interactionPreviousHandleCommand = handleCommand
 
 sendDomCommand = async function interactionHardenedSendDomCommand(cmd, args = {}) {
+  // Many content sites (including Bilibili video cards) open the clicked item in
+  // a child tab. Capture the tab set before every click so a successful DOM
+  // click cannot be misdiagnosed merely because the source tab stayed put.
+  const clickTabId = cmd === 'click' ? await resolveTabId(args.tabId) : undefined
+  const clickTabsBefore = clickTabId === undefined ? undefined : await interactionTabBaseline(clickTabId)
+
+  let value
   // The content-script click path can report success even when a framework
   // handler is bound in the page MAIN world. Use the resilient MAIN-world path
   // first for clicks; it already performs visibility/stability/hit-target checks
   // and strict cross-frame uniqueness. Fall back only if MAIN-world execution is
   // unavailable, never merely because the click produced an unexpected page.
-  if (cmd === 'click' && chrome.scripting?.executeScript && typeof resilientDomFallback === 'function') {
-    const tabId = await resolveTabId(args.tabId)
+  if (cmd === 'click' && clickTabId !== undefined && chrome.scripting?.executeScript && typeof resilientDomFallback === 'function') {
     try {
-      return await resilientDomFallback(tabId, 'click', args)
+      value = await resilientDomFallback(clickTabId, 'click', args)
     } catch (mainWorldError) {
       try {
-        return await interactionPreviousSendDomCommand(cmd, args)
+        value = await interactionPreviousSendDomCommand(cmd, args)
       } catch (bridgeError) {
         throw new Error(
           `Patrol click failed in MAIN-world and frame bridge. `
@@ -39,9 +45,21 @@ sendDomCommand = async function interactionHardenedSendDomCommand(cmd, args = {}
         )
       }
     }
+  } else {
+    value = await interactionPreviousSendDomCommand(cmd, args)
   }
 
-  const value = await interactionPreviousSendDomCommand(cmd, args)
+  if (cmd === 'click' && clickTabId !== undefined) {
+    const opened = await interactionAdoptSingleOpenedTab(clickTabId, clickTabsBefore)
+    if (opened) {
+      value = {
+        ...value,
+        openedTabId: opened.id,
+        openedTabUrl: typeof opened.url === 'string' ? opened.url : '',
+        stateEvidence: `click opened child tab ${opened.id}${opened.url ? ` (${opened.url})` : ''}`,
+      }
+    }
+  }
   return cmd === 'snapshot' ? interactionNormalizeSnapshot(value) : value
 }
 
@@ -78,6 +96,41 @@ function interactionNormalizeSnapshot(value) {
       }
     }),
   }
+}
+
+async function interactionTabBaseline(sourceTabId) {
+  if (!chrome.tabs?.query) return undefined
+  try {
+    const source = chrome.tabs.get ? await chrome.tabs.get(sourceTabId) : undefined
+    const tabs = await chrome.tabs.query({})
+    return {
+      ids: new Set((Array.isArray(tabs) ? tabs : []).map(tab => tab?.id).filter(Number.isInteger)),
+      windowId: Number.isInteger(source?.windowId) ? source.windowId : undefined,
+    }
+  } catch {
+    return undefined
+  }
+}
+
+async function interactionAdoptSingleOpenedTab(sourceTabId, baseline) {
+  if (!baseline?.ids || !chrome.tabs?.query) return undefined
+  for (const delayMs of [0, 80, 180, 320]) {
+    if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs))
+    let tabs
+    try { tabs = await chrome.tabs.query({}) } catch { return undefined }
+    const fresh = (Array.isArray(tabs) ? tabs : []).filter(tab => Number.isInteger(tab?.id) && !baseline.ids.has(tab.id))
+    const children = fresh.filter(tab => tab.openerTabId === sourceTabId)
+    const sameWindow = fresh.filter(tab => baseline.windowId === undefined || tab.windowId === baseline.windowId)
+    const candidates = children.length > 0 ? children : sameWindow
+    if (candidates.length !== 1) {
+      if (fresh.length > 1 || children.length > 1) return undefined
+      continue
+    }
+    const opened = candidates[0]
+    try { await chrome.tabs.update(opened.id, { active: true }) } catch {}
+    return opened
+  }
+  return undefined
 }
 
 async function interactionActivateTab(args) {

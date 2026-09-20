@@ -34,6 +34,37 @@ async function loadInteraction(overrides: Record<string, unknown> = {}) {
 }
 
 describe('Patrol screenshot tab readiness', () => {
+  it('adopts exactly one child tab opened by an ordinary DOM click without focusing the OS window', async () => {
+    let queryCalls = 0
+    const updates: Array<{ id: number; info: any }> = []
+    const tabs = {
+      get: async (id: number) => ({ id, windowId: 2, status: 'complete', url: 'https://example.test/' }),
+      query: async () => {
+        queryCalls += 1
+        if (queryCalls === 1) return [{ id: 7, windowId: 2, active: true, url: 'https://example.test/' }]
+        return [
+          { id: 7, windowId: 2, active: true, url: 'https://example.test/' },
+          { id: 9, windowId: 2, openerTabId: 7, active: false, url: 'https://example.test/video/9' },
+        ]
+      },
+      update: async (id: number, info: any) => {
+        updates.push({ id, info })
+        return { id, windowId: 2, ...info, url: id === 9 ? 'https://example.test/video/9' : 'https://example.test/' }
+      },
+      captureVisibleTab: async () => 'data:image/png;base64,AAAA',
+    }
+    const sandbox = await loadInteraction({ chrome: { tabs, scripting: {} } })
+    const clicked = await sandbox.sendDomCommand('click', { tabId: 7, selector: '#video' })
+
+    expect(clicked).toMatchObject({
+      ok: true,
+      openedTabId: 9,
+      openedTabUrl: 'https://example.test/video/9',
+    })
+    expect(clicked.stateEvidence).toMatch(/opened child tab 9/)
+    expect(updates).toContainEqual({ id: 9, info: { active: true } })
+  })
+
   it('binds a visual click to the exact CURRENT screenshot viewport and consumes the frame', async () => {
     let clickedArgs: any[] | undefined
     const viewport = {

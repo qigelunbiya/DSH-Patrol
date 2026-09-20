@@ -34,6 +34,8 @@ export function registerSemanticClickTool(ctx, bridge, config = {}) {
           transport: optStr,
           targetStateChanged: bool,
           stateEvidence: optStr,
+          openedTabId: optInt,
+          openedTabUrl: optStr,
         },
       },
       render: (_args, result) => [{ type: 'text', text: `Atomically clicked ${result.selector}${result.text ? ` (${result.text})` : ''}.` }],
@@ -69,6 +71,8 @@ export function registerSemanticClickTool(ctx, bridge, config = {}) {
         ...(typeof result.transport === 'string' ? { transport: result.transport } : {}),
         ...(typeof result.targetStateChanged === 'boolean' ? { targetStateChanged: result.targetStateChanged } : {}),
         ...(typeof result.stateEvidence === 'string' ? { stateEvidence: result.stateEvidence } : {}),
+        ...(Number.isInteger(result.openedTabId) ? { openedTabId: result.openedTabId } : {}),
+        ...(typeof result.openedTabUrl === 'string' ? { openedTabUrl: result.openedTabUrl } : {}),
       }
     },
   })

@@ -30,6 +30,10 @@ describe('atomic semantic click extension layer', () => {
     expect(source).toContain("'click'")
     expect(source).toContain('expectedFingerprint')
     expect(source).not.toContain('chrome.tabs.sendMessage')
+    expect(source).toContain('semanticClickTabBaseline')
+    expect(source).toContain('semanticClickAdoptSingleOpenedTab')
+    expect(source).toContain('openedTabId')
+    expect(source).toContain("chrome.tabs.update(opened.id, { active: true })")
   })
 
   it('contains row-context scoring for host identity plus RDP-style actions', () => {
