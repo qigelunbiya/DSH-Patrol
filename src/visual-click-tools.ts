@@ -94,7 +94,7 @@ export function registerPatrolVisualClickTool(
         return [
           'Visual fallback failed before Patrol could confirm a physical click, so this attempt does NOT consume the visual physical-click budget.',
           clicked.error ?? clicked.text ?? 'Unknown browser visual click error',
-          'Capture a fresh patrol_observe(includeImage=true) and retry with its new visualFrameId if the target is still clearly visible.',
+          'Capture a fresh patrol_observe(includeImage=true) and retry with its new visualFrameId if useful. There is no fixed visual-screenshot count ceiling; older bulky visual/tool payloads are pruned before new image attachments.',
         ].filter(Boolean).join('\n')
       }
       outcomes.recordVisualPhysicalClick(args)
@@ -106,7 +106,7 @@ export function registerPatrolVisualClickTool(
           'Visual physical click executed but was NOT recorded because it hit a target inconsistent with the requested business control.',
           mismatch,
           clicked.text,
-          'Do not report this checklist item as completed. Return to CURRENT DOM evidence or capture one fresh visual frame only after the DOM fallback is genuinely exhausted.',
+          'Do not report this checklist item as completed. Use CURRENT DOM/Accessibility evidence or capture another fresh visual frame as needed; do not reuse this consumed frame.',
         ].filter(Boolean).join('\n')
       }
 
@@ -304,6 +304,9 @@ function snapshotElementSignatures(value: unknown): Set<string> {
 function visualTargetMismatch(targetHint: string | undefined, value: unknown): string | undefined {
   const hint = normalizePageText(targetHint ?? '')
   if (!hint) return undefined
+  if (objectBoolean(value, 'unexpectedNavigation') === true) {
+    return `targetHint expects an in-page business control, but CURRENT click unexpectedly navigated away instead of activating ${JSON.stringify(targetHint ?? '')}`
+  }
   const haystack = normalizePageText([
     objectString(value, 'selectorHint') ?? '',
     objectString(value, 'targetText') ?? '',
