@@ -8,11 +8,13 @@ import { recognizeScreenshotText } from './screenshot-ocr.js'
 const reqStr = { type: 'string', required: true }
 const reqInt = { type: 'integer', required: true }
 const reqBool = { type: 'boolean', required: true }
+const reqNum = { type: 'number', required: true }
 const str = { type: 'string' }
 const int = { type: 'integer' }
 const bool = { type: 'boolean' }
 const optStr = { type: 'string' }
 const optInt = { type: 'integer' }
+const optNum = { type: 'number' }
 const optBool = { type: 'boolean' }
 
 const TAB = {
@@ -176,6 +178,42 @@ export function registerTools(ctx, bridge, config = {}) {
       },
     }),
     defineTool({
+      name: 'browser_visual_click',
+      description: 'Internal Patrol primitive for a verified model-vision fallback click. Teaching binds normalized coordinates to a fresh screenshot frame; replay prefers the discovered selector and falls back to guarded URL/scroll/viewport coordinates.',
+      parameters: {
+        xRatio: reqNum, yRatio: reqNum, frameId: optStr, selectorHint: optStr, urlIdentity: optStr,
+        scrollX: optNum, scrollY: optNum, viewportWidth: optNum, viewportHeight: optNum, viewportScale: optNum,
+        expectedTag: optStr, expectedRole: optStr, tabId: optInt,
+      },
+      output: {
+        schema: {
+          type: 'object', additionalProperties: false,
+          properties: {
+            ok: reqBool, xRatio: reqNum, yRatio: reqNum, selectorHint: str, urlIdentity: str,
+            scrollX: optNum, scrollY: optNum, viewportWidth: optNum, viewportHeight: optNum, viewportScale: optNum,
+            targetTag: str, targetRole: str, targetText: str, targetStateChanged: bool, stateEvidence: str, transport: str,
+          },
+        },
+        render: (_args, value) => [{ type: 'text', text: `Visual browser click executed at (${Number(value.xRatio).toFixed(4)}, ${Number(value.yRatio).toFixed(4)}) via ${value.transport || 'visual'}${value.selectorHint ? `; reusable selector=${value.selectorHint}` : ''}.` }],
+      },
+      presentCall: args => generic('Visual browser click', { xRatio: args.xRatio, yRatio: args.yRatio, frameId: args.frameId, selectorHint: args.selectorHint }),
+      execute: async (args, exec) => {
+        const value = requireOk(await run(bridge, exec, 'visualClick', clean({
+          xRatio: args.xRatio, yRatio: args.yRatio, frameId: args.frameId, selectorHint: args.selectorHint,
+          urlIdentity: args.urlIdentity, scrollX: args.scrollX, scrollY: args.scrollY,
+          viewportWidth: args.viewportWidth, viewportHeight: args.viewportHeight, viewportScale: args.viewportScale,
+          expectedTag: args.expectedTag, expectedRole: args.expectedRole, tabId: args.tabId,
+        }), timeoutMs), 'visualClick')
+        return clean({
+          ok: true, xRatio: value.xRatio ?? args.xRatio, yRatio: value.yRatio ?? args.yRatio,
+          selectorHint: value.selectorHint, urlIdentity: value.urlIdentity, scrollX: value.scrollX, scrollY: value.scrollY,
+          viewportWidth: value.viewportWidth, viewportHeight: value.viewportHeight, viewportScale: value.viewportScale,
+          targetTag: value.targetTag, targetRole: value.targetRole, targetText: value.targetText,
+          targetStateChanged: value.targetStateChanged, stateEvidence: value.stateEvidence, transport: value.transport,
+        })
+      },
+    }),
+    defineTool({
       name: 'browser_type',
       description: 'Type PUBLIC non-sensitive text. Patrol credential fields must use browser_type_credential.',
       parameters: { selector: reqStr, text: reqStr, clear: optBool, tabId: optInt },
@@ -276,6 +314,13 @@ export function registerTools(ctx, bridge, config = {}) {
             verificationKind: str,
             verificationSubtype: str,
             verificationOcrAllowed: bool,
+            visualFrameId: str,
+            urlIdentity: str,
+            viewportWidth: optNum,
+            viewportHeight: optNum,
+            viewportScale: optNum,
+            scrollX: optNum,
+            scrollY: optNum,
           },
         },
         render: (_args, value) => [{ type: 'text', text: renderScreenshotResult(value) }],
@@ -295,6 +340,13 @@ export function registerTools(ctx, bridge, config = {}) {
           verificationKind: ocr.verificationKind,
           verificationSubtype: ocr.verificationSubtype,
           verificationOcrAllowed: ocr.verificationOcrAllowed,
+          visualFrameId: value.visualFrameId,
+          urlIdentity: value.urlIdentity,
+          viewportWidth: value.viewportWidth,
+          viewportHeight: value.viewportHeight,
+          viewportScale: value.viewportScale,
+          scrollX: value.scrollX,
+          scrollY: value.scrollY,
         })
       },
     }),
@@ -383,11 +435,15 @@ function renderBrowserStatus(value) {
   const semanticClick = capabilities.includes('semanticClick')
     ? 'semanticClick=yes'
     : 'semanticClick=MISSING'
+  const visualClick = capabilities.includes('visualClick')
+    ? 'visualClick=yes'
+    : 'visualClick=MISSING'
   const warnings = []
   if (imageCode !== 'captureImageCode=yes') warnings.push('runtime/extension capability mismatch: restart Harness before CAPTCHA visual capture')
   if (semanticClick !== 'semanticClick=yes') warnings.push('atomic semantic transport unavailable; patrol_click_target will use its verified unique-selector fallback')
+  if (visualClick !== 'visualClick=yes') warnings.push('browser visual-click fallback unavailable; restart Harness after updating the Patrol extension')
   const suffix = warnings.length > 0 ? `; ${warnings.join('; ')}` : ''
-  return `${base} ${imageCode}; ${semanticClick}; capabilities=[${capabilities.join(', ')}]${suffix}.`
+  return `${base} ${imageCode}; ${semanticClick}; ${visualClick}; capabilities=[${capabilities.join(', ')}]${suffix}.`
 }
 
 function renderScreenshotResult(value) {
