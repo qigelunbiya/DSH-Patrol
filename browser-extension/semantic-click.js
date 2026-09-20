@@ -105,12 +105,17 @@ async function semanticClickCommand(args) {
         }
       }
     }
+
+    const piercedFallback = await semanticClickPiercedFallback(tabId, spec, frames)
+    if (piercedFallback) return piercedFallback
     throw new Error(`atomic semantic target not found for ${semanticDescribeSpec(spec)}`)
   }
   candidates.sort((left, right) => Number(right.candidate.score || 0) - Number(left.candidate.score || 0))
   const bestScore = Number(candidates[0]?.candidate?.score || 0)
   const best = candidates.filter(item => Number(item.candidate.score || 0) === bestScore)
   if (best.length !== 1) {
+    const piercedFallback = await semanticClickPiercedFallback(tabId, spec, frames)
+    if (piercedFallback) return piercedFallback
     const details = best.slice(0, 6).map(item => `${item.frame.frameId}:${String(item.candidate.text || item.candidate.selector || '?')}`).join(', ')
     throw new Error(`atomic semantic target is ambiguous (${best.length} equally ranked candidates): ${details}`)
   }
@@ -181,6 +186,83 @@ async function semanticClickCommand(args) {
       openedTabUrl: typeof opened.url === 'string' ? opened.url : '',
       stateEvidence: `semantic click opened child tab ${opened.id}${opened.url ? ` (${opened.url})` : ''}`,
     } : (typeof clicked.stateEvidence === 'string' && clicked.stateEvidence ? { stateEvidence: clicked.stateEvidence } : {})),
+  }
+}
+
+async function semanticClickPiercedFallback(tabId, spec, frames) {
+  if (!semanticTrustedMouseAvailable()) return undefined
+  let viewport
+  try {
+    if (typeof interactionViewportState === 'function') viewport = await interactionViewportState(tabId)
+  } catch {}
+  const originX = Number.isFinite(Number(viewport?.width)) ? Number(viewport.width) / 2 : undefined
+  const originY = Number.isFinite(Number(viewport?.height)) ? Number(viewport.height) / 2 : undefined
+  const intent = [spec.locatorText, spec.task].filter(Boolean).join(' ')
+
+  let resolved
+  let selector = ''
+  let transport = ''
+  if (typeof interactionWantsPublishTarget === 'function'
+    && interactionWantsPublishTarget(intent)
+    && typeof interactionResolvePiercedActionPoint === 'function') {
+    resolved = await interactionResolvePiercedActionPoint(tabId, intent, originX, originY)
+    if (resolved) {
+      selector = 'cdp-pierced::publish-action'
+      transport = 'atomic-semantic+cdp-publish-action+trusted-native-mouse'
+    }
+  }
+
+  if (!resolved && typeof interactionResolvePiercedSemanticPoint === 'function' && spec.locatorText) {
+    resolved = await interactionResolvePiercedSemanticPoint(tabId, spec.locatorText, spec.locatorRole || '', originX, originY)
+    if (resolved) {
+      selector = 'cdp-accessibility::semantic-target'
+      transport = 'atomic-semantic+cdp-accessibility+trusted-native-mouse'
+    }
+  }
+  if (!resolved || !Number.isFinite(Number(resolved.x)) || !Number.isFinite(Number(resolved.y))) return undefined
+
+  let beforeEditor
+  if (typeof interactionWantsPublishTarget === 'function'
+    && interactionWantsPublishTarget(intent)
+    && typeof interactionFocusedEditorProbe === 'function') {
+    try { beforeEditor = await interactionFocusedEditorProbe(tabId, false) } catch {}
+  }
+  const beforeUrl = viewport?.urlIdentity
+  const native = await semanticTrustedMouseClick(tabId, Number(resolved.x), Number(resolved.y))
+  if (native.partial) throw new Error(`trusted pierced semantic click partially dispatched; refusing a second click: ${native.error || 'unknown native input failure'}`)
+  if (!native.ok) return undefined
+  await new Promise(resolve => setTimeout(resolve, 220))
+
+  let afterEditor
+  if (beforeEditor && typeof interactionFocusedEditorProbe === 'function') {
+    try { afterEditor = await interactionFocusedEditorProbe(tabId, false) } catch {}
+  }
+  let afterViewport
+  try {
+    if (typeof interactionViewportState === 'function') afterViewport = await interactionViewportState(tabId)
+  } catch {}
+  const unexpectedNavigation = Boolean(beforeUrl && afterViewport?.urlIdentity && beforeUrl !== afterViewport.urlIdentity)
+  const beforeText = typeof beforeEditor?.observedText === 'string' ? beforeEditor.observedText.trim() : ''
+  const afterText = typeof afterEditor?.observedText === 'string' ? afterEditor.observedText.trim() : ''
+  const editorCleared = beforeText.length > 0 && afterText.length === 0
+
+  return {
+    ok: true,
+    selector,
+    text: String(resolved.evidence || resolved.name || spec.locatorText || ''),
+    role: String(resolved.role || spec.locatorRole || ''),
+    tag: String(resolved.tag || spec.locatorTag || ''),
+    replaySelectorSafe: false,
+    frameId: 0,
+    frameUrl: frames.find(frame => frame.frameId === 0)?.url || '',
+    transport,
+    targetStateChanged: !unexpectedNavigation && editorCleared,
+    unexpectedNavigation,
+    stateEvidence: unexpectedNavigation
+      ? 'semantic in-page action unexpectedly navigated away; refusing to treat navigation as success'
+      : editorCleared
+        ? 'comment editor cleared after semantic publish/send click'
+        : 'trusted semantic click used exact CDP accessibility/pierced geometry',
   }
 }
 
