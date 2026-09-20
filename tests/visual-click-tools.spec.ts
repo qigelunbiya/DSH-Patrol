@@ -81,8 +81,10 @@ describe('browser visual fallback click teaching', () => {
           text: 'visual clicked',
           value: {
             ok: true,
-            xRatio: 0.17,
-            yRatio: 0.81,
+            xRatio: 0.1609375,
+            yRatio: 0.7666666667,
+            requestedXRatio: 0.17,
+            requestedYRatio: 0.81,
             selectorHint: 'top-frame::.video-like',
             urlIdentity: 'https://www.bilibili.com/video/BV-test',
             viewportWidth: 1280,
@@ -133,8 +135,8 @@ describe('browser visual fallback click teaching', () => {
     expect(saved.steps[0]).toMatchObject({
       tool: 'browser_visual_click',
       arguments: {
-        xRatio: 0.17,
-        yRatio: 0.81,
+        xRatio: 0.1609375,
+        yRatio: 0.7666666667,
         selectorHint: 'top-frame::.video-like',
         urlIdentity: 'https://www.bilibili.com/video/BV-test',
         viewportWidth: 1280,
@@ -208,6 +210,41 @@ describe('browser visual fallback click teaching', () => {
     expect(result).toMatch(/NOT recorded/)
     expect(result).toMatch(/点赞\/like/)
     expect((await store.load('visual-click')).steps).toHaveLength(0)
+    expect(outcomes.unverifiedPhysicalClicks(args)).toBe(1)
+  })
+
+  it('does not record or auto-retry when a trusted physical click outcome is uncertain', async () => {
+    const outcomes = createPatrolClickOutcomeTracker()
+    const { store, tool, exec } = await setup(async (name) => {
+      if (name === 'browser_read_page') return { ok: true, text: 'video', value: { ok: true, url: 'https://www.bilibili.com/video/BV-test', text: 'video' } }
+      if (name === 'browser_snapshot') return { ok: true, text: 'snapshot', value: { ok: true, url: 'https://www.bilibili.com/video/BV-test', elements: [] } }
+      if (name === 'browser_visual_click') return {
+        ok: true,
+        text: 'trusted click uncertain',
+        value: {
+          ok: true,
+          xRatio: 0.2,
+          yRatio: 0.8,
+          physicalClickUncertain: true,
+          stateEvidence: 'trusted native physical click outcome became uncertain; refusing synthetic duplicate',
+        },
+      }
+      throw new Error(`unexpected tool ${name}`)
+    }, outcomes)
+
+    const args = {
+      inspectionId: 'visual-click',
+      stepName: '点击发布按钮',
+      targetHint: '蓝色发布按钮',
+      frameId: 'browser-visual-current',
+      xRatio: 0.2,
+      yRatio: 0.8,
+    }
+    const result = await tool.execute(args, exec)
+    expect(result).toMatch(/did NOT issue a synthetic duplicate/)
+    expect(result).toMatch(/Observe the CURRENT page state/)
+    expect((await store.load('visual-click')).steps).toHaveLength(0)
+    expect(outcomes.visualPhysicalClicks(args)).toBe(1)
     expect(outcomes.unverifiedPhysicalClicks(args)).toBe(1)
   })
 

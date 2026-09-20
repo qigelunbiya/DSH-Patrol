@@ -307,6 +307,10 @@ describe('Patrol screenshot tab readiness', () => {
             },
           }
         }
+        if (method === 'DOM.getNodeForLocation') {
+          expect(params).toMatchObject({ x: 570, y: 632, includeUserAgentShadowDOM: true })
+          return { backendNodeId: 42 }
+        }
         if (method === 'DOM.resolveNode') {
           expect(params).toEqual({ backendNodeId: 42 })
           return { object: { objectId: 'closed-editor-42' } }
@@ -343,6 +347,10 @@ describe('Patrol screenshot tab readiness', () => {
       requestedClickY: 624,
       resolvedClickX: 570,
       resolvedClickY: 632,
+      xRatio: 0.57,
+      yRatio: 0.79,
+      requestedXRatio: 0.30,
+      requestedYRatio: 0.78,
       targetFocusedEditable: true,
     })
     expect(clicked.stateEvidence).toMatch(/pierced Shadow DOM/)
@@ -506,9 +514,11 @@ describe('Patrol screenshot tab readiness', () => {
     expect(source).toContain("targetHint = ''")
     expect(source).toContain('const resolveHintTarget = (initialTarget, originalX, originalY) =>')
     expect(source).toContain('visual targetHint matches multiple equally-near CURRENT DOM targets')
-    expect(source).toContain('let trustedX = Number.isFinite(Number(probe?.clickX))')
+    expect(source).toContain('let trustedX = preResolved')
+    expect(source).toContain('? probeClientX')
     expect(source).toContain('await interactionDispatchTrustedMouseClick(tabId, trustedX, trustedY)')
-    expect(source).toContain('visualSnapped: resolved.snapped === true')
+    expect(source).toContain('interactionVerifyPiercedTargetHit')
+    expect(source).toContain('physicalClickUncertain')
   })
 
   it('falls back from a stale explicit tab id to the CURRENT active browser tab', async () => {
@@ -743,6 +753,18 @@ describe('Patrol screenshot tab readiness', () => {
     expect(capture?.params?.quality).toBe(72)
   })
 
+  it('requires replay fingerprint verification and refuses duplicate fallback after uncertain native dispatch', async () => {
+    const source = await readFile(interactionPath, 'utf8')
+    expect(source).toContain('interactionValidateVisualReplaySelector')
+    expect(source).toContain('visual-selector-replay+fingerprint-verified')
+    expect(source).toContain('interactionVerifyPiercedTargetHit')
+    expect(source).toContain('includeUserAgentShadowDOM: true')
+    expect(source).toContain('physicalClickUncertain')
+    expect(source).toContain('refusing synthetic duplicate')
+    expect(source).toContain('requestedXRatio')
+    expect(source).toContain('effectiveXRatio')
+  })
+
   it('contains a pierced publish/send resolver so a rough publish point cannot become a recommended-video click', async () => {
     const source = await readFile(interactionPath, 'utf8')
     expect(source).toContain('function interactionWantsPublishTarget(targetHint)')
@@ -816,6 +838,10 @@ describe('Patrol screenshot tab readiness', () => {
         if (method === 'Page.getLayoutMetrics') {
           return { cssVisualViewport: { clientWidth: 1000, clientHeight: 800, pageX: 0, pageY: 1200 } }
         }
+        if (method === 'DOM.getNodeForLocation') {
+          expect(params).toMatchObject({ x: 725, y: 611, includeUserAgentShadowDOM: true })
+          return { backendNodeId: 44 }
+        }
         if (method === 'DOM.resolveNode') {
           expect(params.backendNodeId).toBe(44)
           return { object: { objectId: 'publish-44' } }
@@ -857,6 +883,10 @@ describe('Patrol screenshot tab readiness', () => {
       requestedClickY: 480,
       resolvedClickX: 725,
       resolvedClickY: 611,
+      xRatio: 0.725,
+      yRatio: 0.76375,
+      requestedXRatio: 0.90,
+      requestedYRatio: 0.60,
       visualSnapped: true,
     })
   })

@@ -12,7 +12,7 @@ export const PATROL_INTEGRITY_PROMPT = `DSH Patrol 可复用流程完整性规�
 - 如果 CURRENT 页面已经出现了清单中的下一个明确操作目标（例如用户明确要求“点击 Logo”，而页面当前只显示 Logo），立即执行该操作。不得把“点击后才会出现的内容”误当成“点击前还需要继续等待的加载内容”，也不得用无意义 wait/read/snapshot 循环拖延明确动作。
 - 用户明确要求填写的字段必须拥有真实可重放的输入步骤。即使 CURRENT 页面已经自动填好用户名、工号或普通文本，也必须通过对应 patrol_* 输入工具规范化并记录；“这次页面碰巧预填”不能替代下一次重放所需动作。敏感值仍只保存安全引用，绝不保存明文。
 - 业务点击优先使用 patrol_click_target。若点击后的具体业务文本已经从用户要求或 CURRENT 证据中明确知道，可提供 expectedText；若未知（例如 Logo 揭示表单、自定义菜单展开），不要猜 expectedText，直接省略，让 Patrol 通过点击前后 URL/可交互 DOM/页面状态变化自动验证。禁止为了满足参数而杜撰成功条件。
-- 新建 DRAFT 的顶层 targetUrl 在教学开始后锁定。用户要求“点击某入口”时，不得用猜测 URL 的 patrol_navigate 代替该点击，也不得先调用 patrol_update_inspection 把猜测 URL 改成新 target 再绕过导航保护。只有用户明确改变了任务目标时才允许重建/清空流程后使用新 target。
+- 新建 DRAFT 的顶层 targetUrl 是流程入口元数据，不是浏览器当前位置锁。正常巡检允许 patrol_navigate 在同一流程中访问后续已知 URL，也允许 action=back/forward/reload 恢复真实浏览器历史；但当用户明确要求“点击某入口”时，不得用模型猜测的内部 URL 替代该业务点击，也不得先调用 patrol_update_inspection 把猜测 URL 改成新 target 来伪造成功。
 - 已有非空流程与当前用户描述不完全一致时，默认策略必须是“保留旧流程并做最小化定位/修复”，绝不能因为 replay 失败、缺任务清单、步骤较多或新需求相似，就先 patrol_delete、patrol_remove_steps、patrol_delete_step 或 patrol_rewrite_flow_path 清空/重写旧流程。
 - 但是，如果 CURRENT 用户消息本身已经明确要求“旧流程删掉/清空/重建/重新创建”这类完整流程替换，不要再弹一遍确认卡造成死循环；直接对旧 inspection 调用 patrol_delete，并且 confirmed=true，然后按用户要求重新创建。patrol_delete 自身的 confirmed=true 就是完整流程删除的显式确认门槛。只有用户没有明确要求删除整个旧流程、而模型为了局部修复想删除/清理/批量移除/重写步骤时，才必须调用 patrol_request_flow_change_choice 弹出原生三选一卡片：① 确定（允许一次） ② 新建一份流程图 ③ 总是确定。
 - 用户选择“确定（允许一次）”后只授权一次局部破坏性工具调用；用户选择“新建一份流程图”后必须保留旧流程原样并使用新的 inspectionId；用户选择“总是确定”仅对当前 inspectionId、当前 Harness 进程有效，不得把这个偏好持久化到未来重启后的会话。
@@ -23,7 +23,6 @@ export const PATROL_INTEGRITY_PROMPT = `DSH Patrol 可复用流程完整性规�
 - 页面发生跳转/iframe 重建不允许让触发跳转的动作丢失。Patrol 应对页面变化做有界验证并保留已验证的因果点击。
 - 不要直接调用会改变页面的 browser_*。browser_click 等是 DSH Patrol 内部执行 primitive；patrol_* 复合工具会在内部调用它们并负责唯一目标解析、验证、记录和重放。`
 
-const BROWSER_STEP_TOOLS = new Set(['patrol_browser_step', 'patrol_reteach_browser_step'])
 /**
  * Kept as a compatibility export for existing tests/importers. Click integrity
  * is implemented by the click composite itself (unique target + post-click
@@ -75,23 +74,13 @@ export function createPatrolTeachingIntegrityGuard() {
     }
 
     if (!inspectionId) return undefined
-    const declared = declaredTargets.get(inspectionId)
-    if (!declared) return undefined
 
-    let requestedUrl = ''
-    if (name === 'patrol_navigate' && typeof args.url === 'string') requestedUrl = args.url
-    else if (BROWSER_STEP_TOOLS.has(name) && args.action === 'navigate' && isRecord(args.arguments) && typeof args.arguments.url === 'string') {
-      requestedUrl = args.arguments.url
-    }
-    if (!requestedUrl) return undefined
-
-    const requested = navigationIdentity(requestedUrl)
-    if (!requested || requested === declared) return undefined
-    return [
-      'DSH Patrol navigation integrity guard: navigation was NOT executed.',
-      `This DRAFT declared target ${JSON.stringify(declared)}, but the requested navigation is ${JSON.stringify(requested)}.`,
-      'Do not guess an internal URL to bypass a failed click. Repair the required CURRENT-page action instead. A different top-level target requires an explicitly recreated flow.',
-    ].join(' ')
+    // targetUrl remains protected against silent metadata rewrites above, but
+    // the CURRENT browser is intentionally free to navigate within a real
+    // workflow. Navigation/back/forward/reload are ordinary recordable actions;
+    // correctness is enforced by task/checklist evidence rather than by forcing
+    // every page to equal the initial target URL.
+    return undefined
   }
 }
 

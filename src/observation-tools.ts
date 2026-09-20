@@ -5,6 +5,7 @@ import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { PatrolBootstrapObservationKind, PatrolObservationGate } from './observation-guard.js'
 import { PatrolRunner } from './runner.js'
 import { PatrolStore } from './store.js'
+import { countRetainedToolResultImages, offloadHistoricalToolResultImages } from './image-context-hardening.js'
 
 const IMAGE_SCHEMA = {
   type: 'object',
@@ -78,7 +79,7 @@ export function registerPatrolObservationTools(
 ): () => void {
   const observe = defineTool({
     name: 'patrol_observe',
-    description: 'Read-only CURRENT-page observation. Captures a screenshot for freshness/OCR and can attach that exact CURRENT image with includeImage=true whenever the model decides vision is useful. There is no fixed screenshot-count limit; before a new visual attachment Patrol proactively prunes older bulky tool/image payloads and keeps the raster DPR-aware/bounded for local-model stability. Does not record a Runbook step.',
+    description: 'Read-only CURRENT-page observation. Captures a screenshot for freshness/OCR and can attach that exact CURRENT image with includeImage=true whenever the model decides vision is useful. There is no fixed screenshot-count limit; before a new visual attachment Patrol offloads older model-visible image blocks through Harness image/offload, trims oversized TEXT tool results separately, and keeps the raster DPR-aware/bounded for local-model stability. Does not record a Runbook step.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       tabId: { type: 'integer' },
@@ -161,10 +162,10 @@ export function registerPatrolObservationTools(
       rawInput: { inspectionId: args.inspectionId, tabId: args.tabId, includeImage: args.includeImage === true },
     }),
     async execute(args, exec: ToolRunContext) {
-      // Visual capture is unlimited by count, but old bulky Patrol tool/image
-      // payloads must not accumulate in the local-Qwen request. Prune before
-      // attaching each new CURRENT visual frame so the newest image remains
-      // useful without rebuilding the old OOM/503 failure pattern.
+      // Visual capture is unlimited by count, but previous screenshot image
+      // blocks must not accumulate in the next local-Qwen request. The generic
+      // toolResultPruner only trims text, so Patrol explicitly offloads old
+      // image occurrences first and runs the text pruner as a separate pass.
       if (args.includeImage === true) pruneHistoricalVisualContext(ctx, exec)
 
       // Screenshot capture establishes freshness and supplies bounded OCR.
@@ -385,11 +386,26 @@ async function currentTabMetadata(
 function pruneHistoricalVisualContext(ctx: Context, exec: ToolRunContext): void {
   const agent = exec.agent as unknown as { session?: unknown } | undefined
   if (agent?.session === undefined) return
+
+  // We are about to add one fresh CURRENT screenshot. Offload every older
+  // tool-result image so the new screenshot is the only retained Patrol visual
+  // occurrence after read_image returns. This is a durable model-surface
+  // projection, not a deletion from the append-only session log.
+  const imagesBefore = countRetainedToolResultImages(agent.session)
+  const imageResult = offloadHistoricalToolResultImages(agent.session, 0)
+  if (imageResult.applied) {
+    ctx.logger.info(
+      `[dsh-patrol/vision] offloaded historical image payloads before CURRENT visual attachment; before=${imagesBefore}, after=${imageResult.retainedAfter}, offloaded=${imageResult.offloaded}`,
+    )
+  } else if (imageResult.error !== undefined) {
+    ctx.logger.warn(`[dsh-patrol/vision] historical image offload unavailable: ${imageResult.error}`)
+  }
+
   let pruner: ToolResultPrunerLike | undefined
   try {
     pruner = ctx.get('toolResultPruner') as ToolResultPrunerLike | undefined
   } catch {
-    return
+    pruner = undefined
   }
   if (pruner === undefined) return
   try {
@@ -397,10 +413,10 @@ function pruneHistoricalVisualContext(ctx: Context, exec: ToolRunContext): void 
     const pruned = Array.isArray(result.pruned) ? result.pruned.length : 0
     const chars = typeof result.charsRemoved === 'number' ? result.charsRemoved : 0
     if (pruned > 0 || chars > 0) {
-      ctx.logger.info(`[dsh-patrol/vision] pruned historical tool/image payloads before CURRENT visual attachment; entries=${pruned}, chars=${chars}`)
+      ctx.logger.info(`[dsh-patrol/vision] trimmed historical TEXT tool payloads before CURRENT visual attachment; entries=${pruned}, chars=${chars}`)
     }
   } catch (error: unknown) {
-    ctx.logger.warn(`[dsh-patrol/vision] proactive visual-history prune failed: ${error instanceof Error ? error.message : String(error)}`)
+    ctx.logger.warn(`[dsh-patrol/vision] proactive visual-history text prune failed: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 

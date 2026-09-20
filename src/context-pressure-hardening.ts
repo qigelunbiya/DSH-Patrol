@@ -5,6 +5,10 @@ import {
   isPatrolQwenConstrainedRoute,
   isQwenLocalAuthUnavailableFailure,
 } from './context-pressure-guard.js'
+import {
+  countRetainedToolResultImages,
+  offloadHistoricalToolResultImages,
+} from './image-context-hardening.js'
 
 interface RequestRoute {
   provider: string
@@ -14,6 +18,12 @@ interface RequestRoute {
 interface FailureLike {
   code?: string
   message?: string
+  status?: number
+  statusCode?: number
+  retryAfterMs?: number
+  headers?: Record<string, string | number | undefined>
+  requestId?: string
+  request_id?: string
 }
 
 interface TokenMeasurementLike {
@@ -38,7 +48,7 @@ interface ToolResultPrunerLike {
 
 interface SessionLike {
   requestHeader(): { config?: Pick<LlmCallConfig, 'provider' | 'model'> } | undefined
-  surface?: { replaceGeneration?: number }
+  surface?: { replaceGeneration?: number; nodes?: readonly number[] }
 }
 
 interface AgentLike {
@@ -63,21 +73,25 @@ interface SeenStep {
   route?: RequestRoute
 }
 
+interface StepRecoveryState {
+  attempts: number
+  lastOomAt?: number
+}
+
 /**
- * The architectural context window of the local 122B model is not the useful
- * Patrol limit. Browser traces contain many tool blocks and historically also
- * repeated screenshot image attachments. The worker can OOM while the nominal
- * context window still looks healthy, so Patrol keeps a large safety margin.
- *
- * Compact observations now avoid images by default, but these thresholds remain
- * intentionally conservative so one unusually large table/snapshot cannot be
- * the request that tips the local worker over the edge.
+ * The local 122B route can exhaust GPU/request capacity before the nominal text
+ * context window is reached. Patrol therefore controls text and image pressure
+ * independently. In particular, Harness' ordinary tool-result pruner trims text
+ * only; historical image blocks are offloaded through the image/offload
+ * projection instead of being mistaken for "pruned".
  */
 export const PATROL_QWEN_HARDENED_PRUNE_LIMIT = 4_000
 export const PATROL_QWEN_HARDENED_COMPACT_LIMIT = 7_000
 export const PATROL_QWEN_NO_METER_PRUNE_STEP = 2
 export const PATROL_QWEN_NO_METER_COMPACT_STEP = 5
-export const PATROL_QWEN_AUTH_RETRY_DELAY_MS = 3_500
+export const PATROL_QWEN_AUTH_RETRY_DELAYS_MS = [3_500, 7_000, 14_000, 28_000] as const
+export const PATROL_QWEN_AUTH_RETRY_DELAY_MS = PATROL_QWEN_AUTH_RETRY_DELAYS_MS[0]
+export const PATROL_QWEN_OOM_DIAGNOSTIC_TTL_MS = 60_000
 
 function asAgentLike(value: unknown): AgentLike | undefined {
   if (value === null || typeof value !== 'object') return undefined
@@ -154,19 +168,27 @@ function pruneAdvanced(
     || (before !== undefined && after !== undefined && after > before)
 }
 
-function annotatePressureFailure(failure: FailureLike, sawCudaOom: boolean): void {
+function annotatePressureFailure(
+  failure: FailureLike,
+  options: { oom: boolean; sameStepRecentOom: boolean; retryAttempt: number; retryDelayMs?: number },
+): void {
   if (failure.message?.includes('[DSH Patrol diagnostic]') === true) return
   const authUnavailable = isQwenLocalAuthUnavailableFailure(failure)
-  const explanation = sawCudaOom
-    ? 'The local Qwen worker reported CUDA OOM; the following provider unavailability is treated as a likely recovery/cooldown symptom.'
-    : authUnavailable
-      ? 'The local Qwen provider is currently unavailable. This can be an auth-pool/cooldown condition and can also follow GPU memory pressure; Patrol does not assume OOM unless the backend actually reported it.'
-      : 'The local Qwen worker reported GPU memory exhaustion while processing this Patrol request.'
+  const explanation = options.oom
+    ? '本次模型请求直接报告了 CUDA/GPU OOM；Patrol 只会在实际减少请求负载后重试。'
+    : authUnavailable && options.sameStepRecentOom
+      ? '本次返回 auth_unavailable；同一模型步骤较早一次尝试在 60 秒内报告过 OOM，因此可能处于 worker 恢复/冷却阶段，但这不是新的 OOM 证据。'
+      : authUnavailable
+        ? '本次返回 auth_unavailable，表示上游当前不可用；它可能来自 worker 冷却、auth pool、并发/排队或其他网关状态，Patrol 不会把它直接解释成 CUDA OOM。'
+        : '本次本地 Qwen 请求失败。'
+  const retry = options.retryDelayMs === undefined
+    ? ''
+    : `Patrol 将等待约 ${options.retryDelayMs}ms 后执行第 ${options.retryAttempt} 次有界重试；只重发尚未成功的模型请求，不会重放已完成的浏览器写操作。`
   failure.message = [
     failure.message ?? failure.code ?? 'model request failed',
     `[DSH Patrol diagnostic] ${explanation}`,
-    'Patrol already reduced browser history, uses compact image-on-demand observations, and attempted early compaction before the bounded retry.',
-  ].join('\n')
+    retry,
+  ].filter(Boolean).join('\n')
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -193,7 +215,7 @@ function pruneOnce(
     const result = pruner.pruneSession(agent.session)
     const advanced = pruneAdvanced(agent.session, before, result)
     if (advanced) {
-      ctx.logger.warn(`[dsh-patrol/context-pressure] ${label}; removed historical Patrol tool payloads before model dispatch`)
+      ctx.logger.warn(`[dsh-patrol/context-pressure] ${label}; trimmed historical TEXT tool payloads before model dispatch`)
     }
     return advanced
   } catch (error: unknown) {
@@ -202,21 +224,56 @@ function pruneOnce(
   }
 }
 
+function offloadImages(
+  ctx: Context,
+  agent: AgentLike,
+  keepLatest: number,
+  label: string,
+): boolean {
+  const result = offloadHistoricalToolResultImages(agent.session, keepLatest)
+  if (result.applied) {
+    ctx.logger.warn(
+      `[dsh-patrol/context-pressure] ${label}; offloaded ${result.offloaded} historical image occurrence(s); retained=${result.retainedAfter}`,
+    )
+    return result.offloaded > 0
+  }
+  if (result.error !== undefined) {
+    ctx.logger.warn(`[dsh-patrol/context-pressure] ${label} unavailable: ${result.error}`)
+  }
+  return false
+}
+
+function retryAfterMs(failure: FailureLike): number | undefined {
+  if (typeof failure.retryAfterMs === 'number' && Number.isFinite(failure.retryAfterMs) && failure.retryAfterMs >= 0) {
+    return Math.min(120_000, failure.retryAfterMs)
+  }
+  const raw = failure.headers?.['retry-after'] ?? failure.headers?.['Retry-After']
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) return Math.min(120_000, raw * 1000)
+  if (typeof raw !== 'string' || raw.trim() === '') return undefined
+  const seconds = Number(raw)
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(120_000, seconds * 1000)
+  const when = Date.parse(raw)
+  if (!Number.isFinite(when)) return undefined
+  return Math.min(120_000, Math.max(0, when - Date.now()))
+}
+
+function failureRequestId(failure: FailureLike): string | undefined {
+  const value = failure.requestId ?? failure.request_id
+  return typeof value === 'string' && value.trim() !== '' ? value.trim().slice(0, 160) : undefined
+}
+
 /**
  * Patrol-only pressure guard used by the mounted preset.
  *
- * - model-free pruning starts around 4k measured tokens;
- * - durable compaction starts around 7k measured tokens;
- * - cumulative model-step counters survive user turns and remain active even
- *   when tokenMeter exists, because image/vision pressure can be under-counted;
- * - after compaction, one final model-free prune runs if the measured surface is
- *   still above the safe threshold;
- * - CUDA-OOM/auth-unavailable gets exactly one bounded reduced-context retry.
+ * Healthy pre-step pressure may use model-backed compaction. Failed-request
+ * recovery is intentionally model-free: image offload + text pruning + bounded
+ * cooldown retry. That prevents auth_unavailable recovery from calling the same
+ * already-failing Qwen model merely to generate a compaction summary.
  */
 export function registerPatrolContextPressureGuard(ctx: Context): () => void {
   const seenSteps = new Map<string, SeenStep>()
-  const attemptedRecovery = new WeakMap<object, string>()
-  const cudaOomAgents = new WeakSet<object>()
+  const recoveryByAgent = new WeakMap<object, Map<string, StepRecoveryState>>()
+  const lastSeenStep = new WeakMap<object, string>()
   const cumulativeModelSteps = new WeakMap<object, number>()
   const lastStepPrune = new WeakMap<object, number>()
   const lastStepCompact = new WeakMap<object, number>()
@@ -238,26 +295,41 @@ export function registerPatrolContextPressureGuard(ctx: Context): () => void {
       const route = routeFromAgent(agent)
       remember(payload.turn, payload.step, agent, route)
 
+      const agentKey = agent as unknown as object
+      const currentStepKey = keyOf(payload.turn, payload.step)
+      const previousStepKey = lastSeenStep.get(agentKey)
+      if (previousStepKey !== undefined && previousStepKey !== currentStepKey) {
+        // A later model step proves the previous one recovered/completed; stale
+        // OOM/auth recovery state must not leak into unrelated future 503 text.
+        recoveryByAgent.delete(agentKey)
+      }
+      lastSeenStep.set(agentKey, currentStepKey)
+
       // This plugin only mounts in Patrol. Before request routing is fully
       // resolved, protect the request conservatively; a known non-Qwen route
       // keeps Harness' normal policy.
       if (route !== undefined && !isPatrolQwenConstrainedRoute(route)) return next()
 
-      const agentKey = agent as unknown as object
+      // Keep only the newest retained tool-result image in the actual model
+      // surface. This is independent of the text-only toolResultPruner.
+      offloadImages(ctx, agent, 1, 'proactive Patrol image offload')
+      const retainedImages = countRetainedToolResultImages(agent.session)
+
       const cumulativeStep = (cumulativeModelSteps.get(agentKey) ?? 0) + 1
       cumulativeModelSteps.set(agentKey, cumulativeStep)
       const pressureStep = Math.max(payload.step, cumulativeStep)
 
       const tokenMeter = readTokenMeter(ctx)
       let tokens = measuredTokens(tokenMeter, agent.session)
-      // Vision attachments are not always represented accurately by tokenMeter.
-      // Keep a step-cadence guard active even when a meter exists, otherwise a
-      // long image-assisted patrol can look "small" in text tokens and still
-      // exhaust the local Qwen worker.
+      ctx.logger.info(
+        `[dsh-patrol/context-pressure] pre-dispatch budget route=${route?.provider ?? 'pending'}/${route?.model ?? 'pending'}`
+        + ` turn=${payload.turn} step=${payload.step} textTokens=${tokens ?? 'unknown'} retainedToolImages=${retainedImages}`,
+      )
+
       const lastPrunedAt = lastStepPrune.get(agentKey) ?? 0
       const pruneDueByStep = pressureStep >= PATROL_QWEN_NO_METER_PRUNE_STEP
         && pressureStep - lastPrunedAt >= PATROL_QWEN_NO_METER_PRUNE_STEP
-      const shouldPrune = tokens !== undefined && tokens >= PATROL_QWEN_HARDENED_PRUNE_LIMIT
+      const shouldPrune = (tokens !== undefined && tokens >= PATROL_QWEN_HARDENED_PRUNE_LIMIT)
         || pruneDueByStep
       const pruner = readToolResultPruner(ctx)
       if (shouldPrune) {
@@ -269,7 +341,7 @@ export function registerPatrolContextPressureGuard(ctx: Context): () => void {
       const lastCompactedAt = lastStepCompact.get(agentKey) ?? 0
       const compactDueByStep = pressureStep >= PATROL_QWEN_NO_METER_COMPACT_STEP
         && pressureStep - lastCompactedAt >= PATROL_QWEN_NO_METER_COMPACT_STEP
-      const shouldCompact = tokens !== undefined && tokens >= PATROL_QWEN_HARDENED_COMPACT_LIMIT
+      const shouldCompact = (tokens !== undefined && tokens >= PATROL_QWEN_HARDENED_COMPACT_LIMIT)
         || compactDueByStep
       if (!shouldCompact || payload.signal.aborted) return next()
 
@@ -322,57 +394,75 @@ export function registerPatrolContextPressureGuard(ctx: Context): () => void {
       if (!oom && !authUnavailable) return next()
 
       const agentKey = agent as unknown as object
-      if (oom) cudaOomAgents.add(agentKey)
-      annotatePressureFailure(payload.failure, oom || cudaOomAgents.has(agentKey))
-
       const stepKey = keyOf(payload.turn, payload.step)
-      if (attemptedRecovery.get(agentKey) === stepKey) return next()
-      attemptedRecovery.set(agentKey, stepKey)
-
-      const tokenMeter = readTokenMeter(ctx)
-      const pruner = readToolResultPruner(ctx)
-      let advanced = pruneOnce(ctx, pruner, agent, 'post-failure Patrol history prune')
-
-      // If pruning already made enough room, avoid a model-backed summary call.
-      // If measurement is unavailable, still compact because that blind spot was
-      // where long multi-turn sessions previously escaped protection.
-      const tokensAfterPrune = measuredTokens(tokenMeter, agent.session)
-      const shouldCompact = tokensAfterPrune === undefined
-        || tokensAfterPrune >= PATROL_QWEN_HARDENED_COMPACT_LIMIT
-        || !advanced
-      const compaction = readCompaction(ctx)
-      if (compaction !== undefined && shouldCompact && !payload.signal.aborted) {
-        const before = replaceGeneration(agent.session)
-        try {
-          const result = await compaction.compactIfNeeded(agent, 'context-overflow', payload.signal)
-          const after = replaceGeneration(agent.session)
-          if (result !== null || (before !== undefined && after !== undefined && after > before)) advanced = true
-          const nextTokens = measuredTokens(tokenMeter, agent.session)
-          if (!payload.signal.aborted && nextTokens !== undefined && nextTokens >= PATROL_QWEN_HARDENED_PRUNE_LIMIT) {
-            if (pruneOnce(ctx, pruner, agent, 'post-recovery-compaction Patrol history prune')) advanced = true
-          }
-        } catch (error: unknown) {
-          const after = replaceGeneration(agent.session)
-          if (before !== undefined && after !== undefined && after > before) advanced = true
-          ctx.logger.warn(`[dsh-patrol/context-pressure] post-failure compaction reported: ${error instanceof Error ? error.message : String(error)}`)
-        }
+      let steps = recoveryByAgent.get(agentKey)
+      if (steps === undefined) {
+        steps = new Map()
+        recoveryByAgent.set(agentKey, steps)
       }
+      const state = steps.get(stepKey) ?? { attempts: 0 }
+      const now = Date.now()
+      const sameStepRecentOom = state.lastOomAt !== undefined
+        && now - state.lastOomAt <= PATROL_QWEN_OOM_DIAGNOSTIC_TTL_MS
+      if (oom) state.lastOomAt = now
 
-      // auth_unavailable is often the worker/provider cooldown phase after a
-      // preceding CUDA OOM. Proactive pruning may already have removed every
-      // pruneable historical payload, so advanced=false must not suppress the
-      // single bounded cooldown retry. Raw OOM without auth_unavailable still
-      // requires an actual context reduction before retrying the same request.
-      if (payload.signal.aborted) return next()
-      if (!advanced && !authUnavailable) return next()
-      if (authUnavailable) {
+      if (state.attempts >= PATROL_QWEN_AUTH_RETRY_DELAYS_MS.length) {
+        annotatePressureFailure(payload.failure, {
+          oom,
+          sameStepRecentOom,
+          retryAttempt: state.attempts,
+        })
         ctx.logger.warn(
-          `[dsh-patrol/context-pressure] local Qwen is auth-unavailable; waiting ${PATROL_QWEN_AUTH_RETRY_DELAY_MS}ms before one reduced-context/cooldown retry`,
+          `[dsh-patrol/context-pressure] recovery exhausted route=${route.provider}/${route.model} turn=${payload.turn} step=${payload.step}`,
         )
-        await sleep(PATROL_QWEN_AUTH_RETRY_DELAY_MS, payload.signal)
+        return next()
       }
+
+      // Failed-request recovery must not call compaction.summarize() on the same
+      // unavailable model. Reduce only durable/model-free pressure here.
+      const imageReduced = offloadImages(ctx, agent, 1, 'post-failure Patrol image offload')
+      const pruner = readToolResultPruner(ctx)
+      const textReduced = pruneOnce(ctx, pruner, agent, 'post-failure Patrol text history prune')
+      const tokenMeter = readTokenMeter(ctx)
+      const tokens = measuredTokens(tokenMeter, agent.session)
+      const retainedImages = countRetainedToolResultImages(agent.session)
+
+      // A raw OOM retry requires actual request reduction. auth_unavailable may
+      // simply need the upstream worker/auth pool to recover, so cooldown retry
+      // is allowed even if there was nothing left to prune.
+      if (oom && !authUnavailable && !imageReduced && !textReduced) {
+        annotatePressureFailure(payload.failure, {
+          oom: true,
+          sameStepRecentOom,
+          retryAttempt: state.attempts,
+        })
+        ctx.logger.warn('[dsh-patrol/context-pressure] raw OOM had no model-free reduction; preserving original failure instead of blind retry')
+        return next()
+      }
+
+      state.attempts += 1
+      steps.set(stepKey, state)
+      const configuredDelay = PATROL_QWEN_AUTH_RETRY_DELAYS_MS[state.attempts - 1]!
+      const serverDelay = retryAfterMs(payload.failure)
+      const delayMs = Math.max(configuredDelay, serverDelay ?? 0)
+      annotatePressureFailure(payload.failure, {
+        oom,
+        sameStepRecentOom,
+        retryAttempt: state.attempts,
+        retryDelayMs: delayMs,
+      })
+
+      ctx.logger.warn(
+        `[dsh-patrol/context-pressure] upstream unavailable/recovery wait route=${route.provider}/${route.model}`
+        + ` turn=${payload.turn} step=${payload.step} attempt=${state.attempts}/${PATROL_QWEN_AUTH_RETRY_DELAYS_MS.length}`
+        + ` delayMs=${delayMs} status=${payload.failure.status ?? payload.failure.statusCode ?? 'unknown'}`
+        + ` code=${payload.failure.code ?? 'unknown'} requestId=${failureRequestId(payload.failure) ?? 'unknown'}`
+        + ` textTokens=${tokens ?? 'unknown'} retainedToolImages=${retainedImages}`,
+      )
+
+      await sleep(delayMs, payload.signal)
       if (payload.signal.aborted) return next()
-      ctx.logger.warn('[dsh-patrol/context-pressure] retrying this model step once after bounded pressure recovery')
+      ctx.logger.warn('[dsh-patrol/context-pressure] retrying only the failed model request after bounded model-free recovery')
       return { kind: 'retry' as const }
     },
     { prepend: true },

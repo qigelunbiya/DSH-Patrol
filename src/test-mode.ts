@@ -30,16 +30,17 @@ export function resolvePatrolRuntimePolicy(env: Record<string, string | undefine
 }
 
 export const PATROL_TEST_MODE_OVERRIDE_PROMPT = `DSH Patrol TEST MODE 调试规则（测试模式以“完成真实巡检”为优先，安全边界保留，但不得让编排限制本身阻塞正常页面操作）：
+- 用户可见语言规则不会因 TEST MODE 放宽：用户最近一条自然语言消息是中文时，解释、进度、错误、恢复和总结必须继续使用简体中文；英文工具输出或错误码不代表用户切换了语言。
 - 当前是测试模式。严格 NORMAL MODE 的 observe-before-mutate、页面规划器策略次数/HARD STOP 和 direct-browser 全禁用规则不作为 TEST MODE 的运行时拦截器。TEST MODE 只保留非法 selector 方言、畸形 URL、敏感输入/验证码等真正边界；不要因为“策略次数已耗尽”“必须先 analyze”“不能直接 browser_click”之类旧文案拒绝合理操作。
 - 当前流程必须是真实 inspectionId。运行已有流程用 patrol_run / patrol_run_flow；只有用户明确要修改流程时才进入教学/编辑。已有成功路径不得为了补一个后续动作而从头重新教学。
 - patrol_run / patrol_run_flow / patrol_run_batch 以及 patrol_validate 的重放阶段都按只读运行处理。若 CURRENT 浏览器已经处于同站点 authenticated 会话，Runner 会自动 fast-forward 已保存的登录前缀并从第一个登录后业务步骤继续；这不是流程漂移。不要因为登录 selector 缺失、登录步骤被 skipped、当前已经登录，或 validation/replay 命中 authenticated session，就调用 patrol_begin_edit、patrol_login_state、patrol_insert_*、patrol_reteach_*、patrol_finalize_flow 去补或改流程。用户只要求执行/重跑时，正式 replay 若仍失败就报告真实失败；除非用户在当前消息明确要求修改/优化流程，否则不得擅自编辑。
 - patrol_observe 是推荐的 CURRENT 页面观察工具。长流程不要每个动作后都 observe/snapshot；只有页面跳转、目标不确定、弹窗/iframe 重建或下一步确实需要新证据时再观察。
 - CURRENT 页面点击优先 patrol_click_target，因为它可以语义定位、验证并记录。若唯一文本点击失败、同名控件有多个、表格/弹窗/iframe 结构复杂，可调用 patrol_analyze_step 获取 CURRENT 证据，但 analyze 在 TEST MODE 是辅助工具，不是 patrol_click / patrol_click_target 的强制许可证。
-- 普通巡检观察默认 patrol_observe(includeImage=false)，优先使用 CURRENT DOM/OCR；不要为了“看一眼页面”持续把整张截图塞进模型上下文。只有上述 DOM 路径已经失败并且即将执行 patrol_visual_click_target 时，才获取一次 includeImage=true 的 CURRENT 图像，使用完即回到 DOM/OCR 路径。
+- 浏览器点击策略不强制 DOM-first 或 vision-last。CURRENT DOM/semantic 证据清楚时可直接 patrol_click_target；视觉更合适时也可以直接 patrol_observe(includeImage=true) + patrol_visual_click_target。视觉截图没有固定次数上限，但不要在页面无变化时机械重复同一张图；每次新图前 Patrol 会把历史工具图片从模型可见上下文中 offload，只保留当前动作真正需要的新视觉帧。
 - TEST MODE 的现场教学允许传当前 live tabId 来确保动作落在正确标签页；Patrol 执行时使用它，但写入 Runbook 前会自动剥离这个临时 tabId。不要因为“tabId 不可持久化”放弃 press/scroll/navigate 等现场动作。
-- 浏览器公开文本输入仍优先 patrol_type_text + CURRENT selector。若评论/富文本编辑器位于 web component / shadow DOM，DOM 分析确实拿不到可输入 selector，但最后兜底点击已经把正确编辑器聚焦，则使用 patrol_type_focused_text；它通过浏览器真实焦点输入并记录 browser_type_focused，禁止拿它填写密码、OTP、token 或验证码。
+- 浏览器公开文本输入仍优先 patrol_type_text + CURRENT selector。若评论/富文本编辑器位于 web component / shadow DOM，常规 selector 无法直接输入，但前一步已经可靠地把正确编辑器聚焦，则使用 patrol_type_focused_text；它通过浏览器真实焦点输入并记录 browser_type_focused，禁止拿它填写密码、OTP、token 或验证码。
 - 当已经从 CURRENT snapshot/read-page 获得一个具体 CSS selector 时，可以直接使用 patrol_click 做受记录的 fallback；不要因为缺少 patrol_analyze_step 而拒绝执行。patrol_click 自己负责浏览器动作和结果验证。
-- 若 Patrol 复合点击在复杂老系统上仍无法执行，TEST MODE 允许把 browser_semantic_click / browser_click 作为“当前页面现场操作”的 DOM 后备，也允许 browser_press / browser_scroll / browser_select。browser_visual_click 不作为模型可直接调用的逃生口；视觉点击必须通过 patrol_visual_click_target，且只有 DOM/semantic + CURRENT analyze 已证明 DOM 无可靠目标或恢复失败后才能使用。它们不会自动写入 Runbook，所以一旦低层后备成功，应尽快用 CURRENT 成功证据补教为 patrol_* 步骤或在最终 flow cleanup 时保留可重放路径。不要把低层后备当第一选择，也不要无限循环 selector。
+- TEST MODE 允许 browser_semantic_click / browser_click / browser_press / browser_scroll / browser_select / browser_navigate 作为 CURRENT 页面现场恢复通道。browser_visual_click 不作为模型可直接调用的逃生口；视觉点击统一通过 patrol_visual_click_target，使 frame 绑定、点击前验证和 Runbook 记录保持完整。DOM、semantic、vision 之间没有硬编码先后顺序，应根据 CURRENT 证据选择；低层后备成功后再用可重放的 patrol_* 路径固化，不要无限循环 selector。
 - TEST MODE 已启用 Windows Desktop Automation。desktop_* 原语可以直接操作当前桌面应用，不做动作权限分级；发消息、删除文件、关闭窗口等当前都允许直接执行。NORMAL MODE 现阶段同样不分级，后续权限分级由项目维护者单独设计。需要把桌面动作写入 Runbook 时使用 patrol_desktop_action；桌面定位优先 UI Automation > 快捷键 > OCR > CURRENT 坐标。
 - 操作微信/WPS/百度网盘等已知应用前，优先 desktop_read_app_guide 读取对应 Markdown 指南；工作区指南优先于插件内置指南。不要把应用知识库当成 CURRENT UI 事实，真正点击前仍以 desktop_snapshot / desktop_ocr 的当前证据为准。
 - 对“目标身份 + 行内动作”场景，例如某一主机/工单/设备行里的 RDP、SSH、详情按钮，patrol_click_target 的 stepName 必须同时保留目标身份和动作名称。扩展会先按最近业务行上下文定位；对于固定列/分裂表格，还会按 row key、aria-rowindex、同组行序号和水平对齐关系把身份列与动作列关联，避免只按第一个同名按钮点击。

@@ -482,19 +482,32 @@ async function interactionVisualClick(args) {
   const selectorHint = typeof args.selectorHint === 'string' ? args.selectorHint.trim() : ''
   if (selectorHint) {
     try {
-      const clicked = await sendDomCommand('click', { selector: selectorHint, tabId })
-      return {
-        ok: true,
-        selectorHint,
-        xRatio,
-        yRatio,
-        transport: 'visual-selector-replay',
-        targetStateChanged: false,
-        stateEvidence: 'recorded visual selector replayed through normal browser click',
-        ...(typeof clicked?.tag === 'string' ? { targetTag: clicked.tag } : {}),
-        ...(typeof clicked?.text === 'string' ? { targetText: clicked.text } : {}),
+      const validated = await interactionValidateVisualReplaySelector(tabId, selectorHint, args)
+      if (validated?.ok === true && validated.fingerprintMatched === true) {
+        const clicked = await sendDomCommand('click', { selector: selectorHint, tabId })
+        return {
+          ok: true,
+          selectorHint,
+          xRatio,
+          yRatio,
+          transport: 'visual-selector-replay+fingerprint-verified',
+          targetStateChanged: clicked?.targetStateChanged === true,
+          ...(typeof clicked?.stateEvidence === 'string' ? { stateEvidence: clicked.stateEvidence } : {
+            stateEvidence: 'recorded visual selector replayed only after CURRENT target fingerprint verification',
+          }),
+          ...(typeof validated.tag === 'string' ? { targetTag: validated.tag } : {}),
+          ...(typeof validated.role === 'string' && validated.role ? { targetRole: validated.role } : {}),
+          ...(typeof validated.text === 'string' && validated.text ? { targetText: validated.text } : {}),
+          ...(typeof validated.title === 'string' && validated.title ? { targetTitle: validated.title } : {}),
+          ...(typeof validated.ariaLabel === 'string' && validated.ariaLabel ? { targetAriaLabel: validated.ariaLabel } : {}),
+          ...(typeof validated.id === 'string' && validated.id ? { targetId: validated.id } : {}),
+          ...(typeof validated.className === 'string' && validated.className ? { targetClassName: validated.className } : {}),
+        }
       }
-    } catch {}
+    } catch {
+      // Selector drift is expected on dynamic pages. Do not physically click an
+      // unverified match; continue into semantic/CDP/geometry replay below.
+    }
   }
 
   const urlIdentity = typeof args.urlIdentity === 'string' ? args.urlIdentity.trim() : ''
@@ -538,6 +551,88 @@ async function interactionVisualClick(args) {
   const expectedAriaLabel = typeof args.expectedAriaLabel === 'string' ? args.expectedAriaLabel.trim() : ''
   const clicked = await interactionPerformVisualClick(tabId, xRatio, yRatio, current, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, typeof args.targetHint === 'string' ? args.targetHint.trim() : '')
   return interactionVisualClickResult(clicked, current, xRatio, yRatio, 'visual-coordinate-replay')
+}
+
+async function interactionValidateVisualReplaySelector(tabId, rawSelector, args) {
+  if (!chrome.scripting?.executeScript) return undefined
+  const parsed = parseFrameSelector(rawSelector)
+  // Persisted visual selectors are deliberately limited to document-addressable
+  // targets. Shadow/CDP-only targets replay through semantic/geometry recovery.
+  if (parsed.topFrame !== true) return undefined
+  const results = await chrome.scripting.executeScript({
+    target: { tabId, frameIds: [0] },
+    world: 'MAIN',
+    func: interactionMainWorldValidateVisualReplaySelector,
+    args: [parsed.selector, {
+      expectedTag: typeof args.expectedTag === 'string' ? args.expectedTag : '',
+      expectedRole: typeof args.expectedRole === 'string' ? args.expectedRole : '',
+      expectedTitle: typeof args.expectedTitle === 'string' ? args.expectedTitle : '',
+      expectedAriaLabel: typeof args.expectedAriaLabel === 'string' ? args.expectedAriaLabel : '',
+      targetTextHint: typeof args.targetTextHint === 'string' ? args.targetTextHint : '',
+      targetIdHint: typeof args.targetIdHint === 'string' ? args.targetIdHint : '',
+      targetClassHint: typeof args.targetClassHint === 'string' ? args.targetClassHint : '',
+    }],
+  })
+  const value = Array.isArray(results) ? results[0]?.result : undefined
+  return value && typeof value === 'object' ? value : undefined
+}
+
+function interactionMainWorldValidateVisualReplaySelector(selector, fingerprint = {}) {
+  const compact = value => String(value || '').replace(/\s+/g, ' ').trim()
+  const normalize = value => compact(value).toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
+  const roleOf = element => {
+    const explicit = compact(element.getAttribute?.('role') || '').toLowerCase()
+    if (explicit) return explicit
+    const tag = element.tagName?.toLowerCase?.() || ''
+    if (tag === 'button') return 'button'
+    if (tag === 'a' && element.getAttribute?.('href')) return 'link'
+    if (element instanceof HTMLTextAreaElement || element?.isContentEditable === true) return 'textbox'
+    if (element instanceof HTMLInputElement && !['button', 'submit', 'reset'].includes(String(element.type || '').toLowerCase())) return 'textbox'
+    return ''
+  }
+  let matches
+  try { matches = [...document.querySelectorAll(selector)] } catch { return { ok: false, fingerprintMatched: false, reason: 'invalid-selector' } }
+  const visible = matches.filter(element => {
+    const style = getComputedStyle(element)
+    const rect = element.getBoundingClientRect()
+    return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0 && rect.width > 0 && rect.height > 0
+  })
+  if (visible.length !== 1) return { ok: false, fingerprintMatched: false, reason: `selector-visible-count-${visible.length}` }
+  const element = visible[0]
+  const tag = element.tagName.toLowerCase()
+  const role = roleOf(element)
+  const title = compact(element.getAttribute('title') || '')
+  const ariaLabel = compact(element.getAttribute('aria-label') || '')
+  const id = compact(element.id || '')
+  const className = compact([...(element.classList || [])].join(' '))
+  const text = compact(element.innerText || element.textContent || ariaLabel || title || '').slice(0, 240)
+
+  if (fingerprint.expectedTag && tag !== String(fingerprint.expectedTag).toLowerCase()) return { ok: false, fingerprintMatched: false, reason: 'tag-mismatch' }
+  if (fingerprint.expectedRole && role !== String(fingerprint.expectedRole).toLowerCase()) return { ok: false, fingerprintMatched: false, reason: 'role-mismatch' }
+  if (fingerprint.expectedTitle && title !== String(fingerprint.expectedTitle)) return { ok: false, fingerprintMatched: false, reason: 'title-mismatch' }
+  if (fingerprint.expectedAriaLabel && ariaLabel !== String(fingerprint.expectedAriaLabel)) return { ok: false, fingerprintMatched: false, reason: 'aria-label-mismatch' }
+  if (fingerprint.targetIdHint && id !== String(fingerprint.targetIdHint)) return { ok: false, fingerprintMatched: false, reason: 'id-mismatch' }
+
+  const classHints = compact(fingerprint.targetClassHint).split(/\s+/)
+    .filter(Boolean)
+    .filter(token => !/^(?:active|selected|current|checked|focus|focused|hover|on|off)$/i.test(token))
+  if (classHints.length > 0 && !classHints.some(token => element.classList?.contains(token))) {
+    return { ok: false, fingerprintMatched: false, reason: 'class-mismatch' }
+  }
+  const textHint = normalize(fingerprint.targetTextHint)
+  if (textHint && !/^\d+$/.test(textHint)) {
+    const actual = normalize(text)
+    if (!actual || (!actual.includes(textHint) && !textHint.includes(actual))) {
+      return { ok: false, fingerprintMatched: false, reason: 'text-mismatch' }
+    }
+  }
+
+  const strongEvidence = Boolean(
+    fingerprint.expectedRole || fingerprint.expectedTitle || fingerprint.expectedAriaLabel
+    || fingerprint.targetIdHint || classHints.length > 0 || (textHint && !/^\d+$/.test(textHint)),
+  )
+  if (!strongEvidence) return { ok: false, fingerprintMatched: false, reason: 'insufficient-fingerprint' }
+  return { ok: true, fingerprintMatched: true, tag, role, title, ariaLabel, id, className, text }
 }
 
 async function interactionSetScroll(tabId, x, y) {
@@ -1007,6 +1102,84 @@ async function interactionResolvePiercedEditablePoint(tabId, targetHint, origina
   }
 }
 
+async function interactionVerifyPiercedTargetHit(tabId, backendNodeId, clientX, clientY) {
+  if (!Number.isInteger(Number(backendNodeId))
+    || !chrome.debugger?.attach || !chrome.debugger?.sendCommand || !chrome.debugger?.detach) return false
+  const target = { tabId }
+  let attached = false
+  try {
+    await chrome.debugger.attach(target, '1.3')
+    attached = true
+    const hit = await chrome.debugger.sendCommand(target, 'DOM.getNodeForLocation', {
+      x: Math.round(Number(clientX)),
+      y: Math.round(Number(clientY)),
+      includeUserAgentShadowDOM: true,
+    })
+    const hitBackendNodeId = Number(hit?.backendNodeId)
+    if (!Number.isInteger(hitBackendNodeId)) return false
+    if (hitBackendNodeId === Number(backendNodeId)) return true
+
+    // A click on a legitimate descendant of the resolved control is safe too.
+    // Compare object identity/containment through CDP so closed Shadow DOM does
+    // not get flattened back to a visible host by MAIN-world probing.
+    const [resolvedTarget, resolvedHit] = await Promise.all([
+      chrome.debugger.sendCommand(target, 'DOM.resolveNode', { backendNodeId: Number(backendNodeId) }),
+      chrome.debugger.sendCommand(target, 'DOM.resolveNode', { backendNodeId: hitBackendNodeId }),
+    ])
+    const targetObjectId = resolvedTarget?.object?.objectId
+    const hitObjectId = resolvedHit?.object?.objectId
+    if (!targetObjectId || !hitObjectId) return false
+    const contains = await chrome.debugger.sendCommand(target, 'Runtime.callFunctionOn', {
+      objectId: targetObjectId,
+      functionDeclaration: 'function(hit){ return Boolean(hit) && (this === hit || this.contains?.(hit) === true); }',
+      arguments: [{ objectId: hitObjectId }],
+      returnByValue: true,
+    })
+    return contains?.result?.value === true
+  } catch {
+    return false
+  } finally {
+    if (attached) {
+      try { await chrome.debugger.detach(target) } catch {}
+    }
+  }
+}
+
+function interactionPiercedDescriptor(resolved, requestedX, requestedY, clickX, clickY) {
+  return {
+    ok: true,
+    selector: '',
+    replaySelectorSafe: false,
+    tag: typeof resolved?.tag === 'string' ? resolved.tag : '',
+    role: typeof resolved?.role === 'string' ? resolved.role : '',
+    text: typeof resolved?.evidence === 'string' ? resolved.evidence.slice(0, 240) : '',
+    title: '',
+    ariaLabel: '',
+    id: '',
+    className: '',
+    targetStateChanged: false,
+    targetFocusedEditable: false,
+    stateSignature: '',
+    stateEvidence: '',
+    focusedEditorText: '',
+    requestedClickX: requestedX,
+    requestedClickY: requestedY,
+    clickX,
+    clickY,
+    visualSnapped: Math.hypot(clickX - requestedX, clickY - requestedY) > 0.5,
+    snapDistance: Math.hypot(clickX - requestedX, clickY - requestedY),
+  }
+}
+
+function interactionSameProbeTarget(before, after) {
+  if (!before || !after || typeof before !== 'object' || typeof after !== 'object') return false
+  if (before.selector && after.selector && before.selector === after.selector) return true
+  if (before.id && after.id && before.id === after.id && before.tag === after.tag) return true
+  if (before.ariaLabel && after.ariaLabel && before.ariaLabel === after.ariaLabel && before.tag === after.tag) return true
+  if (before.title && after.title && before.title === after.title && before.tag === after.tag) return true
+  return false
+}
+
 async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, targetHint = '') {
   if (!chrome.scripting?.executeScript) throw new Error('visualClick requires chrome.scripting')
   const captureLeft = Number.isFinite(Number(viewport.captureClientLeft)) ? Number(viewport.captureClientLeft) : Number(viewport.offsetLeft || 0)
@@ -1016,35 +1189,73 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
   if (captureWidth <= 0 || captureHeight <= 0) throw new Error('visualClick screenshot capture geometry is invalid')
   const clientX = captureLeft + Math.max(1, Math.min(captureWidth - 1, captureWidth * xRatio))
   const clientY = captureTop + Math.max(1, Math.min(captureHeight - 1, captureHeight * yRatio))
+
   const piercedEditable = await interactionResolvePiercedEditablePoint(tabId, targetHint, clientX, clientY)
   const piercedAction = piercedEditable ? undefined : await interactionResolvePiercedActionPoint(tabId, targetHint, clientX, clientY)
   const preResolved = piercedEditable || piercedAction
   const probeClientX = Number.isFinite(Number(preResolved?.x)) ? Number(preResolved.x) : clientX
   const probeClientY = Number.isFinite(Number(preResolved?.y)) ? Number(preResolved.y) : clientY
 
-  let nativeError = ''
-  if (chrome.debugger?.attach && chrome.debugger?.sendCommand && chrome.debugger?.detach) {
-    let probe
-    try {
-      const probeResults = await chrome.scripting.executeScript({
-        target: { tabId, frameIds: [0] },
-        world: 'MAIN',
-        func: interactionMainWorldVisualClick,
-        args: [probeClientX, probeClientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, true, targetHint],
-      })
-      probe = Array.isArray(probeResults) ? probeResults[0]?.result : undefined
-      if (probe?.ok === false) throw new Error(probe.error || 'visual target probe failed')
-    } catch (error) {
-      nativeError = `target probe failed: ${safeError(error)}`
+  if (preResolved) {
+    if (expectedTag && preResolved.tag && String(preResolved.tag).toLowerCase() !== expectedTag) {
+      throw new Error('CDP-resolved visual target has a different tag than teaching')
     }
+    if (expectedRole && preResolved.role && String(preResolved.role).toLowerCase() !== expectedRole) {
+      throw new Error('CDP-resolved visual target has a different role than teaching')
+    }
+    const label = String(preResolved.evidence || '').trim()
+    if (expectedTitle && label && label !== expectedTitle) throw new Error('CDP-resolved visual target has a different title/accessible label than teaching')
+    if (expectedAriaLabel && label && label !== expectedAriaLabel) throw new Error('CDP-resolved visual target has a different aria-label/accessible label than teaching')
+    if (!await interactionVerifyPiercedTargetHit(tabId, preResolved.backendNodeId, probeClientX, probeClientY)) {
+      throw new Error('CDP-resolved visual target is not the final topmost hit at its calibrated click point; refusing physical input')
+    }
+  }
 
-    const hasExpectedFingerprint = Boolean(expectedTag || expectedRole || expectedTitle || expectedAriaLabel)
-    const hasTargetHint = Boolean(String(targetHint || '').trim())
-    if ((!hasExpectedFingerprint && !hasTargetHint) || (probe && typeof probe === 'object' && probe.ok !== false)) {
+  let nativeError = ''
+  let nativeMouseDispatched = false
+  let probe
+  let beforeFocusedEditor
+  if (interactionWantsPublishTarget(targetHint)) {
+    try { beforeFocusedEditor = await interactionFocusedEditorProbe(tabId, false) } catch {}
+  }
+
+  if (chrome.debugger?.attach && chrome.debugger?.sendCommand && chrome.debugger?.detach) {
+    try {
       try {
-        let trustedX = Number.isFinite(Number(probe?.clickX)) ? Number(probe.clickX) : probeClientX
-        let trustedY = Number.isFinite(Number(probe?.clickY)) ? Number(probe.clickY) : probeClientY
+        const probeResults = await chrome.scripting.executeScript({
+          target: { tabId, frameIds: [0] },
+          world: 'MAIN',
+          func: interactionMainWorldVisualClick,
+          args: [probeClientX, probeClientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, true, targetHint],
+        })
+        probe = Array.isArray(probeResults) ? probeResults[0]?.result : undefined
+        if (probe?.ok === false) throw new Error(probe.error || 'visual target probe failed')
+      } catch (error) {
+        if (!preResolved) throw error
+        // Closed Shadow DOM/CDP targets are already verified by backend identity.
+        // MAIN may see only the host; that must never replace the pierced target.
+        probe = undefined
+      }
+
+      const hasExpectedFingerprint = Boolean(expectedTag || expectedRole || expectedTitle || expectedAriaLabel)
+      const hasTargetHint = Boolean(String(targetHint || '').trim())
+      const canDispatch = Boolean(preResolved)
+        || ((!hasExpectedFingerprint && !hasTargetHint) || (probe && typeof probe === 'object' && probe.ok !== false))
+      if (canDispatch) {
+        // CDP identity owns the final coordinate when available. MAIN-world
+        // correction is used only when no pierced target was resolved.
+        let trustedX = preResolved
+          ? probeClientX
+          : Number.isFinite(Number(probe?.clickX)) ? Number(probe.clickX) : probeClientX
+        let trustedY = preResolved
+          ? probeClientY
+          : Number.isFinite(Number(probe?.clickY)) ? Number(probe.clickY) : probeClientY
+        const clickedTarget = preResolved
+          ? interactionPiercedDescriptor(preResolved, clientX, clientY, trustedX, trustedY)
+          : probe
+
         await interactionDispatchTrustedMouseClick(tabId, trustedX, trustedY)
+        nativeMouseDispatched = true
         await new Promise(resolve => setTimeout(resolve, piercedEditable?.kind === 'activator' ? 180 : 260))
 
         let activatedEditor
@@ -1054,12 +1265,38 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
             if (activatedEditor?.kind === 'editable'
               && Number.isFinite(Number(activatedEditor.x))
               && Number.isFinite(Number(activatedEditor.y))) {
-              trustedX = Number(activatedEditor.x)
-              trustedY = Number(activatedEditor.y)
+              const nextX = Number(activatedEditor.x)
+              const nextY = Number(activatedEditor.y)
+              if (!await interactionVerifyPiercedTargetHit(tabId, activatedEditor.backendNodeId, nextX, nextY)) {
+                throw new Error('mounted editor is not the topmost hit at its CDP-resolved point')
+              }
+              trustedX = nextX
+              trustedY = nextY
               await interactionDispatchTrustedMouseClick(tabId, trustedX, trustedY)
+              nativeMouseDispatched = true
               await new Promise(resolve => setTimeout(resolve, 180))
             }
-          } catch {}
+          } catch (error) {
+            return {
+              ...(clickedTarget && typeof clickedTarget === 'object' ? clickedTarget : {}),
+              ok: true,
+              targetStateChanged: false,
+              targetFocusedEditable: false,
+              requestedClickX: clientX,
+              requestedClickY: clientY,
+              clickX: trustedX,
+              clickY: trustedY,
+              visualSnapped: Math.hypot(trustedX - clientX, trustedY - clientY) > 0.5,
+              snapDistance: Math.hypot(trustedX - clientX, trustedY - clientY),
+              cdpPiercedTarget: Boolean(preResolved),
+              cdpPiercedActivator: true,
+              cdpPiercedFollowupEditor: false,
+              cdpPiercedAction: Boolean(piercedAction),
+              physicalClickUncertain: true,
+              stateEvidence: `editor activator click was dispatched, but follow-up editor verification failed; refusing a second synthetic click: ${safeError(error)}`,
+              inputTransport: 'chrome-debugger',
+            }
+          }
         }
 
         let afterProbe
@@ -1072,17 +1309,21 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
           })
           afterProbe = Array.isArray(afterResults) ? afterResults[0]?.result : undefined
         } catch {}
+
+        const sameProbeTarget = !preResolved && interactionSameProbeTarget(probe, afterProbe)
         let targetStateChanged = Boolean(
-          probe && afterProbe
-          && typeof probe.stateSignature === 'string'
-          && typeof afterProbe.stateSignature === 'string'
+          sameProbeTarget
+          && typeof probe?.stateSignature === 'string'
+          && typeof afterProbe?.stateSignature === 'string'
           && probe.stateSignature !== afterProbe.stateSignature
         )
         let focusedEditor
         if (interactionWantsEditableTarget(targetHint) || interactionWantsPublishTarget(targetHint)) {
           try { focusedEditor = await interactionFocusedEditorProbe(tabId, false) } catch {}
         }
-        const beforeEditorText = typeof probe?.focusedEditorText === 'string' ? probe.focusedEditorText : ''
+        const beforeEditorText = typeof beforeFocusedEditor?.observedText === 'string'
+          ? beforeFocusedEditor.observedText
+          : typeof probe?.focusedEditorText === 'string' ? probe.focusedEditorText : ''
         const afterEditorText = typeof focusedEditor?.observedText === 'string' ? focusedEditor.observedText : ''
         const editorClearedAfterPublish = interactionWantsPublishTarget(targetHint)
           && beforeEditorText.trim().length > 0
@@ -1101,24 +1342,18 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
           }
         } catch {}
 
-        const targetFocusedEditable = afterProbe?.targetFocusedEditable === true || focusedEditor?.focusUsable === true
-        const resolvedX = Number.isFinite(Number(afterProbe?.clickX))
-          ? Number(afterProbe.clickX)
-          : Number.isFinite(Number(probe?.clickX)) ? Number(probe.clickX) : trustedX
-        const resolvedY = Number.isFinite(Number(afterProbe?.clickY))
-          ? Number(afterProbe.clickY)
-          : Number.isFinite(Number(probe?.clickY)) ? Number(probe.clickY) : trustedY
-        const snapDistance = Math.hypot(resolvedX - clientX, resolvedY - clientY)
+        const targetFocusedEditable = focusedEditor?.focusUsable === true
+          || (!preResolved && afterProbe?.targetFocusedEditable === true)
+        const snapDistance = Math.hypot(trustedX - clientX, trustedY - clientY)
         return {
+          ...(clickedTarget && typeof clickedTarget === 'object' ? clickedTarget : {}),
           ok: true,
-          ...(probe && typeof probe === 'object' ? probe : {}),
-          ...(afterProbe && typeof afterProbe === 'object' ? afterProbe : {}),
           targetStateChanged,
           targetFocusedEditable,
           requestedClickX: clientX,
           requestedClickY: clientY,
-          clickX: resolvedX,
-          clickY: resolvedY,
+          clickX: trustedX,
+          clickY: trustedY,
           visualSnapped: snapDistance > 0.5,
           snapDistance,
           cdpPiercedTarget: Boolean(preResolved),
@@ -1126,27 +1361,46 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
           cdpPiercedFollowupEditor: activatedEditor?.kind === 'editable',
           cdpPiercedAction: Boolean(piercedAction),
           unexpectedNavigation,
+          physicalClickUncertain: false,
           stateEvidence: unexpectedNavigation
             ? 'in-page visual control unexpectedly navigated away; never treat this as business success'
             : editorClearedAfterPublish
               ? 'comment editor cleared after trusted publish/send click'
               : targetStateChanged
                 ? preResolved
-                  ? piercedAction
-                    ? 'trusted native click changed the publish/send control state after pierced action resolution'
-                    : 'trusted native click changed the visual target own DOM state after pierced Shadow DOM/editor resolution'
-                  : 'trusted native click changed the visual target own DOM state'
+                  ? 'trusted native click changed verified business state after CDP target resolution'
+                  : 'trusted native click changed the same pre-click visual target own DOM state'
                 : targetFocusedEditable
-              ? activatedEditor?.kind === 'editable'
-                ? 'trusted native click activated the comment editor and then focused its mounted editable control'
-                : piercedEditable
-                  ? 'trusted native click focused an editor resolved through pierced Shadow DOM/editor targeting'
-                  : 'trusted native click focused an editable control'
-              : '',
+                  ? activatedEditor?.kind === 'editable'
+                    ? 'trusted native click activated the comment editor and then focused its mounted editable control'
+                    : piercedEditable
+                      ? 'trusted native click focused an editor resolved through pierced Shadow DOM/editor targeting'
+                      : 'trusted native click focused an editable control'
+                  : '',
           inputTransport: 'chrome-debugger',
         }
-      } catch (error) {
-        nativeError = [nativeError, `trusted mouse failed: ${safeError(error)}`].filter(Boolean).join('; ')
+      }
+    } catch (error) {
+      if (nativeMouseDispatched || error?.physicalClickDispatched === true) {
+        return {
+          ...(probe && typeof probe === 'object' ? probe : {}),
+          ok: true,
+          targetStateChanged: false,
+          targetFocusedEditable: false,
+          requestedClickX: clientX,
+          requestedClickY: clientY,
+          clickX: probeClientX,
+          clickY: probeClientY,
+          physicalClickUncertain: true,
+          stateEvidence: `trusted native physical click outcome became uncertain; refusing synthetic duplicate: ${safeError(error)}`,
+          inputTransport: 'chrome-debugger',
+        }
+      }
+      nativeError = `trusted mouse failed before physical dispatch was confirmed: ${safeError(error)}`
+      if (preResolved) {
+        // Never flatten a verified closed-shadow/CDP target back into a MAIN
+        // synthetic click merely because debugger input failed.
+        throw new Error(nativeError)
       }
     }
   }
@@ -1178,6 +1432,7 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
 async function interactionDispatchTrustedMouseClick(tabId, clientX, clientY) {
   const target = { tabId }
   let attached = false
+  let mousePressed = false
   try {
     await chrome.debugger.attach(target, '1.3')
     attached = true
@@ -1187,9 +1442,16 @@ async function interactionDispatchTrustedMouseClick(tabId, clientX, clientY) {
     await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
       type: 'mousePressed', x: clientX, y: clientY, button: 'left', buttons: 1, clickCount: 1,
     })
+    mousePressed = true
     await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
       type: 'mouseReleased', x: clientX, y: clientY, button: 'left', buttons: 0, clickCount: 1,
     })
+    return { physicalClickDispatched: true }
+  } catch (error) {
+    if (mousePressed && error && typeof error === 'object') {
+      try { error.physicalClickDispatched = true } catch {}
+    }
+    throw error
   } finally {
     if (attached) {
       try { await chrome.debugger.detach(target) } catch {}
@@ -1198,6 +1460,18 @@ async function interactionDispatchTrustedMouseClick(tabId, clientX, clientY) {
 }
 
 function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transport) {
+  const captureLeft = Number.isFinite(Number(viewport.captureClientLeft)) ? Number(viewport.captureClientLeft) : Number(viewport.offsetLeft || 0)
+  const captureTop = Number.isFinite(Number(viewport.captureClientTop)) ? Number(viewport.captureClientTop) : Number(viewport.offsetTop || 0)
+  const captureWidth = Number.isFinite(Number(viewport.captureWidth)) ? Number(viewport.captureWidth) : Number(viewport.width || 0)
+  const captureHeight = Number.isFinite(Number(viewport.captureHeight)) ? Number(viewport.captureHeight) : Number(viewport.height || 0)
+  const resolvedX = Number.isFinite(Number(clicked.clickX)) ? Number(clicked.clickX) : undefined
+  const resolvedY = Number.isFinite(Number(clicked.clickY)) ? Number(clicked.clickY) : undefined
+  const effectiveXRatio = resolvedX !== undefined && captureWidth > 0
+    ? Math.max(0, Math.min(1, (resolvedX - captureLeft) / captureWidth))
+    : xRatio
+  const effectiveYRatio = resolvedY !== undefined && captureHeight > 0
+    ? Math.max(0, Math.min(1, (resolvedY - captureTop) / captureHeight))
+    : yRatio
   const rawSelector = typeof clicked.selector === 'string' ? clicked.selector.trim() : ''
   const selectorHint = rawSelector
     ? (rawSelector.startsWith(INTERACTION_TOP_FRAME_PREFIX) ? rawSelector : `${INTERACTION_TOP_FRAME_PREFIX}${rawSelector}`)
@@ -1209,8 +1483,10 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
       : transport
   return {
     ok: true,
-    xRatio,
-    yRatio,
+    xRatio: effectiveXRatio,
+    yRatio: effectiveYRatio,
+    requestedXRatio: xRatio,
+    requestedYRatio: yRatio,
     transport: effectiveTransport,
     ...(selectorHint ? { selectorHint } : {}),
     urlIdentity: viewport.urlIdentity,
@@ -1243,6 +1519,7 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
     cdpPiercedActivator: clicked.cdpPiercedActivator === true,
     cdpPiercedFollowupEditor: clicked.cdpPiercedFollowupEditor === true,
     cdpPiercedAction: clicked.cdpPiercedAction === true,
+    physicalClickUncertain: clicked.physicalClickUncertain === true,
     ...(Number.isFinite(Number(clicked.snapDistance)) ? { snapDistance: Number(clicked.snapDistance) } : {}),
   }
 }
