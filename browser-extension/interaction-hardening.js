@@ -205,7 +205,20 @@ async function interactionVisualClick(args) {
     if (!interactionSameViewport(frame, current, 2)) {
       throw new Error('browser visual frame is stale: URL/scroll/zoom/viewport changed after screenshot; capture a fresh visual observation')
     }
-    const clicked = await interactionPerformVisualClick(tabId, xRatio, yRatio, frame, '', '', '', '')
+    const expectedTag = typeof args.expectedTag === 'string' ? args.expectedTag.trim().toLowerCase() : ''
+    const expectedRole = typeof args.expectedRole === 'string' ? args.expectedRole.trim().toLowerCase() : ''
+    const expectedTitle = typeof args.expectedTitle === 'string' ? args.expectedTitle.trim() : ''
+    const expectedAriaLabel = typeof args.expectedAriaLabel === 'string' ? args.expectedAriaLabel.trim() : ''
+    const clicked = await interactionPerformVisualClick(
+      tabId,
+      xRatio,
+      yRatio,
+      frame,
+      expectedTag,
+      expectedRole,
+      expectedTitle,
+      expectedAriaLabel,
+    )
     interactionVisualFrames.delete(frameId)
     return interactionVisualClickResult(clicked, frame, xRatio, yRatio, 'bound-current-visual-frame')
   }

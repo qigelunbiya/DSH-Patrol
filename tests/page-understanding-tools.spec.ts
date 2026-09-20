@@ -167,6 +167,9 @@ describe('Patrol page understanding planner', () => {
       name: 'patrol_analyze_step',
       arguments: { inspectionId: 'demo', task: '点击目标行的 RDP', locatorText: 'RDP' },
     })).toBeUndefined()
+    // This test exercises retry-budget semantics after analysis has explicitly
+    // concluded there is no reliable DOM target.
+    outcomes.setVisualFallbackAuthorization({ inspectionId: 'demo', stepName: '点击目标行的 RDP' }, true)
 
     expect(visual('browser-visual-1')).toBeUndefined()
     expect(visual('browser-visual-2')).toBeUndefined()
