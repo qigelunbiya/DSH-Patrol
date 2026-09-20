@@ -514,9 +514,11 @@ describe('Patrol screenshot tab readiness', () => {
     expect(source).toContain("targetHint = ''")
     expect(source).toContain('const resolveHintTarget = (initialTarget, originalX, originalY) =>')
     expect(source).toContain('visual targetHint matches multiple equally-near CURRENT DOM targets')
-    expect(source).toContain('let trustedX = Number.isFinite(Number(probe?.clickX))')
+    expect(source).toContain('let trustedX = preResolved')
+    expect(source).toContain('? probeClientX')
     expect(source).toContain('await interactionDispatchTrustedMouseClick(tabId, trustedX, trustedY)')
-    expect(source).toContain('visualSnapped: resolved.snapped === true')
+    expect(source).toContain('interactionVerifyPiercedTargetHit')
+    expect(source).toContain('physicalClickUncertain')
   })
 
   it('falls back from a stale explicit tab id to the CURRENT active browser tab', async () => {
