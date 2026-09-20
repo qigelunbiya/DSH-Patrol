@@ -6,20 +6,30 @@ export interface PatrolClickIdentity {
 
 export interface PatrolClickOutcomeTracker {
   unverifiedPhysicalClicks(input: PatrolClickIdentity): number
+  visualPhysicalClicks(input: PatrolClickIdentity): number
   recordUnverifiedPhysicalClick(input: PatrolClickIdentity): void
+  recordVisualPhysicalClick(input: PatrolClickIdentity): void
   recordVerified(input: PatrolClickIdentity): void
   clearInspection(inspectionId: string): void
 }
 
 export function createPatrolClickOutcomeTracker(): PatrolClickOutcomeTracker {
   const attempts = new Map<string, number>()
+  const visualPhysicalAttempts = new Map<string, number>()
   return {
     unverifiedPhysicalClicks(input) {
       return attempts.get(clickKey(input)) ?? 0
     },
+    visualPhysicalClicks(input) {
+      return visualPhysicalAttempts.get(clickKey(input)) ?? 0
+    },
     recordUnverifiedPhysicalClick(input) {
       const key = clickKey(input)
       attempts.set(key, (attempts.get(key) ?? 0) + 1)
+    },
+    recordVisualPhysicalClick(input) {
+      const key = clickKey(input)
+      visualPhysicalAttempts.set(key, (visualPhysicalAttempts.get(key) ?? 0) + 1)
     },
     recordVerified(input) {
       attempts.delete(clickKey(input))
@@ -27,6 +37,7 @@ export function createPatrolClickOutcomeTracker(): PatrolClickOutcomeTracker {
     clearInspection(inspectionId) {
       const prefix = `${normalize(inspectionId)}|`
       for (const key of attempts.keys()) if (key.startsWith(prefix)) attempts.delete(key)
+      for (const key of visualPhysicalAttempts.keys()) if (key.startsWith(prefix)) visualPhysicalAttempts.delete(key)
     },
   }
 }

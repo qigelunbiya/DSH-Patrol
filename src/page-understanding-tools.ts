@@ -41,7 +41,6 @@ interface PlanningGuardState {
   analyzed: boolean
   businessKey: string
   strategyAttempts: number
-  visualAttempted: boolean
 }
 
 interface SnapshotElement {
@@ -64,7 +63,7 @@ export const PATROL_PAGE_UNDERSTANDING_PROMPT = `DSH Patrol 页面理解与执�
 - patrol_analyze_step 永远不写 Runbook。它优先把“行身份 + 行内动作”绑定，例如“目标地址 + RDP”，避免只按 [RDP] 命中多行。不要把分析器给出的 selector 再扩写成更长的 nth-of-type，也不要在分析失败后继续 browser_count/snapshot/read_page 猜选择器。
 - selector 参数只接受当前浏览器 querySelector 层支持的 CSS。严禁使用 jQuery/Playwright/XPath 方言：:contains(...)、:has-text(...)、text=...、//...、.//...、xpath=...。当 locatorText 已知时，优先只传 locatorText 给 patrol_click_target，不要额外猜 selector；patrol_click_target 会在 atomic semantic 失败时自动检查唯一 exact [title="..."]。如果 locatorText 已提供但 selector hint 是这些非法方言，运行时会丢弃这个可选 hint 而继续语义定位，不能让坏 hint 阻塞正确点击。title-backed 树节点若直接调用 selector，则只使用 CURRENT snapshot/analyze 给出的原生 CSS。
 - 业务点击优先 patrol_click_target；若物理点击已发生但结果未验证，最多只允许一次有新证据支持的恢复点击；两次物理点击均未验证就 HARD STOP，避免重复提交。定位阶段只要已经完成一次 DOM/semantic 尝试并做过一次 CURRENT analyze、但仍没有可靠唯一目标，就允许进入单次视觉后备；不要求模型再编造一个 CSS 作为形式上的“第二种策略”。
-- 视觉后备不是第三种 selector。patrol_visual_click_target 必须使用 patrol_observe(includeImage=true) 刚刚返回的 visualFrameId；底层验证 tab、URL、scroll、zoom、viewport 与截图一致才点击。教学成功后保存为 browser_visual_click：重放优先使用视觉命中时发现的 stable selector；若 selector 漂移，再恢复记录的 URL/scroll/viewport 并使用归一化 xRatio/yRatio。视觉点击成功后该 screenshot frame 立即失效，下一次必须重新截图。
+- 视觉后备不是第三种 selector。patrol_visual_click_target 必须使用 patrol_observe(includeImage=true) 刚刚返回的 visualFrameId；底层验证 tab、URL、scroll、zoom、viewport 与截图一致才点击。若视觉调用在物理点击前失败（例如 stale frame、能力缺失、viewport 已变化），这次不消耗视觉物理点击预算，必须换一张 CURRENT 截图后再试；若已经发生物理视觉点击但业务状态仍未验证，最多只允许再有一次新截图/新证据支持的物理恢复。教学成功后保存为 browser_visual_click：重放优先使用视觉命中时发现的 stable selector；若 selector 漂移，再恢复记录的 URL/scroll/viewport 并使用归一化 xRatio/yRatio。
 - 运行时若返回“DOM selector 策略已耗尽”，立即停止 patrol_analyze_step/patrol_click_target/patrol_click/browser_count/snapshot/read_page 的 selector 探索；只有 CURRENT 图片中明确可见目标时才走一次 patrol_observe(includeImage=true)+patrol_visual_click_target。视觉后备失败/未验证，或者已有两次未验证物理点击时才是最终 HARD STOP；此后必须直接结束当前 assistant turn。
 - 不要为每个内部工具调用向用户重复“我再观察一下/我再试一下/让我换个选择器”。只有需要用户输入/确认、遇到不可恢复阻塞、或任务最终完成时才发自然语言说明。任何没有新工具结果或新页面证据支持的 selector 推测最多写一次。
 - 教学轨迹不等于 Runbook。诊断 snapshot/read、失败点击、重复输入、临时等待都不是最终流程。任务完成后必须 patrol_finalize_flow，只保留真正完成 taskChecklist 的已验证业务路径，再确认流程。
@@ -90,7 +89,7 @@ export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = 
     for (const [key, value] of states) if (now - value.touchedAt > STATE_TTL_MS) states.delete(key)
     let state = states.get(inspectionId)
     if (state === undefined) {
-      state = { touchedAt: now, analyzed: false, businessKey: '', strategyAttempts: 0, visualAttempted: false }
+      state = { touchedAt: now, analyzed: false, businessKey: '', strategyAttempts: 0 }
       states.set(inspectionId, state)
     }
     state.touchedAt = now
@@ -109,7 +108,6 @@ export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = 
     if (name === 'patrol_analyze_step') {
       const key = businessKey(args.task, args.locatorText)
       alignBusinessState(state, key)
-      if (state.visualAttempted) return strategyHardStop('这个业务目标已经执行过视觉后备')
       if (state.strategyAttempts >= 2) return visualFallbackStop()
       if (state.analyzed) {
         return 'DSH Patrol 页面规划器：CURRENT 分析已经为这个业务点击执行过一次。不要重复 analyze/read/snapshot/count；请执行分析给出的唯一恢复方案。'
@@ -121,17 +119,27 @@ export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = 
     if (name === 'patrol_visual_click_target') {
       // targetHint is intentionally visual ("大拇指图标") and can differ from
       // the DOM locator text ("点赞"). Keep the retry episode bound to the
-      // business stepName so a visual description cannot reset the two-strategy budget.
+      // business stepName so a visual description cannot reset the strategy budget.
       const key = businessKey(args.stepName, undefined)
       alignBusinessState(state, key)
       const unverified = outcomes.unverifiedPhysicalClicks(args)
-      if (unverified >= 2) return strategyHardStop('同一业务动作已有两次未验证的物理点击')
-      const visualEligible = state.strategyAttempts >= 2 || (state.strategyAttempts >= 1 && state.analyzed)
+      const visualPhysical = outcomes.visualPhysicalClicks(args)
+      if (unverified >= 2 || visualPhysical >= 2) {
+        return strategyHardStop('同一业务动作已经发生两次未验证/视觉物理点击')
+      }
+      if (visualPhysical >= 1 && unverified === 0) {
+        return strategyHardStop('这个业务目标已有一次已验证的视觉物理点击，禁止再次点击以免把点赞等开关状态反向切回')
+      }
+      const visualEligible = state.strategyAttempts >= 2
+        || (state.strategyAttempts >= 1 && state.analyzed)
+        || (visualPhysical >= 1 && unverified >= 1)
       if (!visualEligible) {
         return 'DSH Patrol 页面规划器：视觉点击需要先证明 DOM 路径无法可靠完成。至少先执行一次 patrol_click_target；若失败，再调用一次 patrol_analyze_step 获取 CURRENT DOM 证据。完成这两步后即可直接使用截图视觉后备，不需要为了凑“第二种策略”继续猜 CSS。'
       }
-      if (state.visualAttempted) return strategyHardStop('这个业务目标的一次视觉后备已经用完')
-      state.visualAttempted = true
+      // Do NOT consume the visual budget here. The tool may still fail before
+      // any physical click (stale frame, unsupported capability, viewport
+      // changed). patrol_visual_click_target records the budget only after the
+      // browser confirms that a physical visual click was actually executed.
       state.analyzed = false
       return undefined
     }
@@ -139,10 +147,13 @@ export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = 
     if (!CLICK_TOOLS.has(name)) return undefined
     const key = businessKey(args.stepName, args.locatorText)
     alignBusinessState(state, key)
-    if (state.visualAttempted) return strategyHardStop('这个业务目标已经执行过视觉后备')
+    const visualPhysical = outcomes.visualPhysicalClicks(args)
+    const unverified = outcomes.unverifiedPhysicalClicks(args)
+    if (visualPhysical >= 1 && unverified === 0) {
+      return strategyHardStop('这个业务目标已有一次已验证的视觉物理点击，禁止重复 DOM 点击')
+    }
 
     if (name === 'patrol_click_target') {
-      const unverified = outcomes.unverifiedPhysicalClicks(args)
       if (unverified >= 2) return strategyHardStop('同一业务动作已有两次未验证的物理点击')
       if (state.strategyAttempts >= 2) return visualFallbackStop()
       if ((unverified === 1 || state.strategyAttempts === 1) && !state.analyzed) {
@@ -188,7 +199,6 @@ function alignBusinessState(state: PlanningGuardState, key: string): void {
   state.businessKey = key
   state.analyzed = false
   state.strategyAttempts = 0
-  state.visualAttempted = false
 }
 
 function businessKey(primary: unknown, locator: unknown): string {

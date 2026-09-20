@@ -43,6 +43,11 @@ const ELEMENT = {
     href: str,
     checked: bool,
     value: str,
+    context: str,
+    evidence: str,
+    correlation: str,
+    score: optNum,
+    depth: optInt,
   },
 }
 
@@ -53,6 +58,21 @@ function requireOk(value, operation) {
   if (!value || typeof value !== 'object') throw new Error(`${operation} returned an invalid browser response`)
   if (value.ok === false) throw new Error(redactMessage(value.error || `${operation} failed`))
   return value
+}
+
+function normalizeSnapshotElement(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const tag = typeof value.tag === 'string' && value.tag.trim() ? value.tag : undefined
+  const selector = typeof value.selector === 'string' && value.selector.trim() ? value.selector : undefined
+  if (!tag || !selector) return undefined
+  const out = { tag, selector }
+  for (const key of ['role', 'text', 'type', 'name', 'href', 'value', 'context', 'evidence', 'correlation']) {
+    if (typeof value[key] === 'string') out[key] = value[key]
+  }
+  if (typeof value.checked === 'boolean') out.checked = value.checked
+  if (typeof value.score === 'number' && Number.isFinite(value.score)) out.score = value.score
+  if (Number.isInteger(value.depth)) out.depth = value.depth
+  return out
 }
 
 export function registerTools(ctx, bridge, config = {}) {
@@ -146,7 +166,10 @@ export function registerTools(ctx, bridge, config = {}) {
       presentCall: args => generic('Snapshot page', args),
       execute: async (args, exec) => {
         const value = requireOk(await run(bridge, exec, 'snapshot', { selector: args.selector, maxElements: args.maxElements ?? 150, includeHidden: args.includeHidden ?? false, tabId: args.tabId }, timeoutMs), 'snapshot')
-        return { ok: true, url: value.url ?? '', title: value.title ?? '', elements: value.elements ?? [], truncated: value.truncated ?? false }
+        const elements = Array.isArray(value.elements)
+          ? value.elements.map(normalizeSnapshotElement).filter(Boolean)
+          : []
+        return { ok: true, url: value.url ?? '', title: value.title ?? '', elements, truncated: value.truncated ?? false }
       },
     }),
     defineTool({

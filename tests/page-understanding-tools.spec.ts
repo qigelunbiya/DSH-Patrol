@@ -94,11 +94,23 @@ describe('Patrol page understanding planner', () => {
     })).toBeUndefined()
   })
 
-  it('uses at most two DOM strategies, then permits exactly one screenshot-bound visual fallback', () => {
-    const guard = createPatrolPlanningGuard()
+  it('does not poison the business target when a visual fallback fails before any physical click', () => {
+    const outcomes = createPatrolClickOutcomeTracker()
+    const guard = createPatrolPlanningGuard(outcomes)
     const semantic = () => guard({
       name: 'patrol_click_target',
       arguments: { inspectionId: 'demo', stepName: '点击目标行的 RDP', locatorText: 'RDP' },
+    })
+    const visual = (frameId: string) => guard({
+      name: 'patrol_visual_click_target',
+      arguments: {
+        inspectionId: 'demo',
+        stepName: '点击目标行的 RDP',
+        targetHint: 'CURRENT 截图中的 RDP 图标',
+        frameId,
+        xRatio: 0.82,
+        yRatio: 0.61,
+      },
     })
 
     expect(semantic()).toBeUndefined()
@@ -107,37 +119,16 @@ describe('Patrol page understanding planner', () => {
       name: 'patrol_analyze_step',
       arguments: { inspectionId: 'demo', task: '点击目标行的 RDP', locatorText: 'RDP' },
     })).toBeUndefined()
-    expect(semantic()).toBeUndefined()
-    expect(semantic()).toMatch(/DOM selector 策略已耗尽|patrol_visual_click_target/)
-    expect(guard({
-      name: 'patrol_analyze_step',
-      arguments: { inspectionId: 'demo', task: '点击目标行的 RDP', locatorText: 'RDP' },
-    })).toMatch(/DOM selector 策略已耗尽|patrol_visual_click_target/)
 
-    expect(guard({
-      name: 'patrol_visual_click_target',
-      arguments: {
-        inspectionId: 'demo',
-        stepName: '点击目标行的 RDP',
-        targetHint: 'CURRENT 截图中的 RDP 图标',
-        frameId: 'browser-visual-1',
-        xRatio: 0.82,
-        yRatio: 0.61,
-      },
-    })).toBeUndefined()
+    expect(visual('browser-visual-1')).toBeUndefined()
+    expect(visual('browser-visual-2')).toBeUndefined()
 
-    expect(semantic()).toMatch(/HARD STOP/)
-    expect(guard({
-      name: 'patrol_visual_click_target',
-      arguments: {
-        inspectionId: 'demo',
-        stepName: '点击目标行的 RDP',
-        targetHint: 'RDP',
-        frameId: 'browser-visual-2',
-        xRatio: 0.82,
-        yRatio: 0.61,
-      },
-    })).toMatch(/HARD STOP/)
+    outcomes.recordVisualPhysicalClick({ inspectionId: 'demo', stepName: '点击目标行的 RDP' })
+    outcomes.recordUnverifiedPhysicalClick({ inspectionId: 'demo', stepName: '点击目标行的 RDP' })
+    expect(visual('browser-visual-3')).toBeUndefined()
+    outcomes.recordVisualPhysicalClick({ inspectionId: 'demo', stepName: '点击目标行的 RDP' })
+    outcomes.recordUnverifiedPhysicalClick({ inspectionId: 'demo', stepName: '点击目标行的 RDP' })
+    expect(visual('browser-visual-4')).toMatch(/HARD STOP/)
   })
 
   it('does not reset a stalled selector budget just because the same target is renamed cosmetically', () => {

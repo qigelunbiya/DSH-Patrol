@@ -5,6 +5,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { afterEach, describe, expect, it } from 'vitest'
 import { registerPatrolVisualClickTool } from '../src/visual-click-tools.ts'
+import { createPatrolClickOutcomeTracker } from '../src/click-retry-state.ts'
 import { PatrolStore } from '../src/store.ts'
 import type { InspectionDefinition, JsonObject } from '../src/types.ts'
 
@@ -13,7 +14,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
-async function setup(dispatch: (tool: string, args: JsonObject) => Promise<any>) {
+async function setup(dispatch: (tool: string, args: JsonObject) => Promise<any>, clickOutcomes?: any) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-visual-click-'))
   roots.push(root)
   const store = new PatrolStore(root)
@@ -29,7 +30,7 @@ async function setup(dispatch: (tool: string, args: JsonObject) => Promise<any>)
       },
     },
   } as unknown as Context
-  registerPatrolVisualClickTool(ctx, store, { dispatch } as any, { maxSteps: 20 })
+  registerPatrolVisualClickTool(ctx, store, { dispatch } as any, { maxSteps: 20, clickOutcomes })
   const tool = definitions.find(item => item.name === 'patrol_visual_click_target')
   if (!tool) throw new Error('patrol_visual_click_target not registered')
   const exec = {
@@ -151,6 +152,29 @@ describe('browser visual fallback click teaching', () => {
       'browser_snapshot',
       'browser_visual_click',
     ])
+  })
+
+  it('does not consume visual physical-click budget when browser_visual_click fails before clicking', async () => {
+    const outcomes = createPatrolClickOutcomeTracker()
+    const { tool, exec } = await setup(async (name) => {
+      if (name === 'browser_read_page') return { ok: true, text: '首页', value: { ok: true, url: 'https://www.bilibili.com/', text: '首页' } }
+      if (name === 'browser_snapshot') return { ok: true, text: 'snapshot', value: { ok: true, url: 'https://www.bilibili.com/', elements: [] } }
+      if (name === 'browser_visual_click') return { ok: false, error: 'browser visual frame is stale or unavailable', text: '' }
+      throw new Error(`unexpected tool ${name}`)
+    }, outcomes)
+
+    const args = {
+      inspectionId: 'visual-click',
+      stepName: '给视频点赞',
+      targetHint: '大拇指点赞按钮',
+      frameId: 'browser-visual-current',
+      xRatio: 0.1,
+      yRatio: 0.8,
+    }
+    const result = await tool.execute(args, exec)
+    expect(result).toMatch(/does NOT consume/i)
+    expect(outcomes.visualPhysicalClicks(args)).toBe(0)
+    expect(outcomes.unverifiedPhysicalClicks(args)).toBe(0)
   })
 
   it('rejects a screenshot file name used as frameId before dispatch', async () => {

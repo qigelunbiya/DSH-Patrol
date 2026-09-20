@@ -144,7 +144,7 @@ export function createManagedBrowserController(options = {}) {
         await configureWorker(refreshedWorker)
         await waitForBridge(bridge, connectTimeoutMs, extensionId)
         if (missingRequiredCapability()) {
-          throw new Error(`Patrol extension connected but is still missing required capabilities after in-place refresh: ${missingRequiredCapabilities().join(', ')}`)
+          throw new Error('Patrol extension connected but is still missing required semanticClick capability after in-place refresh')
         }
       }
 
@@ -265,15 +265,10 @@ export function createManagedBrowserController(options = {}) {
     }).catch(() => {})
   }
 
-  function missingRequiredCapabilities() {
+  function missingRequiredCapability() {
     const extension = bridge.status?.()?.extension
     const capabilities = extension?.capabilities
-    if (!Array.isArray(capabilities)) return []
-    return ['semanticClick', 'visualClick'].filter(capability => !capabilities.includes(capability))
-  }
-
-  function missingRequiredCapability() {
-    return missingRequiredCapabilities().length > 0
+    return Array.isArray(capabilities) && !capabilities.includes('semanticClick')
   }
 
   function writeCurrentState() {

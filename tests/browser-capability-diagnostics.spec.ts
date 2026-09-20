@@ -59,6 +59,52 @@ describe('browser capability diagnostics', () => {
     expect(rendered).toContain('visualSnapshot')
   })
 
+  it('sanitizes enriched snapshot metadata so context/evidence cannot invalidate browser_snapshot output', async () => {
+    const fixture = fakeToolContext()
+    const bridge = {
+      status: () => ({
+        connected: true,
+        pending: 0,
+        extension: {
+          name: 'dsh-patrol-browser-extension',
+          version: '0.3.1',
+          capabilities: ['captureImageCode', 'visualSnapshot', 'semanticClick', 'visualClick'],
+        },
+      }),
+      async request(cmd) {
+        if (cmd !== 'snapshot') throw new Error(`unexpected ${cmd}`)
+        return {
+          ok: true,
+          url: 'https://www.bilibili.com/',
+          title: '哔哩哔哩',
+          elements: [{
+            tag: 'span',
+            selector: 'top-frame::span[title="点赞"]',
+            text: '点赞',
+            context: '视频操作栏',
+            evidence: 'title-backed-custom-action',
+            unexpectedFutureField: 'must be dropped',
+          }],
+          truncated: false,
+        }
+      },
+      saveScreenshot: () => '/tmp/unused.png',
+    }
+
+    registerTools(fixture.ctx, bridge)
+    const snapshot = fixture.definitions.find(definition => definition.name === 'browser_snapshot')
+    const value = await snapshot.execute({ maxElements: 50 }, {})
+    expect(value.elements).toEqual([{
+      tag: 'span',
+      selector: 'top-frame::span[title="点赞"]',
+      text: '点赞',
+      context: '视频操作栏',
+      evidence: 'title-backed-custom-action',
+    }])
+    expect(snapshot.output.schema.properties.elements.items.properties).toHaveProperty('context')
+    expect(snapshot.output.schema.properties.elements.items.properties).toHaveProperty('evidence')
+  })
+
   it('reports semanticClick as missing instead of treating a registered host tool as available', async () => {
     const fixture = fakeToolContext()
     const bridge = {

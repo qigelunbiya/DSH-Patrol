@@ -86,7 +86,14 @@ export function registerPatrolVisualClickTool(
         yRatio: args.yRatio,
         tabId: args.tabId,
       }), exec)
-      if (!clicked.ok) return `Visual fallback click failed and was NOT recorded. ${clicked.error ?? clicked.text ?? 'Unknown browser visual click error'}`
+      if (!clicked.ok) {
+        return [
+          'Visual fallback failed before Patrol could confirm a physical click, so this attempt does NOT consume the visual physical-click budget.',
+          clicked.error ?? clicked.text ?? 'Unknown browser visual click error',
+          'Capture a fresh patrol_observe(includeImage=true) and retry with its new visualFrameId if the target is still clearly visible.',
+        ].filter(Boolean).join('\n')
+      }
+      outcomes.recordVisualPhysicalClick(args)
 
       let verificationMethod: NonNullable<ToolStep['teaching']>['method']
       let verificationEvidence = ''
