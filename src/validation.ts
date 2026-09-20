@@ -218,9 +218,16 @@ function assertToolArgumentPolicy(stepId: string, tool: string, args: JsonObject
   }
   if (tool === 'browser_navigate') {
     const action = args.action ?? 'navigate'
-    if (action !== 'navigate') throw new Error(`step ${stepId} browser_navigate must use an explicit URL, not history action ${String(action)}`)
-    if (typeof args.url !== 'string' || args.url.length === 0) throw new Error(`step ${stepId} browser_navigate requires url`)
-    if (args.newTab === true) throw new Error(`step ${stepId} browser_navigate must reuse the active tab; newTab is not replay-stable`)
+    if (!['navigate', 'back', 'forward', 'reload'].includes(String(action))) {
+      throw new Error(`step ${stepId} browser_navigate action is invalid: ${String(action)}`)
+    }
+    if (action === 'navigate') {
+      if (typeof args.url !== 'string' || args.url.length === 0) throw new Error(`step ${stepId} browser_navigate requires url`)
+      if (args.newTab === true) throw new Error(`step ${stepId} browser_navigate must reuse the active tab; newTab is not replay-stable`)
+    } else {
+      if ('url' in args) throw new Error(`step ${stepId} browser_navigate history action ${String(action)} must not persist url`)
+      if ('newTab' in args) throw new Error(`step ${stepId} browser_navigate history action ${String(action)} must not persist newTab`)
+    }
   }
   const refs = collectCredentialReferences(args)
   if (tool === 'browser_type_credential') {
