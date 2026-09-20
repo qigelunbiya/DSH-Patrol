@@ -590,12 +590,13 @@ function interactionCdpActionNode(node, attrs) {
   const name = String(node?.nodeName || '').toLowerCase()
   const role = String(attrs.role || '').toLowerCase()
   const type = String(attrs.type || '').toLowerCase()
-  if (name === 'button' || name === 'a') return true
+  if (name === 'button') return true
   if (name === 'input' && ['button', 'submit'].includes(type)) return true
-  if (role === 'button' || role === 'link') return true
+  if (role === 'button') return true
   const evidence = [
     name, attrs.id, attrs.class, attrs.name, attrs['aria-label'], attrs.title,
   ].filter(Boolean).join(' ').toLowerCase()
+  if (name === 'a' && !/(?:btn|button|send|submit|publish|post|comment-action)/i.test(evidence)) return false
   return /(?:btn|button|send|submit|publish|post|comment-action)/i.test(evidence)
 }
 
