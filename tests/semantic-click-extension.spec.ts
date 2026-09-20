@@ -159,4 +159,15 @@ describe('atomic semantic click extension layer', () => {
     expect(source).toContain("'cdp-pierced::editor-activator'")
   })
 
+
+  it('uses CDP Accessibility geometry as a semantic fallback for custom controls and exact publish actions', () => {
+    const source = readFileSync(join(root, 'browser-extension', 'semantic-click.js'), 'utf8')
+    expect(source).toContain('semanticClickPiercedFallback')
+    expect(source).toContain('interactionResolvePiercedActionPoint')
+    expect(source).toContain('interactionResolvePiercedSemanticPoint')
+    expect(source).toContain("'cdp-accessibility::semantic-target'")
+    expect(source).toContain("'cdp-pierced::publish-action'")
+    expect(source).toContain('unexpectedNavigation')
+  })
+
 })
