@@ -87,6 +87,17 @@ describe('current-page observation evidence fallback', () => {
     expect(harness.observed).toHaveLength(1)
   })
 
+  it('prunes historical Patrol payloads before every new visual attachment instead of imposing a screenshot-count cap', async () => {
+    const harness = setupObservationHarness({ readImage: 'success', captcha: false, prune: true })
+    for (let index = 0; index < 4; index += 1) {
+      const value = await harness.tool.execute({ inspectionId: 'demo', includeImage: true }, harness.exec)
+      expect(value.imageStatus).toBe('attached')
+    }
+    expect(harness.pruneCalls).toBe(4)
+    expect(harness.readImageCalls).toBe(4)
+    expect(harness.screenshotArgs).toHaveLength(4)
+  })
+
   it('falls back to compact evidence when explicit image attachment is unavailable', async () => {
     const harness = setupObservationHarness({ readImage: 'failed', captcha: false })
     const value = await harness.tool.execute({ inspectionId: 'demo', includeImage: true }, harness.exec)
@@ -128,14 +139,26 @@ describe('current-page observation evidence fallback', () => {
 function setupObservationHarness(options: {
   readImage: 'missing' | 'failed' | 'success'
   captcha: boolean
+  prune?: boolean
 }) {
   const definitions: any[] = []
   const observed: Array<{ inspectionId: string; rootCallId: unknown }> = []
   const organized: Array<{ inspectionId: string; sourcePath: string; workspaceRoot: string }> = []
   let readImageCalls = 0
+  let pruneCalls = 0
   const screenshotArgs: any[] = []
 
   const ctx = {
+    get(name: string) {
+      if (name !== 'toolResultPruner' || options.prune !== true) return undefined
+      return {
+        pruneSession() {
+          pruneCalls += 1
+          return { pruned: [{ kind: 'old-image' }], charsRemoved: 1024 }
+        },
+      }
+    },
+    logger: { info() {}, warn() {} },
     tools: {
       register(definition: any) {
         definitions.push(definition)
@@ -247,5 +270,6 @@ function setupObservationHarness(options: {
     organized,
     screenshotArgs,
     get readImageCalls() { return readImageCalls },
+    get pruneCalls() { return pruneCalls },
   }
 }
