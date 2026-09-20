@@ -285,8 +285,10 @@ export function createManagedBrowserController(options = {}) {
     const extension = bridge.status?.()?.extension
     const capabilities = extension?.capabilities
     return Array.isArray(capabilities)
-      && capabilities.includes('visualClick')
-      && !capabilities.includes('trustedVisualClick')
+      && (
+        (capabilities.includes('visualClick') && !capabilities.includes('trustedVisualClick'))
+        || !capabilities.includes('trustedFocusedType')
+      )
   }
 
   function writeCurrentState() {

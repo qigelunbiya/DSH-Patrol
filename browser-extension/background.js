@@ -13,6 +13,7 @@ const EXTENSION_CAPABILITIES = Object.freeze([
   'semanticClick',
   'visualClick',
   'trustedVisualClick',
+  'trustedFocusedType',
 ])
 let socket = null
 let state = 'disconnected'

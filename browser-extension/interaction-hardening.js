@@ -49,6 +49,7 @@ handleCommand = async function interactionHardenedHandleCommand(cmd, args = {}) 
   if (cmd === 'activateTab') return await interactionActivateTab(args)
   if (cmd === 'screenshot') return await interactionScreenshot(args)
   if (cmd === 'visualClick') return await interactionVisualClick(args)
+  if (cmd === 'typeFocused') return await interactionTypeFocused(args)
   if (cmd === 'select') return await interactionSelect(args)
   return await interactionPreviousHandleCommand(cmd, args)
 }
@@ -611,6 +612,133 @@ function interactionTabIsCapturable(tab) {
   const url = typeof tab.url === 'string' ? tab.url.trim() : ''
   if (!/^https?:\/\//i.test(url)) return false
   return tab.status !== 'loading'
+}
+
+async function interactionTypeFocused(args) {
+  const tabId = await resolveTabId(args.tabId)
+  const text = typeof args.text === 'string' ? args.text : ''
+  if (!text) throw new Error('typeFocused requires non-empty text')
+  if (!chrome.scripting?.executeScript) throw new Error('typeFocused requires chrome.scripting')
+  const before = await interactionFocusedEditorProbe(tabId, args.clear !== false)
+  if (!before?.focusUsable) throw new Error('no focused browser editor is available; click/focus the intended input first')
+
+  let trusted = false
+  let attached = false
+  const target = { tabId }
+  try {
+    if (chrome.debugger?.attach && chrome.debugger?.sendCommand && chrome.debugger?.detach) {
+      await chrome.debugger.attach(target, '1.3')
+      attached = true
+      if (args.clear !== false && before.clearedByScript !== true) {
+        for (const event of [
+          { type: 'keyDown', key: 'a', code: 'KeyA', modifiers: 2 },
+          { type: 'keyUp', key: 'a', code: 'KeyA', modifiers: 2 },
+          { type: 'keyDown', key: 'Backspace', code: 'Backspace' },
+          { type: 'keyUp', key: 'Backspace', code: 'Backspace' },
+        ]) await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', event)
+      }
+      await chrome.debugger.sendCommand(target, 'Input.insertText', { text })
+      trusted = true
+    }
+  } finally {
+    if (attached) {
+      try { await chrome.debugger.detach(target) } catch {}
+    }
+  }
+  if (!trusted) {
+    const inserted = await interactionFocusedEditorInsertSynthetic(tabId, text)
+    if (!inserted?.ok) throw new Error(inserted?.error || 'focused editor synthetic text insertion failed')
+  }
+  await new Promise(resolve => setTimeout(resolve, 80))
+  const after = await interactionFocusedEditorProbe(tabId, false)
+  return {
+    ok: true,
+    textLength: text.length,
+    focusedTag: String(after?.focusedTag || before.focusedTag || ''),
+    focusKind: String(after?.focusKind || before.focusKind || ''),
+    observedText: typeof after?.observedText === 'string' ? after.observedText : '',
+    transport: trusted ? 'chrome-debugger-insert-text' : 'main-world-focused-editor',
+  }
+}
+
+async function interactionFocusedEditorProbe(tabId, clear) {
+  const results = await chrome.scripting.executeScript({
+    target: { tabId, frameIds: [0] },
+    world: 'MAIN',
+    func: interactionMainWorldFocusedEditor,
+    args: ['probe', { clear }],
+  })
+  return Array.isArray(results) ? results[0]?.result : undefined
+}
+
+async function interactionFocusedEditorInsertSynthetic(tabId, text) {
+  const results = await chrome.scripting.executeScript({
+    target: { tabId, frameIds: [0] },
+    world: 'MAIN',
+    func: interactionMainWorldFocusedEditor,
+    args: ['insert', { text }],
+  })
+  return Array.isArray(results) ? results[0]?.result : undefined
+}
+
+function interactionMainWorldFocusedEditor(mode, args = {}) {
+  const deepActiveElement = () => {
+    let active = document.activeElement
+    let guard = 0
+    while (active instanceof Element && active.shadowRoot?.activeElement instanceof Element && guard < 8) {
+      active = active.shadowRoot.activeElement
+      guard += 1
+    }
+    return active
+  }
+  const setNativeValue = (element, value) => {
+    const proto = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set
+    if (setter) setter.call(element, value)
+    else element.value = value
+  }
+  const active = deepActiveElement()
+  const host = document.activeElement
+  const directEditable = active instanceof HTMLInputElement
+    || active instanceof HTMLTextAreaElement
+    || active?.isContentEditable === true
+  const nonBodyFocus = host instanceof Element && !['body', 'html'].includes(host.tagName.toLowerCase())
+  const focusUsable = directEditable || nonBodyFocus
+  if (!focusUsable) return { ok: false, focusUsable: false, error: 'document has no focused editor/control' }
+
+  let clearedByScript = false
+  if (mode === 'probe' && args.clear === true && directEditable) {
+    if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) setNativeValue(active, '')
+    else active.textContent = ''
+    active.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+    clearedByScript = true
+  }
+  if (mode === 'insert') {
+    if (!directEditable) return { ok: false, focusUsable: true, error: 'focused custom host requires trusted Input.insertText' }
+    const text = String(args.text || '')
+    if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
+      setNativeValue(active, String(active.value || '') + text)
+    } else {
+      const selection = getSelection()
+      if (selection && selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0)
+        range.deleteContents()
+        range.insertNode(document.createTextNode(text))
+        range.collapse(false)
+      } else active.textContent = String(active.textContent || '') + text
+    }
+    active.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: text }))
+    active.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+  }
+  const observedText = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement
+    ? String(active.value || '')
+    : active?.isContentEditable === true ? String(active.textContent || '') : ''
+  return {
+    ok: true, focusUsable, clearedByScript,
+    focusedTag: active instanceof Element ? active.tagName.toLowerCase() : host?.tagName?.toLowerCase?.() || '',
+    focusKind: directEditable ? 'editable' : 'custom-focus-host',
+    observedText: observedText.slice(0, 500),
+  }
 }
 
 async function interactionSelect(args) {

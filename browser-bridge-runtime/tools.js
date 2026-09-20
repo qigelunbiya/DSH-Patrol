@@ -243,6 +243,26 @@ export function registerTools(ctx, bridge, config = {}) {
       },
     }),
     defineTool({
+      name: 'browser_type_focused',
+      description: 'Type PUBLIC non-sensitive text into the CURRENT focused browser editor after a verified focus click; supports web-component/shadow-DOM editors.',
+      parameters: { text: reqStr, clear: optBool, tabId: optInt },
+      output: {
+        schema: { type: 'object', additionalProperties: false, properties: {
+          ok: reqBool, textLength: reqInt, focusedTag: str, focusKind: str, observedText: str, transport: str,
+        } },
+        render: (_args, value) => [{ type: 'text', text: `Typed ${value.textLength} public character(s) into focused browser editor via ${value.transport || 'focused-input'}.` }],
+      },
+      presentCall: args => generic('Type focused public text', { clear: args.clear }),
+      execute: async (args, exec) => {
+        const value = requireOk(await run(bridge, exec, 'typeFocused', { text: args.text, clear: args.clear ?? true, tabId: args.tabId }, timeoutMs), 'focused type')
+        return clean({
+          ok: true,
+          textLength: Number.isInteger(value.textLength) ? value.textLength : args.text.length,
+          focusedTag: value.focusedTag, focusKind: value.focusKind, observedText: value.observedText, transport: value.transport,
+        })
+      },
+    }),
+    defineTool({
       name: 'browser_type',
       description: 'Type PUBLIC non-sensitive text. Patrol credential fields must use browser_type_credential.',
       parameters: { selector: reqStr, text: reqStr, clear: optBool, tabId: optInt },

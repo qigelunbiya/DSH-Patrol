@@ -315,6 +315,37 @@ function createDefinitions(ctx: Context, store: PatrolStore, runner: PatrolRunne
     },
   })
 
+  const typeFocusedText = defineTool({
+    name: 'patrol_type_focused_text',
+    description: 'Execute and record PUBLIC non-sensitive text input into the CURRENT focused browser editor. Use only after the intended editor was just focused and no stable DOM selector is available.',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+      stepName: { type: 'string', required: true },
+      text: { type: 'string', required: true },
+      clear: { type: 'boolean' },
+      notes: { type: 'string' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      assertSafePersistentText(args.stepName, 'stepName')
+      if (args.notes !== undefined) assertSafePersistentText(args.notes, 'step notes')
+      assertSafePlainTextInput(args.stepName, 'focused-editor')
+      assertSafePublicInputText(args.text)
+      const definition = await loadEditable(store, args.inspectionId, options.maxSteps)
+      const browserArgs: JsonObject = { text: args.text, clear: args.clear ?? true }
+      const dispatched = await runner.dispatch('browser_type_focused', browserArgs, exec)
+      if (!dispatched.ok) return `Focused teaching input failed and was NOT recorded. ${dispatched.error ?? dispatched.text}`
+      const step: ToolStep = {
+        id: nextStepId(definition.steps), kind: 'tool', name: args.stepName,
+        tool: 'browser_type_focused', arguments: browserArgs,
+        ...(args.notes === undefined ? {} : { notes: args.notes }),
+        recordedAt: new Date().toISOString(),
+      }
+      await appendStep(store, definition, step)
+      return `Executed and recorded ${step.id} (focused public text input).\n${dispatched.text}`
+    },
+  })
+
   const typeCredential = defineTool({
     name: 'patrol_type_credential',
     description: 'Type a Harness credential into a browser field while recording only ${credential:REF}. The plaintext secret is resolved per operation and is never stored in inspection.json or Patrol reports.',
@@ -640,6 +671,7 @@ function createDefinitions(ctx: Context, store: PatrolStore, runner: PatrolRunne
     createDraft,
     browserStep,
     typeText,
+    typeFocusedText,
     typeCredential,
     addCheckpoint,
     confirm,
