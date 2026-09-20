@@ -225,7 +225,7 @@ export function registerPatrolVisualClickTool(
         `Executed and recorded ${step.id} (browser_visual_click) after CURRENT visual-state verification.`,
         `Visual point: xRatio=${args.xRatio.toFixed(4)}, yRatio=${args.yRatio.toFixed(4)}; capture=${captureWidth ?? viewportWidth}x${captureHeight ?? viewportHeight} CSS px at (${captureClientLeft ?? 0}, ${captureClientTop ?? 0}).`,
         objectBoolean(clicked.value, 'visualSnapped') === true
-          ? `Coordinate corrected before click: requested=(${objectNumber(clicked.value, 'requestedClickX') ?? '?'}, ${objectNumber(clicked.value, 'requestedClickY') ?? '?'}), resolved=(${objectNumber(clicked.value, 'resolvedClickX') ?? '?'}, ${objectNumber(clicked.value, 'resolvedClickY') ?? '?'}), delta=${objectNumber(clicked.value, 'snapDistance')?.toFixed(1) ?? '?'} CSS px.`
+          ? `Coordinate corrected before click: requested=(${objectNumber(clicked.value, 'requestedClickX') ?? '?'}, ${objectNumber(clicked.value, 'requestedClickY') ?? '?'}), resolved=(${objectNumber(clicked.value, 'resolvedClickX') ?? '?'}, ${objectNumber(clicked.value, 'resolvedClickY') ?? '?'}), delta=${objectNumber(clicked.value, 'snapDistance')?.toFixed(1) ?? '?'} CSS px${objectBoolean(clicked.value, 'cdpPiercedTarget') === true ? ' via CDP pierced Shadow DOM' : ''}.`
           : 'Coordinate passed CURRENT DOM target validation without correction.',
         selectorHint
           ? `Replay prefers discovered selector ${JSON.stringify(selectorHint)}, then uses guarded normalized coordinates only if selector replay fails.`
