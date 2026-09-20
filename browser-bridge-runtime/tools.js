@@ -214,12 +214,12 @@ export function registerTools(ctx, bridge, config = {}) {
         schema: {
           type: 'object', additionalProperties: false,
           properties: {
-            ok: reqBool, xRatio: reqNum, yRatio: reqNum, selectorHint: str, urlIdentity: str,
+            ok: reqBool, xRatio: reqNum, yRatio: reqNum, requestedXRatio: optNum, requestedYRatio: optNum, selectorHint: str, urlIdentity: str,
             scrollX: optNum, scrollY: optNum, viewportWidth: optNum, viewportHeight: optNum, viewportScale: optNum,
             captureClientLeft: optNum, captureClientTop: optNum, captureWidth: optNum, captureHeight: optNum, captureMode: str,
             targetTag: str, targetRole: str, targetText: str, targetTitle: str, targetAriaLabel: str,
             targetId: str, targetClassName: str, targetStateChanged: bool, targetFocusedEditable: bool, stateEvidence: str, transport: str,
-            requestedClickX: optNum, requestedClickY: optNum, resolvedClickX: optNum, resolvedClickY: optNum, visualSnapped: bool, snapDistance: optNum, cdpPiercedTarget: bool, cdpPiercedActivator: bool, cdpPiercedFollowupEditor: bool, cdpPiercedAction: bool, unexpectedNavigation: bool,
+            requestedClickX: optNum, requestedClickY: optNum, resolvedClickX: optNum, resolvedClickY: optNum, visualSnapped: bool, snapDistance: optNum, cdpPiercedTarget: bool, cdpPiercedActivator: bool, cdpPiercedFollowupEditor: bool, cdpPiercedAction: bool, unexpectedNavigation: bool, physicalClickUncertain: bool,
           },
         },
         render: (_args, value) => [{ type: 'text', text: `Visual browser click executed at (${Number(value.xRatio).toFixed(4)}, ${Number(value.yRatio).toFixed(4)}) via ${value.transport || 'visual'}${value.selectorHint ? `; reusable selector=${value.selectorHint}` : ''}.` }],
@@ -234,10 +234,11 @@ export function registerTools(ctx, bridge, config = {}) {
           captureWidth: args.captureWidth, captureHeight: args.captureHeight, captureMode: args.captureMode,
           expectedTag: args.expectedTag, expectedRole: args.expectedRole,
           expectedTitle: args.expectedTitle, expectedAriaLabel: args.expectedAriaLabel,
-          targetHint: args.targetHint, tabId: args.tabId,
+          targetHint: args.targetHint, targetTextHint: args.targetTextHint, targetIdHint: args.targetIdHint, targetClassHint: args.targetClassHint, tabId: args.tabId,
         }), timeoutMs), 'visualClick')
         return clean({
           ok: true, xRatio: value.xRatio ?? args.xRatio, yRatio: value.yRatio ?? args.yRatio,
+          requestedXRatio: value.requestedXRatio, requestedYRatio: value.requestedYRatio,
           selectorHint: value.selectorHint, urlIdentity: value.urlIdentity, scrollX: value.scrollX, scrollY: value.scrollY,
           viewportWidth: value.viewportWidth, viewportHeight: value.viewportHeight, viewportScale: value.viewportScale,
           captureClientLeft: value.captureClientLeft, captureClientTop: value.captureClientTop,
@@ -251,7 +252,7 @@ export function registerTools(ctx, bridge, config = {}) {
           resolvedClickX: value.resolvedClickX, resolvedClickY: value.resolvedClickY,
           visualSnapped: value.visualSnapped, snapDistance: value.snapDistance, cdpPiercedTarget: value.cdpPiercedTarget,
           cdpPiercedActivator: value.cdpPiercedActivator, cdpPiercedFollowupEditor: value.cdpPiercedFollowupEditor, cdpPiercedAction: value.cdpPiercedAction,
-          unexpectedNavigation: value.unexpectedNavigation,
+          unexpectedNavigation: value.unexpectedNavigation, physicalClickUncertain: value.physicalClickUncertain,
         })
       },
     }),
