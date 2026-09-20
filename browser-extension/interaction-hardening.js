@@ -273,10 +273,17 @@ function interactionMainWorldViewportState() {
 
 function interactionSameViewport(left, right, tolerance = 1) {
   if (!left || !right || left.urlIdentity !== right.urlIdentity) return false
-  return ['width', 'height', 'offsetLeft', 'offsetTop', 'scale', 'scrollX', 'scrollY', 'innerWidth', 'innerHeight', 'devicePixelRatio'].every(key =>
+  const core = ['width', 'height', 'offsetLeft', 'offsetTop', 'scale', 'scrollX', 'scrollY']
+  if (!core.every(key =>
     Number.isFinite(Number(left[key]))
     && Number.isFinite(Number(right[key]))
-    && Math.abs(Number(left[key]) - Number(right[key])) <= tolerance)
+    && Math.abs(Number(left[key]) - Number(right[key])) <= tolerance)) return false
+  for (const key of ['innerWidth', 'innerHeight', 'devicePixelRatio']) {
+    const l = Number(left[key])
+    const r = Number(right[key])
+    if (Number.isFinite(l) && Number.isFinite(r) && Math.abs(l - r) > tolerance) return false
+  }
+  return true
 }
 
 function interactionPruneVisualFrames() {
