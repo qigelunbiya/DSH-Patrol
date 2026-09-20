@@ -1369,7 +1369,7 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
               : targetStateChanged
                 ? preResolved
                   ? 'trusted native click changed verified business state after CDP target resolution'
-                  : 'trusted native click changed the same pre-click visual target DOM state'
+                  : 'trusted native click changed the same pre-click visual target own DOM state'
                 : targetFocusedEditable
                   ? activatedEditor?.kind === 'editable'
                     ? 'trusted native click activated the comment editor and then focused its mounted editable control'
