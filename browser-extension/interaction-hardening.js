@@ -158,10 +158,11 @@ async function interactionScreenshot(args) {
   let captureDevicePixelRatio
   let captureGeometry = interactionVisibleTabCaptureGeometry(before)
 
+  const estimatedPhysicalWidth = Number(before?.width || 0) * Math.max(1, Number(before?.devicePixelRatio || 1))
   if (format === 'jpeg'
     && Number.isFinite(requestedMaxWidth)
     && requestedMaxWidth >= 480
-    && before?.width > requestedMaxWidth) {
+    && estimatedPhysicalWidth > requestedMaxWidth) {
     try {
       const compact = await interactionCaptureCompactScreenshot(tabId, requestedMaxWidth, quality, before)
       if (compact?.dataUrl) {
