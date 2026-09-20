@@ -19,7 +19,8 @@ describe('browser interaction hardening layer', () => {
   it('promotes input submit values to semantic text and prefers MAIN-world actionability clicks', () => {
     expect(source).toContain("['button', 'submit', 'reset']")
     expect(source).toContain('inputActionText')
-    expect(source).toContain("resilientDomFallback(tabId, 'click', args)")
+    expect(source).toContain("resilientDomFallback(clickTabId, 'click', args)")
+    expect(source).toContain('interactionAdoptSingleOpenedTab(clickTabId, clickTabsBefore)')
   })
 
   it('never focuses the OS browser window for tab activation or screenshots', () => {
