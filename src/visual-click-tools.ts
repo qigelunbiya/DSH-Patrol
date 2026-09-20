@@ -313,6 +313,19 @@ function visualTargetMismatch(targetHint: string | undefined, value: unknown): s
     objectString(value, 'targetClassName') ?? '',
   ].join(' '))
 
+  const wantsCommentEditor = /评论.*(?:输入|编辑)|回复.*(?:输入|编辑)|输入框|编辑框|comment.*(?:input|editor)|reply.*(?:input|editor)/i.test(hint)
+  if (wantsCommentEditor) {
+    const focused = objectBoolean(value, 'targetFocusedEditable') === true
+    const explicitEditorEvidence = /textbox|textarea|contenteditable|bili-comment-editor|comment-editor|reply-editor/.test(haystack)
+    const broadCommentsShell = /(?:^|[^a-z])bili-comments(?:[^a-z]|$)/.test(haystack)
+    if (broadCommentsShell && !focused) {
+      return 'targetHint expects the actual comment editor, but CURRENT click only resolved the whole bili-comments container and did not focus an editable control'
+    }
+    if (!focused && !explicitEditorEvidence) {
+      return `targetHint expects a focused comment editor, but CURRENT clicked DOM evidence was ${JSON.stringify(haystack.slice(0, 320) || '(empty)')}`
+    }
+  }
+
   const groups: Array<{ hint: RegExp; evidence: RegExp; label: string }> = [
     { hint: /点赞|大拇指|\blike\b|thumb/, evidence: /点赞|\blike\b|thumb|video-like|aria-pressed/, label: '点赞/like' },
     { hint: /评论|回复|\bcomment\b|\breply\b/, evidence: /评论|回复|comment|reply|editor|textarea|placeholder/, label: '评论/comment' },
