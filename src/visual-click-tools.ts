@@ -41,14 +41,14 @@ export function registerPatrolVisualClickTool(
   const outcomes = options.clickOutcomes ?? createPatrolClickOutcomeTracker()
   const tool = defineTool({
     name: 'patrol_visual_click_target',
-    description: 'Browser model-vision click. The model may choose vision directly when it is appropriate; no DOM-first sequence is required. First call patrol_observe(includeImage=true), then pass its CURRENT visualFrameId plus target-center xRatio/yRatio and a useful targetHint. Patrol binds the click to that screenshot viewport, pre-validates/snap-resolves the intended target, verifies business state, and records a reusable browser_visual_click step. Never use for image-code/CAPTCHA.',
+    description: 'Browser model-vision click using the same frame-bound principle as Desktop Automation. The model may choose vision directly when useful. First call patrol_observe(includeImage=true), then use the exact CURRENT attachment as the full frame, choose the clickable control\'s interior center (not a rough region), and pass xRatio=centerX/imageWidth and yRatio=centerY/imageHeight with the returned visualFrameId plus a concrete targetHint. Patrol binds that point to the exact screenshot geometry; DOM/Shadow-DOM evidence may reject or uniquely rescue a mismatched point but must not silently validate an unrelated nearby control. Never use for image-code/CAPTCHA.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
       frameId: { type: 'string', required: true },
       xRatio: { type: 'number', required: true },
       yRatio: { type: 'number', required: true },
-      targetHint: { type: 'string', required: true, description: 'Concrete CURRENT business target, e.g. 评论输入框/点赞按钮/完整视频标题. Required so Patrol can validate and correct visual coordinates before dispatching the mouse.' },
+      targetHint: { type: 'string', required: true, description: 'Concrete CURRENT business target, e.g. 评论输入框/发布按钮/点赞按钮/完整视频标题. Use the visible control label when available. Required so Patrol can reject an unrelated hit before physical mouse input.' },
       tabId: { type: 'integer' },
       expectedText: { type: 'string' },
       expectationMode: { type: 'string', enum: ['contains', 'not-contains'] },
@@ -138,14 +138,15 @@ export function registerPatrolVisualClickTool(
         verificationMethod = 'state-change'
         verificationEvidence = objectString(clicked.value, 'stateEvidence') ?? 'clicked visual target focused an editable control'
       } else {
-        const verified = await verifyAutomaticStateChange(runner, exec, beforeState, args.tabId)
+        const verified = await verifyAutomaticStateChange(runner, exec, beforeState, args.tabId, args.targetHint)
         verificationAttempts = verified.attempts
         if (!verified.ok) {
           outcomes.recordUnverifiedPhysicalClick(args)
           return [
             'Visual click executed but was NOT recorded because no meaningful CURRENT target/page/DOM state change could be verified.',
+            verified.evidence,
             clicked.text,
-            'Do not retry with the same screenshot. Capture a fresh visual observation before any further decision.',
+            'Do not report this target as completed. If this was an in-page control and navigation occurred, return to the original page before any retry; never count the navigation itself as success.',
           ].filter(Boolean).join('\n')
         }
         verificationMethod = 'state-change'
@@ -252,18 +253,30 @@ async function capturePageState(runner: PatrolRunner, exec: ToolRunContext, tabI
     elementSignatures: snapshotElementSignatures(snapshot.value),
   }
 }
-async function verifyAutomaticStateChange(runner: PatrolRunner, exec: ToolRunContext, before: PageState | undefined, tabId: number | undefined): Promise<StateChangeVerification> {
+async function verifyAutomaticStateChange(runner: PatrolRunner, exec: ToolRunContext, before: PageState | undefined, tabId: number | undefined, targetHint?: string): Promise<StateChangeVerification> {
   if (before === undefined) return { ok: false, attempts: 0 }
   for (let index = 0; index < AUTO_VERIFY_DELAYS_MS.length; index += 1) {
     const delayMs = AUTO_VERIFY_DELAYS_MS[index]!
     if (delayMs > 0) await sleep(delayMs)
     const after = await capturePageState(runner, exec, tabId)
     if (after === undefined) continue
+    if (before.url && after.url && before.url !== after.url && inPageControlHint(targetHint)) {
+      return {
+        ok: false,
+        attempts: index + 1,
+        evidence: `unexpected navigation for in-page control ${JSON.stringify(targetHint ?? '')}: ${safeStateUrl(before.url)} -> ${safeStateUrl(after.url)}`,
+      }
+    }
     const evidence = stateChangeEvidence(before, after)
     if (evidence !== undefined) return { ok: true, attempts: index + 1, evidence }
   }
   return { ok: false, attempts: AUTO_VERIFY_DELAYS_MS.length }
 }
+function inPageControlHint(targetHint: string | undefined): boolean {
+  const hint = normalizePageText(targetHint ?? '')
+  return /点赞|投币|收藏|评论|回复|输入框|编辑框|发布|发表|发送|提交|like|favorite|comment|reply|post|send|submit/.test(hint)
+}
+
 function stateChangeEvidence(before: PageState, after: PageState): string | undefined {
   if (before.url && after.url && before.url !== after.url) return `URL changed from ${safeStateUrl(before.url)} to ${safeStateUrl(after.url)}`
   // Global dynamic DOM/text churn is not evidence that a visual business target
@@ -304,7 +317,7 @@ function visualTargetMismatch(targetHint: string | undefined, value: unknown): s
     { hint: /点赞|大拇指|\blike\b|thumb/, evidence: /点赞|\blike\b|thumb|video-like|aria-pressed/, label: '点赞/like' },
     { hint: /评论|回复|\bcomment\b|\breply\b/, evidence: /评论|回复|comment|reply|editor|textarea|placeholder/, label: '评论/comment' },
     { hint: /搜索|\bsearch\b/, evidence: /搜索|search/, label: '搜索/search' },
-    { hint: /发送|提交|\bsend\b|\bsubmit\b/, evidence: /发送|提交|send|submit/, label: '发送/send' },
+    { hint: /发布|发表|发送|提交|\bpost\b|\bsend\b|\bsubmit\b/, evidence: /发布|发表|发送|提交|post|send|submit/, label: '发布/发送/post' },
   ]
   const expected = groups.find(group => group.hint.test(hint))
   if (expected === undefined || expected.evidence.test(haystack)) return undefined
