@@ -256,6 +256,53 @@ describe('Patrol screenshot tab readiness', () => {
     expect(debuggerCalls).toEqual([{ method: 'Input.insertText', params: { text: '支持👍' } }])
   })
 
+  it('downscales only explicit model-visual screenshots while preserving viewport geometry', async () => {
+    const viewport = {
+      urlIdentity: 'https://example.test/video/1',
+      width: 1920, height: 1080, offsetLeft: 0, offsetTop: 0, scale: 1, scrollX: 0, scrollY: 300,
+    }
+    const debuggerCalls: Array<{ method: string; params?: any }> = []
+    let visibleCaptureCalls = 0
+    const debuggerApi = {
+      async attach() {},
+      async sendCommand(_target: any, method: string, params?: any) {
+        debuggerCalls.push({ method, params })
+        if (method === 'Page.getLayoutMetrics') {
+          return { cssVisualViewport: { clientWidth: 1920, clientHeight: 1080, pageX: 0, pageY: 300 } }
+        }
+        if (method === 'Page.captureScreenshot') return { data: 'COMPACTJPEG' }
+        return {}
+      },
+      async detach() {},
+    }
+    const scripting = {
+      async executeScript(request: any) {
+        if (request.func?.name === 'interactionMainWorldViewportState') return [{ result: { ...viewport } }]
+        throw new Error(`unexpected executeScript function ${request.func?.name || 'anonymous'}`)
+      },
+    }
+    const tabs = {
+      get: async () => ({ id: 7, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
+      update: async (id: number) => ({ id, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
+      captureVisibleTab: async () => { visibleCaptureCalls += 1; return 'data:image/jpeg;base64,FULL' },
+    }
+    const sandbox = await loadInteraction({ chrome: { tabs, scripting, debugger: debuggerApi } })
+    const shot = await sandbox.handleCommand('screenshot', { tabId: 7, format: 'jpeg', maxWidth: 1024, quality: 68 })
+
+    expect(shot).toMatchObject({
+      ok: true,
+      compactVisual: true,
+      dataUrl: 'data:image/jpeg;base64,COMPACTJPEG',
+      viewportWidth: 1920,
+      viewportHeight: 1080,
+    })
+    expect(shot.captureScale).toBeCloseTo(1024 / 1920)
+    expect(visibleCaptureCalls).toBe(0)
+    const capture = debuggerCalls.find(call => call.method === 'Page.captureScreenshot')
+    expect(capture?.params?.clip).toMatchObject({ width: 1920, height: 1080, y: 300 })
+    expect(capture?.params?.quality).toBe(68)
+  })
+
   it('waits for a newly opened blank/loading tab to obtain an HTTP URL before capture', async () => {
     let getCalls = 0
     let capturedWindow: number | undefined

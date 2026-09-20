@@ -288,6 +288,8 @@ export function createManagedBrowserController(options = {}) {
       && (
         (capabilities.includes('visualClick') && !capabilities.includes('trustedVisualClick'))
         || !capabilities.includes('trustedFocusedType')
+        || !capabilities.includes('clickOpenedTabAdoption')
+        || !capabilities.includes('compactVisualCapture')
       )
   }
 

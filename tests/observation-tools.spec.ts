@@ -49,6 +49,8 @@ describe('current-page observation evidence fallback', () => {
     expect(value.imageStatus).toBe('not-requested')
     expect(value.image).toBeUndefined()
     expect(harness.readImageCalls).toBe(0)
+    expect(harness.screenshotArgs[0]).toMatchObject({ format: 'png' })
+    expect(harness.screenshotArgs[0]?.maxWidth).toBeUndefined()
     expect(value.ocrText).toContain('LOGIN')
     expect(value.path).toBe('C:\\workspace\\patrol-results\\demo\\teaching\\screenshots\\current.png')
     expect(harness.organized).toEqual([{
@@ -81,6 +83,7 @@ describe('current-page observation evidence fallback', () => {
     expect(value.imageStatus).toBe('attached')
     expect(value.image).toMatchObject({ attachmentId: 'img-1', mediaType: 'image/png' })
     expect(harness.readImageCalls).toBe(1)
+    expect(harness.screenshotArgs[0]).toMatchObject({ format: 'jpeg', maxWidth: 1024, quality: 68 })
     expect(harness.observed).toHaveLength(1)
   })
 
@@ -130,6 +133,7 @@ function setupObservationHarness(options: {
   const observed: Array<{ inspectionId: string; rootCallId: unknown }> = []
   const organized: Array<{ inspectionId: string; sourcePath: string; workspaceRoot: string }> = []
   let readImageCalls = 0
+  const screenshotArgs: any[] = []
 
   const ctx = {
     tools: {
@@ -173,8 +177,9 @@ function setupObservationHarness(options: {
   } as unknown as PatrolStore
 
   const runner = {
-    async dispatch(tool: string) {
+    async dispatch(tool: string, args: any) {
       if (tool === 'browser_screenshot') {
+        screenshotArgs.push(args)
         return {
           ok: true,
           text: 'Screenshot saved',
@@ -240,6 +245,7 @@ function setupObservationHarness(options: {
     exec,
     observed,
     organized,
+    screenshotArgs,
     get readImageCalls() { return readImageCalls },
   }
 }

@@ -347,7 +347,7 @@ export function registerTools(ctx, bridge, config = {}) {
     defineTool({
       name: 'browser_screenshot',
       description: 'Capture the active tab to the CURRENT Harness workspace and run bundled Windows OCR. In CAPTCHA test mode, conventional image-code pages are explicitly OCR-readable; only non-image-code verification challenges remain suppressed. Headless/scheduled executions without a session workspace fall back to the Patrol bridge temporary directory.',
-      parameters: { tabId: optInt, format: { type: 'string', enum: ['png', 'jpeg'] } },
+      parameters: { tabId: optInt, format: { type: 'string', enum: ['png', 'jpeg'] }, maxWidth: optInt, quality: optInt },
       output: {
         schema: {
           type: 'object',
@@ -372,13 +372,20 @@ export function registerTools(ctx, bridge, config = {}) {
             viewportScale: optNum,
             scrollX: optNum,
             scrollY: optNum,
+            compactVisual: bool,
+            captureScale: optNum,
           },
         },
         render: (_args, value) => [{ type: 'text', text: renderScreenshotResult(value) }],
       },
       presentCall: args => generic('Take screenshot', args),
       execute: async (args, exec) => {
-        const value = requireOk(await run(bridge, exec, 'screenshot', { tabId: args.tabId, format: args.format ?? 'png' }, timeoutMs), 'screenshot')
+        const value = requireOk(await run(bridge, exec, 'screenshot', {
+          tabId: args.tabId,
+          format: args.format ?? 'png',
+          maxWidth: args.maxWidth,
+          quality: args.quality,
+        }, timeoutMs), 'screenshot')
         const workspaceRoot = exec?.agent?.session?.header?.cwd
         const path = bridge.saveScreenshot(value.dataUrl, workspaceRoot)
         const ocr = await inspectScreenshotOcr(bridge, exec, args.tabId, value.dataUrl, timeoutMs)
@@ -398,6 +405,8 @@ export function registerTools(ctx, bridge, config = {}) {
           viewportScale: value.viewportScale,
           scrollX: value.scrollX,
           scrollY: value.scrollY,
+          compactVisual: value.compactVisual,
+          captureScale: value.captureScale,
         })
       },
     }),

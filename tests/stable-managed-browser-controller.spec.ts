@@ -116,7 +116,7 @@ describe('stable managed Patrol browser controller', () => {
           name: 'dsh-patrol-browser-extension',
           version: refreshes > 0 ? '0.3.2' : '0.3.1',
           capabilities: refreshes > 0
-            ? ['captureImageCode', 'semanticClick', 'visualClick', 'trustedVisualClick', 'trustedFocusedType']
+            ? ['captureImageCode', 'semanticClick', 'visualClick', 'trustedVisualClick', 'trustedFocusedType', 'clickOpenedTabAdoption', 'compactVisualCapture']
             : ['captureImageCode', 'semanticClick', 'visualClick'],
         }
       },

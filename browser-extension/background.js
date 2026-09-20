@@ -14,6 +14,8 @@ const EXTENSION_CAPABILITIES = Object.freeze([
   'visualClick',
   'trustedVisualClick',
   'trustedFocusedType',
+  'clickOpenedTabAdoption',
+  'compactVisualCapture',
 ])
 let socket = null
 let state = 'disconnected'

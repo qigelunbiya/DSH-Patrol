@@ -157,7 +157,8 @@ export function registerPatrolObservationTools(
       // expensive for long local-model sessions.
       const shot = await runner.dispatch('browser_screenshot', compactObject({
         tabId: args.tabId,
-        format: 'png',
+        format: args.includeImage === true ? 'jpeg' : 'png',
+        ...(args.includeImage === true ? { maxWidth: 1024, quality: 68 } : {}),
       }), exec)
       if (!shot.ok) {
         const bootstrap = await detectBootstrapObservation(runner, exec, args.tabId)

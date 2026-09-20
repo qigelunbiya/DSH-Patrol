@@ -149,7 +149,34 @@ async function interactionScreenshot(args) {
 
   const before = await interactionViewportState(tabId)
   const format = args.format === 'jpeg' ? 'jpeg' : 'png'
-  const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format })
+  const requestedMaxWidth = Number(args.maxWidth)
+  const quality = Number.isInteger(args.quality) ? Math.max(25, Math.min(args.quality, 95)) : 70
+  let dataUrl
+  let captureScale = 1
+  let compactVisual = false
+
+  if (format === 'jpeg'
+    && Number.isFinite(requestedMaxWidth)
+    && requestedMaxWidth >= 480
+    && before?.width > requestedMaxWidth) {
+    try {
+      const compact = await interactionCaptureCompactScreenshot(tabId, requestedMaxWidth, quality)
+      if (compact?.dataUrl) {
+        dataUrl = compact.dataUrl
+        captureScale = compact.scale
+        compactVisual = true
+      }
+    } catch {
+      // Keep the normal capture path as a safe compatibility fallback.
+    }
+  }
+  if (!dataUrl) {
+    dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
+      format,
+      ...(format === 'jpeg' ? { quality } : {}),
+    })
+  }
+
   const after = await interactionViewportState(tabId)
   const visualFrame = interactionRegisterVisualFrame(tabId, before, after)
 
@@ -157,7 +184,45 @@ async function interactionScreenshot(args) {
     ok: true,
     dataUrl,
     bytes: Math.floor(dataUrl.length * 0.75),
+    compactVisual,
+    captureScale,
     ...(visualFrame || {}),
+  }
+}
+
+async function interactionCaptureCompactScreenshot(tabId, maxWidth, quality) {
+  if (!chrome.debugger?.attach || !chrome.debugger?.sendCommand || !chrome.debugger?.detach) return undefined
+  const target = { tabId }
+  let attached = false
+  try {
+    await chrome.debugger.attach(target, '1.3')
+    attached = true
+    const metrics = await chrome.debugger.sendCommand(target, 'Page.getLayoutMetrics')
+    const viewport = metrics?.cssVisualViewport || metrics?.visualViewport
+    const width = Number(viewport?.clientWidth)
+    const height = Number(viewport?.clientHeight)
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return undefined
+    const scale = Math.max(0.1, Math.min(1, maxWidth / width))
+    if (scale >= 0.995) return undefined
+    const shot = await chrome.debugger.sendCommand(target, 'Page.captureScreenshot', {
+      format: 'jpeg',
+      quality,
+      fromSurface: true,
+      captureBeyondViewport: false,
+      clip: {
+        x: Number(viewport?.pageX || 0),
+        y: Number(viewport?.pageY || 0),
+        width,
+        height,
+        scale,
+      },
+    })
+    if (!shot || typeof shot.data !== 'string' || !shot.data) return undefined
+    return { dataUrl: `data:image/jpeg;base64,${shot.data}`, scale }
+  } finally {
+    if (attached) {
+      try { await chrome.debugger.detach(target) } catch {}
+    }
   }
 }
 
