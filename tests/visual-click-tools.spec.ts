@@ -244,6 +244,7 @@ describe('browser visual fallback click teaching', () => {
     await expect(tool.execute({
       inspectionId: 'visual-click',
       stepName: '点击评论输入框',
+      targetHint: ' ',
       frameId: 'browser-visual-current',
       xRatio: 0.5,
       yRatio: 0.8,
