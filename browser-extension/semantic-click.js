@@ -268,7 +268,17 @@ async function semanticClickPageCommand(mode, spec) {
     for (const img of deepQueryAll('img', element)) parts.push(img.getAttribute('alt'), img.getAttribute('title'))
     return compact(parts.filter(Boolean).join(' '))
   }
-  const roleOf = element => compact(element.getAttribute?.('role') || (element.tagName === 'A' ? 'link' : element.tagName === 'BUTTON' ? 'button' : element instanceof HTMLInputElement && ['button', 'submit', 'reset'].includes(String(element.type || '').toLowerCase()) ? 'button' : ''))
+  const roleOf = element => {
+    const explicit = compact(element.getAttribute?.('role') || '')
+    if (explicit) return explicit
+    if (element.tagName === 'A') return 'link'
+    if (element.tagName === 'BUTTON') return 'button'
+    if (element instanceof HTMLTextAreaElement || element?.isContentEditable === true) return 'textbox'
+    if (element instanceof HTMLInputElement) {
+      return ['button', 'submit', 'reset'].includes(String(element.type || '').toLowerCase()) ? 'button' : 'textbox'
+    }
+    return ''
+  }
   const stableSelector = element => {
     const selectorRoot = element.getRootNode?.() || document
     const uniqueInRoot = selector => {
