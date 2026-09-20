@@ -101,4 +101,12 @@ describe('current Patrol behavior prompt', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/多条源记录映射到同一个键时先合并\/编号\/换行后一次写入同一个目标单元格/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/模板不是固定格式/s)
   })
+  it('documents focused public typing for shadow-DOM/web-component editors', () => {
+    expect(PATROL_BEHAVIOR_PROMPT).toContain('patrol_type_focused_text')
+    expect(PATROL_BEHAVIOR_PROMPT).toContain('web component')
+    expect(PATROL_BEHAVIOR_PROMPT).toContain('shadow DOM')
+    expect(PATROL_BEHAVIOR_PROMPT).toContain('browser_type_focused')
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/绝不能用于密码、token、OTP 或验证码/)
+  })
+
 })
