@@ -120,6 +120,7 @@ export function registerPatrolClickTargetTool(
       let targetStateEvidence: string | undefined
       let openedTabId: number | undefined
       let openedTabUrl: string | undefined
+      let semanticReplayRequired = false
 
       if (locator !== undefined) {
         let atomic = await runner.dispatch('browser_semantic_click', compactObject({
@@ -248,6 +249,7 @@ export function registerPatrolClickTargetTool(
           targetStateEvidence = objectString(atomic.value, 'stateEvidence')
           openedTabId = objectNumber(atomic.value, 'openedTabId')
           openedTabUrl = objectString(atomic.value, 'openedTabUrl')
+          semanticReplayRequired = objectBoolean(atomic.value, 'replaySelectorSafe') === false
           resolutionSummary = [
             `selector=${JSON.stringify(resolvedSelector)}`,
             objectString(atomic.value, 'text') ? `text=${JSON.stringify(objectString(atomic.value, 'text'))}` : undefined,
@@ -338,13 +340,26 @@ export function registerPatrolClickTargetTool(
       const condition = optionalCondition(args.conditionSourceStepId, args.conditionExpectedText, args.conditionMode)
 
       // tabId is execution-local browser state and must never be persisted into
-      // a reusable Runbook. The runner resolves the Patrol tab at replay time.
-      const stepArguments = compactObject({ selector: resolvedSelector })
+      // a reusable Runbook. Ordinary semantic targets keep a selector replay for
+      // compatibility. Targets inside open Shadow DOM cannot be addressed by a
+      // document-level CSS selector, so preserve the semantic resolver itself.
+      const replayTool = semanticReplayRequired && locator !== undefined
+        ? 'browser_semantic_click'
+        : 'browser_click'
+      const stepArguments = replayTool === 'browser_semantic_click'
+        ? compactObject({
+            locatorText: locator?.text,
+            locatorRole: locator?.role,
+            locatorTag: locator?.tag,
+            selectorHint: resolvedSelector,
+            task: args.stepName,
+          })
+        : compactObject({ selector: resolvedSelector })
       const step: ToolStep = {
         id: nextStepId(definition.steps),
         kind: 'tool',
         name: args.stepName,
-        tool: 'browser_click',
+        tool: replayTool,
         arguments: stepArguments,
         ...expectation,
         ...condition,
@@ -357,7 +372,7 @@ export function registerPatrolClickTargetTool(
           },
         }),
         notes: stepExecutionNotes({
-          tool: 'browser_click',
+          tool: replayTool,
           args: stepArguments,
           ...expectation,
           ...condition,
@@ -375,14 +390,16 @@ export function registerPatrolClickTargetTool(
       options.clickOutcomes?.recordVerified(args)
 
       return [
-        `Executed and recorded ${step.id} (browser_click) only after CURRENT business-state verification.`,
+        `Executed and recorded ${step.id} (${replayTool}) only after CURRENT business-state verification.`,
         `Resolved target: ${resolutionSummary}`,
         verificationAttempts === undefined
           ? undefined
           : `Post-click business state verified in ${verificationAttempts} attempt(s) by ${verificationMethod === 'state-change' ? 'automatic CURRENT-state change' : 'expected text'}.`,
         verificationEvidence === undefined ? undefined : `Verification evidence: ${verificationEvidence}`,
         clickedText,
-        'Semantic discovery and the physical click were one browser-extension command; the content-script/frame bridge was not used for the last-mile click.',
+        semanticReplayRequired
+          ? 'The target lives inside open Shadow DOM; replay keeps the semantic resolver instead of persisting an unreachable document CSS selector.'
+          : 'Semantic discovery and the physical click were one browser-extension command; the content-script/frame bridge was not used for the last-mile click.',
       ].filter(Boolean).join('\n')
     },
   })
