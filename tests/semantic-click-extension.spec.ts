@@ -63,7 +63,7 @@ describe('atomic semantic click extension layer', () => {
     expect(source).toContain('const stateSignature = element =>')
     expect(source).toContain('targetStateChanged')
     expect(source).toContain("element.getAttribute?.('placeholder')")
-    expect(source).toContain("'[contenteditable="true"]'")
+    expect(source).toContain("'[contenteditable=\"true\"]'")
   })
 
   it('matches the observed enterprise Ant-tree shape: one titled leaf drives its click-listener wrapper', () => {

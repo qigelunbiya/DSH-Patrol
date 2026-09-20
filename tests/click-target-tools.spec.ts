@@ -71,7 +71,7 @@ function page(text: string, url = 'https://example.test') {
   return { ok: true, text, value: { ok: true, url, text } }
 }
 
-function atomic(selector: string, text = '') {
+function atomic(selector: string, text = '', targetStateChanged = false) {
   return {
     ok: true,
     text: `Atomically clicked ${selector}`,
@@ -82,6 +82,8 @@ function atomic(selector: string, text = '') {
       role: 'button',
       tag: 'button',
       transport: 'atomic-main-world-semantic-click',
+      targetStateChanged,
+      ...(targetStateChanged ? { stateEvidence: 'semantic click target DOM state changed' } : {}),
     },
   }
 }
@@ -143,7 +145,7 @@ describe('semantic Patrol click target', () => {
       }
       if (name === 'browser_semantic_click') {
         clicked = true
-        return atomic('top-frame::#logo', '长城网际')
+        return atomic('top-frame::#logo', '长城网际', true)
       }
       throw new Error(`unexpected tool ${name}`)
     })
@@ -154,7 +156,7 @@ describe('semantic Patrol click target', () => {
       locatorText: '长城网际',
     }, exec)
 
-    expect(result).toContain('automatic CURRENT-state change')
+    expect(result).toContain('semantic click target DOM state changed')
     expect(calls.filter(name => name === 'browser_semantic_click')).toHaveLength(1)
     const saved = await store.load('click-target')
     expect(saved.steps).toHaveLength(1)
@@ -221,7 +223,7 @@ describe('semantic Patrol click target', () => {
       if (name === 'browser_count') return { ok: true, text: '1', value: { ok: true, count: 1 } }
       if (name === 'browser_click') {
         clicked = true
-        return { ok: true, text: 'Clicked logo', value: { ok: true, selector: '#logo' } }
+        return { ok: true, text: 'Clicked logo', value: { ok: true, selector: '#logo', targetStateChanged: true, stateEvidence: 'selector click target DOM state changed' } }
       }
       if (name === 'browser_read_page') return page(clicked ? '用户名 密码 短信验证码 登录' : '长城网际')
       throw new Error(`unexpected tool ${name}`)
@@ -258,7 +260,7 @@ describe('semantic Patrol click target', () => {
       if (name === 'browser_count') return { ok: true, text: '1', value: { ok: true, count: 1 } }
       if (name === 'browser_click') {
         clicked = true
-        return { ok: true, text: 'clicked', value: { ok: true } }
+        return { ok: true, text: 'clicked', value: { ok: true, targetStateChanged: true, stateEvidence: 'selector click target DOM state changed' } }
       }
       throw new Error(`unexpected tool ${name}`)
     })
@@ -360,7 +362,7 @@ describe('semantic Patrol click target', () => {
       if (name === 'browser_count') return { ok: true, text: '1', value: { ok: true, count: 1 } }
       if (name === 'browser_click') {
         clicked = true
-        return { ok: true, text: 'Clicked workbench', value: { ok: true } }
+        return { ok: true, text: 'Clicked workbench', value: { ok: true, targetStateChanged: true, stateEvidence: 'selector click target DOM state changed' } }
       }
       throw new Error(`unexpected tool ${name}`)
     })
@@ -440,7 +442,7 @@ describe('semantic Patrol click target', () => {
     }, exec)
 
     expect(result).toContain('NOT recorded')
-    expect(result).toContain('no meaningful post-click')
+    expect(result).toContain('neither the target itself nor the page URL changed')
     expect((await store.load('click-target')).steps).toEqual([])
   })
 
@@ -499,7 +501,7 @@ describe('semantic Patrol click target', () => {
   it('replays the old unique-selector teaching path when no semantic locator is supplied', async () => {
     const { store, tool, exec } = await setup(async (name) => {
       if (name === 'browser_count') return { ok: true, text: '1', value: { ok: true, count: 1 } }
-      if (name === 'browser_click') return { ok: true, text: 'clicked', value: { ok: true } }
+      if (name === 'browser_click') return { ok: true, text: 'clicked', value: { ok: true, targetStateChanged: true, stateEvidence: 'selector click target DOM state changed' } }
       throw new Error(`unexpected tool ${name}`)
     })
 

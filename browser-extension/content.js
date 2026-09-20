@@ -258,12 +258,24 @@ function count(args) {
   return { ok: true, selector: args.selector, count: matched.length, visibleOnly }
 }
 
-function click(args) {
+async function click(args) {
   const element = requiredElement(args.selector)
   element.scrollIntoView({ block: 'center', inline: 'center' })
   if (typeof element.click !== 'function') throw new Error(`selector ${args.selector} is not clickable`)
+  const beforeState = clickStateSignature(element)
   dispatchRealisticClick(element)
-  return { ok: true, selector: args.selector, tag: element.tagName.toLowerCase(), text: compactText(element.innerText || element.textContent || '', 120) }
+  await sleep(220)
+  const targetStateChanged = !element.isConnected || clickStateSignature(element) !== beforeState
+  return {
+    ok: true,
+    selector: args.selector,
+    tag: element.tagName.toLowerCase(),
+    text: compactText(element.innerText || element.textContent || '', 120),
+    targetStateChanged,
+    stateEvidence: !element.isConnected
+      ? 'selector click target detached/re-rendered'
+      : targetStateChanged ? 'selector click target DOM state changed' : '',
+  }
 }
 
 function typeText(args) {
@@ -370,6 +382,20 @@ function isVisible(element) {
     if (rect.right <= 0 || rect.bottom <= 0 || rect.left >= viewportWidth || rect.top >= viewportHeight) return false
   }
   return true
+}
+
+function clickStateSignature(element) {
+  if (!(element instanceof Element)) return ''
+  return [
+    element.tagName.toLowerCase(),
+    compactText(element.getAttribute?.('class') || '', 240),
+    compactText(element.getAttribute?.('aria-pressed') || '', 80),
+    compactText(element.getAttribute?.('aria-checked') || '', 80),
+    compactText(element.getAttribute?.('aria-expanded') || '', 80),
+    compactText(element.getAttribute?.('data-state') || '', 80),
+    compactText(element.getAttribute?.('title') || '', 160),
+    compactText(element.innerText || element.textContent || '', 320),
+  ].join('|')
 }
 
 function effectiveClickTarget(element) {

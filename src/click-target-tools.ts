@@ -170,6 +170,8 @@ export function registerPatrolClickTargetTool(
                 physicalClickExecuted = true
                 resolvedSelector = titleSelector
                 clickedText = clickedTitle.text
+                targetStateChanged = objectBoolean(clickedTitle.value, 'targetStateChanged') === true
+                targetStateEvidence = objectString(clickedTitle.value, 'stateEvidence')
                 resolutionSummary = `selector=${JSON.stringify(titleSelector)}, transport=unique-exact-title-direct`
               }
             }
@@ -224,6 +226,8 @@ export function registerPatrolClickTargetTool(
           physicalClickExecuted = true
           resolvedSelector = fallbackSelector
           clickedText = fallback.text
+          targetStateChanged = objectBoolean(fallback.value, 'targetStateChanged') === true
+          targetStateEvidence = objectString(fallback.value, 'stateEvidence')
           resolutionSummary = `selector=${JSON.stringify(fallbackSelector)}, transport=selector-compatible fallback`
           }
         } else {

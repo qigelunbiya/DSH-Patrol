@@ -178,6 +178,16 @@ async function patrolMainWorldDomCommand(cmd, selector, args) {
   }
   const frame = () => new Promise(resolve => requestAnimationFrame(() => resolve()))
   const disabled = element => element.matches?.(':disabled,[aria-disabled="true"]') === true
+  const stateSignature = element => [
+    element?.tagName?.toLowerCase?.() || '',
+    compact(element?.getAttribute?.('class') || ''),
+    compact(element?.getAttribute?.('aria-pressed') || ''),
+    compact(element?.getAttribute?.('aria-checked') || ''),
+    compact(element?.getAttribute?.('aria-expanded') || ''),
+    compact(element?.getAttribute?.('data-state') || ''),
+    compact(element?.getAttribute?.('title') || ''),
+    compact(element?.innerText || element?.textContent || '').slice(0, 320),
+  ].join('|')
 
   if (cmd === 'count') return { ok: true, count: args.visibleOnly === false ? query(selector).length : matches().length }
   if (cmd === 'readPage') {
@@ -248,6 +258,7 @@ async function patrolMainWorldDomCommand(cmd, selector, args) {
     throw new Error(`target does not receive pointer events at click point; intercepted by <${hit.tagName.toLowerCase()}>`)
   }
 
+  const beforeState = stateSignature(element)
   element.focus?.({ preventScroll: true })
   const mouse = type => new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0, buttons: type === 'mousedown' ? 1 : 0 })
   if (typeof PointerEvent !== 'undefined') {
@@ -258,5 +269,15 @@ async function patrolMainWorldDomCommand(cmd, selector, args) {
   for (const type of ['mouseover', 'mousemove', 'mousedown', 'mouseup']) element.dispatchEvent(mouse(type))
   if (typeof element.click === 'function') element.click()
   else element.dispatchEvent(mouse('click'))
-  return { ok: true, tag: element.tagName.toLowerCase(), text: compact(element.innerText || element.textContent || '').slice(0, 200) }
+  await new Promise(resolve => setTimeout(resolve, 220))
+  const targetStateChanged = !element.isConnected || stateSignature(element) !== beforeState
+  return {
+    ok: true,
+    tag: element.tagName.toLowerCase(),
+    text: compact(element.innerText || element.textContent || '').slice(0, 200),
+    targetStateChanged,
+    stateEvidence: !element.isConnected
+      ? 'selector click target detached/re-rendered'
+      : targetStateChanged ? 'selector click target DOM state changed' : '',
+  }
 }
