@@ -710,4 +710,109 @@ describe('Patrol screenshot tab readiness', () => {
     expect(source).toMatch(/发布\|发表\|发送\|提交/)
   })
 
+
+  it('rescues a rough visual publish point to a closed-shadow publish button instead of an ordinary video link', async () => {
+    const viewport = {
+      urlIdentity: 'https://example.test/video/1',
+      width: 1000, height: 800, offsetLeft: 0, offsetTop: 0, scale: 1,
+      scrollX: 0, scrollY: 1200, innerWidth: 1000, innerHeight: 800, devicePixelRatio: 1,
+    }
+    const mouseEvents: Array<{ method: string; params: any }> = []
+    const scripting = {
+      async executeScript(request: any) {
+        if (request.func?.name === 'interactionMainWorldViewportState') return [{ result: { ...viewport } }]
+        if (request.func?.name === 'interactionMainWorldVisualClick') {
+          const x = Number(request.args?.[0]), y = Number(request.args?.[1])
+          return [{ result: {
+            ok: true,
+            selector: 'button.comment-publish',
+            tag: 'button',
+            role: 'button',
+            text: '发布',
+            className: 'comment-publish',
+            clickX: x,
+            clickY: y,
+            stateSignature: mouseEvents.length ? 'published' : 'ready',
+            targetFocusedEditable: false,
+          } }]
+        }
+        throw new Error(`unexpected script ${request.func?.name || 'anonymous'}`)
+      },
+    }
+    const debuggerApi = {
+      async attach() {},
+      async sendCommand(_target: any, method: string, params: any) {
+        if (method === 'DOM.getDocument') {
+          return {
+            root: {
+              nodeName: '#document', backendNodeId: 1,
+              children: [
+                {
+                  nodeName: 'A', backendNodeId: 20,
+                  attributes: ['href', '/video/BV-wrong', 'class', 'recommended-video'],
+                  children: [{ nodeType: 3, nodeName: '#text', nodeValue: '旁边推荐视频' }],
+                },
+                {
+                  nodeName: 'BILI-COMMENT-EDITOR', backendNodeId: 30,
+                  shadowRoots: [{
+                    nodeName: '#document-fragment', backendNodeId: 31, shadowRootType: 'closed',
+                    children: [{
+                      nodeName: 'BUTTON', backendNodeId: 44,
+                      attributes: ['class', 'comment-publish', 'role', 'button'],
+                      children: [{ nodeType: 3, nodeName: '#text', nodeValue: '发布' }],
+                    }],
+                  }],
+                },
+              ],
+            },
+          }
+        }
+        if (method === 'Page.getLayoutMetrics') {
+          return { cssVisualViewport: { clientWidth: 1000, clientHeight: 800, pageX: 0, pageY: 1200 } }
+        }
+        if (method === 'DOM.resolveNode') {
+          expect(params.backendNodeId).toBe(44)
+          return { object: { objectId: 'publish-44' } }
+        }
+        if (method === 'Runtime.callFunctionOn') {
+          expect(params.objectId).toBe('publish-44')
+          return { result: { value: { left: 680, top: 590, right: 770, bottom: 632, width: 90, height: 42 } } }
+        }
+        if (method === 'Input.dispatchMouseEvent') {
+          mouseEvents.push({ method, params })
+          return {}
+        }
+        throw new Error(`unexpected debugger command ${method}`)
+      },
+      async detach() {},
+    }
+    const tabs = {
+      get: async () => ({ id: 7, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
+      update: async (id: number) => ({ id, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
+      captureVisibleTab: async () => 'data:image/png;base64,AAAA',
+    }
+    const sandbox = await loadInteraction({ chrome: { tabs, scripting, debugger: debuggerApi } })
+    const shot = await sandbox.handleCommand('screenshot', { tabId: 7 })
+    const clicked = await sandbox.handleCommand('visualClick', {
+      tabId: 7,
+      frameId: shot.visualFrameId,
+      xRatio: 0.90,
+      yRatio: 0.60,
+      targetHint: '蓝色发布按钮',
+    })
+
+    const pressed = mouseEvents.find(item => item.params?.type === 'mousePressed')
+    expect(pressed?.params).toMatchObject({ x: 725, y: 611, button: 'left' })
+    expect(clicked).toMatchObject({
+      ok: true,
+      cdpPiercedTarget: true,
+      cdpPiercedAction: true,
+      requestedClickX: 900,
+      requestedClickY: 480,
+      resolvedClickX: 725,
+      resolvedClickY: 611,
+      visualSnapped: true,
+    })
+  })
+
 })
