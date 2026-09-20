@@ -153,6 +153,11 @@ export function registerPatrolVisualClickTool(
       const urlIdentity = objectString(clicked.value, 'urlIdentity')
       const viewportWidth = objectNumber(clicked.value, 'viewportWidth')
       const viewportHeight = objectNumber(clicked.value, 'viewportHeight')
+      const captureClientLeft = objectNumber(clicked.value, 'captureClientLeft')
+      const captureClientTop = objectNumber(clicked.value, 'captureClientTop')
+      const captureWidth = objectNumber(clicked.value, 'captureWidth')
+      const captureHeight = objectNumber(clicked.value, 'captureHeight')
+      const captureMode = objectString(clicked.value, 'captureMode')
       const scrollX = objectNumber(clicked.value, 'scrollX')
       const scrollY = objectNumber(clicked.value, 'scrollY')
       if (urlIdentity === undefined || viewportWidth === undefined || viewportHeight === undefined || scrollX === undefined || scrollY === undefined) {
@@ -168,6 +173,11 @@ export function registerPatrolVisualClickTool(
         viewportWidth,
         viewportHeight,
         viewportScale: objectNumber(clicked.value, 'viewportScale'),
+        captureClientLeft,
+        captureClientTop,
+        captureWidth,
+        captureHeight,
+        captureMode,
         scrollX,
         scrollY,
         expectedTag: objectString(clicked.value, 'targetTag'),
@@ -209,7 +219,7 @@ export function registerPatrolVisualClickTool(
 
       return [
         `Executed and recorded ${step.id} (browser_visual_click) after CURRENT visual-state verification.`,
-        `Visual point: xRatio=${args.xRatio.toFixed(4)}, yRatio=${args.yRatio.toFixed(4)}.`,
+        `Visual point: xRatio=${args.xRatio.toFixed(4)}, yRatio=${args.yRatio.toFixed(4)}; capture=${captureWidth ?? viewportWidth}x${captureHeight ?? viewportHeight} CSS px at (${captureClientLeft ?? 0}, ${captureClientTop ?? 0}).`,
         selectorHint
           ? `Replay prefers discovered selector ${JSON.stringify(selectorHint)}, then uses guarded normalized coordinates only if selector replay fails.`
           : 'Replay uses the recorded normalized visual point with URL/scroll/viewport guards.',
