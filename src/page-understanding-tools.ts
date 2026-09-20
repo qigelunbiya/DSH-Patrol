@@ -136,11 +136,12 @@ export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = 
       if (!visualEligible) {
         return 'DSH Patrol 页面规划器：视觉点击需要先证明 DOM 路径无法可靠完成。至少先执行一次 patrol_click_target；若失败，再调用一次 patrol_analyze_step 获取 CURRENT DOM 证据。完成这两步后即可直接使用截图视觉后备，不需要为了凑“第二种策略”继续猜 CSS。'
       }
-      // Do NOT consume the visual budget here. The tool may still fail before
-      // any physical click (stale frame, unsupported capability, viewport
-      // changed). patrol_visual_click_target records the budget only after the
-      // browser confirms that a physical visual click was actually executed.
-      state.analyzed = false
+      // Do NOT consume the visual budget or clear analyzed evidence here.
+      // The tool may still fail before any physical click (stale frame,
+      // unsupported capability, viewport changed). Keeping CURRENT analysis
+      // eligibility lets a fresh screenshot/frame retry without forcing the
+      // model back into guessed CSS. The outcome tracker is updated only after
+      // the browser confirms that a physical visual click actually executed.
       return undefined
     }
 
