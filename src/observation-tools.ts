@@ -163,7 +163,12 @@ export function registerPatrolObservationTools(
       const shot = await runner.dispatch('browser_screenshot', compactObject({
         tabId: args.tabId,
         format: args.includeImage === true ? 'jpeg' : 'png',
-        ...(args.includeImage === true ? { maxWidth: 1024, quality: 68 } : {}),
+        // Keep enough native raster detail for precise visual pointing, but make
+        // maxWidth a final physical-pixel budget inside the extension (DPR-aware).
+        // This avoids the old DPR=2 bug where "1024" still produced a ~2048px
+        // model image and simultaneously keeps browser vision closer to the
+        // geometry-faithful Desktop Automation frame.
+        ...(args.includeImage === true ? { maxWidth: 1536, quality: 72 } : {}),
       }), exec)
       if (!shot.ok) {
         const bootstrap = await detectBootstrapObservation(runner, exec, args.tabId)
