@@ -56,7 +56,7 @@ describe('Patrol reusable-flow integrity', () => {
     } })).toBeUndefined()
   })
 
-  it('blocks guessed internal URLs after a draft declares its target, including generic browser-step navigation', () => {
+  it('allows real in-flow navigation while keeping the entry target metadata stable', () => {
     const guard = createPatrolTeachingIntegrityGuard()
     expect(guard({
       name: 'patrol_create_draft',
@@ -73,7 +73,11 @@ describe('Patrol reusable-flow integrity', () => {
     expect(guard({
       name: 'patrol_navigate',
       arguments: { inspectionId: 'demo', url: 'http://172.21.9.122/com-portal/todo' },
-    })).toMatch(/navigation was NOT executed/i)
+    })).toBeUndefined()
+    expect(guard({
+      name: 'patrol_navigate',
+      arguments: { inspectionId: 'demo', action: 'back' },
+    })).toBeUndefined()
     expect(guard({
       name: 'patrol_browser_step',
       arguments: {
@@ -81,16 +85,16 @@ describe('Patrol reusable-flow integrity', () => {
         action: 'navigate',
         arguments: { url: 'http://172.21.9.122/com-portal/home' },
       },
-    })).toMatch(/Do not guess an internal URL/i)
+    })).toBeUndefined()
   })
 
-  it('blocks target rewriting as a recovery bypass and requires a fresh flow for a real target change', () => {
+  it('blocks target metadata rewriting but does not freeze the CURRENT browser at the entry URL', () => {
     const guard = createPatrolTeachingIntegrityGuard()
     guard({ name: 'patrol_create_draft', arguments: { inspectionId: 'demo', targetUrl: 'https://example.test/a' } })
     guard({ name: 'patrol_set_task_checklist', arguments: { inspectionId: 'demo', tasks: ['访问入口'] } })
-    expect(guard({ name: 'patrol_navigate', arguments: { inspectionId: 'demo', url: 'https://example.test/b' } })).toMatch(/navigation was NOT executed/i)
+    expect(guard({ name: 'patrol_navigate', arguments: { inspectionId: 'demo', url: 'https://example.test/b' } })).toBeUndefined()
     expect(guard({ name: 'patrol_update_inspection', arguments: { inspectionId: 'demo', targetUrl: 'https://example.test/b' } })).toMatch(/targetUrl change was NOT executed/i)
-    expect(guard({ name: 'patrol_navigate', arguments: { inspectionId: 'demo', url: 'https://example.test/b?session=1' } })).toMatch(/navigation was NOT executed/i)
+    expect(guard({ name: 'patrol_navigate', arguments: { inspectionId: 'demo', url: 'https://example.test/b?session=1' } })).toBeUndefined()
 
     expect(guard({ name: 'patrol_delete', arguments: { inspectionId: 'demo' } })).toBeUndefined()
     expect(guard({ name: 'patrol_create_draft', arguments: { inspectionId: 'demo', targetUrl: 'https://example.test/b' } })).toBeUndefined()
@@ -104,7 +108,8 @@ describe('Patrol reusable-flow integrity', () => {
     expect(PATROL_INTEGRITY_PROMPT).toMatch(/CURRENT 页面已经出现.*立即执行/s)
     expect(PATROL_INTEGRITY_PROMPT).toMatch(/自动填好.*也必须/s)
     expect(PATROL_INTEGRITY_PROMPT).toMatch(/expectedText.*若未知.*省略/s)
-    expect(PATROL_INTEGRITY_PROMPT).toMatch(/不得用猜测 URL 的 patrol_navigate 代替/s)
+    expect(PATROL_INTEGRITY_PROMPT).toMatch(/不得用模型猜测的内部 URL 替代该业务点击/s)
+    expect(PATROL_INTEGRITY_PROMPT).toMatch(/action=back\/forward\/reload/s)
     expect(PATROL_INTEGRITY_PROMPT).toMatch(/patrol_finalize_flow/s)
   })
 
