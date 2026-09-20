@@ -642,6 +642,25 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
   }
   const cssString = value => String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')
   const unique = selector => { try { return document.querySelectorAll(selector).length === 1 } catch { return false } }
+  const deepQueryAll = selector => {
+    const out = []
+    const roots = [document]
+    const seenRoots = new Set()
+    let scannedElements = 0
+    while (roots.length && seenRoots.size < 64 && scannedElements < 12000) {
+      const root = roots.shift()
+      if (!root || seenRoots.has(root) || typeof root.querySelectorAll !== 'function') continue
+      seenRoots.add(root)
+      try { out.push(...root.querySelectorAll(selector)) } catch { return [] }
+      let elements = []
+      try { elements = [...root.querySelectorAll('*')] } catch {}
+      scannedElements += elements.length
+      for (const element of elements) {
+        if (element?.shadowRoot && !seenRoots.has(element.shadowRoot)) roots.push(element.shadowRoot)
+      }
+    }
+    return [...new Set(out)]
+  }
   const stableSelector = element => {
     if (!(element instanceof Element)) return ''
     if (element.id) return '#' + cssEscape(element.id)
@@ -687,6 +706,11 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     }
     return hit
   }
+  const isEditableTarget = element => element instanceof HTMLInputElement
+    || element instanceof HTMLTextAreaElement
+    || element?.isContentEditable === true
+    || compact(element?.getAttribute?.('role') || '').toLowerCase() === 'textbox'
+    || /(?:editor|input|textarea)/i.test(String(element?.tagName || ''))
   const normalizeHint = value => compact(value).toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
   const hintCoreOf = value => normalizeHint(value)
     .replace(/current|截图|其中|中的|页面|视频|封面|按钮|图标|控件|链接|点击|打开|进入/g, '')
@@ -709,7 +733,10 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     const evidence = normalizeHint(targetEvidence(element))
     const hintCore = hintCoreOf(rawHint)
     if (/点赞|大拇指|\blike\b|thumb/i.test(rawHint)) return /点赞|like|thumb|videolike|ariapressed/.test(evidence) ? 220 : 0
-    if (/评论|回复|\bcomment\b|\breply\b/i.test(rawHint)) return /评论|回复|comment|reply|editor|textarea|placeholder/.test(evidence) ? 220 : 0
+    if (/评论|回复|\bcomment\b|\breply\b/i.test(rawHint)) {
+      if (!/评论|回复|comment|reply|editor|textarea|placeholder/.test(evidence)) return 0
+      return isEditableTarget(element) ? 360 : 220
+    }
     if (/搜索|\bsearch\b/i.test(rawHint)) return /搜索|search/.test(evidence) ? 220 : 0
     if (/发送|提交|\bsend\b|\bsubmit\b/i.test(rawHint)) return /发送|提交|send|submit/.test(evidence) ? 220 : 0
     if (hintCore.length < 3) return 0
@@ -721,15 +748,19 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     const rawHint = compact(targetHint)
     const hintCore = hintCoreOf(rawHint)
     const hasIntent = /点赞|大拇指|\blike\b|thumb|评论|回复|\bcomment\b|\breply\b|搜索|\bsearch\b|发送|提交|\bsend\b|\bsubmit\b/i.test(rawHint)
+    const wantsEditable = /评论.*(?:输入|编辑)|回复.*(?:输入|编辑)|输入框|编辑框|comment.*(?:input|editor)|reply.*(?:input|editor)/i.test(rawHint)
     if (!rawHint || (!hasIntent && hintCore.length < 3)) return { target: initialTarget, clickX: originalX, clickY: originalY, snapped: false }
-    if (hintScore(initialTarget) > 0) return { target: initialTarget, clickX: originalX, clickY: originalY, snapped: false }
+    if (hintScore(initialTarget) > 0 && (!wantsEditable || isEditableTarget(initialTarget))) {
+      return { target: initialTarget, clickX: originalX, clickY: originalY, snapped: false }
+    }
 
     const candidateSelector = [
-      actionableSelector, 'textarea', 'input:not([type="hidden"])', '[contenteditable="true"]', '[title]', '[aria-label]',
+      actionableSelector, 'textarea', 'input:not([type="hidden"])', '[contenteditable="true"]', '[role="textbox"]',
+      'bili-comment-editor', 'bili-comments', '[title]', '[aria-label]',
     ].join(',')
     const uniqueTargets = []
     const seen = new Set()
-    for (const candidate of document.querySelectorAll(candidateSelector)) {
+    for (const candidate of deepQueryAll(candidateSelector)) {
       if (!visible(candidate) || disabled(candidate)) continue
       const resolved = chooseTarget(candidate)
       if (!(resolved instanceof Element) || !visible(resolved) || disabled(resolved) || seen.has(resolved)) continue
