@@ -374,4 +374,40 @@ describe('browser visual fallback click teaching', () => {
     expect((await store.load('visual-click')).steps).toHaveLength(0)
   })
 
+
+  it('immediately rejects a publish click when the browser reports unexpected navigation', async () => {
+    const { store, tool, exec } = await setup(async (name) => {
+      if (name === 'browser_read_page') return { ok: true, text: '评论页', value: { ok: true, url: 'https://www.bilibili.com/video/BV-original', text: '评论页' } }
+      if (name === 'browser_snapshot') return { ok: true, text: 'snapshot', value: { ok: true, url: 'https://www.bilibili.com/video/BV-original', elements: [] } }
+      if (name === 'browser_visual_click') return {
+        ok: true,
+        text: 'wrong click',
+        value: {
+          ok: true,
+          selectorHint: 'top-frame::a.recommended-video',
+          targetTag: 'a',
+          targetRole: 'link',
+          targetText: '另一个视频',
+          unexpectedNavigation: true,
+          targetStateChanged: false,
+          urlIdentity: 'https://www.bilibili.com/video/BV-original',
+          viewportWidth: 1425, viewportHeight: 709, scrollX: 0, scrollY: 600,
+        },
+      }
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    const result = await tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '点击发布按钮发送评论',
+      targetHint: '蓝色发布按钮',
+      frameId: 'browser-visual-current',
+      xRatio: 0.58,
+      yRatio: 0.65,
+    }, exec)
+    expect(result).toMatch(/NOT recorded/)
+    expect(result).toMatch(/unexpectedly navigated away/)
+    expect((await store.load('visual-click')).steps).toHaveLength(0)
+  })
+
 })

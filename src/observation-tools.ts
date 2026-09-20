@@ -66,6 +66,10 @@ interface ImageAttachmentAttempt {
   error?: string
 }
 
+interface ToolResultPrunerLike {
+  pruneSession(session: unknown): { pruned?: unknown[]; charsRemoved?: number }
+}
+
 export function registerPatrolObservationTools(
   ctx: Context,
   store: PatrolStore,
@@ -74,7 +78,7 @@ export function registerPatrolObservationTools(
 ): () => void {
   const observe = defineTool({
     name: 'patrol_observe',
-    description: 'Read-only CURRENT-page observation. Captures a screenshot for freshness/OCR and can attach that exact CURRENT image with includeImage=true whenever the model decides vision is useful. Visual images remain size/context bounded to protect local-model stability. Does not record a Runbook step.',
+    description: 'Read-only CURRENT-page observation. Captures a screenshot for freshness/OCR and can attach that exact CURRENT image with includeImage=true whenever the model decides vision is useful. There is no fixed screenshot-count limit; before a new visual attachment Patrol proactively prunes older bulky tool/image payloads and keeps the raster DPR-aware/bounded for local-model stability. Does not record a Runbook step.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       tabId: { type: 'integer' },
@@ -157,9 +161,13 @@ export function registerPatrolObservationTools(
       rawInput: { inspectionId: args.inspectionId, tabId: args.tabId, includeImage: args.includeImage === true },
     }),
     async execute(args, exec: ToolRunContext) {
-      // Screenshot capture establishes freshness and supplies bounded OCR. Image
-      // attachment is opt-in because repeated image blocks are disproportionately
-      // expensive for long local-model sessions.
+      // Visual capture is unlimited by count, but old bulky Patrol tool/image
+      // payloads must not accumulate in the local-Qwen request. Prune before
+      // attaching each new CURRENT visual frame so the newest image remains
+      // useful without rebuilding the old OOM/503 failure pattern.
+      if (args.includeImage === true) pruneHistoricalVisualContext(ctx, exec)
+
+      // Screenshot capture establishes freshness and supplies bounded OCR.
       const shot = await runner.dispatch('browser_screenshot', compactObject({
         tabId: args.tabId,
         format: args.includeImage === true ? 'jpeg' : 'png',
@@ -371,6 +379,28 @@ async function currentTabMetadata(
   return {
     url: objectRawString(tab, 'url') ?? '',
     title: objectRawString(tab, 'title') ?? '',
+  }
+}
+
+function pruneHistoricalVisualContext(ctx: Context, exec: ToolRunContext): void {
+  const agent = exec.agent as unknown as { session?: unknown } | undefined
+  if (agent?.session === undefined) return
+  let pruner: ToolResultPrunerLike | undefined
+  try {
+    pruner = ctx.get('toolResultPruner') as ToolResultPrunerLike | undefined
+  } catch {
+    return
+  }
+  if (pruner === undefined) return
+  try {
+    const result = pruner.pruneSession(agent.session)
+    const pruned = Array.isArray(result.pruned) ? result.pruned.length : 0
+    const chars = typeof result.charsRemoved === 'number' ? result.charsRemoved : 0
+    if (pruned > 0 || chars > 0) {
+      ctx.logger.info(`[dsh-patrol/vision] pruned historical tool/image payloads before CURRENT visual attachment; entries=${pruned}, chars=${chars}`)
+    }
+  } catch (error: unknown) {
+    ctx.logger.warn(`[dsh-patrol/vision] proactive visual-history prune failed: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 

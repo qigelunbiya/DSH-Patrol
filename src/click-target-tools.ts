@@ -284,6 +284,17 @@ export function registerPatrolClickTargetTool(
       let verificationMethod: NonNullable<ToolStep['teaching']>['method'] | undefined
       let verificationEvidence: string | undefined
 
+      const semanticIntent = [args.stepName, locator?.text].filter(Boolean).join(' ')
+      if (openedTabId !== undefined && inPageControlHint(semanticIntent)) {
+        options.clickOutcomes?.recordUnverifiedPhysicalClick(args)
+        return [
+          'Semantic click executed but was NOT recorded because an in-page control unexpectedly opened/navigated to another page.',
+          `Resolved target: ${resolutionSummary}`,
+          openedTabUrl ? `Unexpected child tab: ${safeStateUrl(openedTabUrl)}` : undefined,
+          'For controls such as 评论输入框/发布/点赞, navigation is evidence of a wrong target, not success.',
+        ].filter(Boolean).join('\n')
+      }
+
       const verificationTabId = openedTabId ?? args.tabId
       if (expectation.expectation !== undefined) {
         const verified = await verifyPostClickExpectation(
@@ -314,7 +325,7 @@ export function registerPatrolClickTargetTool(
           verificationMethod = 'state-change'
           verificationEvidence = targetStateEvidence ?? 'semantic target changed its own CURRENT DOM state'
         } else {
-          const verified = await verifyAutomaticStateChange(runner, exec, beforeState, args.tabId)
+          const verified = await verifyAutomaticStateChange(runner, exec, beforeState, args.tabId, semanticIntent)
           verificationAttempts = verified.attempts
           if (!verified.ok) {
             if (physicalClickExecuted) options.clickOutcomes?.recordUnverifiedPhysicalClick(args)
@@ -429,6 +440,7 @@ async function verifyAutomaticStateChange(
   exec: ToolRunContext,
   before: PageState | undefined,
   tabId: number | undefined,
+  targetHint?: string,
 ): Promise<StateChangeVerification> {
   if (before === undefined) return { ok: false, attempts: 0 }
   for (let index = 0; index < AUTO_VERIFY_DELAYS_MS.length; index += 1) {
@@ -436,10 +448,22 @@ async function verifyAutomaticStateChange(
     if (delayMs > 0) await sleep(delayMs)
     const after = await capturePageState(runner, exec, tabId)
     if (after === undefined) continue
+    if (before.url && after.url && before.url !== after.url && inPageControlHint(targetHint)) {
+      return {
+        ok: false,
+        attempts: index + 1,
+        evidence: `unexpected navigation for in-page control ${JSON.stringify(targetHint ?? '')}: ${safeStateUrl(before.url)} -> ${safeStateUrl(after.url)}`,
+      }
+    }
     const evidence = stateChangeEvidence(before, after)
     if (evidence !== undefined) return { ok: true, attempts: index + 1, evidence }
   }
   return { ok: false, attempts: AUTO_VERIFY_DELAYS_MS.length }
+}
+
+function inPageControlHint(targetHint: string | undefined): boolean {
+  const hint = normalizePageText(targetHint ?? '')
+  return /点赞|投币|收藏|评论|回复|输入框|编辑框|发布|发表|发送|提交|like|favorite|comment|reply|post|send|submit/.test(hint)
 }
 
 function stateChangeEvidence(before: PageState, after: PageState): string | undefined {

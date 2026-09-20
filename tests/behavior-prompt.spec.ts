@@ -116,6 +116,8 @@ describe('current Patrol behavior prompt', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/xRatio=centerX\/imageWidth/)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/yRatio=centerY\/imageHeight/)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/可点击控件内部的几何中心点/)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/视觉截图没有固定次数上限/)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/附加新图前主动裁剪历史大型工具\/图片结果/)
     expect(PATROL_BEHAVIOR_PROMPT).not.toMatch(/浏览器点击必须坚持 DOM-first/)
   })
 
