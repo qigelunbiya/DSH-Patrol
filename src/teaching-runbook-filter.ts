@@ -145,7 +145,7 @@ function isDynamicImageCodeSolver(step: ToolStep): boolean {
 
 function actionKindForTool(tool: string): BusinessAction {
   if (tool === 'browser_navigate' || tool === 'desktop_launch_app' || tool === 'desktop_open_path' || tool === 'desktop_activate_window') return 'navigate'
-  if (tool === 'browser_click' || tool === 'browser_visual_click' || tool === 'browser_press' || tool === 'browser_select'
+  if (tool === 'browser_click' || tool === 'browser_visual_click' || tool === 'browser_semantic_click' || tool === 'browser_press' || tool === 'browser_select'
     || tool === 'desktop_click_target' || tool === 'desktop_click_ocr_text' || tool === 'desktop_click_coordinates' || tool === 'desktop_press' || tool === 'desktop_press_target'
     || tool === 'desktop_hotkey' || tool === 'desktop_paste' || tool === 'desktop_paste_target' || tool === 'desktop_drag'
     || tool === 'desktop_close_window' || tool === 'desktop_delete_path') return 'click'
@@ -235,6 +235,7 @@ function isDurableBusinessProgress(step: InspectionStep): boolean {
   if (step.kind === 'checkpoint') return true
   return step.tool === 'browser_click'
     || step.tool === 'browser_visual_click'
+    || step.tool === 'browser_semantic_click'
     || step.tool === 'browser_press'
     || step.tool === 'browser_select'
     || step.tool.startsWith('browser_type')
