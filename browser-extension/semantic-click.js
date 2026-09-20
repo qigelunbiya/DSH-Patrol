@@ -355,6 +355,13 @@ async function semanticClickPageCommand(mode, spec) {
   const wantedText = normalize(spec.locatorText || '')
   const wantedRole = normalize(spec.locatorRole || '')
   const wantedTag = normalize(spec.locatorTag || '')
+  const semanticIntentText = String(`${spec.locatorText || ''} ${spec.task || ''}`)
+  const wantsCommentEditor = /评论.*(?:输入|编辑)|回复.*(?:输入|编辑)|输入框|编辑框|comment.*(?:input|editor)|reply.*(?:input|editor)/i.test(semanticIntentText)
+  const editableCandidate = element => element instanceof HTMLInputElement
+    || element instanceof HTMLTextAreaElement
+    || element?.isContentEditable === true
+    || normalize(element.getAttribute?.('role') || '') === 'textbox'
+    || /(?:editor|input|textarea)/i.test(String(element?.tagName || ''))
   const globalExactTitleCandidates = wantedText
     ? deepQueryAll('[title]').filter(element => {
         if (!visible(element) || disabled(element)) return false
@@ -420,6 +427,9 @@ async function semanticClickPageCommand(mode, spec) {
       if (!normText) return null
       if (normText === wantedText) score += 140
       else if (normText.includes(wantedText) || wantedText.includes(normText)) score += 80
+      else if (wantsCommentEditor
+        && editableCandidate(element)
+        && /评论|回复|comment|reply|editor|textarea|placeholder/.test(normText)) score += 110
       else return null
     }
     if (wantedText) {
@@ -432,6 +442,7 @@ async function semanticClickPageCommand(mode, spec) {
       try { if (element.matches(selectorHint)) score += 35 } catch {}
     }
     if (['a', 'button'].includes(tag) || role === 'button' || role === 'link' || role === 'menuitem') score += 12
+    if (wantsCommentEditor && editableCandidate(element)) score += 80
     if (wantsLogo) {
       const logoEvidence = [
         element.id || '',
