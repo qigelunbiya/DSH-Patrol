@@ -39,7 +39,6 @@ const RESET_EPISODE_TOOLS = new Set([
 interface PlanningGuardState {
   touchedAt: number
   businessKey: string
-  visualImageCaptures: number
 }
 
 interface SnapshotElement {
@@ -62,8 +61,8 @@ export const PATROL_PAGE_UNDERSTANDING_PROMPT = `DSH Patrol 页面理解与执�
 - patrol_analyze_step 永远不写 Runbook。需要表格行身份、弹窗上下文、iframe 或同名目标消歧时，它会把“行身份 + 行内动作”绑定，例如“目标地址 + RDP”。不要把分析器给出的 selector 再扩写成更长的 nth-of-type，也不要在没有新证据时连续猜 selector。
 - selector 只接受当前浏览器 querySelector 层支持的 CSS。严禁 jQuery/Playwright/XPath 方言：:contains(...)、:has-text(...)、text=...、//...、.//...、xpath=...。locatorText 已知时优先只传 locatorText 给 patrol_click_target；若 locatorText 已提供但 selector hint 是非法方言，运行时会丢弃这个可选 hint 而继续语义定位。
 - 一种方法失败不会锁死其他方法。DOM/semantic 未命中后可以切换视觉，视觉未命中后也可以回到 DOM/semantic；不要为了满足固定次数而重复 analyze/read/snapshot 或编造 CSS。已经有证据确认开关型业务点击成功后，不要再次点击同一目标把状态反向切回。
-- patrol_visual_click_target 必须使用 patrol_observe(includeImage=true) 返回的 CURRENT visualFrameId；底层会核对 tab、URL、scroll、zoom、viewport。targetHint 会参与点击前的 DOM 命中校验：坐标落到相邻卡片但页面上存在唯一匹配目标时，底层可吸附到匹配控件中心；无法唯一确认时应在物理点击前失败，而不是盲点。
-- 视觉使用时机不受限制，但视觉上下文资源仍受保护：同一业务目标最多向模型附加两张 CURRENT 视觉截图（首张 + 一次 stale/恢复重拍），避免连续整页截图把本地 Qwen 推到 CUDA OOM / 503。这个限制只控制重复图像附件数量，不要求视觉必须作为最后兜底。
+- patrol_visual_click_target 必须使用 patrol_observe(includeImage=true) 返回的 CURRENT visualFrameId；底层会核对 tab、URL、scroll、zoom、viewport。targetHint 会参与点击前的业务控件验证和高置信语义救援：视觉点明显落到无关推荐卡片/播放器小窗时必须拒绝；若 CURRENT DOM/Accessibility 能唯一解析出目标控件（例如“发布”按钮、评论编辑器、完整视频标题），允许改用该唯一控件的真实盒模型。不能把视觉点静默吸到一个大容器或相邻无关控件。
+- 视觉截图不设固定次数上限。模型可以在页面/滚动/布局变化后按需重新 patrol_observe(includeImage=true) 获取新的 CURRENT frame；但每次新视觉附件前 Patrol 会主动裁剪历史大型工具结果，并保持 DPR-aware 的有界截图尺寸，避免旧图片堆积把本地 Qwen 推到 CUDA OOM / 503。不要无状态变化地机械重复同一张截图，但不得因为“已经看过两次”而阻止真正需要的新视觉观察。
 - 教学成功后的 browser_visual_click 重放优先使用视觉命中时发现的 stable selector；selector 漂移时才恢复记录的 URL/scroll/viewport 并使用归一化 xRatio/yRatio。所有方法都必须以 CURRENT 业务状态验证为准，不能仅因为工具发出了 click 就宣称成功。
 - 不要为每个内部工具调用向用户重复“我再观察一下/我再试一下/让我换个选择器”。只有需要用户输入/确认、遇到不可恢复阻塞、或任务最终完成时才发自然语言说明。任何没有新工具结果或新页面证据支持的 selector 推测最多写一次。
 - 教学轨迹不等于 Runbook。诊断 snapshot/read、失败点击、重复输入、临时等待都不是最终流程。任务完成后必须 patrol_finalize_flow，只保留真正完成 taskChecklist 的已验证业务路径，再确认流程。
@@ -89,7 +88,7 @@ function createStrategyNeutralPlanningGuard(outcomes: PatrolClickOutcomeTracker)
     for (const [key, value] of states) if (now - value.touchedAt > STATE_TTL_MS) states.delete(key)
     let state = states.get(inspectionId)
     if (state === undefined) {
-      state = { touchedAt: now, businessKey: '', visualImageCaptures: 0 }
+      state = { touchedAt: now, businessKey: '' }
       states.set(inspectionId, state)
     }
     state.touchedAt = now
@@ -106,8 +105,9 @@ function createStrategyNeutralPlanningGuard(outcomes: PatrolClickOutcomeTracker)
     }
 
     if (name === 'patrol_observe' && args.includeImage === true) {
-      if (state.visualImageCaptures >= 2) return visualImageBudgetExhausted()
-      state.visualImageCaptures += 1
+      // No fixed screenshot-count ceiling. Local-Qwen stability is handled by
+      // bounded raster size plus proactive pruning of older Patrol tool/image
+      // payloads before the next visual attachment.
       return undefined
     }
 
@@ -166,9 +166,7 @@ function unsupportedSelectorSyntax(name: string, args: Record<string, unknown>):
 function alignBusinessState(state: PlanningGuardState, key: string): void {
   if (!key || state.businessKey === key) return
   if (state.businessKey && (state.businessKey.includes(key) || key.includes(state.businessKey))) return
-  const carryAnonymousVisual = state.businessKey === '' && state.visualImageCaptures > 0
   state.businessKey = key
-  if (!carryAnonymousVisual) state.visualImageCaptures = 0
 }
 
 function toggleLikeBusinessAction(args: Record<string, unknown>): boolean {
@@ -188,16 +186,6 @@ function businessKey(primary: unknown, locator: unknown): string {
     .replace(/\d{6,}/g, '#')
     .slice(0, 220)
 }
-
-function visualImageBudgetExhausted(): string {
-  return [
-    'DSH Patrol 页面规划器：这个业务目标已经附加过两张视觉截图，本次 includeImage=true 未执行。',
-    '不要继续通过重复整页截图试错；这会显著增加本地 Qwen 的视觉上下文/GPU 压力并可能触发 CUDA OOM / 503。',
-    '若两张 CURRENT 图都无法形成一次可验证视觉点击，请回到 DOM/semantic 证据或停止并报告阻塞。',
-  ].join(' ')
-}
-
-
 
 function strategyHardStop(reason = '同一业务点击的安全恢复预算已耗尽'): string {
   return `DSH Patrol 页面规划器 HARD STOP：${reason}。本次操作未继续执行。禁止继续 DOM selector 或视觉坐标尝试；请报告当前页面无法安全完成该业务目标。`
