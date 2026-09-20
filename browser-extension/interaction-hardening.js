@@ -569,6 +569,7 @@ async function interactionResolvePiercedEditablePoint(tabId, targetHint, origina
     if (!candidates.length) return undefined
 
     const measured = []
+    const hasOrigin = Number.isFinite(Number(originalX)) && Number.isFinite(Number(originalY))
     for (const candidate of candidates) {
       try {
         const resolved = await chrome.debugger.sendCommand(target, 'DOM.resolveNode', { backendNodeId: candidate.backendNodeId })
@@ -595,7 +596,7 @@ async function interactionResolvePiercedEditablePoint(tabId, targetHint, origina
           rect: { left, top, width, height, right: left + width, bottom: top + height },
           x: centerX,
           y: centerY,
-          distance: Math.hypot(centerX - originalX, centerY - originalY),
+          distance: hasOrigin ? Math.hypot(centerX - Number(originalX), centerY - Number(originalY)) : 0,
         })
       } catch {}
     }
@@ -603,7 +604,7 @@ async function interactionResolvePiercedEditablePoint(tabId, targetHint, origina
     measured.sort((left, right) => right.score - left.score || left.distance - right.distance)
     const best = measured[0]
     const runnerUp = measured[1]
-    if (runnerUp && runnerUp.score === best.score && Math.abs(runnerUp.distance - best.distance) < 8) return undefined
+    if (runnerUp && runnerUp.score === best.score && (!hasOrigin || Math.abs(runnerUp.distance - best.distance) < 8)) return undefined
     return {
       x: best.x,
       y: best.y,
