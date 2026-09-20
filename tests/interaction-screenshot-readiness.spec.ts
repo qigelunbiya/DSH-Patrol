@@ -228,6 +228,127 @@ describe('Patrol screenshot tab readiness', () => {
     expect(debuggerCalls[1]?.params).toMatchObject({ type: 'mousePressed', x: 200, y: 600, button: 'left' })
   })
 
+  it('corrects an offset visual comment point to a real textbox inside closed Shadow DOM via CDP pierce', async () => {
+    const viewport = {
+      urlIdentity: 'https://example.test/video/1',
+      width: 1000,
+      height: 800,
+      offsetLeft: 0,
+      offsetTop: 0,
+      scale: 1,
+      scrollX: 0,
+      scrollY: 1200,
+    }
+    const debuggerCalls: Array<{ method: string; params: any }> = []
+    const mouseEvents: Array<{ method: string; params: any }> = []
+    const scripting = {
+      async executeScript(request: any) {
+        if (request.func?.name === 'interactionMainWorldViewportState') return [{ result: { ...viewport } }]
+        if (request.func?.name === 'interactionMainWorldVisualClick') {
+          return [{ result: {
+            ok: true,
+            selector: 'bili-comment-editor',
+            tag: 'bili-comment-editor',
+            role: '',
+            text: 'wifi 连接中……检测到粉丝评论输出电波……',
+            stateSignature: mouseEvents.length ? 'focused-host' : 'idle-host',
+            targetFocusedEditable: false,
+            clickX: request.args?.[0],
+            clickY: request.args?.[1],
+          } }]
+        }
+        if (request.func?.name === 'interactionMainWorldFocusedEditor') {
+          return [{ result: {
+            ok: true,
+            focusUsable: mouseEvents.length > 0,
+            focusedTag: 'bili-comment-editor',
+            focusKind: 'custom-focus-host',
+            observedText: '',
+          } }]
+        }
+        throw new Error(`unexpected executeScript function ${request.func?.name || 'anonymous'}`)
+      },
+    }
+    const tabs = {
+      get: async () => ({ id: 7, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
+      update: async (id: number) => ({ id, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
+      captureVisibleTab: async () => 'data:image/png;base64,AAAA',
+    }
+    const debuggerApi = {
+      async attach() {},
+      async sendCommand(_target: any, method: string, params: any) {
+        debuggerCalls.push({ method, params })
+        if (method === 'DOM.getDocument') {
+          expect(params).toEqual({ depth: -1, pierce: true })
+          return {
+            root: {
+              nodeName: '#document',
+              backendNodeId: 1,
+              children: [{
+                nodeName: 'BILI-COMMENTS',
+                backendNodeId: 10,
+                attributes: ['class', 'comments'],
+                children: [{
+                  nodeName: 'BILI-COMMENT-EDITOR',
+                  backendNodeId: 11,
+                  attributes: ['data-placeholder', 'wifi 连接中……检测到粉丝评论输出电波……', 'class', 'comment-editor'],
+                  shadowRoots: [{
+                    nodeName: '#document-fragment',
+                    backendNodeId: 12,
+                    shadowRootType: 'closed',
+                    children: [{
+                      nodeName: 'DIV',
+                      backendNodeId: 42,
+                      attributes: ['contenteditable', 'true', 'role', 'textbox', 'class', 'rich-textarea'],
+                    }],
+                  }],
+                }],
+              }],
+            },
+          }
+        }
+        if (method === 'DOM.resolveNode') {
+          expect(params).toEqual({ backendNodeId: 42 })
+          return { object: { objectId: 'closed-editor-42' } }
+        }
+        if (method === 'Runtime.callFunctionOn') {
+          expect(params.objectId).toBe('closed-editor-42')
+          return { result: { value: { left: 420, top: 610, right: 720, bottom: 654, width: 300, height: 44 } } }
+        }
+        if (method === 'Input.dispatchMouseEvent') {
+          mouseEvents.push({ method, params })
+          return {}
+        }
+        throw new Error(`unexpected debugger command ${method}`)
+      },
+      async detach() {},
+    }
+    const sandbox = await loadInteraction({ chrome: { tabs, scripting, debugger: debuggerApi } })
+    const shot = await sandbox.handleCommand('screenshot', { tabId: 7 })
+    const clicked = await sandbox.handleCommand('visualClick', {
+      tabId: 7,
+      frameId: shot.visualFrameId,
+      xRatio: 0.30,
+      yRatio: 0.78,
+      targetHint: 'wifi连接中的评论输入框',
+    })
+
+    const pressed = mouseEvents.find(item => item.params?.type === 'mousePressed')
+    expect(pressed?.params).toMatchObject({ x: 570, y: 632, button: 'left' })
+    expect(clicked).toMatchObject({
+      ok: true,
+      cdpPiercedTarget: true,
+      visualSnapped: true,
+      requestedClickX: 300,
+      requestedClickY: 624,
+      resolvedClickX: 570,
+      resolvedClickY: 632,
+      targetFocusedEditable: true,
+    })
+    expect(clicked.stateEvidence).toMatch(/pierced Shadow DOM/)
+    expect(debuggerCalls.some(call => call.method === 'DOM.getDocument')).toBe(true)
+  })
+
   it('types Unicode text through trusted CURRENT browser focus for shadow/editor fallbacks', async () => {
     const debuggerCalls: Array<{ method: string; params: any }> = []
     const scripting = {
@@ -494,6 +615,10 @@ describe('Patrol screenshot tab readiness', () => {
     expect(source).toContain('shadowHostContext(element)')
     expect(source).toContain("visual targetHint does not match any CURRENT DOM target; refusing a coordinate-only click")
     expect(source).toContain('right.score - left.score || left.distance - right.distance')
+    expect(source).toContain('if (wantsEditable && !isEditableTarget(resolved)) continue')
+    expect(source).toContain('rawPointPreserved: true')
+    expect(source).toContain("DOM.getDocument', { depth: -1, pierce: true }")
+    expect(source).toContain("'cdp-pierced-shadow-editor'")
     expect(source).toContain('snapDistance: Math.hypot(clickX - originalX, clickY - originalY)')
     expect(source).not.toContain("/(?:editor|input|textarea)/i.test(String(element?.tagName || ''))")
   })

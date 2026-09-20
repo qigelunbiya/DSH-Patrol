@@ -117,6 +117,15 @@ describe('atomic semantic click extension layer', () => {
     expect(source).toContain("deepQueryAll('img,svg', element)")
   })
 
+  it('falls back to CDP-pierced closed Shadow DOM editors when MAIN-world semantic search cannot see them', () => {
+    const source = readFileSync(join(root, 'browser-extension', 'semantic-click.js'), 'utf8')
+    expect(source).toContain("typeof interactionResolvePiercedEditablePoint === 'function'")
+    expect(source).toContain('await interactionResolvePiercedEditablePoint')
+    expect(source).toContain("'cdp-pierced::textbox'")
+    expect(source).toContain("'atomic-semantic+cdp-pierced-shadow+trusted-native-mouse'")
+    expect(source).toContain('replaySelectorSafe: false')
+  })
+
   it('searches open shadow DOM and prioritizes real comment editors', () => {
     const source = readFileSync(join(root, 'browser-extension', 'semantic-click.js'), 'utf8')
     expect(source).toContain('const deepQueryAll = (selector, startRoot = document) =>')

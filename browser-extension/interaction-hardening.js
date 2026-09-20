@@ -471,6 +471,159 @@ async function interactionSetScroll(tabId, x, y) {
   })
 }
 
+
+function interactionWantsEditableTarget(targetHint) {
+  return /评论.*(?:输入|编辑)|回复.*(?:输入|编辑)|输入框|编辑框|comment.*(?:input|editor)|reply.*(?:input|editor)/i.test(String(targetHint || ''))
+}
+
+function interactionCdpNodeAttributes(node) {
+  const attrs = Array.isArray(node?.attributes) ? node.attributes : []
+  const out = {}
+  for (let index = 0; index + 1 < attrs.length; index += 2) {
+    out[String(attrs[index] || '').toLowerCase()] = String(attrs[index + 1] || '')
+  }
+  return out
+}
+
+function interactionCdpNodeContext(node, attrs, ancestorContext) {
+  return [
+    ancestorContext,
+    String(node?.nodeName || '').toLowerCase(),
+    attrs.id,
+    attrs.class,
+    attrs.name,
+    attrs.placeholder,
+    attrs['data-placeholder'],
+    attrs['aria-label'],
+    attrs.title,
+    attrs.role,
+  ].filter(Boolean).join(' ')
+}
+
+function interactionCdpEditableNode(node, attrs) {
+  const name = String(node?.nodeName || '').toLowerCase()
+  if (name === 'textarea') return true
+  if (name === 'input') return String(attrs.type || '').toLowerCase() !== 'hidden'
+  if (String(attrs.role || '').toLowerCase() === 'textbox') return true
+  if (Object.prototype.hasOwnProperty.call(attrs, 'contenteditable')) {
+    const value = String(attrs.contenteditable || '').toLowerCase()
+    return value === '' || value === 'true' || value === 'plaintext-only'
+  }
+  return false
+}
+
+function interactionCdpEditableHintScore(targetHint, context) {
+  const hint = String(targetHint || '').toLowerCase()
+  const evidence = String(context || '').toLowerCase()
+  let score = 100
+  if (/评论|回复|comment|reply/i.test(hint)) {
+    if (/评论|回复|comment|reply|editor|textarea|textbox|placeholder/.test(evidence)) score += 420
+    else score -= 80
+  }
+  const normalizedHint = hint.replace(/current|截图|其中|中的|页面|视频|封面|按钮|图标|控件|链接|点击|打开|进入|输入框|编辑框/g, '').replace(/[^\p{L}\p{N}]+/gu, '')
+  const normalizedEvidence = evidence.replace(/[^\p{L}\p{N}]+/gu, '')
+  if (normalizedHint.length >= 3 && normalizedEvidence.includes(normalizedHint)) score += 180
+  return score
+}
+
+async function interactionResolvePiercedEditablePoint(tabId, targetHint, originalX, originalY) {
+  if (!interactionWantsEditableTarget(targetHint)) return undefined
+  if (!chrome.debugger?.attach || !chrome.debugger?.sendCommand || !chrome.debugger?.detach) return undefined
+
+  const target = { tabId }
+  let attached = false
+  try {
+    await chrome.debugger.attach(target, '1.3')
+    attached = true
+    const documentResult = await chrome.debugger.sendCommand(target, 'DOM.getDocument', { depth: -1, pierce: true })
+    const root = documentResult?.root
+    if (!root || typeof root !== 'object') return undefined
+
+    const candidates = []
+    const stack = [{ node: root, context: '' }]
+    let scanned = 0
+    while (stack.length && scanned < 20000 && candidates.length < 80) {
+      const current = stack.pop()
+      const node = current?.node
+      if (!node || typeof node !== 'object') continue
+      scanned += 1
+      const attrs = interactionCdpNodeAttributes(node)
+      const context = interactionCdpNodeContext(node, attrs, current.context)
+      if (interactionCdpEditableNode(node, attrs) && Number.isInteger(node.backendNodeId)) {
+        candidates.push({
+          backendNodeId: node.backendNodeId,
+          tag: String(node.nodeName || '').toLowerCase(),
+          role: String(attrs.role || '').toLowerCase() || 'textbox',
+          context,
+          score: interactionCdpEditableHintScore(targetHint, context),
+        })
+      }
+      const nextContext = context.slice(-1200)
+      const children = [
+        ...(Array.isArray(node.children) ? node.children : []),
+        ...(Array.isArray(node.shadowRoots) ? node.shadowRoots : []),
+        ...(node.contentDocument && typeof node.contentDocument === 'object' ? [node.contentDocument] : []),
+      ]
+      for (let index = children.length - 1; index >= 0; index -= 1) stack.push({ node: children[index], context: nextContext })
+    }
+    if (!candidates.length) return undefined
+
+    const measured = []
+    const hasOrigin = Number.isFinite(Number(originalX)) && Number.isFinite(Number(originalY))
+    for (const candidate of candidates) {
+      try {
+        const resolved = await chrome.debugger.sendCommand(target, 'DOM.resolveNode', { backendNodeId: candidate.backendNodeId })
+        const objectId = resolved?.object?.objectId
+        if (!objectId) continue
+        const rectResult = await chrome.debugger.sendCommand(target, 'Runtime.callFunctionOn', {
+          objectId,
+          functionDeclaration: 'function(){const r=this.getBoundingClientRect();return {left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:r.width,height:r.height};}',
+          returnByValue: true,
+        })
+        const rect = rectResult?.result?.value
+        if (!rect || !Number.isFinite(Number(rect.left)) || !Number.isFinite(Number(rect.top))
+          || !Number.isFinite(Number(rect.width)) || !Number.isFinite(Number(rect.height))
+          || Number(rect.width) <= 2 || Number(rect.height) <= 2) continue
+        const left = Number(rect.left)
+        const top = Number(rect.top)
+        const width = Number(rect.width)
+        const height = Number(rect.height)
+        const centerX = left + width / 2
+        const centerY = top + height / 2
+        if (centerX < -2 || centerY < -2) continue
+        measured.push({
+          ...candidate,
+          rect: { left, top, width, height, right: left + width, bottom: top + height },
+          x: centerX,
+          y: centerY,
+          distance: hasOrigin ? Math.hypot(centerX - Number(originalX), centerY - Number(originalY)) : 0,
+        })
+      } catch {}
+    }
+    if (!measured.length) return undefined
+    measured.sort((left, right) => right.score - left.score || left.distance - right.distance)
+    const best = measured[0]
+    const runnerUp = measured[1]
+    if (runnerUp && runnerUp.score === best.score && (!hasOrigin || Math.abs(runnerUp.distance - best.distance) < 8)) return undefined
+    return {
+      x: best.x,
+      y: best.y,
+      tag: best.tag,
+      role: best.role,
+      backendNodeId: best.backendNodeId,
+      distance: best.distance,
+      rect: best.rect,
+      source: 'cdp-pierced-shadow-editor',
+    }
+  } catch {
+    return undefined
+  } finally {
+    if (attached) {
+      try { await chrome.debugger.detach(target) } catch {}
+    }
+  }
+}
+
 async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, targetHint = '') {
   if (!chrome.scripting?.executeScript) throw new Error('visualClick requires chrome.scripting')
   const captureLeft = Number.isFinite(Number(viewport.captureClientLeft)) ? Number(viewport.captureClientLeft) : Number(viewport.offsetLeft || 0)
@@ -480,6 +633,9 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
   if (captureWidth <= 0 || captureHeight <= 0) throw new Error('visualClick screenshot capture geometry is invalid')
   const clientX = captureLeft + Math.max(1, Math.min(captureWidth - 1, captureWidth * xRatio))
   const clientY = captureTop + Math.max(1, Math.min(captureHeight - 1, captureHeight * yRatio))
+  const piercedEditable = await interactionResolvePiercedEditablePoint(tabId, targetHint, clientX, clientY)
+  const probeClientX = Number.isFinite(Number(piercedEditable?.x)) ? Number(piercedEditable.x) : clientX
+  const probeClientY = Number.isFinite(Number(piercedEditable?.y)) ? Number(piercedEditable.y) : clientY
 
   let nativeError = ''
   if (chrome.debugger?.attach && chrome.debugger?.sendCommand && chrome.debugger?.detach) {
@@ -489,7 +645,7 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
         target: { tabId, frameIds: [0] },
         world: 'MAIN',
         func: interactionMainWorldVisualClick,
-        args: [clientX, clientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, true, targetHint],
+        args: [probeClientX, probeClientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, true, targetHint],
       })
       probe = Array.isArray(probeResults) ? probeResults[0]?.result : undefined
       if (probe?.ok === false) throw new Error(probe.error || 'visual target probe failed')
@@ -501,8 +657,8 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
     const hasTargetHint = Boolean(String(targetHint || '').trim())
     if ((!hasExpectedFingerprint && !hasTargetHint) || (probe && typeof probe === 'object' && probe.ok !== false)) {
       try {
-        const trustedX = Number.isFinite(Number(probe?.clickX)) ? Number(probe.clickX) : clientX
-        const trustedY = Number.isFinite(Number(probe?.clickY)) ? Number(probe.clickY) : clientY
+        const trustedX = Number.isFinite(Number(probe?.clickX)) ? Number(probe.clickX) : probeClientX
+        const trustedY = Number.isFinite(Number(probe?.clickY)) ? Number(probe.clickY) : probeClientY
         await interactionDispatchTrustedMouseClick(tabId, trustedX, trustedY)
         await new Promise(resolve => setTimeout(resolve, 260))
         let afterProbe
@@ -521,17 +677,39 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
           && typeof afterProbe.stateSignature === 'string'
           && probe.stateSignature !== afterProbe.stateSignature
         )
-        const targetFocusedEditable = afterProbe?.targetFocusedEditable === true
+        let focusedEditor
+        if (interactionWantsEditableTarget(targetHint)) {
+          try { focusedEditor = await interactionFocusedEditorProbe(tabId, false) } catch {}
+        }
+        const targetFocusedEditable = afterProbe?.targetFocusedEditable === true || focusedEditor?.focusUsable === true
+        const resolvedX = Number.isFinite(Number(afterProbe?.clickX))
+          ? Number(afterProbe.clickX)
+          : Number.isFinite(Number(probe?.clickX)) ? Number(probe.clickX) : trustedX
+        const resolvedY = Number.isFinite(Number(afterProbe?.clickY))
+          ? Number(afterProbe.clickY)
+          : Number.isFinite(Number(probe?.clickY)) ? Number(probe.clickY) : trustedY
+        const snapDistance = Math.hypot(resolvedX - clientX, resolvedY - clientY)
         return {
           ok: true,
           ...(probe && typeof probe === 'object' ? probe : {}),
           ...(afterProbe && typeof afterProbe === 'object' ? afterProbe : {}),
           targetStateChanged,
           targetFocusedEditable,
+          requestedClickX: clientX,
+          requestedClickY: clientY,
+          clickX: resolvedX,
+          clickY: resolvedY,
+          visualSnapped: snapDistance > 0.5,
+          snapDistance,
+          cdpPiercedTarget: piercedEditable?.source === 'cdp-pierced-shadow-editor',
           stateEvidence: targetStateChanged
-            ? 'trusted native click changed the visual target own DOM state'
+            ? piercedEditable?.source === 'cdp-pierced-shadow-editor'
+              ? 'trusted native click changed the visual target own DOM state after pierced Shadow DOM resolution'
+              : 'trusted native click changed the visual target own DOM state'
             : targetFocusedEditable
-              ? 'trusted native click focused an editable control'
+              ? piercedEditable?.source === 'cdp-pierced-shadow-editor'
+                ? 'trusted native click focused an editor resolved through pierced Shadow DOM'
+                : 'trusted native click focused an editable control'
               : '',
           inputTransport: 'chrome-debugger',
         }
@@ -547,7 +725,7 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
       target: { tabId, frameIds: [0] },
       world: 'MAIN',
       func: interactionMainWorldVisualClick,
-      args: [clientX, clientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, false, targetHint],
+      args: [probeClientX, probeClientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, false, targetHint],
     })
   } catch (error) {
     throw new Error([
@@ -629,6 +807,7 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
     ...(Number.isFinite(Number(clicked.clickX)) ? { resolvedClickX: Number(clicked.clickX) } : {}),
     ...(Number.isFinite(Number(clicked.clickY)) ? { resolvedClickY: Number(clicked.clickY) } : {}),
     visualSnapped: clicked.visualSnapped === true,
+    cdpPiercedTarget: clicked.cdpPiercedTarget === true,
     ...(Number.isFinite(Number(clicked.snapDistance)) ? { snapDistance: Number(clicked.snapDistance) } : {}),
   }
 }
@@ -819,6 +998,7 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
       if (rect.right <= 0 || rect.bottom <= 0 || rect.left >= innerWidth || rect.top >= innerHeight) continue
       const score = hintScore(resolved)
       if (score <= 0) continue
+      if (wantsEditable && !isEditableTarget(resolved)) continue
       const centerX = rect.left + rect.width / 2
       const centerY = rect.top + rect.height / 2
       const distance = Math.hypot(centerX - originalX, centerY - originalY)
@@ -826,7 +1006,18 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
       uniqueTargets.push({ target: resolved, score, rect, distance })
     }
     uniqueTargets.sort((left, right) => right.score - left.score || left.distance - right.distance)
-    if (!uniqueTargets.length) throw new Error('visual targetHint does not match any CURRENT DOM target; refusing a coordinate-only click')
+    if (!uniqueTargets.length) {
+      if (wantsEditable && hintScore(initialTarget) > 0) {
+        return {
+          target: initialTarget,
+          clickX: originalX,
+          clickY: originalY,
+          snapped: false,
+          rawPointPreserved: true,
+        }
+      }
+      throw new Error('visual targetHint does not match any CURRENT DOM target; refusing a coordinate-only click')
+    }
     const bestScore = uniqueTargets[0].score
     const best = uniqueTargets.filter(item => item.score === bestScore)
     const chosen = best[0]
@@ -911,6 +1102,7 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     clickX,
     clickY,
     visualSnapped: resolved.snapped === true,
+    rawPointPreserved: resolved.rawPointPreserved === true,
     snapDistance: Number.isFinite(Number(resolved.snapDistance)) ? Number(resolved.snapDistance) : Math.hypot(clickX - clientX, clickY - clientY),
   }
   if (probeOnly) return descriptor

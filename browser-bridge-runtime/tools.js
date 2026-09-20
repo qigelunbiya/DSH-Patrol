@@ -219,7 +219,7 @@ export function registerTools(ctx, bridge, config = {}) {
             captureClientLeft: optNum, captureClientTop: optNum, captureWidth: optNum, captureHeight: optNum, captureMode: str,
             targetTag: str, targetRole: str, targetText: str, targetTitle: str, targetAriaLabel: str,
             targetId: str, targetClassName: str, targetStateChanged: bool, targetFocusedEditable: bool, stateEvidence: str, transport: str,
-            requestedClickX: optNum, requestedClickY: optNum, resolvedClickX: optNum, resolvedClickY: optNum, visualSnapped: bool, snapDistance: optNum,
+            requestedClickX: optNum, requestedClickY: optNum, resolvedClickX: optNum, resolvedClickY: optNum, visualSnapped: bool, snapDistance: optNum, cdpPiercedTarget: bool,
           },
         },
         render: (_args, value) => [{ type: 'text', text: `Visual browser click executed at (${Number(value.xRatio).toFixed(4)}, ${Number(value.yRatio).toFixed(4)}) via ${value.transport || 'visual'}${value.selectorHint ? `; reusable selector=${value.selectorHint}` : ''}.` }],
@@ -249,7 +249,7 @@ export function registerTools(ctx, bridge, config = {}) {
           stateEvidence: value.stateEvidence, transport: value.transport,
           requestedClickX: value.requestedClickX, requestedClickY: value.requestedClickY,
           resolvedClickX: value.resolvedClickX, resolvedClickY: value.resolvedClickY,
-          visualSnapped: value.visualSnapped, snapDistance: value.snapDistance,
+          visualSnapped: value.visualSnapped, snapDistance: value.snapDistance, cdpPiercedTarget: value.cdpPiercedTarget,
         })
       },
     }),
