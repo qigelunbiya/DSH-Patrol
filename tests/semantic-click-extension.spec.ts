@@ -94,6 +94,19 @@ describe('atomic semantic click extension layer', () => {
     expect(source).toContain('element = effectiveClickTarget(element)')
   })
 
+  it('promotes a titled card heading to its real interactive ancestor', () => {
+    const source = readFileSync(join(root, 'browser-extension', 'semantic-click.js'), 'utf8')
+
+    expect(source).toContain('interactiveAncestorSelector')
+    expect(source).toContain("'a[href]'")
+    expect(source).toContain('const interactive = element.closest?.(interactiveAncestorSelector)')
+    expect(source).toContain('const persistedClickTarget = (element, clickTarget) =>')
+    expect(source).toContain('return treeWrapper === clickTarget ? element : clickTarget')
+    expect(source).toContain('selector: stableSelector(persistedTarget)')
+    expect(source).toContain('role: roleOf(clickTarget) || chosen.role')
+    expect(source).toContain('tag: clickTarget.tagName.toLowerCase()')
+  })
+
   it('can discover a plain image or SVG logo even when it has no link/button wrapper', () => {
     const source = readFileSync(join(root, 'browser-extension', 'semantic-click.js'), 'utf8')
 
