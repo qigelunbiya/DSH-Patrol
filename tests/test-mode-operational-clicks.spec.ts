@@ -6,7 +6,7 @@ describe('TEST MODE operational click fallbacks', () => {
   it('mounts a syntax-only planning guard in TEST MODE instead of strategy-budget HARD STOP blocking', () => {
     const source = readFileSync(join(process.cwd(), 'src', 'index.ts'), 'utf8')
     expect(source).toContain('runtimePolicy.testMode')
-    expect(source).toContain('createPatrolTestModePlanningGuard()')
+    expect(source).toContain('createPatrolTestModePlanningGuard(clickOutcomes)')
     expect(source).toContain('strategy counters')
     expect(source).toContain("build=${TEST_MODE_BUILD_MARKER}")
     expect(source).toContain("test-bypass-v11-operational-browser")
@@ -16,7 +16,8 @@ describe('TEST MODE operational click fallbacks', () => {
     const source = readFileSync(join(process.cwd(), 'src', 'index.ts'), 'utf8')
     expect(source).toContain("'browser_semantic_click'")
     expect(source).toContain("'browser_click'")
-    expect(source).toContain("'browser_visual_click'")
+    const allowed = source.match(/const TEST_MODE_DIRECT_BROWSER_ALLOWED = new Set\(\[([\s\S]*?)\]\)/)?.[1] ?? ''
+    expect(allowed).not.toContain("'browser_visual_click'")
     expect(source).toContain("'browser_press'")
     expect(source).toContain("'browser_scroll'")
     expect(source).toContain("'browser_select'")

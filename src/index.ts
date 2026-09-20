@@ -106,7 +106,6 @@ const TEST_MODE_DIRECT_BROWSER_ALLOWED = new Set([
   // calls are live-only; patrol_* remains preferred for record/replay.
   'browser_semantic_click',
   'browser_click',
-  'browser_visual_click',
   'browser_press',
   'browser_scroll',
   'browser_select',
@@ -159,7 +158,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const verificationGuard = createManualVerificationGuard()
   const clickOutcomes = createPatrolClickOutcomeTracker()
   const planningGuard = runtimePolicy.testMode
-    ? createPatrolTestModePlanningGuard()
+    ? createPatrolTestModePlanningGuard(clickOutcomes)
     : createPatrolPlanningGuard(clickOutcomes)
 
   ctx.effect(

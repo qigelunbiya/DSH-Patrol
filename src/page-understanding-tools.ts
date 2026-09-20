@@ -71,14 +71,68 @@ export const PATROL_PAGE_UNDERSTANDING_PROMPT = `DSH Patrol 页面理解与执�
 - 图片字符验证码不走页面点击规划器。TEST MODE 必须先调用 patrol_solve_current_image_code，让 browser_detect_auth_challenge 走 Windows OCR/本地 OCR；只有明确 testModeFallback=true / strategy=model-visual-test 并拿到一次性 fallbackToken 时才允许 browser_capture_image_code_visual。没有 fallbackToken 时禁止模型视觉。NORMAL/无人值守重放继续使用动态本地 solver。OTP/TOTP 继续走专用工具。`
 
 /** Always-on even in TEST MODE: bound model-facing retry strategies. */
-export function createPatrolTestModePlanningGuard() {
+export function createPatrolTestModePlanningGuard(outcomes: PatrolClickOutcomeTracker = createPatrolClickOutcomeTracker()) {
+  const states = new Map<string, PlanningGuardState>()
   return (execution: any): string | undefined => {
     const name = String(execution?.name ?? '')
     const args = isRecord(execution?.arguments) ? execution.arguments : {}
     const selectorIssue = unsupportedSelectorSyntax(name, args)
     if (selectorIssue !== undefined) return selectorIssue
     if (!name.startsWith('patrol_')) return undefined
-    return malformedPatrolUrl(name, args)
+
+    const urlIssue = malformedPatrolUrl(name, args)
+    if (urlIssue !== undefined) return urlIssue
+    const inspectionId = cleanString(args.inspectionId)
+    if (!inspectionId) return undefined
+
+    const now = Date.now()
+    for (const [key, value] of states) if (now - value.touchedAt > STATE_TTL_MS) states.delete(key)
+    let state = states.get(inspectionId)
+    if (state === undefined) {
+      state = { touchedAt: now, analyzed: false, businessKey: '', strategyAttempts: 0 }
+      states.set(inspectionId, state)
+    }
+    state.touchedAt = now
+
+    if (RESET_EPISODE_TOOLS.has(name) || PHASE_PROGRESS_TOOLS.has(name)) {
+      outcomes.clearInspection(inspectionId)
+      states.delete(inspectionId)
+      return undefined
+    }
+
+    if (name === 'patrol_analyze_step') {
+      alignBusinessState(state, businessKey(args.task, args.locatorText))
+      state.analyzed = true
+      return undefined
+    }
+
+    if (name === 'patrol_visual_click_target') {
+      alignBusinessState(state, businessKey(args.stepName, undefined))
+      if (outcomes.unverifiedPhysicalClicks(args) >= 2 || outcomes.visualPhysicalClicks(args) >= 2) {
+        return strategyHardStop('同一业务动作已经发生两次未验证/视觉物理点击')
+      }
+      const visualEligible = outcomes.visualFallbackAuthorized(args)
+        || (state.analyzed && state.strategyAttempts >= 1)
+        || state.strategyAttempts >= 2
+      if (!visualEligible) {
+        return [
+          'DSH Patrol TEST MODE：视觉点击仍然只是最后兜底，本次未执行。',
+          '先用 patrol_click_target 走 DOM/semantic；失败后调用一次 patrol_analyze_step。',
+          'analyze 若给出具体 selector，先执行该 DOM 方案；只有 no-unique-target，或有 CURRENT 证据的 DOM 恢复仍失败，才允许 patrol_observe(includeImage=true)+patrol_visual_click_target。',
+        ].join(' ')
+      }
+      return undefined
+    }
+
+    if (CLICK_TOOLS.has(name)) {
+      alignBusinessState(state, businessKey(args.stepName, args.locatorText))
+      // TEST MODE deliberately never hard-stops fresh DOM evidence. It still
+      // counts DOM attempts solely to decide when visual fallback is justified.
+      state.strategyAttempts += 1
+      return undefined
+    }
+
+    return undefined
   }
 }
 

@@ -18,7 +18,7 @@ export interface PatrolClickOutcomeTracker {
 export function createPatrolClickOutcomeTracker(): PatrolClickOutcomeTracker {
   const attempts = new Map<string, number>()
   const visualPhysicalAttempts = new Map<string, number>()
-  const visualFallbackInspections = new Set<string>()
+  const visualFallbackKeys = new Set<string>()
   return {
     unverifiedPhysicalClicks(input) {
       return attempts.get(clickKey(input)) ?? 0
@@ -27,12 +27,12 @@ export function createPatrolClickOutcomeTracker(): PatrolClickOutcomeTracker {
       return visualPhysicalAttempts.get(clickKey(input)) ?? 0
     },
     visualFallbackAuthorized(input) {
-      return visualFallbackInspections.has(inspectionKey(input))
+      return visualFallbackKeys.has(clickKey(input))
     },
     setVisualFallbackAuthorization(input, allowed) {
-      const key = inspectionKey(input)
-      if (allowed) visualFallbackInspections.add(key)
-      else visualFallbackInspections.delete(key)
+      const key = clickKey(input)
+      if (allowed) visualFallbackKeys.add(key)
+      else visualFallbackKeys.delete(key)
     },
     recordUnverifiedPhysicalClick(input) {
       const key = clickKey(input)
@@ -43,15 +43,16 @@ export function createPatrolClickOutcomeTracker(): PatrolClickOutcomeTracker {
       visualPhysicalAttempts.set(key, (visualPhysicalAttempts.get(key) ?? 0) + 1)
     },
     recordVerified(input) {
-      attempts.delete(clickKey(input))
-      visualFallbackInspections.delete(inspectionKey(input))
+      const key = clickKey(input)
+      attempts.delete(key)
+      visualFallbackKeys.delete(key)
     },
     clearInspection(inspectionId) {
       const normalizedInspection = normalize(inspectionId)
       const prefix = `${normalizedInspection}|`
       for (const key of attempts.keys()) if (key.startsWith(prefix)) attempts.delete(key)
       for (const key of visualPhysicalAttempts.keys()) if (key.startsWith(prefix)) visualPhysicalAttempts.delete(key)
-      visualFallbackInspections.delete(normalizedInspection)
+      for (const key of visualFallbackKeys) if (key.startsWith(prefix)) visualFallbackKeys.delete(key)
     },
   }
 }

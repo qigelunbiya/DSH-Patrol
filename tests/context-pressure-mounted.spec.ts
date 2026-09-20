@@ -8,5 +8,14 @@ describe('Patrol context pressure hardening mount', () => {
     expect(source).toContain("from './context-pressure-hardening.js'")
     expect(source).toContain('registerPatrolContextPressureGuard(ctx)')
     expect(source).toContain('hardened local-Qwen context pressure protection')
+    expect(source.match(/registerPatrolContextPressureGuard\(ctx\)/g)).toHaveLength(1)
+  })
+
+  it('does not mount pressure/integrity a second time inside model route recovery', () => {
+    const routeRecovery = readFileSync(join(process.cwd(), 'src', 'model-route-recovery.ts'), 'utf8')
+    expect(routeRecovery).not.toContain("from './context-pressure-hardening.js'")
+    expect(routeRecovery).not.toContain("from './patrol-integrity.js'")
+    expect(routeRecovery).not.toContain('registerPatrolContextPressureGuard(ctx)')
+    expect(routeRecovery).not.toContain('registerPatrolIntegrity(ctx)')
   })
 })

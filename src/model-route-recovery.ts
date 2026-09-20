@@ -3,8 +3,6 @@ import type {
   LlmCallConfig,
   ReasoningEffortId,
 } from '@deepseek-ai/dsh-llm'
-import { registerPatrolContextPressureGuard } from './context-pressure-hardening.js'
-import { registerPatrolIntegrity } from './patrol-integrity.js'
 
 interface ModelSelection {
   provider: string
@@ -130,18 +128,13 @@ function readDefaultModelSelection(ctx: Context): ModelSelection | undefined {
  * immediate swap to the current default model for the same model step. Later
  * failures are delegated to Harness' bounded retry layer.
  *
- * This is also the always-mounted Patrol reliability seam: context pressure and
- * reusable-flow integrity are registered here because this function is loaded
- * in both normal and TEST MODE. TEST MODE may relax observation/debugging rules,
- * but it must never relax causal click recording or final Runbook integrity.
+ * Context-pressure hardening and reusable-flow integrity are mounted exactly
+ * once from index.ts. This module owns only stale durable model-route recovery.
  */
 export function registerPatrolModelRouteRecovery(ctx: Context): () => void {
   let lastResolvedRoute: ResolvedRequestRoute | undefined
   let pendingRecovery: PendingRecovery | undefined
   let attemptedPositionKey: string | undefined
-  const disposePressureGuard = registerPatrolContextPressureGuard(ctx)
-  const disposeIntegrity = registerPatrolIntegrity(ctx)
-
   const disposeRequest = ctx.on(
     'agent/request',
     async (
@@ -218,8 +211,6 @@ export function registerPatrolModelRouteRecovery(ctx: Context): () => void {
   )
 
   return () => {
-    disposeIntegrity()
-    disposePressureGuard()
     disposeRequest()
     disposeRequestError()
   }
