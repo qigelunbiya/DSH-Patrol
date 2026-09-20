@@ -207,7 +207,7 @@ export function registerTools(ctx, bridge, config = {}) {
         xRatio: reqNum, yRatio: reqNum, frameId: optStr, selectorHint: optStr, urlIdentity: optStr,
         scrollX: optNum, scrollY: optNum, viewportWidth: optNum, viewportHeight: optNum, viewportScale: optNum,
         expectedTag: optStr, expectedRole: optStr, expectedTitle: optStr, expectedAriaLabel: optStr,
-        targetTextHint: optStr, targetIdHint: optStr, targetClassHint: optStr, tabId: optInt,
+        targetHint: optStr, targetTextHint: optStr, targetIdHint: optStr, targetClassHint: optStr, tabId: optInt,
       },
       output: {
         schema: {
@@ -228,7 +228,8 @@ export function registerTools(ctx, bridge, config = {}) {
           urlIdentity: args.urlIdentity, scrollX: args.scrollX, scrollY: args.scrollY,
           viewportWidth: args.viewportWidth, viewportHeight: args.viewportHeight, viewportScale: args.viewportScale,
           expectedTag: args.expectedTag, expectedRole: args.expectedRole,
-          expectedTitle: args.expectedTitle, expectedAriaLabel: args.expectedAriaLabel, tabId: args.tabId,
+          expectedTitle: args.expectedTitle, expectedAriaLabel: args.expectedAriaLabel,
+          targetHint: args.targetHint, tabId: args.tabId,
         }), timeoutMs), 'visualClick')
         return clean({
           ok: true, xRatio: value.xRatio ?? args.xRatio, yRatio: value.yRatio ?? args.yRatio,

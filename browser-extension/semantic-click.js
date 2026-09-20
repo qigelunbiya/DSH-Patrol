@@ -295,11 +295,32 @@ async function semanticClickPageCommand(mode, spec) {
       compact(element.innerText || element.textContent || '').slice(0, 320),
     ].join('|')
   }
+  const interactiveAncestorSelector = [
+    'a[href]', 'button', 'input[type="button"]', 'input[type="submit"]', 'input[type="reset"]',
+    '[role="button"]', '[role="link"]', '[role="menuitem"]', '[role="tab"]',
+    '[onclick]', '[bg-click]', '[ng-click]', '[data-action]', '[tabindex]:not([tabindex="-1"])',
+  ].join(',')
   const physicalClickTarget = element => {
     const title = compact(element.getAttribute?.('title') || '')
-    if (!title) return element
-    const treeWrapper = element.closest?.('.ant-tree-node-content-wrapper,[role="treeitem"]')
-    return treeWrapper instanceof Element && visible(treeWrapper) ? treeWrapper : element
+    if (title) {
+      const treeWrapper = element.closest?.('.ant-tree-node-content-wrapper,[role="treeitem"]')
+      if (treeWrapper instanceof Element && visible(treeWrapper) && !disabled(treeWrapper)) return treeWrapper
+    }
+    const interactive = element.closest?.(interactiveAncestorSelector)
+    if (interactive instanceof Element && visible(interactive) && !disabled(interactive)) return interactive
+    let node = element.parentElement
+    for (let depth = 0; node instanceof Element && depth < 6; depth += 1, node = node.parentElement) {
+      if (visible(node) && !disabled(node) && getComputedStyle(node).cursor === 'pointer') return node
+    }
+    return element
+  }
+  const persistedClickTarget = (element, clickTarget) => {
+    const title = compact(element.getAttribute?.('title') || '')
+    const treeWrapper = title ? element.closest?.('.ant-tree-node-content-wrapper,[role="treeitem"]') : null
+    // Keep the titled Ant-tree leaf for replay because content.js knows how to
+    // re-promote it. For ordinary cards/headings persist the real interactive
+    // ancestor (for example Bilibili h3[title] -> enclosing a[href]).
+    return treeWrapper === clickTarget ? element : clickTarget
   }
   const wantedText = normalize(spec.locatorText || '')
   const wantedRole = normalize(spec.locatorRole || '')
@@ -434,6 +455,7 @@ async function semanticClickPageCommand(mode, spec) {
   }
   const element = chosen.element
   const clickTarget = physicalClickTarget(element)
+  const persistedTarget = persistedClickTarget(element, clickTarget)
   clickTarget.scrollIntoView?.({ block: 'center', inline: 'center', behavior: 'instant' })
   const frame = () => new Promise(resolve => requestAnimationFrame(resolve))
   const before = clickTarget.getBoundingClientRect()
@@ -447,10 +469,10 @@ async function semanticClickPageCommand(mode, spec) {
   if (hit && hit !== clickTarget && !clickTarget.contains(hit)) throw new Error(`semantic target is intercepted by <${hit.tagName.toLowerCase()}>`)
   const descriptor = {
     ok: true,
-    selector: stableSelector(element),
+    selector: stableSelector(persistedTarget),
     text: chosen.text,
-    role: chosen.role,
-    tag: chosen.tag,
+    role: roleOf(clickTarget) || chosen.role,
+    tag: clickTarget.tagName.toLowerCase(),
     clientX: x,
     clientY: y,
     stateSignature: stateSignature(clickTarget),
@@ -475,8 +497,9 @@ async function semanticClickPageCommand(mode, spec) {
     : targetStateChanged
       ? 'semantic click target DOM state changed'
       : ''
-  // Persist the stable semantic leaf selector, not the generic wrapper. Replay
-  // promotes only this titled Ant-tree descendant back to its clickable wrapper.
+  // Persist the actual interactive ancestor for ordinary cards/headings. Ant
+  // tree leaves remain the exception because replay deliberately re-promotes
+  // their stable titled leaf to the framework wrapper.
   return {
     ...descriptor,
     targetStateChanged,

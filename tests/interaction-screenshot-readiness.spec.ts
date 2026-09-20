@@ -4,6 +4,7 @@ import vm from 'node:vm'
 import { describe, expect, it } from 'vitest'
 
 const interactionPath = fileURLToPath(new URL('../browser-extension/interaction-hardening.js', import.meta.url))
+const backgroundPath = fileURLToPath(new URL('../browser-extension/background.js', import.meta.url))
 
 async function loadInteraction(overrides: Record<string, unknown> = {}) {
   const source = await readFile(interactionPath, 'utf8')
@@ -375,4 +376,23 @@ describe('Patrol screenshot tab readiness', () => {
     expect(value.ok).toBe(true)
     expect(value.bytes).toBeGreaterThan(0)
   })
+
+  it('pre-validates targetHint and can snap a visual point before trusted mouse input', async () => {
+    const source = await readFile(interactionPath, 'utf8')
+    expect(source).toContain("targetHint = ''")
+    expect(source).toContain('const resolveHintTarget = (initialTarget, originalX, originalY) =>')
+    expect(source).toContain('visual targetHint matches multiple CURRENT DOM targets')
+    expect(source).toContain('const trustedX = Number.isFinite(Number(probe?.clickX))')
+    expect(source).toContain('await interactionDispatchTrustedMouseClick(tabId, trustedX, trustedY)')
+    expect(source).toContain('visualSnapped: resolved.snapped === true')
+  })
+
+  it('falls back from a stale explicit tab id to the CURRENT active browser tab', async () => {
+    const source = await readFile(backgroundPath, 'utf8')
+    expect(source).toContain('const tab = await chrome.tabs.get(explicit)')
+    expect(source).toContain("await chrome.tabs.query({ active: true, currentWindow: true })")
+    expect(source).toContain("const activeTabs = await chrome.tabs.query({ active: true })")
+    expect(source).toContain('safer than sending every simple DOM command to a permanently dead id')
+  })
+
 })

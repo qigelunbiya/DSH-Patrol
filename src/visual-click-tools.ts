@@ -41,7 +41,7 @@ export function registerPatrolVisualClickTool(
   const outcomes = options.clickOutcomes ?? createPatrolClickOutcomeTracker()
   const tool = defineTool({
     name: 'patrol_visual_click_target',
-    description: 'Browser model-vision fallback click. DOM/semantic remains preferred; in NORMAL MODE the planner enforces fallback sequencing, while TEST MODE permits operational recovery without strategy-counter deadlocks. First call patrol_observe(includeImage=true), then pass its CURRENT visualFrameId plus target-center xRatio/yRatio. Patrol binds the click to that screenshot viewport, verifies business state, and records a reusable browser_visual_click step. Never use for image-code/CAPTCHA.',
+    description: 'Browser model-vision click. The model may choose vision directly when it is appropriate; no DOM-first sequence is required. First call patrol_observe(includeImage=true), then pass its CURRENT visualFrameId plus target-center xRatio/yRatio and a useful targetHint. Patrol binds the click to that screenshot viewport, pre-validates/snap-resolves the intended target, verifies business state, and records a reusable browser_visual_click step. Never use for image-code/CAPTCHA.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
@@ -84,6 +84,7 @@ export function registerPatrolVisualClickTool(
         frameId: args.frameId,
         xRatio: args.xRatio,
         yRatio: args.yRatio,
+        targetHint: args.targetHint,
         tabId: args.tabId,
       }), exec)
       if (!clicked.ok) {

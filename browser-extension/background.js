@@ -450,8 +450,21 @@ function isSmallImageDataUrl(value) {
 }
 
 async function resolveTabId(explicit) {
-  if (Number.isInteger(explicit)) return explicit
-  const [active] = await chrome.tabs.query({ active: true, currentWindow: true })
+  if (Number.isInteger(explicit)) {
+    try {
+      const tab = await chrome.tabs.get(explicit)
+      if (tab && tab.id === explicit) return explicit
+    } catch {
+      // A model/tool may still hold the id of a tab that navigated into a new
+      // child tab or was closed. Falling back to the CURRENT active tab is
+      // safer than sending every simple DOM command to a permanently dead id.
+    }
+  }
+  let [active] = await chrome.tabs.query({ active: true, currentWindow: true })
+  if (!active || active.id === undefined) {
+    const activeTabs = await chrome.tabs.query({ active: true })
+    active = activeTabs.find(tab => typeof tab?.url === 'string' && /^https?:\/\//i.test(tab.url)) ?? activeTabs[0]
+  }
   if (!active || active.id === undefined) throw new Error('no active browser tab')
   return active.id
 }

@@ -337,6 +337,7 @@ async function interactionVisualClick(args) {
       expectedRole,
       expectedTitle,
       expectedAriaLabel,
+      typeof args.targetHint === 'string' ? args.targetHint.trim() : '',
     )
     interactionVisualFrames.delete(frameId)
     return interactionVisualClickResult(clicked, frame, xRatio, yRatio, 'bound-current-visual-frame')
@@ -391,7 +392,7 @@ async function interactionVisualClick(args) {
   const expectedRole = typeof args.expectedRole === 'string' ? args.expectedRole.trim().toLowerCase() : ''
   const expectedTitle = typeof args.expectedTitle === 'string' ? args.expectedTitle.trim() : ''
   const expectedAriaLabel = typeof args.expectedAriaLabel === 'string' ? args.expectedAriaLabel.trim() : ''
-  const clicked = await interactionPerformVisualClick(tabId, xRatio, yRatio, current, expectedTag, expectedRole, expectedTitle, expectedAriaLabel)
+  const clicked = await interactionPerformVisualClick(tabId, xRatio, yRatio, current, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, typeof args.targetHint === 'string' ? args.targetHint.trim() : '')
   return interactionVisualClickResult(clicked, current, xRatio, yRatio, 'visual-coordinate-replay')
 }
 
@@ -405,7 +406,7 @@ async function interactionSetScroll(tabId, x, y) {
   })
 }
 
-async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, expectedTag, expectedRole, expectedTitle, expectedAriaLabel) {
+async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, targetHint = '') {
   if (!chrome.scripting?.executeScript) throw new Error('visualClick requires chrome.scripting')
   const clientX = viewport.offsetLeft + Math.max(1, Math.min(viewport.width - 1, viewport.width * xRatio))
   const clientY = viewport.offsetTop + Math.max(1, Math.min(viewport.height - 1, viewport.height * yRatio))
@@ -418,7 +419,7 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
         target: { tabId, frameIds: [0] },
         world: 'MAIN',
         func: interactionMainWorldVisualClick,
-        args: [clientX, clientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, true],
+        args: [clientX, clientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, true, targetHint],
       })
       probe = Array.isArray(probeResults) ? probeResults[0]?.result : undefined
       if (probe?.ok === false) throw new Error(probe.error || 'visual target probe failed')
@@ -427,9 +428,12 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
     }
 
     const hasExpectedFingerprint = Boolean(expectedTag || expectedRole || expectedTitle || expectedAriaLabel)
-    if (!hasExpectedFingerprint || (probe && typeof probe === 'object' && probe.ok !== false)) {
+    const hasTargetHint = Boolean(String(targetHint || '').trim())
+    if ((!hasExpectedFingerprint && !hasTargetHint) || (probe && typeof probe === 'object' && probe.ok !== false)) {
       try {
-        await interactionDispatchTrustedMouseClick(tabId, clientX, clientY)
+        const trustedX = Number.isFinite(Number(probe?.clickX)) ? Number(probe.clickX) : clientX
+        const trustedY = Number.isFinite(Number(probe?.clickY)) ? Number(probe.clickY) : clientY
+        await interactionDispatchTrustedMouseClick(tabId, trustedX, trustedY)
         await new Promise(resolve => setTimeout(resolve, 260))
         let afterProbe
         try {
@@ -437,7 +441,7 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
             target: { tabId, frameIds: [0] },
             world: 'MAIN',
             func: interactionMainWorldVisualClick,
-            args: [clientX, clientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, true],
+            args: [trustedX, trustedY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, true, targetHint],
           })
           afterProbe = Array.isArray(afterResults) ? afterResults[0]?.result : undefined
         } catch {}
@@ -473,7 +477,7 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
       target: { tabId, frameIds: [0] },
       world: 'MAIN',
       func: interactionMainWorldVisualClick,
-      args: [clientX, clientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, false],
+      args: [clientX, clientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, false, targetHint],
     })
   } catch (error) {
     throw new Error([
@@ -548,7 +552,7 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
   }
 }
 
-async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, probeOnly = false) {
+async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, probeOnly = false, targetHint = '') {
   const compact = value => String(value || '').replace(/\s+/g, ' ').trim()
   const roleOf = element => {
     const explicit = compact(element.getAttribute?.('role') || '').toLowerCase()
@@ -617,6 +621,72 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     }
     return hit
   }
+  const normalizeHint = value => compact(value).toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
+  const hintCoreOf = value => normalizeHint(value)
+    .replace(/current|截图|其中|中的|页面|视频|封面|按钮|图标|控件|链接|点击|打开|进入/g, '')
+  const targetEvidence = element => {
+    if (!(element instanceof Element)) return ''
+    const context = element.closest?.('a[href],button,[role="button"],[role="link"],li,article,[data-action]') || element
+    return compact([
+      element.getAttribute?.('aria-label'), element.getAttribute?.('title'), element.getAttribute?.('placeholder'),
+      element.getAttribute?.('id'), element.getAttribute?.('class'), element.getAttribute?.('href'),
+      element.innerText, element.textContent,
+      context !== element ? context.getAttribute?.('aria-label') : '',
+      context !== element ? context.getAttribute?.('title') : '',
+      context !== element ? context.getAttribute?.('href') : '',
+      context !== element ? context.innerText : '',
+    ].filter(Boolean).join(' '))
+  }
+  const hintScore = element => {
+    const rawHint = compact(targetHint)
+    if (!rawHint) return 0
+    const evidence = normalizeHint(targetEvidence(element))
+    const hintCore = hintCoreOf(rawHint)
+    if (/点赞|大拇指|\blike\b|thumb/i.test(rawHint)) return /点赞|like|thumb|videolike|ariapressed/.test(evidence) ? 220 : 0
+    if (/评论|回复|\bcomment\b|\breply\b/i.test(rawHint)) return /评论|回复|comment|reply|editor|textarea|placeholder/.test(evidence) ? 220 : 0
+    if (/搜索|\bsearch\b/i.test(rawHint)) return /搜索|search/.test(evidence) ? 220 : 0
+    if (/发送|提交|\bsend\b|\bsubmit\b/i.test(rawHint)) return /发送|提交|send|submit/.test(evidence) ? 220 : 0
+    if (hintCore.length < 3) return 0
+    if (evidence.includes(hintCore)) return 180 + Math.min(80, hintCore.length)
+    if (evidence.length >= 4 && hintCore.includes(evidence)) return 80
+    return 0
+  }
+  const resolveHintTarget = (initialTarget, originalX, originalY) => {
+    const rawHint = compact(targetHint)
+    const hintCore = hintCoreOf(rawHint)
+    const hasIntent = /点赞|大拇指|\blike\b|thumb|评论|回复|\bcomment\b|\breply\b|搜索|\bsearch\b|发送|提交|\bsend\b|\bsubmit\b/i.test(rawHint)
+    if (!rawHint || (!hasIntent && hintCore.length < 3)) return { target: initialTarget, clickX: originalX, clickY: originalY, snapped: false }
+    if (hintScore(initialTarget) > 0) return { target: initialTarget, clickX: originalX, clickY: originalY, snapped: false }
+
+    const candidateSelector = [
+      actionableSelector, 'textarea', 'input:not([type="hidden"])', '[contenteditable="true"]', '[title]', '[aria-label]',
+    ].join(',')
+    const uniqueTargets = []
+    const seen = new Set()
+    for (const candidate of document.querySelectorAll(candidateSelector)) {
+      if (!visible(candidate) || disabled(candidate)) continue
+      const resolved = chooseTarget(candidate)
+      if (!(resolved instanceof Element) || !visible(resolved) || disabled(resolved) || seen.has(resolved)) continue
+      const rect = resolved.getBoundingClientRect()
+      if (rect.right <= 0 || rect.bottom <= 0 || rect.left >= innerWidth || rect.top >= innerHeight) continue
+      const score = hintScore(resolved)
+      if (score <= 0) continue
+      seen.add(resolved)
+      uniqueTargets.push({ target: resolved, score, rect })
+    }
+    uniqueTargets.sort((left, right) => right.score - left.score)
+    if (!uniqueTargets.length) throw new Error('visual targetHint does not match the DOM target at the requested point')
+    const bestScore = uniqueTargets[0].score
+    const best = uniqueTargets.filter(item => item.score === bestScore)
+    if (best.length !== 1) throw new Error('visual targetHint matches multiple CURRENT DOM targets; refusing a coordinate guess')
+    const chosen = best[0]
+    return {
+      target: chosen.target,
+      clickX: Math.max(chosen.rect.left + 1, Math.min(chosen.rect.left + chosen.rect.width / 2, chosen.rect.right - 1)),
+      clickY: Math.max(chosen.rect.top + 1, Math.min(chosen.rect.top + chosen.rect.height / 2, chosen.rect.bottom - 1)),
+      snapped: true,
+    }
+  }
   const signature = element => {
     if (!(element instanceof Element)) return ''
     return [
@@ -646,8 +716,12 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
   if (!(hit instanceof Element)) throw new Error('visual click point does not hit a DOM element')
   const hitIsIframe = hit.tagName?.toLowerCase?.() === 'iframe'
   if (hitIsIframe && !probeOnly) throw new Error('visual click point lands on an iframe surface; synthetic MAIN-world click cannot safely enter a cross-origin frame')
-  const target = hitIsIframe ? hit : chooseTarget(hit)
-  if (!(target instanceof Element) || !visible(target) || disabled(target)) throw new Error('visual click target is not actionable')
+  const initialTarget = hitIsIframe ? hit : chooseTarget(hit)
+  if (!(initialTarget instanceof Element) || !visible(initialTarget) || disabled(initialTarget)) throw new Error('visual click target is not actionable')
+  const resolved = hitIsIframe ? { target: initialTarget, clickX: clientX, clickY: clientY, snapped: false } : resolveHintTarget(initialTarget, clientX, clientY)
+  const target = resolved.target
+  const clickX = resolved.clickX
+  const clickY = resolved.clickY
   const tag = target.tagName.toLowerCase()
   const role = roleOf(target)
   const title = compact(target.getAttribute('title') || '')
@@ -658,7 +732,7 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
   if (expectedAriaLabel && ariaLabel !== expectedAriaLabel) throw new Error('visual coordinate replay hit a different aria-label than teaching')
 
   const rect = target.getBoundingClientRect()
-  if (clientX < rect.left - 1 || clientX > rect.right + 1 || clientY < rect.top - 1 || clientY > rect.bottom + 1) throw new Error('visual click target no longer contains the recorded point')
+  if (clickX < rect.left - 1 || clickX > rect.right + 1 || clickY < rect.top - 1 || clickY > rect.bottom + 1) throw new Error('visual click target no longer contains the resolved point')
 
   const before = signature(target)
   const descriptor = {
@@ -675,21 +749,24 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     targetFocusedEditable: editable(deepActiveElement()),
     stateSignature: signature(target),
     stateEvidence: '',
+    clickX,
+    clickY,
+    visualSnapped: resolved.snapped === true,
   }
   if (probeOnly) return descriptor
 
   target.focus?.({ preventScroll: true })
-  const eventTarget = hit
+  const eventTarget = target
   if (typeof PointerEvent !== 'undefined') {
     for (const type of ['pointerover', 'pointermove', 'pointerdown', 'pointerup']) {
-      eventTarget.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX, clientY, pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0 }))
+      eventTarget.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: clickX, clientY: clickY, pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0 }))
     }
   }
   for (const type of ['mouseover', 'mousemove', 'mousedown', 'mouseup']) {
-    eventTarget.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX, clientY, button: 0 }))
+    eventTarget.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX: clickX, clientY: clickY, button: 0 }))
   }
   if (typeof eventTarget.click === 'function') eventTarget.click()
-  else eventTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, clientX, clientY, button: 0 }))
+  else eventTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, clientX: clickX, clientY: clickY, button: 0 }))
 
   await new Promise(resolve => setTimeout(resolve, 350))
   let targetStateChanged = false
