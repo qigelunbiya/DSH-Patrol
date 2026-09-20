@@ -57,9 +57,6 @@ export function createPatrolClickOutcomeTracker(): PatrolClickOutcomeTracker {
   }
 }
 
-function inspectionKey(input: PatrolClickIdentity): string {
-  return normalize(clean(input.inspectionId) || 'unknown')
-}
 
 function clickKey(input: PatrolClickIdentity): string {
   const inspectionId = clean(input.inspectionId) || 'unknown'

@@ -353,10 +353,6 @@ function safeStateUrl(value: string): string {
     return value.split(/[?#]/, 1)[0] ?? value
   }
 }
-function shortStateEvidence(value: string): string {
-  const text = value.replace(/\s+/g, ' ').trim()
-  return text.length <= 220 ? text : `${text.slice(0, 220)}…`
-}
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }

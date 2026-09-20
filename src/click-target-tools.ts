@@ -116,6 +116,8 @@ export function registerPatrolClickTargetTool(
       let clickedText = ''
       let resolutionSummary = ''
       let physicalClickExecuted = false
+      let targetStateChanged = false
+      let targetStateEvidence: string | undefined
 
       if (locator !== undefined) {
         let atomic = await runner.dispatch('browser_semantic_click', compactObject({
@@ -232,6 +234,8 @@ export function registerPatrolClickTargetTool(
             return 'Atomic semantic click executed but returned no reusable selector, so it was NOT recorded.'
           }
           clickedText = objectString(atomic.value, 'text') ?? atomic.text ?? ''
+          targetStateChanged = objectBoolean(atomic.value, 'targetStateChanged') === true
+          targetStateEvidence = objectString(atomic.value, 'stateEvidence')
           resolutionSummary = [
             `selector=${JSON.stringify(resolvedSelector)}`,
             objectString(atomic.value, 'text') ? `text=${JSON.stringify(objectString(atomic.value, 'text'))}` : undefined,
@@ -282,12 +286,10 @@ export function registerPatrolClickTargetTool(
         verificationMethod = 'expected-text'
         verificationEvidence = `${expectation.expectation.mode} ${JSON.stringify(expectation.expectation.value)}`
       } else if (locator !== undefined) {
-        const atomicTargetStateChanged = objectBoolean(atomic?.value, 'targetStateChanged') === true
-        const atomicStateEvidence = objectString(atomic?.value, 'stateEvidence')
-        if (atomicTargetStateChanged) {
+        if (targetStateChanged) {
           verificationAttempts = 1
           verificationMethod = 'state-change'
-          verificationEvidence = atomicStateEvidence ?? 'semantic target changed its own CURRENT DOM state'
+          verificationEvidence = targetStateEvidence ?? 'semantic target changed its own CURRENT DOM state'
         } else {
           const verified = await verifyAutomaticStateChange(runner, exec, beforeState, args.tabId)
           verificationAttempts = verified.attempts
@@ -533,10 +535,6 @@ function safeStateUrl(value: string): string {
   }
 }
 
-function shortStateEvidence(value: string): string {
-  const text = value.replace(/\s+/g, ' ').trim()
-  return text.length <= 220 ? text : `${text.slice(0, 220)}…`
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
