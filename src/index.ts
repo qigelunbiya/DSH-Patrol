@@ -19,6 +19,7 @@ import { registerPatrolFlowTools } from './flow-tools.js'
 import { registerPatrolHandoffTools } from './handoff-tools.js'
 import { PATROL_FLOW_REFERENCE_PROMPT, registerPatrolFlowReferenceTools } from './flow-reference-tools.js'
 import { PatrolLifecycleStore } from './lifecycle-store.js'
+import { PATROL_LANGUAGE_PROMPT } from './language-prompt.js'
 import { createManualVerificationGuard, PATROL_MANUAL_VERIFICATION_PROMPT } from './manual-verification-guard.js'
 import { registerPatrolModelRouteRecovery } from './model-route-recovery.js'
 import { createPatrolObservationGate, PATROL_OBSERVATION_PROMPT } from './observation-guard.js'
@@ -66,6 +67,7 @@ export * from './excel-tools-v5.js'
 export * from './flow-optimizer.js'
 export * from './flow-tools.js'
 export * from './lifecycle-store.js'
+export * from './language-prompt.js'
 export * from './recovery-guard.js'
 export * from './recovery-tools.js'
 export * from './totp-tools.js'
@@ -97,6 +99,7 @@ const TEST_MODE_DIRECT_BROWSER_ALLOWED = new Set([
   'browser_read_page',
   'browser_count',
   'browser_login_state',
+  'browser_navigate',
   'browser_wait',
   'browser_screenshot',
   'browser_capture_image_code_visual',
@@ -299,6 +302,15 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
   const systemPrompt = ctx.get('systemPrompt')
   if (systemPrompt !== undefined) {
+    // Locale is a user-facing contract, not a strict-workflow policy. TEST MODE
+    // relaxes orchestration but must retain the same Chinese/other-language
+    // behavior as NORMAL MODE.
+    ctx.effect(() => systemPrompt.section({
+      name: 'agent:dsh-patrol-language',
+      order: 90,
+      text: PATROL_LANGUAGE_PROMPT,
+    }), 'dsh-patrol: always-on user language contract')
+
     ctx.effect(() => systemPrompt.section({
       name: 'agent:dsh-patrol-flow-reference-replay',
       order: 1000,
