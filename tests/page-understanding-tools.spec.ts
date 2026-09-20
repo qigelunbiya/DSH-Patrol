@@ -41,21 +41,22 @@ describe('Patrol page understanding planner', () => {
     })).toBeUndefined()
   })
 
-  it('caps repeated visual attachments without making vision a last-resort method', () => {
+  it('allows arbitrarily many fresh visual observations while keeping strategy neutral', () => {
     for (const makeGuard of [
       () => createPatrolTestModePlanningGuard(createPatrolClickOutcomeTracker()),
       () => createPatrolPlanningGuard(createPatrolClickOutcomeTracker()),
     ]) {
       const guard = makeGuard()
-      const image = () => guard({
-        name: 'patrol_observe',
-        arguments: { inspectionId: 'image-budget', includeImage: true },
-      })
-      expect(image()).toBeUndefined()
-      expect(image()).toBeUndefined()
-      expect(image()).toMatch(/两张视觉截图|CUDA OOM \/ 503/)
+      for (let index = 0; index < 8; index += 1) {
+        expect(guard({
+          name: 'patrol_observe',
+          arguments: { inspectionId: 'image-budget', includeImage: true },
+        })).toBeUndefined()
+      }
     }
-    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/视觉使用时机不受限制/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/视觉截图不设固定次数上限/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/主动裁剪历史大型工具结果/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).not.toMatch(/最多向模型附加两张|两张视觉截图/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).not.toMatch(/DOM 永远优先|视觉像素只允许作为最后兜底/)
   })
 
