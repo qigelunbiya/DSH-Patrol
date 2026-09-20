@@ -129,6 +129,7 @@ describe('Patrol screenshot tab readiness', () => {
       yRatio: 0.8,
       expectedTitle: '点赞',
       expectedAriaLabel: '点赞',
+      targetHint: '点赞按钮',
     })
     expect(clicked).toMatchObject({
       ok: true,
@@ -153,6 +154,7 @@ describe('Patrol screenshot tab readiness', () => {
       frameId: shot.visualFrameId,
       xRatio: 0.2,
       yRatio: 0.8,
+      targetHint: '点赞按钮',
     })).rejects.toThrow(/stale or unavailable/)
   })
 
@@ -212,6 +214,7 @@ describe('Patrol screenshot tab readiness', () => {
       frameId: shot.visualFrameId,
       xRatio: 0.2,
       yRatio: 0.75,
+      targetHint: '点赞按钮',
     })
     expect(clicked.transport).toContain('trusted-native-mouse')
     expect(clicked.selectorHint).toBe('top-frame::div[title="点赞（Q）"]')
@@ -381,7 +384,7 @@ describe('Patrol screenshot tab readiness', () => {
     const source = await readFile(interactionPath, 'utf8')
     expect(source).toContain("targetHint = ''")
     expect(source).toContain('const resolveHintTarget = (initialTarget, originalX, originalY) =>')
-    expect(source).toContain('visual targetHint matches multiple CURRENT DOM targets')
+    expect(source).toContain('visual targetHint matches multiple equally-near CURRENT DOM targets')
     expect(source).toContain('const trustedX = Number.isFinite(Number(probe?.clickX))')
     expect(source).toContain('await interactionDispatchTrustedMouseClick(tabId, trustedX, trustedY)')
     expect(source).toContain('visualSnapped: resolved.snapped === true')
@@ -471,6 +474,7 @@ describe('Patrol screenshot tab readiness', () => {
       frameId: shot.visualFrameId,
       xRatio: 0.25,
       yRatio: 0.5,
+      targetHint: 'Target button',
     })
 
     const pressed = mouseEvents.find(item => item.params?.type === 'mousePressed')
@@ -479,6 +483,28 @@ describe('Patrol screenshot tab readiness', () => {
     // generic viewport instead of the screenshot's CDP clip it would be (405, 457).
     expect(pressed?.params.x).not.toBe(405)
     expect(pressed?.params.y).not.toBe(457)
+  })
+
+
+  it('deep-hit-tests Shadow DOM before visual clicks and can snap an offset point to the intended editor', async () => {
+    const source = await readFile(interactionPath, 'utf8')
+    expect(source).toContain('const deepElementFromPoint = (x, y) =>')
+    expect(source).toContain('hit.shadowRoot.elementFromPoint?.(x, y)')
+    expect(source).toContain('const shadowHostContext = element =>')
+    expect(source).toContain('shadowHostContext(element)')
+    expect(source).toContain("visual targetHint does not match any CURRENT DOM target; refusing a coordinate-only click")
+    expect(source).toContain('right.score - left.score || left.distance - right.distance')
+    expect(source).toContain('snapDistance: Math.hypot(clickX - originalX, clickY - originalY)')
+    expect(source).not.toContain("/(?:editor|input|textarea)/i.test(String(element?.tagName || ''))")
+  })
+
+  it('requires targetHint for live visual frames but preserves old replay compatibility', async () => {
+    const source = await readFile(interactionPath, 'utf8')
+    expect(source).toContain("live visualClick requires targetHint")
+    const frameGuard = source.indexOf("live visualClick requires targetHint")
+    const replayGeometry = source.indexOf("visualClick replay requires selectorHint or recorded URL/viewport/scroll geometry")
+    expect(frameGuard).toBeGreaterThan(0)
+    expect(replayGeometry).toBeGreaterThan(frameGuard)
   })
 
 })

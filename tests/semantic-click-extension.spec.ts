@@ -125,6 +125,9 @@ describe('atomic semantic click extension layer', () => {
     expect(source).toContain("'bili-comment-editor'")
     expect(source).toContain('const wantsCommentEditor =')
     expect(source).toContain('editableCandidate(element)')
+    expect(source).toContain('const shadowHostContext = element =>')
+    expect(source).toContain('parts.push(element.innerText, element.textContent, shadowHostContext(element))')
+    expect(source).not.toContain("/(?:editor|input|textarea)/i.test(String(element?.tagName || ''))")
     expect(source).toContain('replaySelectorSafe: !(persistedTarget.getRootNode?.() instanceof ShadowRoot)')
   })
 

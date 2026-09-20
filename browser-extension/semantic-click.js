@@ -260,11 +260,34 @@ async function semanticClickPageCommand(mode, spec) {
     }
     return [...new Set(out)]
   }
+  const shadowHostContext = element => {
+    const parts = []
+    let node = element
+    let guard = 0
+    while (node instanceof Element && guard < 5) {
+      const root = node.getRootNode?.()
+      const host = root instanceof ShadowRoot ? root.host : null
+      if (!(host instanceof Element)) break
+      parts.push(
+        host.tagName?.toLowerCase?.() || '',
+        host.id || '',
+        host.getAttribute?.('class') || '',
+        host.getAttribute?.('aria-label') || '',
+        host.getAttribute?.('title') || '',
+        host.getAttribute?.('placeholder') || '',
+        host.getAttribute?.('data-placeholder') || '',
+        host.innerText || host.textContent || '',
+      )
+      node = host
+      guard += 1
+    }
+    return compact(parts.filter(Boolean).join(' '))
+  }
   const actionText = element => {
     const parts = [element.getAttribute?.('aria-label'), element.getAttribute?.('title'), element.getAttribute?.('placeholder')]
     if (element instanceof HTMLInputElement && ['button', 'submit', 'reset'].includes(String(element.type || '').toLowerCase())) parts.push(element.value)
     if (element instanceof HTMLImageElement) parts.push(element.getAttribute('alt'), element.getAttribute('src'))
-    parts.push(element.innerText, element.textContent)
+    parts.push(element.innerText, element.textContent, shadowHostContext(element))
     for (const img of deepQueryAll('img', element)) parts.push(img.getAttribute('alt'), img.getAttribute('title'))
     return compact(parts.filter(Boolean).join(' '))
   }
@@ -371,7 +394,6 @@ async function semanticClickPageCommand(mode, spec) {
     || element instanceof HTMLTextAreaElement
     || element?.isContentEditable === true
     || normalize(element.getAttribute?.('role') || '') === 'textbox'
-    || /(?:editor|input|textarea)/i.test(String(element?.tagName || ''))
   const globalExactTitleCandidates = wantedText
     ? deepQueryAll('[title]').filter(element => {
         if (!visible(element) || disabled(element)) return false

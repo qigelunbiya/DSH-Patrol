@@ -48,7 +48,7 @@ export function registerPatrolVisualClickTool(
       frameId: { type: 'string', required: true },
       xRatio: { type: 'number', required: true },
       yRatio: { type: 'number', required: true },
-      targetHint: { type: 'string' },
+      targetHint: { type: 'string', required: true, description: 'Concrete CURRENT business target, e.g. 评论输入框/点赞按钮/完整视频标题. Required so Patrol can validate and correct visual coordinates before dispatching the mouse.' },
       tabId: { type: 'integer' },
       expectedText: { type: 'string' },
       expectationMode: { type: 'string', enum: ['contains', 'not-contains'] },
@@ -68,7 +68,10 @@ export function registerPatrolVisualClickTool(
         throw new Error('frameId must be the visualFrameId returned by the immediately preceding patrol_observe(includeImage=true), not the screenshot file name/path. If patrol_observe has no visualFrameId, check browser_status: visualClick must be yes.')
       }
       assertSafePersistentText(args.stepName, 'stepName')
-      if (args.targetHint !== undefined) assertSafePersistentText(args.targetHint, 'targetHint')
+      if (typeof args.targetHint !== 'string' || args.targetHint.trim().length < 2) {
+        throw new Error('targetHint is required for visual clicks so Patrol can validate/correct the screenshot coordinate against the CURRENT DOM before physical mouse input')
+      }
+      assertSafePersistentText(args.targetHint, 'targetHint')
       if (args.expectedText !== undefined) assertSafePersistentText(args.expectedText, 'expectedText')
       if (args.conditionExpectedText !== undefined) assertSafePersistentText(args.conditionExpectedText, 'conditionExpectedText')
       if (args.notes !== undefined) assertSafePersistentText(args.notes, 'step notes')
@@ -184,12 +187,13 @@ export function registerPatrolVisualClickTool(
         expectedRole: objectString(clicked.value, 'targetRole'),
         expectedTitle: objectString(clicked.value, 'targetTitle'),
         expectedAriaLabel: objectString(clicked.value, 'targetAriaLabel'),
+        targetHint: args.targetHint.trim(),
         targetTextHint: objectString(clicked.value, 'targetText'),
         targetIdHint: objectString(clicked.value, 'targetId'),
         targetClassHint: objectString(clicked.value, 'targetClassName'),
       })
       const condition = optionalCondition(args.conditionSourceStepId, args.conditionExpectedText, args.conditionMode)
-      const targetNote = args.targetHint?.trim() ? `视觉目标：${args.targetHint.trim()}` : '视觉目标：来自 CURRENT screenshot 的明确控件中心点'
+      const targetNote = `视觉目标：${args.targetHint.trim()}`
       const providedNotes = [targetNote, args.notes?.trim()].filter(Boolean).join('\n')
       const step: ToolStep = {
         id: nextStepId(definition.steps),
@@ -200,7 +204,7 @@ export function registerPatrolVisualClickTool(
         ...expectation,
         ...condition,
         teaching: { status: 'verified', method: verificationMethod, evidence: verificationEvidence },
-        ...(args.targetHint?.trim() ? { taskHint: args.targetHint.trim() } : {}),
+        taskHint: args.targetHint.trim(),
         notes: stepExecutionNotes({
           tool: 'browser_visual_click',
           args: stepArguments,
@@ -220,6 +224,9 @@ export function registerPatrolVisualClickTool(
       return [
         `Executed and recorded ${step.id} (browser_visual_click) after CURRENT visual-state verification.`,
         `Visual point: xRatio=${args.xRatio.toFixed(4)}, yRatio=${args.yRatio.toFixed(4)}; capture=${captureWidth ?? viewportWidth}x${captureHeight ?? viewportHeight} CSS px at (${captureClientLeft ?? 0}, ${captureClientTop ?? 0}).`,
+        objectBoolean(clicked.value, 'visualSnapped') === true
+          ? `Coordinate corrected before click: requested=(${objectNumber(clicked.value, 'requestedClickX') ?? '?'}, ${objectNumber(clicked.value, 'requestedClickY') ?? '?'}), resolved=(${objectNumber(clicked.value, 'resolvedClickX') ?? '?'}, ${objectNumber(clicked.value, 'resolvedClickY') ?? '?'}), delta=${objectNumber(clicked.value, 'snapDistance')?.toFixed(1) ?? '?'} CSS px.`
+          : 'Coordinate passed CURRENT DOM target validation without correction.',
         selectorHint
           ? `Replay prefers discovered selector ${JSON.stringify(selectorHint)}, then uses guarded normalized coordinates only if selector replay fails.`
           : 'Replay uses the recorded normalized visual point with URL/scroll/viewport guards.',
