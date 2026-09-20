@@ -673,10 +673,26 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
     const hasTargetHint = Boolean(String(targetHint || '').trim())
     if ((!hasExpectedFingerprint && !hasTargetHint) || (probe && typeof probe === 'object' && probe.ok !== false)) {
       try {
-        const trustedX = Number.isFinite(Number(probe?.clickX)) ? Number(probe.clickX) : probeClientX
-        const trustedY = Number.isFinite(Number(probe?.clickY)) ? Number(probe.clickY) : probeClientY
+        let trustedX = Number.isFinite(Number(probe?.clickX)) ? Number(probe.clickX) : probeClientX
+        let trustedY = Number.isFinite(Number(probe?.clickY)) ? Number(probe.clickY) : probeClientY
         await interactionDispatchTrustedMouseClick(tabId, trustedX, trustedY)
-        await new Promise(resolve => setTimeout(resolve, 260))
+        await new Promise(resolve => setTimeout(resolve, piercedEditable?.kind === 'activator' ? 180 : 260))
+
+        let activatedEditor
+        if (piercedEditable?.kind === 'activator' && interactionWantsEditableTarget(targetHint)) {
+          try {
+            activatedEditor = await interactionResolvePiercedEditablePoint(tabId, targetHint, trustedX, trustedY)
+            if (activatedEditor?.kind === 'editable'
+              && Number.isFinite(Number(activatedEditor.x))
+              && Number.isFinite(Number(activatedEditor.y))) {
+              trustedX = Number(activatedEditor.x)
+              trustedY = Number(activatedEditor.y)
+              await interactionDispatchTrustedMouseClick(tabId, trustedX, trustedY)
+              await new Promise(resolve => setTimeout(resolve, 180))
+            }
+          } catch {}
+        }
+
         let afterProbe
         try {
           const afterResults = await chrome.scripting.executeScript({
@@ -717,15 +733,19 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
           clickY: resolvedY,
           visualSnapped: snapDistance > 0.5,
           snapDistance,
-          cdpPiercedTarget: piercedEditable?.source === 'cdp-pierced-shadow-editor',
+          cdpPiercedTarget: Boolean(piercedEditable),
+          cdpPiercedActivator: piercedEditable?.kind === 'activator',
+          cdpPiercedFollowupEditor: activatedEditor?.kind === 'editable',
           stateEvidence: targetStateChanged
-            ? piercedEditable?.source === 'cdp-pierced-shadow-editor'
-              ? 'trusted native click changed the visual target own DOM state after pierced Shadow DOM resolution'
+            ? piercedEditable
+              ? 'trusted native click changed the visual target own DOM state after pierced editor resolution'
               : 'trusted native click changed the visual target own DOM state'
             : targetFocusedEditable
-              ? piercedEditable?.source === 'cdp-pierced-shadow-editor'
-                ? 'trusted native click focused an editor resolved through pierced Shadow DOM'
-                : 'trusted native click focused an editable control'
+              ? activatedEditor?.kind === 'editable'
+                ? 'trusted native click activated the comment editor and then focused its mounted editable control'
+                : piercedEditable
+                  ? 'trusted native click focused an editor resolved through pierced DOM'
+                  : 'trusted native click focused an editable control'
               : '',
           inputTransport: 'chrome-debugger',
         }
@@ -824,6 +844,8 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
     ...(Number.isFinite(Number(clicked.clickY)) ? { resolvedClickY: Number(clicked.clickY) } : {}),
     visualSnapped: clicked.visualSnapped === true,
     cdpPiercedTarget: clicked.cdpPiercedTarget === true,
+    cdpPiercedActivator: clicked.cdpPiercedActivator === true,
+    cdpPiercedFollowupEditor: clicked.cdpPiercedFollowupEditor === true,
     ...(Number.isFinite(Number(clicked.snapDistance)) ? { snapDistance: Number(clicked.snapDistance) } : {}),
   }
 }
