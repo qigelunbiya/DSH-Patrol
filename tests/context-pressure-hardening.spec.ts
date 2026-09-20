@@ -136,4 +136,50 @@ describe('mounted Patrol local-Qwen hardening', () => {
     expect(compactIfNeeded).not.toHaveBeenCalled()
     await ctx.fiber.dispose()
   })
+  it('retries auth_unavailable once even when proactive pruning already left nothing else to remove', async () => {
+    vi.useFakeTimers()
+    try {
+      const ctx = new Context()
+      const current = agent()
+      const pruneSession = vi.fn(() => ({ pruned: [], charsRemoved: 0 }))
+      const compactIfNeeded = vi.fn(async () => null)
+      ctx.provide('tokenMeter', { measure: () => ({ totalTokens: 1_500 }) })
+      ctx.provide('toolResultPruner', { pruneSession })
+      ctx.provide('compaction', { compactIfNeeded })
+      registerPatrolContextPressureGuard(ctx)
+
+      await ctx.waterfall(
+        'agent/pre-step',
+        payload(current, 1, 1) as never,
+        async () => ({ kind: 'enter' as const, messages: [] }),
+      )
+
+      const failure = {
+        code: 'internal_server_error',
+        message: '503: auth_unavailable: no auth available (providers=qwen-local, model=qwen3.5_122b_a10b_fp4)',
+      }
+      const requestError = ctx.waterfall(
+        'agent/request-error',
+        {
+          agent: current,
+          turn: 1,
+          step: 1,
+          provider: 'cliproxy',
+          failure,
+          signal: new AbortController().signal,
+        } as never,
+        async () => ({ kind: 'throw' as const }),
+      )
+      await vi.runAllTimersAsync()
+      const result = await requestError
+
+      expect(result).toMatchObject({ kind: 'retry' })
+      expect(pruneSession).toHaveBeenCalled()
+      expect(failure.message).toContain('[DSH Patrol diagnostic]')
+      await ctx.fiber.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
 })

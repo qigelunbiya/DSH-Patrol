@@ -106,13 +106,19 @@ export function createPatrolTestModePlanningGuard(outcomes: PatrolClickOutcomeTr
       return undefined
     }
 
+    if (name === 'patrol_observe' && args.includeImage === true) {
+      const identity = { inspectionId, stepName: state.businessKey || 'click' }
+      const visualEligible = outcomes.visualFallbackAuthorized(identity) || state.strategyAttempts >= 2
+      if (!visualEligible) return imageFallbackNotYetAuthorized()
+      return undefined
+    }
+
     if (name === 'patrol_visual_click_target') {
       alignBusinessState(state, businessKey(args.stepName, undefined))
       if (outcomes.unverifiedPhysicalClicks(args) >= 2 || outcomes.visualPhysicalClicks(args) >= 2) {
         return strategyHardStop('同一业务动作已经发生两次未验证/视觉物理点击')
       }
       const visualEligible = outcomes.visualFallbackAuthorized(args)
-        || (state.analyzed && state.strategyAttempts >= 1)
         || state.strategyAttempts >= 2
       if (!visualEligible) {
         return [
@@ -178,6 +184,13 @@ export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = 
         return 'DSH Patrol 页面规划器：CURRENT 分析已经为这个业务点击执行过一次。不要重复 analyze/read/snapshot/count；请执行分析给出的唯一恢复方案。'
       }
       state.analyzed = true
+      return undefined
+    }
+
+    if (name === 'patrol_observe' && args.includeImage === true) {
+      const identity = { inspectionId, stepName: state.businessKey || 'click' }
+      const visualEligible = outcomes.visualFallbackAuthorized(identity) || state.strategyAttempts >= 2
+      if (!visualEligible) return imageFallbackNotYetAuthorized()
       return undefined
     }
 
@@ -276,6 +289,14 @@ function businessKey(primary: unknown, locator: unknown): string {
     .replace(/(?:节点|菜单项|菜单|选项)$/g, '')
     .replace(/\d{6,}/g, '#')
     .slice(0, 220)
+}
+
+function imageFallbackNotYetAuthorized(): string {
+  return [
+    'DSH Patrol 页面规划器：本次 includeImage=true 未执行，视觉像素只允许作为最后兜底。',
+    '先使用 patrol_click_target；失败后调用一次 patrol_analyze_step。',
+    'analyze 有具体 DOM 方案时必须先执行该方案；只有 no-unique-target，或第二种有证据的 DOM 方案仍失败后，才允许抓取一张 CURRENT 图像。',
+  ].join(' ')
 }
 
 function visualFallbackStop(): string {

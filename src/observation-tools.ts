@@ -74,7 +74,7 @@ export function registerPatrolObservationTools(
 ): () => void {
   const observe = defineTool({
     name: 'patrol_observe',
-    description: 'Read-only CURRENT-page observation. Captures a screenshot for freshness/OCR, but returns a compact OCR+DOM evidence packet by default so long Patrol conversations do not accumulate image context. Set includeImage=true only when the current task genuinely needs visual pixels. Does not record a Runbook step.',
+    description: 'Read-only CURRENT-page observation. Captures a screenshot for freshness/OCR, but returns a compact OCR+DOM evidence packet by default so long Patrol conversations do not accumulate image context. includeImage=true is reserved for the final visual fallback after DOM/semantic recovery is exhausted; the planning guard rejects premature image attachment. Does not record a Runbook step.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       tabId: { type: 'integer' },

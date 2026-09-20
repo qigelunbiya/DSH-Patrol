@@ -21,7 +21,17 @@ describe('Patrol page understanding planner', () => {
       name: 'patrol_analyze_step',
       arguments: { inspectionId: 'test-live', task: '给视频点赞', locatorText: '点赞' },
     })).toBeUndefined()
+    expect(visual()).toMatch(/视觉点击仍然只是最后兜底/)
+    expect(guard({
+      name: 'patrol_observe',
+      arguments: { inspectionId: 'test-live', includeImage: true },
+    })).toMatch(/视觉像素只允许作为最后兜底/)
+
     outcomes.setVisualFallbackAuthorization({ inspectionId: 'test-live', stepName: '给视频点赞' }, true)
+    expect(guard({
+      name: 'patrol_observe',
+      arguments: { inspectionId: 'test-live', includeImage: true },
+    })).toBeUndefined()
     expect(visual()).toBeUndefined()
 
     for (let index = 0; index < 5; index += 1) {
@@ -154,6 +164,29 @@ describe('Patrol page understanding planner', () => {
         xRatio: 0.08,
         yRatio: 0.75,
       },
+    })).toBeUndefined()
+  })
+
+  it('blocks image attachment until normal-mode DOM recovery actually authorizes visual fallback', () => {
+    const outcomes = createPatrolClickOutcomeTracker()
+    const guard = createPatrolPlanningGuard(outcomes)
+    expect(guard({
+      name: 'patrol_click_target',
+      arguments: { inspectionId: 'normal-img', stepName: '点击评论输入框', locatorText: '评论' },
+    })).toBeUndefined()
+    expect(guard({
+      name: 'patrol_observe',
+      arguments: { inspectionId: 'normal-img', includeImage: true },
+    })).toMatch(/视觉像素只允许作为最后兜底/)
+
+    expect(guard({
+      name: 'patrol_analyze_step',
+      arguments: { inspectionId: 'normal-img', task: '点击评论输入框', locatorText: '评论' },
+    })).toBeUndefined()
+    outcomes.setVisualFallbackAuthorization({ inspectionId: 'normal-img', stepName: '点击评论输入框' }, true)
+    expect(guard({
+      name: 'patrol_observe',
+      arguments: { inspectionId: 'normal-img', includeImage: true },
     })).toBeUndefined()
   })
 

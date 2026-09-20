@@ -77,7 +77,7 @@ export const PATROL_QWEN_HARDENED_PRUNE_LIMIT = 4_000
 export const PATROL_QWEN_HARDENED_COMPACT_LIMIT = 7_000
 export const PATROL_QWEN_NO_METER_PRUNE_STEP = 2
 export const PATROL_QWEN_NO_METER_COMPACT_STEP = 5
-export const PATROL_QWEN_AUTH_RETRY_DELAY_MS = 1_500
+export const PATROL_QWEN_AUTH_RETRY_DELAY_MS = 3_500
 
 function asAgentLike(value: unknown): AgentLike | undefined {
   if (value === null || typeof value !== 'object') return undefined
@@ -358,10 +358,16 @@ export function registerPatrolContextPressureGuard(ctx: Context): () => void {
         }
       }
 
-      if (!advanced || payload.signal.aborted) return next()
+      // auth_unavailable is often the worker/provider cooldown phase after a
+      // preceding CUDA OOM. Proactive pruning may already have removed every
+      // pruneable historical payload, so advanced=false must not suppress the
+      // single bounded cooldown retry. Raw OOM without auth_unavailable still
+      // requires an actual context reduction before retrying the same request.
+      if (payload.signal.aborted) return next()
+      if (!advanced && !authUnavailable) return next()
       if (authUnavailable) {
         ctx.logger.warn(
-          `[dsh-patrol/context-pressure] local Qwen is auth-unavailable; waiting ${PATROL_QWEN_AUTH_RETRY_DELAY_MS}ms before one reduced-context retry`,
+          `[dsh-patrol/context-pressure] local Qwen is auth-unavailable; waiting ${PATROL_QWEN_AUTH_RETRY_DELAY_MS}ms before one reduced-context/cooldown retry`,
         )
         await sleep(PATROL_QWEN_AUTH_RETRY_DELAY_MS, payload.signal)
       }
