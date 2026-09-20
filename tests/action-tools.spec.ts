@@ -139,6 +139,31 @@ describe('flat Patrol action tools', () => {
     }
   })
 
+  it('uses live tabId for teaching actions but strips it from replayable Runbook steps', async () => {
+    const { store, calls, tool, exec } = await setup()
+    await tool('patrol_press').execute({
+      inspectionId: 'flat-actions',
+      stepName: 'Page down',
+      key: 'PageDown',
+      tabId: 12345,
+    }, exec)
+    await tool('patrol_scroll').execute({
+      inspectionId: 'flat-actions',
+      stepName: 'Scroll down',
+      direction: 'down',
+      amount: 500,
+      tabId: 12345,
+    }, exec)
+
+    expect(calls.some(call => call.tool === 'browser_press' && call.args.tabId === 12345)).toBe(true)
+    expect(calls.some(call => call.tool === 'browser_scroll' && call.args.tabId === 12345)).toBe(true)
+    const definition = await store.load('flat-actions')
+    expect(definition.steps).toHaveLength(2)
+    for (const step of definition.steps) {
+      if (step.kind === 'tool') expect(step.arguments).not.toHaveProperty('tabId')
+    }
+  })
+
   it('does not record a raw click when no meaningful post-click business state can be verified', async () => {
     const { store, calls, tool, exec } = await setup()
 

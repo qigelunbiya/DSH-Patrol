@@ -102,6 +102,55 @@ describe('stable managed Patrol browser controller', () => {
     expect(closes).toBe(1)
   })
 
+  it('best-effort refreshes an extension that has legacy visualClick but lacks trustedVisualClick', async () => {
+    const paths = fixture('dsh-patrol-stable-visual-refresh-')
+    const { bridge, state } = bridgeFixture()
+    const extensionId = 'abcdefghijklmnopabcdefghijklmnop'
+    let installed = true
+    let refreshes = 0
+    const worker = {
+      async evaluate() {
+        state.connected = true
+        state.origin = `chrome-extension://${extensionId}`
+        state.extension = {
+          name: 'dsh-patrol-browser-extension',
+          version: refreshes > 0 ? '0.3.2' : '0.3.1',
+          capabilities: refreshes > 0
+            ? ['captureImageCode', 'semanticClick', 'visualClick', 'trustedVisualClick']
+            : ['captureImageCode', 'semanticClick', 'visualClick'],
+        }
+      },
+    }
+    const extension = { name: 'DSH Patrol Browser Bridge', path: paths.extensionPath, workers: async () => [worker] }
+    const browser: any = {
+      connected: true,
+      on() {},
+      process: () => ({ pid: 9103 }),
+      version: async () => 'Chrome/150.0.0.0',
+      pages: async () => [],
+      extensions: async () => installed ? new Map([[extensionId, extension]]) : new Map(),
+      uninstallExtension: async () => { installed = false },
+      installExtension: async () => { installed = true; refreshes += 1; return extensionId },
+      close: async () => { browser.connected = false },
+    }
+    const controller = createManagedBrowserController({
+      bridge,
+      extensionPath: paths.extensionPath,
+      profilePath: paths.profilePath,
+      statePath: paths.statePath,
+      browserExecutable: process.execPath,
+      bridgeUrlHint: () => 'ws://127.0.0.1:3080/patrol-browser-bridge',
+      launchBrowser: async () => browser,
+      logger: { info() {}, warn() {} },
+      startTimeoutMs: 200,
+      connectTimeoutMs: 200,
+    })
+    await expect(controller.ensureStarted()).resolves.toMatchObject({ connected: true })
+    expect(refreshes).toBe(1)
+    expect(state.extension?.capabilities).toContain('trustedVisualClick')
+    await controller.dispose()
+  })
+
   it('provisions the extension and reuses one browser for later Patrol actions', async () => {
     const paths = fixture('dsh-patrol-stable-ok-')
     const { bridge, state } = bridgeFixture()

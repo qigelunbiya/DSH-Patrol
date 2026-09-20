@@ -3,21 +3,20 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 describe('TEST MODE operational click fallbacks', () => {
-  it('keeps click-strategy loop protection active in TEST MODE without disabling low-level fallbacks', () => {
+  it('mounts a syntax-only planning guard in TEST MODE instead of strategy-budget HARD STOP blocking', () => {
     const source = readFileSync(join(process.cwd(), 'src', 'index.ts'), 'utf8')
-    const planningIndex = source.indexOf('planningGuard(execution)')
-    const strictIndex = source.indexOf('if (runtimePolicy.installGuards)')
-    expect(planningIndex).toBeGreaterThan(0)
-    expect(planningIndex).toBeLessThan(strictIndex)
-    expect(source).toContain('Selector/click strategy budgets are safety against model loops')
+    expect(source).toContain('runtimePolicy.testMode')
+    expect(source).toContain('createPatrolTestModePlanningGuard()')
+    expect(source).toContain('strategy counters')
     expect(source).toContain("build=${TEST_MODE_BUILD_MARKER}")
-    expect(source).toContain("test-bypass-v10-desktop-automation")
+    expect(source).toContain("test-bypass-v11-operational-browser")
   })
 
   it('allows non-secret low-level interaction fallbacks in TEST MODE', () => {
     const source = readFileSync(join(process.cwd(), 'src', 'index.ts'), 'utf8')
     expect(source).toContain("'browser_semantic_click'")
     expect(source).toContain("'browser_click'")
+    expect(source).toContain("'browser_visual_click'")
     expect(source).toContain("'browser_press'")
     expect(source).toContain("'browser_scroll'")
     expect(source).toContain("'browser_select'")

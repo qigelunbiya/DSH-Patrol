@@ -105,6 +105,22 @@ describe('browser capability diagnostics', () => {
     expect(snapshot.output.schema.properties.elements.items.properties).toHaveProperty('evidence')
   })
 
+  it('normalizes fractional browser scroll coordinates to the declared integer output schema', async () => {
+    const fixture = fakeToolContext()
+    const bridge = {
+      status: () => ({ connected: true, pending: 0, extension: { capabilities: ['semanticClick'] } }),
+      async request(cmd) {
+        if (cmd === 'scroll') return { ok: true, x: 12.75, y: 345.49 }
+        throw new Error(`unexpected ${cmd}`)
+      },
+      saveScreenshot: () => '/tmp/unused.png',
+    }
+    registerTools(fixture.ctx, bridge)
+    const scroll = fixture.definitions.find(definition => definition.name === 'browser_scroll')
+    const value = await scroll.execute({ direction: 'down', amount: 500 }, {})
+    expect(value).toEqual({ ok: true, x: 13, y: 345 })
+  })
+
   it('reports semanticClick as missing instead of treating a registered host tool as available', async () => {
     const fixture = fakeToolContext()
     const bridge = {

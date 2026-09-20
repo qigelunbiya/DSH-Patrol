@@ -1,8 +1,26 @@
 import { describe, expect, it } from 'vitest'
-import { analyzePageEvidence, createPatrolPlanningGuard, PATROL_PAGE_UNDERSTANDING_PROMPT } from '../src/page-understanding-tools.js'
+import { analyzePageEvidence, createPatrolPlanningGuard, createPatrolTestModePlanningGuard, PATROL_PAGE_UNDERSTANDING_PROMPT } from '../src/page-understanding-tools.js'
 import { createPatrolClickOutcomeTracker } from '../src/click-retry-state.js'
 
 describe('Patrol page understanding planner', () => {
+  it('keeps TEST MODE operational after repeated DOM/visual attempts while still rejecting invalid selector dialects', () => {
+    const guard = createPatrolTestModePlanningGuard()
+    for (let index = 0; index < 6; index += 1) {
+      expect(guard({
+        name: 'patrol_click',
+        arguments: { inspectionId: 'test-live', stepName: '给视频点赞', selector: 'div[title="点赞（Q）"]' },
+      })).toBeUndefined()
+      expect(guard({
+        name: 'patrol_visual_click_target',
+        arguments: { inspectionId: 'test-live', stepName: '给视频点赞（视觉后备）', frameId: 'browser-visual-x', xRatio: 0.1, yRatio: 0.8 },
+      })).toBeUndefined()
+    }
+    expect(guard({
+      name: 'patrol_click',
+      arguments: { inspectionId: 'test-live', stepName: 'bad selector', selector: 'span:has-text("点赞")' },
+    })).toMatch(/只接受 CSS/)
+  })
+
   it('binds a row identity to the action selector instead of clicking an ambiguous RDP label', () => {
     const page = [
       '[Structured table 1; rows=2]',
