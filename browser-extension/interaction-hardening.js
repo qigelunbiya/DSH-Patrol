@@ -205,7 +205,7 @@ async function interactionVisualClick(args) {
     if (!interactionSameViewport(frame, current, 2)) {
       throw new Error('browser visual frame is stale: URL/scroll/zoom/viewport changed after screenshot; capture a fresh visual observation')
     }
-    const clicked = await interactionPerformVisualClick(tabId, xRatio, yRatio, frame, '', '')
+    const clicked = await interactionPerformVisualClick(tabId, xRatio, yRatio, frame, '', '', '', '')
     interactionVisualFrames.delete(frameId)
     return interactionVisualClickResult(clicked, frame, xRatio, yRatio, 'bound-current-visual-frame')
   }
@@ -257,7 +257,9 @@ async function interactionVisualClick(args) {
 
   const expectedTag = typeof args.expectedTag === 'string' ? args.expectedTag.trim().toLowerCase() : ''
   const expectedRole = typeof args.expectedRole === 'string' ? args.expectedRole.trim().toLowerCase() : ''
-  const clicked = await interactionPerformVisualClick(tabId, xRatio, yRatio, current, expectedTag, expectedRole)
+  const expectedTitle = typeof args.expectedTitle === 'string' ? args.expectedTitle.trim() : ''
+  const expectedAriaLabel = typeof args.expectedAriaLabel === 'string' ? args.expectedAriaLabel.trim() : ''
+  const clicked = await interactionPerformVisualClick(tabId, xRatio, yRatio, current, expectedTag, expectedRole, expectedTitle, expectedAriaLabel)
   return interactionVisualClickResult(clicked, current, xRatio, yRatio, 'visual-coordinate-replay')
 }
 
@@ -271,7 +273,7 @@ async function interactionSetScroll(tabId, x, y) {
   })
 }
 
-async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, expectedTag, expectedRole) {
+async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, expectedTag, expectedRole, expectedTitle, expectedAriaLabel) {
   if (!chrome.scripting?.executeScript) throw new Error('visualClick requires chrome.scripting')
   const clientX = viewport.offsetLeft + Math.max(1, Math.min(viewport.width - 1, viewport.width * xRatio))
   const clientY = viewport.offsetTop + Math.max(1, Math.min(viewport.height - 1, viewport.height * yRatio))
@@ -308,6 +310,10 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
     ...(typeof clicked.tag === 'string' ? { targetTag: clicked.tag } : {}),
     ...(typeof clicked.role === 'string' && clicked.role ? { targetRole: clicked.role } : {}),
     ...(typeof clicked.text === 'string' && clicked.text ? { targetText: clicked.text } : {}),
+    ...(typeof clicked.title === 'string' && clicked.title ? { targetTitle: clicked.title } : {}),
+    ...(typeof clicked.ariaLabel === 'string' && clicked.ariaLabel ? { targetAriaLabel: clicked.ariaLabel } : {}),
+    ...(typeof clicked.id === 'string' && clicked.id ? { targetId: clicked.id } : {}),
+    ...(typeof clicked.className === 'string' && clicked.className ? { targetClassName: clicked.className } : {}),
   }
 }
 
@@ -400,8 +406,12 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
   if (!(target instanceof Element) || !visible(target) || disabled(target)) throw new Error('visual click target is not actionable')
   const tag = target.tagName.toLowerCase()
   const role = roleOf(target)
+  const title = compact(target.getAttribute('title') || '')
+  const ariaLabel = compact(target.getAttribute('aria-label') || '')
   if (expectedTag && tag !== expectedTag) throw new Error('visual coordinate replay hit a different tag than teaching')
   if (expectedRole && role !== expectedRole) throw new Error('visual coordinate replay hit a different role than teaching')
+  if (expectedTitle && title !== expectedTitle) throw new Error('visual coordinate replay hit a different title than teaching')
+  if (expectedAriaLabel && ariaLabel !== expectedAriaLabel) throw new Error('visual coordinate replay hit a different aria-label than teaching')
 
   const rect = target.getBoundingClientRect()
   if (clientX < rect.left - 1 || clientX > rect.right + 1 || clientY < rect.top - 1 || clientY > rect.bottom + 1) throw new Error('visual click target no longer contains the recorded point')
@@ -436,6 +446,10 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     tag,
     role,
     text: compact(target.innerText || target.textContent || target.getAttribute('aria-label') || target.getAttribute('title') || '').slice(0, 240),
+    title,
+    ariaLabel,
+    id: compact(target.id || ''),
+    className: compact([...(target.classList || [])].slice(0, 8).join(' ')),
     targetStateChanged,
     stateEvidence,
   }

@@ -60,10 +60,10 @@ export interface PageUnderstandingPlan {
 
 export const PATROL_PAGE_UNDERSTANDING_PROMPT = `DSH Patrol 页面理解与执行规划（NORMAL/TEST MODE 都必须遵守）：
 - taskChecklist 只描述业务动作；真正执行页面动作前，要根据 CURRENT DOM/iframe/modal/structured table 判断该业务动作对应的真实前端结构，不要把用户文字直接翻译成 nth-of-type 后盲点。
-- 唯一且明显的文本目标可直接 patrol_click_target。第一次定位失败、出现 ambiguous、同名控件有多个、目标位于表格行/弹窗/iframe 时，必须先 patrol_analyze_step，再执行一次有新证据支持的 DOM/CSS 恢复方案；同一业务点击最多两种 DOM/CSS/semantic 策略。第二种仍无法定位/点击时立即停止 selector 探索；若 CURRENT 页面截图中肉眼明确可见该业务控件，则允许一次视觉模型后备：patrol_observe(includeImage=true) → 读取该次 visualFrameId → 按同一张图中控件中心给出 xRatio/yRatio → patrol_visual_click_target。
+- 唯一且明显的文本目标可直接 patrol_click_target。第一次定位失败、出现 ambiguous、同名控件有多个、目标位于表格行/弹窗/iframe 时，调用一次 patrol_analyze_step 获取 CURRENT DOM 证据。若分析仍不能给出一个可可靠执行的唯一 DOM 目标，就不要为了凑“第二种策略”继续猜 CSS：只要已经有“一次 DOM/semantic 尝试 + 一次 CURRENT analyze”，就可以直接进入一次视觉模型后备。若分析确实给出了明确的第二种 DOM 方案，也可以先执行它；无论哪条路径，后续都禁止无限 selector 探索。视觉后备流程：patrol_observe(includeImage=true) → 读取真正的 visualFrameId → 按同一张图中控件中心给出 xRatio/yRatio → patrol_visual_click_target。
 - patrol_analyze_step 永远不写 Runbook。它优先把“行身份 + 行内动作”绑定，例如“目标地址 + RDP”，避免只按 [RDP] 命中多行。不要把分析器给出的 selector 再扩写成更长的 nth-of-type，也不要在分析失败后继续 browser_count/snapshot/read_page 猜选择器。
 - selector 参数只接受当前浏览器 querySelector 层支持的 CSS。严禁使用 jQuery/Playwright/XPath 方言：:contains(...)、:has-text(...)、text=...、//...、.//...、xpath=...。当 locatorText 已知时，优先只传 locatorText 给 patrol_click_target，不要额外猜 selector；patrol_click_target 会在 atomic semantic 失败时自动检查唯一 exact [title="..."]。如果 locatorText 已提供但 selector hint 是这些非法方言，运行时会丢弃这个可选 hint 而继续语义定位，不能让坏 hint 阻塞正确点击。title-backed 树节点若直接调用 selector，则只使用 CURRENT snapshot/analyze 给出的原生 CSS。
-- 业务点击优先 patrol_click_target；若物理点击已发生但结果未验证，最多只允许一次有新证据支持的恢复点击；两次物理点击均未验证就 HARD STOP，避免重复提交。定位阶段两种 DOM/CSS 策略耗尽但尚未发生两次未验证物理点击时，不得继续猜 selector，而应进入单次视觉后备。
+- 业务点击优先 patrol_click_target；若物理点击已发生但结果未验证，最多只允许一次有新证据支持的恢复点击；两次物理点击均未验证就 HARD STOP，避免重复提交。定位阶段只要已经完成一次 DOM/semantic 尝试并做过一次 CURRENT analyze、但仍没有可靠唯一目标，就允许进入单次视觉后备；不要求模型再编造一个 CSS 作为形式上的“第二种策略”。
 - 视觉后备不是第三种 selector。patrol_visual_click_target 必须使用 patrol_observe(includeImage=true) 刚刚返回的 visualFrameId；底层验证 tab、URL、scroll、zoom、viewport 与截图一致才点击。教学成功后保存为 browser_visual_click：重放优先使用视觉命中时发现的 stable selector；若 selector 漂移，再恢复记录的 URL/scroll/viewport 并使用归一化 xRatio/yRatio。视觉点击成功后该 screenshot frame 立即失效，下一次必须重新截图。
 - 运行时若返回“DOM selector 策略已耗尽”，立即停止 patrol_analyze_step/patrol_click_target/patrol_click/browser_count/snapshot/read_page 的 selector 探索；只有 CURRENT 图片中明确可见目标时才走一次 patrol_observe(includeImage=true)+patrol_visual_click_target。视觉后备失败/未验证，或者已有两次未验证物理点击时才是最终 HARD STOP；此后必须直接结束当前 assistant turn。
 - 不要为每个内部工具调用向用户重复“我再观察一下/我再试一下/让我换个选择器”。只有需要用户输入/确认、遇到不可恢复阻塞、或任务最终完成时才发自然语言说明。任何没有新工具结果或新页面证据支持的 selector 推测最多写一次。
@@ -126,8 +126,9 @@ export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = 
       alignBusinessState(state, key)
       const unverified = outcomes.unverifiedPhysicalClicks(args)
       if (unverified >= 2) return strategyHardStop('同一业务动作已有两次未验证的物理点击')
-      if (state.strategyAttempts < 2) {
-        return 'DSH Patrol 页面规划器：视觉点击是两种 DOM/CSS/semantic 策略耗尽后的最后后备。当前不允许提前用坐标绕过 DOM。'
+      const visualEligible = state.strategyAttempts >= 2 || (state.strategyAttempts >= 1 && state.analyzed)
+      if (!visualEligible) {
+        return 'DSH Patrol 页面规划器：视觉点击需要先证明 DOM 路径无法可靠完成。至少先执行一次 patrol_click_target；若失败，再调用一次 patrol_analyze_step 获取 CURRENT DOM 证据。完成这两步后即可直接使用截图视觉后备，不需要为了凑“第二种策略”继续猜 CSS。'
       }
       if (state.visualAttempted) return strategyHardStop('这个业务目标的一次视觉后备已经用完')
       state.visualAttempted = true
@@ -191,7 +192,9 @@ function alignBusinessState(state: PlanningGuardState, key: string): void {
 }
 
 function businessKey(primary: unknown, locator: unknown): string {
-  const raw = cleanString(locator) || cleanString(primary) || 'click'
+  // stepName/taskChecklist text is the stable business identity. locatorText is
+  // only a DOM hint and may legitimately change during recovery.
+  const raw = cleanString(primary) || cleanString(locator) || 'click'
   return normalize(raw)
     .replace(/^(?:请)?(?:点击|打开|选择|进入|查看|访问|尝试)+/g, '')
     .replace(/(?:节点|菜单项|菜单|选项)$/g, '')

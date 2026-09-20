@@ -92,6 +92,10 @@ describe('browser visual fallback click teaching', () => {
             targetTag: 'div',
             targetRole: 'button',
             targetText: '5743',
+            targetTitle: '点赞',
+            targetAriaLabel: '点赞',
+            targetId: 'like-button',
+            targetClassName: 'video-like active',
             targetStateChanged: true,
             stateEvidence: 'clicked visual target DOM state changed',
             transport: 'bound-current-visual-frame',
@@ -127,6 +131,11 @@ describe('browser visual fallback click teaching', () => {
         scrollY: 480,
         expectedTag: 'div',
         expectedRole: 'button',
+        expectedTitle: '点赞',
+        expectedAriaLabel: '点赞',
+        targetTextHint: '5743',
+        targetIdHint: 'like-button',
+        targetClassHint: 'video-like active',
       },
       taskHint: '播放器下方左侧的大拇指点赞按钮',
       teaching: {
@@ -142,6 +151,24 @@ describe('browser visual fallback click teaching', () => {
       'browser_snapshot',
       'browser_visual_click',
     ])
+  })
+
+  it('rejects a screenshot file name used as frameId before dispatch', async () => {
+    const calls: string[] = []
+    const { tool, exec } = await setup(async (name) => {
+      calls.push(name)
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    await expect(tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '给视频点赞',
+      targetHint: '大拇指点赞按钮',
+      frameId: 'screenshot-2026-09-20T01-40-03.png',
+      xRatio: 0.1,
+      yRatio: 0.8,
+    }, exec)).rejects.toThrow(/visualFrameId.*not the screenshot file/i)
+    expect(calls).toEqual([])
   })
 
   it('refuses CAPTCHA/image-code targets before any browser visual dispatch', async () => {

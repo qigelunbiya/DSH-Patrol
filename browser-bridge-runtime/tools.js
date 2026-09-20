@@ -183,7 +183,8 @@ export function registerTools(ctx, bridge, config = {}) {
       parameters: {
         xRatio: reqNum, yRatio: reqNum, frameId: optStr, selectorHint: optStr, urlIdentity: optStr,
         scrollX: optNum, scrollY: optNum, viewportWidth: optNum, viewportHeight: optNum, viewportScale: optNum,
-        expectedTag: optStr, expectedRole: optStr, tabId: optInt,
+        expectedTag: optStr, expectedRole: optStr, expectedTitle: optStr, expectedAriaLabel: optStr,
+        targetTextHint: optStr, targetIdHint: optStr, targetClassHint: optStr, tabId: optInt,
       },
       output: {
         schema: {
@@ -191,7 +192,8 @@ export function registerTools(ctx, bridge, config = {}) {
           properties: {
             ok: reqBool, xRatio: reqNum, yRatio: reqNum, selectorHint: str, urlIdentity: str,
             scrollX: optNum, scrollY: optNum, viewportWidth: optNum, viewportHeight: optNum, viewportScale: optNum,
-            targetTag: str, targetRole: str, targetText: str, targetStateChanged: bool, stateEvidence: str, transport: str,
+            targetTag: str, targetRole: str, targetText: str, targetTitle: str, targetAriaLabel: str,
+            targetId: str, targetClassName: str, targetStateChanged: bool, stateEvidence: str, transport: str,
           },
         },
         render: (_args, value) => [{ type: 'text', text: `Visual browser click executed at (${Number(value.xRatio).toFixed(4)}, ${Number(value.yRatio).toFixed(4)}) via ${value.transport || 'visual'}${value.selectorHint ? `; reusable selector=${value.selectorHint}` : ''}.` }],
@@ -202,13 +204,16 @@ export function registerTools(ctx, bridge, config = {}) {
           xRatio: args.xRatio, yRatio: args.yRatio, frameId: args.frameId, selectorHint: args.selectorHint,
           urlIdentity: args.urlIdentity, scrollX: args.scrollX, scrollY: args.scrollY,
           viewportWidth: args.viewportWidth, viewportHeight: args.viewportHeight, viewportScale: args.viewportScale,
-          expectedTag: args.expectedTag, expectedRole: args.expectedRole, tabId: args.tabId,
+          expectedTag: args.expectedTag, expectedRole: args.expectedRole,
+          expectedTitle: args.expectedTitle, expectedAriaLabel: args.expectedAriaLabel, tabId: args.tabId,
         }), timeoutMs), 'visualClick')
         return clean({
           ok: true, xRatio: value.xRatio ?? args.xRatio, yRatio: value.yRatio ?? args.yRatio,
           selectorHint: value.selectorHint, urlIdentity: value.urlIdentity, scrollX: value.scrollX, scrollY: value.scrollY,
           viewportWidth: value.viewportWidth, viewportHeight: value.viewportHeight, viewportScale: value.viewportScale,
           targetTag: value.targetTag, targetRole: value.targetRole, targetText: value.targetText,
+          targetTitle: value.targetTitle, targetAriaLabel: value.targetAriaLabel,
+          targetId: value.targetId, targetClassName: value.targetClassName,
           targetStateChanged: value.targetStateChanged, stateEvidence: value.stateEvidence, transport: value.transport,
         })
       },

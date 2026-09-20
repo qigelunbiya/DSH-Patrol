@@ -60,6 +60,10 @@ describe('Patrol screenshot tab readiness', () => {
               tag: 'div',
               role: 'button',
               text: '5743',
+              title: '点赞',
+              ariaLabel: '点赞',
+              id: 'like-button',
+              className: 'video-like active',
               targetStateChanged: true,
               stateEvidence: 'clicked visual target DOM state changed',
             },
@@ -99,6 +103,10 @@ describe('Patrol screenshot tab readiness', () => {
       targetTag: 'div',
       targetRole: 'button',
       targetText: '5743',
+      targetTitle: '点赞',
+      targetAriaLabel: '点赞',
+      targetId: 'like-button',
+      targetClassName: 'video-like active',
       targetStateChanged: true,
     })
     expect(clickedArgs?.[0]).toBeCloseTo(256)

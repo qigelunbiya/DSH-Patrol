@@ -117,7 +117,7 @@ describe('stable managed Patrol browser controller', () => {
         state.extension = {
           name: 'dsh-patrol-browser-extension',
           version: '0.3.1',
-          capabilities: ['captureImageCode', 'semanticClick'],
+          capabilities: ['captureImageCode', 'semanticClick', 'visualClick'],
         }
       },
     }

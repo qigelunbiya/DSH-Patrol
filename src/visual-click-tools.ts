@@ -64,6 +64,9 @@ export function registerPatrolVisualClickTool(
         || args.xRatio < 0 || args.xRatio > 1 || args.yRatio < 0 || args.yRatio > 1) {
         throw new Error('xRatio/yRatio must be finite numbers between 0 and 1')
       }
+      if (!/^browser-visual-[a-z0-9-]+$/i.test(String(args.frameId ?? '').trim())) {
+        throw new Error('frameId must be the visualFrameId returned by the immediately preceding patrol_observe(includeImage=true), not the screenshot file name/path. If patrol_observe has no visualFrameId, check browser_status: visualClick must be yes.')
+      }
       assertSafePersistentText(args.stepName, 'stepName')
       if (args.targetHint !== undefined) assertSafePersistentText(args.targetHint, 'targetHint')
       if (args.expectedText !== undefined) assertSafePersistentText(args.expectedText, 'expectedText')
@@ -147,6 +150,11 @@ export function registerPatrolVisualClickTool(
         scrollY,
         expectedTag: objectString(clicked.value, 'targetTag'),
         expectedRole: objectString(clicked.value, 'targetRole'),
+        expectedTitle: objectString(clicked.value, 'targetTitle'),
+        expectedAriaLabel: objectString(clicked.value, 'targetAriaLabel'),
+        targetTextHint: objectString(clicked.value, 'targetText'),
+        targetIdHint: objectString(clicked.value, 'targetId'),
+        targetClassHint: objectString(clicked.value, 'targetClassName'),
       })
       const condition = optionalCondition(args.conditionSourceStepId, args.conditionExpectedText, args.conditionMode)
       const targetNote = args.targetHint?.trim() ? `视觉目标：${args.targetHint.trim()}` : '视觉目标：来自 CURRENT screenshot 的明确控件中心点'

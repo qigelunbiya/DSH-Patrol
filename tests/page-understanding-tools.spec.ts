@@ -66,6 +66,34 @@ describe('Patrol page understanding planner', () => {
     expect(plans[0]?.kind).toBe('no-unique-target')
   })
 
+  it('allows a Bilibili-like visual fallback after one failed semantic attempt plus CURRENT analysis even when locator wording changes', () => {
+    const guard = createPatrolPlanningGuard()
+
+    expect(guard({
+      name: 'patrol_click_target',
+      arguments: { inspectionId: 'bili', stepName: '给视频点赞', locatorText: '点赞' },
+    })).toBeUndefined()
+    expect(guard({
+      name: 'patrol_click_target',
+      arguments: { inspectionId: 'bili', stepName: '给视频点赞', locatorText: '大拇指图标' },
+    })).toMatch(/patrol_analyze_step/)
+    expect(guard({
+      name: 'patrol_analyze_step',
+      arguments: { inspectionId: 'bili', task: '给视频点赞', locatorText: '大拇指图标' },
+    })).toBeUndefined()
+    expect(guard({
+      name: 'patrol_visual_click_target',
+      arguments: {
+        inspectionId: 'bili',
+        stepName: '给视频点赞',
+        targetHint: '视频下方的大拇指点赞按钮',
+        frameId: 'browser-visual-current',
+        xRatio: 0.08,
+        yRatio: 0.75,
+      },
+    })).toBeUndefined()
+  })
+
   it('uses at most two DOM strategies, then permits exactly one screenshot-bound visual fallback', () => {
     const guard = createPatrolPlanningGuard()
     const semantic = () => guard({
