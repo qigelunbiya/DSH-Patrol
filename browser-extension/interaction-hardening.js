@@ -512,6 +512,17 @@ function interactionCdpEditableNode(node, attrs) {
   return false
 }
 
+function interactionCdpEditorActivatorNode(node, attrs) {
+  const name = String(node?.nodeName || '').toLowerCase()
+  if (name === 'bili-comments') return false
+  if (name === 'bili-comment-editor') return true
+  const evidence = [
+    name, attrs.id, attrs.class, attrs.name, attrs.role,
+    attrs.placeholder, attrs['data-placeholder'], attrs['aria-label'], attrs.title,
+  ].filter(Boolean).join(' ').toLowerCase()
+  return /(?:comment|reply)[-_ ]?(?:editor|input)|(?:editor|input)[-_ ]?(?:wrap|box|area)/i.test(evidence)
+}
+
 function interactionCdpEditableHintScore(targetHint, context) {
   const hint = String(targetHint || '').toLowerCase()
   const evidence = String(context || '').toLowerCase()
@@ -549,13 +560,16 @@ async function interactionResolvePiercedEditablePoint(tabId, targetHint, origina
       scanned += 1
       const attrs = interactionCdpNodeAttributes(node)
       const context = interactionCdpNodeContext(node, attrs, current.context)
-      if (interactionCdpEditableNode(node, attrs) && Number.isInteger(node.backendNodeId)) {
+      const editable = interactionCdpEditableNode(node, attrs)
+      const activator = !editable && interactionCdpEditorActivatorNode(node, attrs)
+      if ((editable || activator) && Number.isInteger(node.backendNodeId)) {
         candidates.push({
           backendNodeId: node.backendNodeId,
           tag: String(node.nodeName || '').toLowerCase(),
-          role: String(attrs.role || '').toLowerCase() || 'textbox',
+          role: editable ? (String(attrs.role || '').toLowerCase() || 'textbox') : '',
           context,
-          score: interactionCdpEditableHintScore(targetHint, context),
+          kind: editable ? 'editable' : 'activator',
+          score: interactionCdpEditableHintScore(targetHint, context) + (editable ? 500 : 260),
         })
       }
       const nextContext = context.slice(-1200)
@@ -591,6 +605,7 @@ async function interactionResolvePiercedEditablePoint(tabId, targetHint, origina
         const centerX = left + width / 2
         const centerY = top + height / 2
         if (centerX < -2 || centerY < -2) continue
+        if (candidate.kind === 'activator' && (width < 60 || height < 18 || height > 220)) continue
         measured.push({
           ...candidate,
           rect: { left, top, width, height, right: left + width, bottom: top + height },
@@ -601,7 +616,7 @@ async function interactionResolvePiercedEditablePoint(tabId, targetHint, origina
       } catch {}
     }
     if (!measured.length) return undefined
-    measured.sort((left, right) => right.score - left.score || left.distance - right.distance)
+    measured.sort((left, right) => (right.kind === 'editable' ? 1 : 0) - (left.kind === 'editable' ? 1 : 0) || right.score - left.score || left.distance - right.distance)
     const best = measured[0]
     const runnerUp = measured[1]
     if (runnerUp && runnerUp.score === best.score && (!hasOrigin || Math.abs(runnerUp.distance - best.distance) < 8)) return undefined
@@ -613,7 +628,8 @@ async function interactionResolvePiercedEditablePoint(tabId, targetHint, origina
       backendNodeId: best.backendNodeId,
       distance: best.distance,
       rect: best.rect,
-      source: 'cdp-pierced-shadow-editor',
+      kind: best.kind,
+      source: best.kind === 'editable' ? 'cdp-pierced-shadow-editor' : 'cdp-pierced-editor-activator',
     }
   } catch {
     return undefined
@@ -657,10 +673,26 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
     const hasTargetHint = Boolean(String(targetHint || '').trim())
     if ((!hasExpectedFingerprint && !hasTargetHint) || (probe && typeof probe === 'object' && probe.ok !== false)) {
       try {
-        const trustedX = Number.isFinite(Number(probe?.clickX)) ? Number(probe.clickX) : probeClientX
-        const trustedY = Number.isFinite(Number(probe?.clickY)) ? Number(probe.clickY) : probeClientY
+        let trustedX = Number.isFinite(Number(probe?.clickX)) ? Number(probe.clickX) : probeClientX
+        let trustedY = Number.isFinite(Number(probe?.clickY)) ? Number(probe.clickY) : probeClientY
         await interactionDispatchTrustedMouseClick(tabId, trustedX, trustedY)
-        await new Promise(resolve => setTimeout(resolve, 260))
+        await new Promise(resolve => setTimeout(resolve, piercedEditable?.kind === 'activator' ? 180 : 260))
+
+        let activatedEditor
+        if (piercedEditable?.kind === 'activator' && interactionWantsEditableTarget(targetHint)) {
+          try {
+            activatedEditor = await interactionResolvePiercedEditablePoint(tabId, targetHint, trustedX, trustedY)
+            if (activatedEditor?.kind === 'editable'
+              && Number.isFinite(Number(activatedEditor.x))
+              && Number.isFinite(Number(activatedEditor.y))) {
+              trustedX = Number(activatedEditor.x)
+              trustedY = Number(activatedEditor.y)
+              await interactionDispatchTrustedMouseClick(tabId, trustedX, trustedY)
+              await new Promise(resolve => setTimeout(resolve, 180))
+            }
+          } catch {}
+        }
+
         let afterProbe
         try {
           const afterResults = await chrome.scripting.executeScript({
@@ -701,15 +733,19 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
           clickY: resolvedY,
           visualSnapped: snapDistance > 0.5,
           snapDistance,
-          cdpPiercedTarget: piercedEditable?.source === 'cdp-pierced-shadow-editor',
+          cdpPiercedTarget: Boolean(piercedEditable),
+          cdpPiercedActivator: piercedEditable?.kind === 'activator',
+          cdpPiercedFollowupEditor: activatedEditor?.kind === 'editable',
           stateEvidence: targetStateChanged
-            ? piercedEditable?.source === 'cdp-pierced-shadow-editor'
-              ? 'trusted native click changed the visual target own DOM state after pierced Shadow DOM resolution'
+            ? piercedEditable
+              ? 'trusted native click changed the visual target own DOM state after pierced Shadow DOM/editor resolution'
               : 'trusted native click changed the visual target own DOM state'
             : targetFocusedEditable
-              ? piercedEditable?.source === 'cdp-pierced-shadow-editor'
-                ? 'trusted native click focused an editor resolved through pierced Shadow DOM'
-                : 'trusted native click focused an editable control'
+              ? activatedEditor?.kind === 'editable'
+                ? 'trusted native click activated the comment editor and then focused its mounted editable control'
+                : piercedEditable
+                  ? 'trusted native click focused an editor resolved through pierced Shadow DOM/editor targeting'
+                  : 'trusted native click focused an editable control'
               : '',
           inputTransport: 'chrome-debugger',
         }
@@ -808,6 +844,8 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
     ...(Number.isFinite(Number(clicked.clickY)) ? { resolvedClickY: Number(clicked.clickY) } : {}),
     visualSnapped: clicked.visualSnapped === true,
     cdpPiercedTarget: clicked.cdpPiercedTarget === true,
+    cdpPiercedActivator: clicked.cdpPiercedActivator === true,
+    cdpPiercedFollowupEditor: clicked.cdpPiercedFollowupEditor === true,
     ...(Number.isFinite(Number(clicked.snapDistance)) ? { snapDistance: Number(clicked.snapDistance) } : {}),
   }
 }
@@ -942,7 +980,49 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     || compact(element?.getAttribute?.('role') || '').toLowerCase() === 'textbox'
   const normalizeHint = value => compact(value).toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
   const hintCoreOf = value => normalizeHint(value)
-    .replace(/current|截图|其中|中的|页面|视频|封面|按钮|图标|控件|链接|点击|打开|进入/g, '')
+    .replace(/current|截图|其中|中的|页面|视频|封面|卡片|按钮|图标|控件|链接|点击|打开|进入|区域/g, '')
+  const isDirectlyActionable = element => element instanceof Element
+    && (element.matches?.(actionableSelector) || isEditableTarget(element))
+  const isBroadShellTarget = element => {
+    if (!(element instanceof Element)) return true
+    if (isDirectlyActionable(element)) return false
+    const rect = element.getBoundingClientRect()
+    const viewportArea = Math.max(1, innerWidth * innerHeight)
+    const area = Math.max(0, rect.width) * Math.max(0, rect.height)
+    return area / viewportArea > 0.16 || rect.width > innerWidth * 0.72 || rect.height > innerHeight * 0.62
+  }
+  const localizedAncestorEvidence = element => {
+    let node = element
+    for (let depth = 0; node instanceof Element && depth < 6; depth += 1, node = node.parentElement) {
+      const rect = node.getBoundingClientRect()
+      const viewportArea = Math.max(1, innerWidth * innerHeight)
+      const areaRatio = Math.max(0, rect.width) * Math.max(0, rect.height) / viewportArea
+      let actionableCount = 0
+      try { actionableCount = node.querySelectorAll(actionableSelector).length } catch {}
+      const text = compact([
+        node.getAttribute?.('aria-label'), node.getAttribute?.('title'),
+        node.innerText, node.textContent,
+      ].filter(Boolean).join(' '))
+      if (text && areaRatio <= 0.18 && rect.width <= innerWidth * 0.52
+        && rect.height <= innerHeight * 0.62 && actionableCount <= 4) return text
+    }
+    return ''
+  }
+  const isLocalizedCommentEditorActivator = element => {
+    if (!(element instanceof Element) || isEditableTarget(element)) return false
+    const tag = element.tagName?.toLowerCase?.() || ''
+    if (tag === 'bili-comments') return false
+    const evidence = compact([
+      tag, element.id, element.getAttribute?.('class'), element.getAttribute?.('role'),
+      element.getAttribute?.('placeholder'), element.getAttribute?.('data-placeholder'),
+      element.getAttribute?.('aria-label'), element.getAttribute?.('title'),
+      element.innerText, element.textContent, shadowHostContext(element),
+    ].filter(Boolean).join(' ')).toLowerCase()
+    if (tag !== 'bili-comment-editor' && !/(?:comment|reply)[-_ ]?(?:editor|input)|(?:editor|input)[-_ ]?(?:wrap|box|area)/i.test(evidence)) return false
+    const rect = element.getBoundingClientRect()
+    return rect.width >= 60 && rect.height >= 18 && rect.height <= 220
+      && rect.width <= innerWidth * 0.96 && rect.height <= innerHeight * 0.35
+  }
   const targetEvidence = element => {
     if (!(element instanceof Element)) return ''
     const context = element.closest?.('a[href],button,[role="button"],[role="link"],li,article,[data-action]') || element
@@ -950,6 +1030,7 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
       element.getAttribute?.('aria-label'), element.getAttribute?.('title'), element.getAttribute?.('placeholder'),
       element.getAttribute?.('id'), element.getAttribute?.('class'), element.getAttribute?.('href'),
       element.innerText, element.textContent,
+      localizedAncestorEvidence(element),
       shadowHostContext(element),
       context !== element ? context.getAttribute?.('aria-label') : '',
       context !== element ? context.getAttribute?.('title') : '',
@@ -965,7 +1046,9 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     if (/点赞|大拇指|\blike\b|thumb/i.test(rawHint)) return /点赞|like|thumb|videolike|ariapressed/.test(evidence) ? 220 : 0
     if (/评论|回复|\bcomment\b|\breply\b/i.test(rawHint)) {
       if (!/评论|回复|comment|reply|editor|textarea|placeholder/.test(evidence)) return 0
-      return isEditableTarget(element) ? 360 : 220
+      if (isEditableTarget(element)) return 420
+      if (isLocalizedCommentEditorActivator(element)) return 360
+      return isBroadShellTarget(element) ? 0 : 120
     }
     if (/搜索|\bsearch\b/i.test(rawHint)) return /搜索|search/.test(evidence) ? 220 : 0
     if (/发送|提交|\bsend\b|\bsubmit\b/i.test(rawHint)) return /发送|提交|send|submit/.test(evidence) ? 220 : 0
@@ -980,13 +1063,15 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     const hasIntent = /点赞|大拇指|\blike\b|thumb|评论|回复|\bcomment\b|\breply\b|搜索|\bsearch\b|发送|提交|\bsend\b|\bsubmit\b/i.test(rawHint)
     const wantsEditable = /评论.*(?:输入|编辑)|回复.*(?:输入|编辑)|输入框|编辑框|comment.*(?:input|editor)|reply.*(?:input|editor)/i.test(rawHint)
     if (!rawHint || (!hasIntent && hintCore.length < 3)) return { target: initialTarget, clickX: originalX, clickY: originalY, snapped: false }
-    if (hintScore(initialTarget) > 0 && (!wantsEditable || isEditableTarget(initialTarget))) {
+    if (hintScore(initialTarget) > 0
+      && !isBroadShellTarget(initialTarget)
+      && (!wantsEditable || isEditableTarget(initialTarget) || isLocalizedCommentEditorActivator(initialTarget))) {
       return { target: initialTarget, clickX: originalX, clickY: originalY, snapped: false }
     }
 
     const candidateSelector = [
       actionableSelector, 'textarea', 'input:not([type="hidden"])', '[contenteditable="true"]', '[role="textbox"]',
-      'bili-comment-editor', 'bili-comments', '[title]', '[aria-label]',
+      'bili-comment-editor', 'bili-comments', '[title]', '[aria-label]', 'h1', 'h2', 'h3', 'h4', '[class*="title" i]',
     ].join(',')
     const uniqueTargets = []
     const seen = new Set()
@@ -998,7 +1083,8 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
       if (rect.right <= 0 || rect.bottom <= 0 || rect.left >= innerWidth || rect.top >= innerHeight) continue
       const score = hintScore(resolved)
       if (score <= 0) continue
-      if (wantsEditable && !isEditableTarget(resolved)) continue
+      if (wantsEditable && !isEditableTarget(resolved) && !isLocalizedCommentEditorActivator(resolved)) continue
+      if (!wantsEditable && isBroadShellTarget(resolved)) continue
       const centerX = rect.left + rect.width / 2
       const centerY = rect.top + rect.height / 2
       const distance = Math.hypot(centerX - originalX, centerY - originalY)
@@ -1007,7 +1093,7 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     }
     uniqueTargets.sort((left, right) => right.score - left.score || left.distance - right.distance)
     if (!uniqueTargets.length) {
-      if (wantsEditable && hintScore(initialTarget) > 0) {
+      if (wantsEditable && hintScore(initialTarget) > 0 && isLocalizedCommentEditorActivator(initialTarget)) {
         return {
           target: initialTarget,
           clickX: originalX,

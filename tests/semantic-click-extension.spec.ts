@@ -140,4 +140,23 @@ describe('atomic semantic click extension layer', () => {
     expect(source).toContain('replaySelectorSafe: !(persistedTarget.getRootNode?.() instanceof ShadowRoot)')
   })
 
+
+  it('uses bounded card context so visible Bilibili titles can identify the correct card without broad page text', () => {
+    const source = readFileSync(join(root, 'browser-extension', 'semantic-click.js'), 'utf8')
+    expect(source).toContain('const localizedCardText = element =>')
+    expect(source).toContain('interactiveCount <= 4')
+    expect(source).toContain('localCardNorm')
+    expect(source).toContain('localCardNorm.includes(wantedText)')
+    expect(source).toContain("'h1', 'h2', 'h3', 'h4', '[class*=\"title\" i]'")
+  })
+
+  it('prefers a localized comment editor/activator and can follow it to the mounted textbox', () => {
+    const source = readFileSync(join(root, 'browser-extension', 'semantic-click.js'), 'utf8')
+    expect(source).toContain("if (wantsCommentEditor && tag === 'bili-comments') return null")
+    expect(source).toContain('localizedCommentEditorActivator(element)')
+    expect(source).toContain("pierced.kind === 'activator'")
+    expect(source).toContain("mounted?.kind === 'editable'")
+    expect(source).toContain("'cdp-pierced::editor-activator'")
+  })
+
 })

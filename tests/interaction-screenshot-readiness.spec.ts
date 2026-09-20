@@ -506,7 +506,7 @@ describe('Patrol screenshot tab readiness', () => {
     expect(source).toContain("targetHint = ''")
     expect(source).toContain('const resolveHintTarget = (initialTarget, originalX, originalY) =>')
     expect(source).toContain('visual targetHint matches multiple equally-near CURRENT DOM targets')
-    expect(source).toContain('const trustedX = Number.isFinite(Number(probe?.clickX))')
+    expect(source).toContain('let trustedX = Number.isFinite(Number(probe?.clickX))')
     expect(source).toContain('await interactionDispatchTrustedMouseClick(tabId, trustedX, trustedY)')
     expect(source).toContain('visualSnapped: resolved.snapped === true')
   })
@@ -615,7 +615,7 @@ describe('Patrol screenshot tab readiness', () => {
     expect(source).toContain('shadowHostContext(element)')
     expect(source).toContain("visual targetHint does not match any CURRENT DOM target; refusing a coordinate-only click")
     expect(source).toContain('right.score - left.score || left.distance - right.distance')
-    expect(source).toContain('if (wantsEditable && !isEditableTarget(resolved)) continue')
+    expect(source).toContain('if (wantsEditable && !isEditableTarget(resolved) && !isLocalizedCommentEditorActivator(resolved)) continue')
     expect(source).toContain('rawPointPreserved: true')
     expect(source).toContain("DOM.getDocument', { depth: -1, pierce: true }")
     expect(source).toContain("'cdp-pierced-shadow-editor'")
@@ -630,6 +630,27 @@ describe('Patrol screenshot tab readiness', () => {
     const replayGeometry = source.indexOf("visualClick replay requires selectorHint or recorded URL/viewport/scroll geometry")
     expect(frameGuard).toBeGreaterThan(0)
     expect(replayGeometry).toBeGreaterThan(frameGuard)
+  })
+
+
+  it('treats exact card title semantics as stronger than a broad visual shell or adjacent-card coordinate', async () => {
+    const source = await readFile(interactionPath, 'utf8')
+    expect(source).toContain(".replace(/current|截图|其中|中的|页面|视频|封面|卡片|按钮")
+    expect(source).toContain('const localizedAncestorEvidence = element =>')
+    expect(source).toContain('actionableCount <= 4')
+    expect(source).toContain("h1', 'h2', 'h3', 'h4', '[class*=\"title\" i]'")
+    expect(source).toContain('&& !isBroadShellTarget(initialTarget)')
+    expect(source).toContain('if (!wantsEditable && isBroadShellTarget(resolved)) continue')
+  })
+
+  it('allows a localized Bilibili comment-editor activation host but rejects the whole bili-comments shell', async () => {
+    const source = await readFile(interactionPath, 'utf8')
+    expect(source).toContain("if (tag === 'bili-comments') return false")
+    expect(source).toContain("if (tag !== 'bili-comment-editor'")
+    expect(source).toContain("candidate.kind === 'activator' && (width < 60 || height < 18 || height > 220)")
+    expect(source).toContain("piercedEditable?.kind === 'activator'")
+    expect(source).toContain("activatedEditor?.kind === 'editable'")
+    expect(source).toContain('cdpPiercedFollowupEditor')
   })
 
 })
