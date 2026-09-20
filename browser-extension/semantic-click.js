@@ -52,9 +52,25 @@ async function semanticClickCommand(args) {
       const originY = Number.isFinite(Number(viewport?.height)) ? Number(viewport.height) / 2 : undefined
       const pierced = await interactionResolvePiercedEditablePoint(tabId, intent, originX, originY)
       if (pierced && Number.isFinite(Number(pierced.x)) && Number.isFinite(Number(pierced.y))) {
-        const native = await semanticTrustedMouseClick(tabId, Number(pierced.x), Number(pierced.y))
+        let native = await semanticTrustedMouseClick(tabId, Number(pierced.x), Number(pierced.y))
         if (native.partial) {
           throw new Error(`trusted pierced semantic click partially dispatched; refusing a second click: ${native.error || 'unknown native input failure'}`)
+        }
+        let finalPierced = pierced
+        if (native.ok && pierced.kind === 'activator') {
+          await new Promise(resolve => setTimeout(resolve, 180))
+          try {
+            const mounted = await interactionResolvePiercedEditablePoint(tabId, intent, Number(pierced.x), Number(pierced.y))
+            if (mounted?.kind === 'editable'
+              && Number.isFinite(Number(mounted.x))
+              && Number.isFinite(Number(mounted.y))) {
+              native = await semanticTrustedMouseClick(tabId, Number(mounted.x), Number(mounted.y))
+              if (native.partial) throw new Error(`trusted mounted-editor click partially dispatched; refusing retry: ${native.error || 'unknown native input failure'}`)
+              if (native.ok) finalPierced = mounted
+            }
+          } catch (error) {
+            if (/partially dispatched/.test(String(error?.message || error))) throw error
+          }
         }
         if (native.ok) {
           await new Promise(resolve => setTimeout(resolve, 180))
@@ -67,18 +83,24 @@ async function semanticClickCommand(args) {
           } catch {}
           return {
             ok: true,
-            selector: 'cdp-pierced::textbox',
+            selector: finalPierced.kind === 'editable' ? 'cdp-pierced::textbox' : 'cdp-pierced::editor-activator',
             text: spec.locatorText || '',
-            role: pierced.role || 'textbox',
-            tag: pierced.tag || 'div',
+            role: finalPierced.role || (finalPierced.kind === 'editable' ? 'textbox' : ''),
+            tag: finalPierced.tag || 'div',
             replaySelectorSafe: false,
             frameId: 0,
             frameUrl: frames.find(frame => frame.frameId === 0)?.url || '',
-            transport: 'atomic-semantic+cdp-pierced-shadow+trusted-native-mouse',
+            transport: finalPierced.kind === 'editable'
+              ? 'atomic-semantic+cdp-pierced-shadow+trusted-native-mouse'
+              : 'atomic-semantic+cdp-editor-activator+trusted-native-mouse',
             targetStateChanged: focusUsable,
             stateEvidence: focusUsable
-              ? 'trusted semantic click focused an editor resolved through pierced Shadow DOM'
-              : 'trusted semantic click used a pierced Shadow DOM editor box',
+              ? pierced.kind === 'activator'
+                ? 'trusted semantic click activated the comment editor and focused its mounted editable control'
+                : 'trusted semantic click focused an editor resolved through pierced Shadow DOM'
+              : pierced.kind === 'activator'
+                ? 'trusted semantic click used a localized comment-editor activation host'
+                : 'trusted semantic click used a pierced Shadow DOM editor box',
           }
         }
       }
@@ -438,6 +460,38 @@ async function semanticClickPageCommand(mode, spec) {
     || element instanceof HTMLTextAreaElement
     || element?.isContentEditable === true
     || normalize(element.getAttribute?.('role') || '') === 'textbox'
+  const localizedCardText = element => {
+    let node = element
+    for (let depth = 0; node instanceof Element && depth < 6; depth += 1, node = node.parentElement) {
+      const rect = node.getBoundingClientRect()
+      const viewportArea = Math.max(1, innerWidth * innerHeight)
+      const areaRatio = Math.max(0, rect.width) * Math.max(0, rect.height) / viewportArea
+      let interactiveCount = 0
+      try { interactiveCount = node.querySelectorAll(interactiveAncestorSelector).length } catch {}
+      const text = compact([
+        node.getAttribute?.('aria-label'), node.getAttribute?.('title'),
+        node.innerText, node.textContent,
+      ].filter(Boolean).join(' '))
+      if (text && areaRatio <= 0.18 && rect.width <= innerWidth * 0.52
+        && rect.height <= innerHeight * 0.62 && interactiveCount <= 4) return text
+    }
+    return ''
+  }
+  const localizedCommentEditorActivator = element => {
+    if (!(element instanceof Element) || editableCandidate(element)) return false
+    const tag = element.tagName?.toLowerCase?.() || ''
+    if (tag === 'bili-comments') return false
+    const evidence = compact([
+      tag, element.id, element.getAttribute?.('class'), element.getAttribute?.('role'),
+      element.getAttribute?.('placeholder'), element.getAttribute?.('data-placeholder'),
+      element.getAttribute?.('aria-label'), element.getAttribute?.('title'),
+      element.innerText, element.textContent, shadowHostContext(element),
+    ].filter(Boolean).join(' ')).toLowerCase()
+    if (tag !== 'bili-comment-editor' && !/(?:comment|reply)[-_ ]?(?:editor|input)|(?:editor|input)[-_ ]?(?:wrap|box|area)/i.test(evidence)) return false
+    const rect = element.getBoundingClientRect()
+    return rect.width >= 60 && rect.height >= 18 && rect.height <= 220
+      && rect.width <= innerWidth * 0.96 && rect.height <= innerHeight * 0.35
+  }
   const globalExactTitleCandidates = wantedText
     ? deepQueryAll('[title]').filter(element => {
         if (!visible(element) || disabled(element)) return false
@@ -467,6 +521,7 @@ async function semanticClickPageCommand(mode, spec) {
     'textarea', 'input:not([type="hidden"])', '[contenteditable="true"]', '[role="textbox"]',
     'bili-comment-editor', 'bili-comments',
     '[role="treeitem"]', '.ant-tree-node-content-wrapper', '[title]',
+    'h1', 'h2', 'h3', 'h4', '[class*="title" i]',
     'img', 'svg', '[id*="logo" i]', '[class*="logo" i]',
   ].join(',')
   const candidates = deepQueryAll(selector, root).filter(element => visible(element) && !disabled(element))
@@ -493,19 +548,19 @@ async function semanticClickPageCommand(mode, spec) {
     const role = roleOf(element)
     const tag = element.tagName.toLowerCase()
     const normText = normalize(text)
+    const localCard = localizedCardText(element)
+    const localCardNorm = normalize(localCard)
     if (wantedRole && normalize(role) !== wantedRole) return null
     if (wantedTag && normalize(tag) !== wantedTag) return null
+    if (wantsCommentEditor && tag === 'bili-comments') return null
     let score = 0
     if (wantedText) {
-      // An empty accessible name is never a valid fuzzy match. Without this
-      // guard, `wantedText.includes('')` evaluates true and visible shell
-      // links/icons can steal clicks from the requested business target.
-      if (!normText) return null
-      if (normText === wantedText) score += 140
-      else if (normText.includes(wantedText) || wantedText.includes(normText)) score += 80
+      if (normText === wantedText) score += 180
+      else if (normText && (normText.includes(wantedText) || wantedText.includes(normText))) score += 120
+      else if (localCardNorm && (localCardNorm.includes(wantedText) || wantedText.includes(localCardNorm))) score += 72
       else if (wantsCommentEditor
-        && editableCandidate(element)
-        && /评论|回复|comment|reply|editor|textarea|placeholder/.test(normText)) score += 110
+        && (editableCandidate(element) || localizedCommentEditorActivator(element))
+        && /评论|回复|comment|reply|editor|textarea|placeholder/.test(normalize(`${text} ${localCard}`))) score += 130
       else return null
     }
     if (wantedText) {
@@ -518,7 +573,8 @@ async function semanticClickPageCommand(mode, spec) {
       try { if (element.matches(selectorHint)) score += 35 } catch {}
     }
     if (['a', 'button'].includes(tag) || role === 'button' || role === 'link' || role === 'menuitem') score += 12
-    if (wantsCommentEditor && editableCandidate(element)) score += 80
+    if (wantsCommentEditor && editableCandidate(element)) score += 140
+    else if (wantsCommentEditor && localizedCommentEditorActivator(element)) score += 110
     if (wantsLogo) {
       const logoEvidence = [
         element.id || '',
@@ -541,8 +597,8 @@ async function semanticClickPageCommand(mode, spec) {
     const context = compact(element.closest?.('tr,li,form,nav,[role="dialog"],.ant-modal-content,.el-dialog')?.innerText || '')
     for (const token of ipTokens) if (context.includes(token)) score += 90
     for (const token of actionTokens) if (normalize(text).includes(normalize(token)) || normalize(context).includes(normalize(token))) score += 35
-    if (!wantedText && !wantsLogo && task && normalize(`${text} ${context}`).includes(task)) score += 20
-    return { element, text, role, tag, score, context }
+    if (!wantedText && !wantsLogo && task && normalize(`${text} ${localCard} ${context}`).includes(task)) score += 20
+    return { element, text, role, tag, score, context: compact(`${localCard} ${context}`) }
   }).filter(Boolean).filter(item => item.score > 0)
   scored.sort((left, right) => right.score - left.score)
   if (!scored.length) return { ok: true, candidates: [] }
