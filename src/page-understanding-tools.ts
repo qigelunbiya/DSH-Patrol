@@ -119,7 +119,10 @@ export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = 
     }
 
     if (name === 'patrol_visual_click_target') {
-      const key = businessKey(args.stepName, args.targetHint)
+      // targetHint is intentionally visual ("大拇指图标") and can differ from
+      // the DOM locator text ("点赞"). Keep the retry episode bound to the
+      // business stepName so a visual description cannot reset the two-strategy budget.
+      const key = businessKey(args.stepName, undefined)
       alignBusinessState(state, key)
       const unverified = outcomes.unverifiedPhysicalClicks(args)
       if (unverified >= 2) return strategyHardStop('同一业务动作已有两次未验证的物理点击')

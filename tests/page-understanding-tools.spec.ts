@@ -66,7 +66,7 @@ describe('Patrol page understanding planner', () => {
     expect(plans[0]?.kind).toBe('no-unique-target')
   })
 
-  it('allows one semantic attempt, requires one CURRENT analysis, then allows one final strategy only', () => {
+  it('uses at most two DOM strategies, then permits exactly one screenshot-bound visual fallback', () => {
     const guard = createPatrolPlanningGuard()
     const semantic = () => guard({
       name: 'patrol_click_target',
@@ -80,11 +80,36 @@ describe('Patrol page understanding planner', () => {
       arguments: { inspectionId: 'demo', task: '点击目标行的 RDP', locatorText: 'RDP' },
     })).toBeUndefined()
     expect(semantic()).toBeUndefined()
-    expect(semantic()).toMatch(/HARD STOP/)
+    expect(semantic()).toMatch(/DOM selector 策略已耗尽|patrol_visual_click_target/)
     expect(guard({
       name: 'patrol_analyze_step',
       arguments: { inspectionId: 'demo', task: '点击目标行的 RDP', locatorText: 'RDP' },
-    })).toMatch(/HARD STOP/)
+    })).toMatch(/DOM selector 策略已耗尽|patrol_visual_click_target/)
+
+    expect(guard({
+      name: 'patrol_visual_click_target',
+      arguments: {
+        inspectionId: 'demo',
+        stepName: '点击目标行的 RDP',
+        targetHint: 'CURRENT 截图中的 RDP 图标',
+        frameId: 'browser-visual-1',
+        xRatio: 0.82,
+        yRatio: 0.61,
+      },
+    })).toBeUndefined()
+
+    expect(semantic()).toMatch(/HARD STOP/)
+    expect(guard({
+      name: 'patrol_visual_click_target',
+      arguments: {
+        inspectionId: 'demo',
+        stepName: '点击目标行的 RDP',
+        targetHint: 'RDP',
+        frameId: 'browser-visual-2',
+        xRatio: 0.82,
+        yRatio: 0.61,
+      },
+    })).toMatch(/DOM selector 策略已耗尽|patrol_visual_click_target/)
   })
 
   it('does not reset a stalled selector budget just because the same target is renamed cosmetically', () => {
@@ -104,7 +129,7 @@ describe('Patrol page understanding planner', () => {
     expect(guard({
       name: 'patrol_click',
       arguments: { inspectionId: 'demo', stepName: '尝试未分组菜单项', selector: '.ant-tree-node-content-wrapper' },
-    })).toMatch(/HARD STOP/)
+    })).toMatch(/DOM selector 策略已耗尽|patrol_visual_click_target/)
   })
 
   it('rejects unsupported selector dialects without consuming the final recovery budget', () => {
@@ -128,7 +153,7 @@ describe('Patrol page understanding planner', () => {
     expect(guard({
       name: 'patrol_click',
       arguments: { inspectionId: 'demo', stepName: '点击未分组', selector: '.ant-tree-node-content-wrapper' },
-    })).toMatch(/HARD STOP/)
+    })).toMatch(/DOM selector 策略已耗尽|patrol_visual_click_target/)
   })
 
   it('does not let an invalid optional selector hint block patrol_click_target when locatorText is valid', () => {
@@ -175,7 +200,7 @@ describe('Patrol page understanding planner', () => {
     expect(guard({
       name: 'patrol_click_target',
       arguments: { inspectionId: 'demo', stepName: '点击目标行的 RDP', locatorText: 'RDP' },
-    })).toMatch(/HARD STOP/)
+    })).toMatch(/DOM selector 策略已耗尽|patrol_visual_click_target/)
   })
 
   it('resets a stalled click phase after meaningful non-click progress', () => {
@@ -229,8 +254,10 @@ describe('Patrol page understanding planner', () => {
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/没有 fallbackToken 时禁止模型视觉/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).not.toMatch(/不要先跑 ddddocr\/Windows OCR 预检/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/HARD STOP/)
-    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/HARD STOP 后必须直接结束当前 assistant turn/)
-    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/禁止在同一回复里复述相同句式/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/最终 HARD STOP.*必须直接结束当前 assistant turn/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/patrol_visual_click_target/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/visualFrameId/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/browser_visual_click/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/不要为每个内部工具调用.*重复/s)
   })
 })

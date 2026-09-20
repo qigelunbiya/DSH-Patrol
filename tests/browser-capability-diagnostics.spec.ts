@@ -40,7 +40,7 @@ describe('browser capability diagnostics', () => {
         extension: {
           name: 'dsh-patrol-browser-extension',
           version: '0.2.1',
-          capabilities: ['captureImageCode', 'visualSnapshot', 'semanticClick'],
+          capabilities: ['captureImageCode', 'visualSnapshot', 'semanticClick', 'visualClick'],
         },
       }),
       request: async () => ({ ok: true }),
@@ -55,6 +55,7 @@ describe('browser capability diagnostics', () => {
     expect(rendered).toContain('v0.2.1')
     expect(rendered).toContain('captureImageCode=yes')
     expect(rendered).toContain('semanticClick=yes')
+    expect(rendered).toContain('visualClick=yes')
     expect(rendered).toContain('visualSnapshot')
   })
 
@@ -80,6 +81,7 @@ describe('browser capability diagnostics', () => {
     const rendered = status.output.render({}, value).map(block => block.text || '').join('\n')
 
     expect(rendered).toContain('semanticClick=MISSING')
+    expect(rendered).toContain('visualClick=MISSING')
     expect(rendered).toMatch(/selector fallback/i)
   })
 

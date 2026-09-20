@@ -1,0 +1,164 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import type { Context } from '@deepseek-ai/cordis'
+import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
+import { afterEach, describe, expect, it } from 'vitest'
+import { registerPatrolVisualClickTool } from '../src/visual-click-tools.ts'
+import { PatrolStore } from '../src/store.ts'
+import type { InspectionDefinition, JsonObject } from '../src/types.ts'
+
+const roots: string[] = []
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+})
+
+async function setup(dispatch: (tool: string, args: JsonObject) => Promise<any>) {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-visual-click-'))
+  roots.push(root)
+  const store = new PatrolStore(root)
+  await store.init()
+  await store.create(draftDefinition())
+
+  const definitions: any[] = []
+  const ctx = {
+    tools: {
+      register(definition: any) {
+        definitions.push(definition)
+        return () => {}
+      },
+    },
+  } as unknown as Context
+  registerPatrolVisualClickTool(ctx, store, { dispatch } as any, { maxSteps: 20 })
+  const tool = definitions.find(item => item.name === 'patrol_visual_click_target')
+  if (!tool) throw new Error('patrol_visual_click_target not registered')
+  const exec = {
+    token: Symbol('visual-click-test'),
+    rootCallId: 'root',
+    signal: new AbortController().signal,
+  } as unknown as ToolRunContext
+  return { store, tool, exec }
+}
+
+function draftDefinition(): InspectionDefinition {
+  const now = new Date().toISOString()
+  return {
+    schemaVersion: '0.2',
+    id: 'visual-click',
+    name: 'Visual click',
+    description: 'test',
+    status: 'draft',
+    target: { type: 'browser', url: 'https://www.bilibili.com/video/BV-test' },
+    expectedResult: 'liked',
+    artifacts: [],
+    auth: { mode: 'none' },
+    schedule: null,
+    steps: [],
+    metadata: { createdAt: now, updatedAt: now, taskChecklist: ['给视频点赞'] },
+  }
+}
+
+describe('browser visual fallback click teaching', () => {
+  it('records a verified Bilibili-like visual hit as replayable selector-first geometry', async () => {
+    const calls: Array<{ tool: string; args: JsonObject }> = []
+    const { store, tool, exec } = await setup(async (name, args) => {
+      calls.push({ tool: name, args })
+      if (name === 'browser_read_page') {
+        return { ok: true, text: '视频页面 5743', value: { ok: true, url: 'https://www.bilibili.com/video/BV-test', text: '视频页面 5743' } }
+      }
+      if (name === 'browser_snapshot') {
+        return { ok: true, text: 'snapshot', value: { ok: true, url: 'https://www.bilibili.com/video/BV-test', elements: [] } }
+      }
+      if (name === 'browser_visual_click') {
+        expect(args).toMatchObject({
+          frameId: 'browser-visual-current',
+          xRatio: 0.17,
+          yRatio: 0.81,
+        })
+        return {
+          ok: true,
+          text: 'visual clicked',
+          value: {
+            ok: true,
+            xRatio: 0.17,
+            yRatio: 0.81,
+            selectorHint: 'top-frame::.video-like',
+            urlIdentity: 'https://www.bilibili.com/video/BV-test',
+            viewportWidth: 1280,
+            viewportHeight: 720,
+            viewportScale: 1,
+            scrollX: 0,
+            scrollY: 480,
+            targetTag: 'div',
+            targetRole: 'button',
+            targetText: '5743',
+            targetStateChanged: true,
+            stateEvidence: 'clicked visual target DOM state changed',
+            transport: 'bound-current-visual-frame',
+          },
+        }
+      }
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    const result = await tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '给视频点赞',
+      targetHint: '播放器下方左侧的大拇指点赞按钮',
+      frameId: 'browser-visual-current',
+      xRatio: 0.17,
+      yRatio: 0.81,
+    }, exec)
+
+    expect(result).toContain('browser_visual_click')
+    const saved = await store.load('visual-click')
+    expect(saved.steps).toHaveLength(1)
+    expect(saved.steps[0]).toMatchObject({
+      tool: 'browser_visual_click',
+      arguments: {
+        xRatio: 0.17,
+        yRatio: 0.81,
+        selectorHint: 'top-frame::.video-like',
+        urlIdentity: 'https://www.bilibili.com/video/BV-test',
+        viewportWidth: 1280,
+        viewportHeight: 720,
+        viewportScale: 1,
+        scrollX: 0,
+        scrollY: 480,
+        expectedTag: 'div',
+        expectedRole: 'button',
+      },
+      taskHint: '播放器下方左侧的大拇指点赞按钮',
+      teaching: {
+        status: 'verified',
+        method: 'state-change',
+        evidence: 'clicked visual target DOM state changed',
+      },
+    })
+    expect((saved.steps[0] as any).arguments.frameId).toBeUndefined()
+    expect((saved.steps[0] as any).arguments.tabId).toBeUndefined()
+    expect(calls.map(call => call.tool)).toEqual([
+      'browser_read_page',
+      'browser_snapshot',
+      'browser_visual_click',
+    ])
+  })
+
+  it('refuses CAPTCHA/image-code targets before any browser visual dispatch', async () => {
+    const calls: string[] = []
+    const { tool, exec } = await setup(async (name) => {
+      calls.push(name)
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    await expect(tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '点击验证码',
+      targetHint: '四位图片验证码',
+      frameId: 'browser-visual-current',
+      xRatio: 0.5,
+      yRatio: 0.5,
+    }, exec)).rejects.toThrow(/forbidden.*CAPTCHA|Windows\/local OCR/i)
+    expect(calls).toEqual([])
+  })
+})
