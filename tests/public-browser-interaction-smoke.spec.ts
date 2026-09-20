@@ -84,7 +84,7 @@ describe('public real-browser Patrol interaction smoke', () => {
     const site = await localTestSite()
     const harness = await extensionHarness()
     try {
-      expect(harness.manifest.version).toBe('0.3.4')
+      expect(harness.manifest.version).toBe('0.3.5')
       await harness.page.goto(`${site.root}/add_remove_elements/`, { waitUntil: 'domcontentloaded', timeout: 20000 })
 
       await expect(harness.command('semanticClick', {
@@ -100,7 +100,8 @@ describe('public real-browser Patrol interaction smoke', () => {
         locatorRole: 'button',
         task: 'Click Add Element',
       })
-      expect(semantic).toMatchObject({ ok: true, role: 'button', transport: 'atomic-main-world-semantic-click' })
+      expect(semantic).toMatchObject({ ok: true, role: 'button' })
+      expect(semantic.transport).toMatch(/^atomic-(?:main-world-semantic-click|semantic\+trusted-native-mouse)$/)
       expect(semantic.text).toContain('Add Element')
       expect(semantic.selector).toMatch(/^top-frame::/)
 

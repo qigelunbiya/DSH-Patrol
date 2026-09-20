@@ -11,6 +11,7 @@ const EXTENSION_CAPABILITIES = Object.freeze([
   'directImageSource',
   'pageBridgeRetry',
   'semanticClick',
+  'trustedSemanticClick',
   'visualClick',
   'trustedVisualClick',
   'trustedFocusedType',

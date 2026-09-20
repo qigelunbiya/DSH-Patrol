@@ -51,10 +51,49 @@ async function semanticClickCommand(args) {
 
   const chosen = best[0]
   const tabsBefore = await semanticClickTabBaseline(tabId)
-  const clicked = await semanticClickExecute(tabId, chosen.frame.frameId, 'click', {
+  const clickSpec = {
     ...spec,
     expectedFingerprint: chosen.candidate.fingerprint,
-  })
+  }
+
+  let clicked
+  let transport = 'atomic-main-world-semantic-click'
+  if (chosen.frame.frameId === 0 && semanticTrustedMouseAvailable()) {
+    const measured = await semanticClickExecute(tabId, 0, 'measure', clickSpec)
+    const x = Number(measured?.clientX)
+    const y = Number(measured?.clientY)
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      const native = await semanticTrustedMouseClick(tabId, x, y)
+      if (native.ok) {
+        await new Promise(resolve => setTimeout(resolve, 260))
+        let after
+        try { after = await semanticClickExecute(tabId, 0, 'measure', clickSpec) } catch {}
+        const beforeSignature = typeof measured?.stateSignature === 'string' ? measured.stateSignature : ''
+        const afterSignature = typeof after?.stateSignature === 'string' ? after.stateSignature : ''
+        const targetStateChanged = after === undefined
+          ? true
+          : Boolean(beforeSignature && afterSignature && beforeSignature !== afterSignature)
+        clicked = {
+          ...measured,
+          ...(after && typeof after === 'object' ? after : {}),
+          ok: true,
+          targetStateChanged,
+          stateEvidence: after === undefined
+            ? 'trusted semantic click target detached/re-rendered'
+            : targetStateChanged
+              ? 'trusted semantic click changed the target own business state'
+              : '',
+        }
+        transport = 'atomic-semantic+trusted-native-mouse'
+      } else if (native.partial) {
+        throw new Error(`trusted semantic click partially dispatched; refusing a second click: ${native.error || 'unknown native input failure'}`)
+      }
+    }
+  }
+
+  if (clicked === undefined) {
+    clicked = await semanticClickExecute(tabId, chosen.frame.frameId, 'click', clickSpec)
+  }
   if (!clicked || clicked.ok === false) throw new Error(String(clicked?.error || 'atomic semantic click failed'))
   const opened = await semanticClickAdoptSingleOpenedTab(tabId, tabsBefore)
 
@@ -68,13 +107,47 @@ async function semanticClickCommand(args) {
     tag: String(clicked.tag || chosen.candidate.tag || ''),
     frameId: chosen.frame.frameId,
     frameUrl: chosen.frame.url || '',
-    transport: 'atomic-main-world-semantic-click',
+    transport,
     targetStateChanged: clicked.targetStateChanged === true,
     ...(opened ? {
       openedTabId: opened.id,
       openedTabUrl: typeof opened.url === 'string' ? opened.url : '',
       stateEvidence: `semantic click opened child tab ${opened.id}${opened.url ? ` (${opened.url})` : ''}`,
     } : (typeof clicked.stateEvidence === 'string' && clicked.stateEvidence ? { stateEvidence: clicked.stateEvidence } : {})),
+  }
+}
+
+function semanticTrustedMouseAvailable() {
+  return Boolean(chrome.debugger?.attach && chrome.debugger?.sendCommand && chrome.debugger?.detach)
+}
+
+async function semanticTrustedMouseClick(tabId, x, y) {
+  const target = { tabId }
+  let attached = false
+  let sent = 0
+  try {
+    await chrome.debugger.attach(target, '1.3')
+    attached = true
+    const events = [
+      { type: 'mouseMoved', x, y, button: 'none', buttons: 0 },
+      { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 },
+      { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 },
+    ]
+    for (const params of events) {
+      await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', params)
+      sent += 1
+    }
+    return { ok: true, partial: false }
+  } catch (error) {
+    return {
+      ok: false,
+      partial: sent > 0,
+      error: error instanceof Error ? error.message : String(error),
+    }
+  } finally {
+    if (attached) {
+      try { await chrome.debugger.detach(target) } catch {}
+    }
   }
 }
 
@@ -206,9 +279,13 @@ async function semanticClickPageCommand(mode, spec) {
   const fingerprint = element => `${stableSelector(element)}|${normalize(actionText(element))}|${normalize(roleOf(element))}|${element.tagName.toLowerCase()}`
   const stateSignature = element => {
     if (!(element instanceof Element)) return ''
+    const statefulClasses = [...(element.classList || [])]
+      .filter(token => /(?:^|[-_])(active|selected|checked|pressed|liked|on)(?:$|[-_])|^(?:is|has)-(?:active|selected|checked|pressed|liked|on)$/i.test(token))
+      .sort()
+      .join(' ')
     return [
       element.tagName.toLowerCase(),
-      compact(element.getAttribute?.('class') || ''),
+      statefulClasses,
       compact(element.getAttribute?.('aria-pressed') || ''),
       compact(element.getAttribute?.('aria-checked') || ''),
       compact(element.getAttribute?.('aria-expanded') || ''),
@@ -368,7 +445,22 @@ async function semanticClickPageCommand(mode, spec) {
   const y = Math.max(after.top + 1, Math.min(after.top + after.height / 2, after.bottom - 1))
   const hit = document.elementFromPoint(x, y)
   if (hit && hit !== clickTarget && !clickTarget.contains(hit)) throw new Error(`semantic target is intercepted by <${hit.tagName.toLowerCase()}>`)
-  const beforeState = stateSignature(clickTarget)
+  const descriptor = {
+    ok: true,
+    selector: stableSelector(element),
+    text: chosen.text,
+    role: chosen.role,
+    tag: chosen.tag,
+    clientX: x,
+    clientY: y,
+    stateSignature: stateSignature(clickTarget),
+    targetStateChanged: false,
+    stateEvidence: '',
+    evidence: uniqueExactTitleTarget === element ? 'unique-exact-title->ant-tree-wrapper' : 'semantic-score',
+  }
+  if (mode === 'measure') return descriptor
+
+  const beforeState = descriptor.stateSignature
   clickTarget.focus?.({ preventScroll: true })
   if (typeof PointerEvent !== 'undefined') {
     for (const type of ['pointerover', 'pointermove', 'pointerdown', 'pointerup']) clickTarget.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0 }))
@@ -386,13 +478,8 @@ async function semanticClickPageCommand(mode, spec) {
   // Persist the stable semantic leaf selector, not the generic wrapper. Replay
   // promotes only this titled Ant-tree descendant back to its clickable wrapper.
   return {
-    ok: true,
-    selector: stableSelector(element),
-    text: chosen.text,
-    role: chosen.role,
-    tag: chosen.tag,
+    ...descriptor,
     targetStateChanged,
     stateEvidence,
-    evidence: uniqueExactTitleTarget === element ? 'unique-exact-title->ant-tree-wrapper' : 'semantic-score',
   }
 }
