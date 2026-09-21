@@ -23,6 +23,7 @@ const EXTENSION_CAPABILITIES = Object.freeze([
   'visualPointerProbeV1',
   'focusedVisualRegionV1',
   'visualActionMapV1',
+  'verifiedVisualActionPointV1',
 ])
 let socket = null
 let state = 'disconnected'
