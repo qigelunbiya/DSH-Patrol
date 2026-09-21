@@ -49,8 +49,9 @@ export function registerPatrolVisualClickTool(
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
       frameId: { type: 'string', required: true },
-      xRatio: { type: 'number', required: true },
-      yRatio: { type: 'number', required: true },
+      xRatio: { type: 'number', description: 'Normalized screenshot coordinate for free-point visual clicks. Optional when candidateId from a VISUAL ACTION MAP is supplied.' },
+      yRatio: { type: 'number', description: 'Normalized screenshot coordinate for free-point visual clicks. Optional when candidateId from a VISUAL ACTION MAP is supplied.' },
+      candidateId: { type: 'string', description: 'A visual A1/A2/... label chosen by the model from patrol_observe(includeImage=true, actionMap=true). When supplied, the browser clicks that captured interactive rectangle center instead of asking the model to regress a pixel point.' },
       targetHint: { type: 'string', required: true, description: 'Concrete CURRENT business intent, e.g. 评论输入框/发布按钮/点赞按钮/完整视频标题. It labels post-click verification and learned DOM/semantic binding; it does not authorize or relocate the live screenshot coordinate.' },
       expectedVisualText: { type: 'string', description: 'Exact visible label/title read from the attached CURRENT screenshot. Required for navigation/card/video visual clicks so Patrol can verify the chosen screenshot point belongs to that exact item before trusted input and verify the destination afterwards.' },
       visualAuthority: { type: 'boolean', description: 'Backward-compatible flag. Live patrol_visual_click_target teaching is coordinate-authoritative regardless of this value; replay may still use learned semantic/selector recovery.' },
@@ -70,9 +71,12 @@ export function registerPatrolVisualClickTool(
     },
     output: TEXT_OUTPUT,
     async execute(args, exec: ToolRunContext) {
-      if (!Number.isFinite(args.xRatio) || !Number.isFinite(args.yRatio)
-        || args.xRatio < 0 || args.xRatio > 1 || args.yRatio < 0 || args.yRatio > 1) {
-        throw new Error('xRatio/yRatio must be finite numbers between 0 and 1')
+      const candidateId = typeof args.candidateId === 'string' ? args.candidateId.trim().toUpperCase() : ''
+      const hasCandidate = /^A[1-9]\d*$/i.test(candidateId)
+      const hasPoint = Number.isFinite(args.xRatio) && Number.isFinite(args.yRatio)
+        && args.xRatio >= 0 && args.xRatio <= 1 && args.yRatio >= 0 && args.yRatio <= 1
+      if (!hasCandidate && !hasPoint) {
+        throw new Error('visual click requires either candidateId=A# from a VISUAL ACTION MAP or xRatio/yRatio between 0 and 1')
       }
       if (!/^browser-visual-[a-z0-9-]+$/i.test(String(args.frameId ?? '').trim())) {
         throw new Error('frameId must be a visualFrameId returned by patrol_observe(includeImage=true), not the screenshot file name/path. Previously returned frameIds remain reusable while the CURRENT tab/URL/scroll/zoom/viewport still match that screenshot.')
@@ -106,8 +110,9 @@ export function registerPatrolVisualClickTool(
         await store.load(args.inspectionId)
         const probed = await runner.dispatch('browser_visual_click', compactObject({
           frameId: args.frameId,
-          xRatio: args.xRatio,
-          yRatio: args.yRatio,
+          candidateId: hasCandidate ? candidateId : undefined,
+          xRatio: hasPoint ? args.xRatio : undefined,
+          yRatio: hasPoint ? args.yRatio : undefined,
           targetHint: args.targetHint,
           expectedVisualText: args.expectedVisualText,
           visualAuthority: true,
@@ -128,7 +133,9 @@ export function registerPatrolVisualClickTool(
           objectString(probed.value, 'targetAriaLabel') ? `aria=${JSON.stringify(objectString(probed.value, 'targetAriaLabel'))}` : '',
         ].filter(Boolean).join(', ')
         return [
-          `Visual pointer diagnostic ${pointerAction} executed at exact frame coordinate xRatio=${args.xRatio.toFixed(4)}, yRatio=${args.yRatio.toFixed(4)} (X=${Math.round(args.xRatio * 1000)}, Y=${Math.round(args.yRatio * 1000)} on the XY/1000 guide).`,
+          hasCandidate
+            ? `Visual pointer diagnostic ${pointerAction} executed on vision-selected action-map candidate ${candidateId}; browser geometry supplied the exact control center.`
+            : `Visual pointer diagnostic ${pointerAction} executed at exact frame coordinate xRatio=${args.xRatio.toFixed(4)}, yRatio=${args.yRatio.toFixed(4)} (X=${Math.round(args.xRatio * 1000)}, Y=${Math.round(args.yRatio * 1000)} on the XY/1000 guide).`,
           pointerAction === 'mark'
             ? 'A temporary red crosshair was drawn on the page for visual calibration; no click was issued.'
             : pointerAction === 'hover'
@@ -153,8 +160,9 @@ export function registerPatrolVisualClickTool(
       const visualAuthority = true
       const clicked = await runner.dispatch('browser_visual_click', compactObject({
         frameId: args.frameId,
-        xRatio: args.xRatio,
-        yRatio: args.yRatio,
+        candidateId: hasCandidate ? candidateId : undefined,
+        xRatio: hasPoint ? args.xRatio : undefined,
+        yRatio: hasPoint ? args.yRatio : undefined,
         targetHint: args.targetHint,
         expectedVisualText: args.expectedVisualText,
         visualAuthority,
@@ -279,8 +287,12 @@ export function registerPatrolVisualClickTool(
         return 'Visual click reached a verified state but returned incomplete replay geometry, so it was NOT persisted. Capture a fresh visual observation and reteach the target.'
       }
 
-      const effectiveXRatio = objectNumber(clicked.value, 'xRatio') ?? args.xRatio
-      const effectiveYRatio = objectNumber(clicked.value, 'yRatio') ?? args.yRatio
+      const effectiveXRatio = objectNumber(clicked.value, 'xRatio') ?? (hasPoint ? args.xRatio : undefined)
+      const effectiveYRatio = objectNumber(clicked.value, 'yRatio') ?? (hasPoint ? args.yRatio : undefined)
+      if (!Number.isFinite(effectiveXRatio) || !Number.isFinite(effectiveYRatio)) {
+        outcomes.recordUnverifiedPhysicalClick(args)
+        return 'Visual click reached a verified state but did not return effective normalized geometry, so it was NOT persisted.'
+      }
       const bindingActionable = objectBoolean(clicked.value, 'bindingActionable') === true
       const selectorReplaySafe = objectBoolean(clicked.value, 'selectorReplaySafe') !== false
       const learnedLocatorText = bindingActionable
@@ -339,7 +351,7 @@ export function registerPatrolVisualClickTool(
         targetClassHint: objectString(clicked.value, 'targetClassName'),
       })
       const condition = optionalCondition(args.conditionSourceStepId, args.conditionExpectedText, args.conditionMode)
-      const targetNote = `视觉目标：${args.targetHint.trim()}`
+      const targetNote = `视觉目标：${args.targetHint.trim()}${hasCandidate ? `；视觉编号：${candidateId}` : ''}`
       const providedNotes = [targetNote, args.notes?.trim()].filter(Boolean).join('\n')
       const step: ToolStep = {
         id: nextStepId(definition.steps),
@@ -369,9 +381,13 @@ export function registerPatrolVisualClickTool(
 
       return [
         `Executed and recorded ${step.id} (browser_visual_click) after CURRENT model-visible visual-state verification.`,
-        `Visual point saved for replay: xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; model-requested=(${args.xRatio.toFixed(4)}, ${args.yRatio.toFixed(4)}); capture=${captureWidth ?? viewportWidth}x${captureHeight ?? viewportHeight} CSS px at (${captureClientLeft ?? 0}, ${captureClientTop ?? 0}).`,
+        hasCandidate
+          ? `Visual action-map candidate ${candidateId} resolved by CURRENT browser geometry to xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; this exact center was saved for replay. The model selected the labeled box, not a free pixel coordinate.`
+          : `Visual point saved for replay: xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; model-requested=(${args.xRatio.toFixed(4)}, ${args.yRatio.toFixed(4)}); capture=${captureWidth ?? viewportWidth}x${captureHeight ?? viewportHeight} CSS px at (${captureClientLeft ?? 0}, ${captureClientTop ?? 0}).`,
         objectBoolean(clicked.value, 'visualAuthority') === true
-          ? 'TEST visual-grounding used the exact model-selected screenshot point; DOM/Shadow-DOM did not relocate it before physical input.'
+          ? (hasCandidate
+              ? 'Visual grounding used the model-selected action-map label; DOM/CDP contributed only the CURRENT interactive rectangle geometry and did not choose the business target.'
+              : 'TEST visual-grounding used the exact model-selected screenshot point; DOM/Shadow-DOM did not relocate it before physical input.')
           : objectBoolean(clicked.value, 'visualSnapped') === true
             ? `Replay coordinate was corrected against CURRENT learned evidence by ${objectNumber(clicked.value, 'snapDistance')?.toFixed(1) ?? '?'} CSS px.`
             : 'Replay used the recorded visual geometry without correction.',
