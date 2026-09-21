@@ -28,6 +28,24 @@ async function localTestSite() {
       response.end('<!doctype html><button id="target" style="position:fixed;left:432px;top:311px;width:56px;height:28px" oncontextmenu="this.dataset.context=\'yes\';event.preventDefault()">发布</button>')
       return
     }
+    if (request.url === '/visual-card') {
+      response.end(`<!doctype html>
+        <style>
+          body{margin:0}
+          .card{position:fixed;left:300px;top:220px;width:260px;height:130px;cursor:pointer}
+          #real{position:absolute;left:0;top:0;width:240px;height:110px;display:block;background:#ddd}
+          #cover{position:absolute;left:82px;top:0;width:100px;height:110px;z-index:3;background:rgba(0,0,0,.01)}
+        </style>
+        <div class="card">
+          <a id="real" href="/detail" target="_blank">普通视频卡片</a>
+          <div id="cover"></div>
+        </div>`)
+      return
+    }
+    if (request.url === '/detail') {
+      response.end('<!doctype html><title>目标视频</title><h1>普通视频卡片</h1>')
+      return
+    }
     response.statusCode = 404
     response.end('not found')
   })
@@ -89,7 +107,7 @@ describe('public real-browser Patrol interaction smoke', () => {
     const site = await localTestSite()
     const harness = await extensionHarness()
     try {
-      expect(harness.manifest.version).toBe('0.3.11')
+      expect(harness.manifest.version).toBe('0.3.12')
       await harness.page.goto(`${site.root}/add_remove_elements/`, { waitUntil: 'domcontentloaded', timeout: 20000 })
 
       const boundedShot = await harness.command('screenshot', { format: 'jpeg', maxWidth: 1024, quality: 68, coordinateGuide: true })
@@ -181,6 +199,34 @@ describe('public real-browser Patrol interaction smoke', () => {
         visualSnapped: false,
       })
       expect(await harness.page.$eval('#target', element => element.dataset.context)).toBe('yes')
+
+      await harness.page.goto(`${site.root}/visual-card`, { waitUntil: 'domcontentloaded', timeout: 20000 })
+      const cardShot = await harness.command('screenshot', {
+        format: 'jpeg',
+        maxWidth: 1024,
+        quality: 78,
+        actionMap: true,
+      })
+      expect(cardShot).toMatchObject({
+        actionMap: true,
+        actionCandidateCount: 1,
+      })
+      const cardClick = await harness.command('visualClick', {
+        frameId: cardShot.visualFrameId,
+        candidateId: 'A1',
+        targetHint: '普通视频卡片',
+        expectedVisualText: '普通视频卡片',
+        visualAuthority: true,
+      })
+      expect(cardClick).toMatchObject({
+        ok: true,
+        candidateId: 'A1',
+        actionCandidateKind: 'anchor',
+        actionCandidateSafePoint: expect.stringMatching(/^verified-hit:/),
+        visualSnapped: false,
+      })
+      expect(cardClick.openedTabId).toBeGreaterThan(0)
+      expect(cardClick.openedTabUrl).toContain('/detail')
 
       await harness.page.goto(`${site.root}/add_remove_elements/`, { waitUntil: 'domcontentloaded', timeout: 20000 })
 
