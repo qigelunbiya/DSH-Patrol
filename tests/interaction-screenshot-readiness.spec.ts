@@ -509,15 +509,17 @@ describe('Patrol screenshot tab readiness', () => {
     expect(value.bytes).toBeGreaterThan(0)
   })
 
-  it('pre-validates targetHint and can snap a visual point before trusted mouse input', async () => {
+  it('gives live visual teaching exact coordinate authority while keeping DOM-assisted replay guarded', async () => {
     const source = await readFile(interactionPath, 'utf8')
-    expect(source).toContain("targetHint = ''")
+    expect(source).toContain("visualAuthority = false")
+    expect(source).toContain('targetHint,\n      true,')
     expect(source).toContain('const resolveHintTarget = (initialTarget, originalX, originalY) =>')
-    expect(source).toContain('visual targetHint matches multiple equally-near CURRENT DOM targets')
-    expect(source).toContain('let trustedX = preResolved')
-    expect(source).toContain('? probeClientX')
+    expect(source).toContain('visualAuthority ? undefined : await interactionResolvePiercedEditablePoint')
+    expect(source).toContain('let trustedX = visualAuthority')
+    expect(source).toContain('? clientX')
     expect(source).toContain('await interactionDispatchTrustedMouseClick(tabId, trustedX, trustedY)')
-    expect(source).toContain('interactionVerifyPiercedTargetHit')
+    expect(source).toContain("bindingSource: visualAuthority ? 'visual-hit-test-post-click-learning'")
+    expect(source).toContain('visual-learned-semantic-replay')
     expect(source).toContain('physicalClickUncertain')
   })
 
@@ -894,99 +896,22 @@ describe('Patrol screenshot tab readiness', () => {
     expect(source).toContain('effectiveXRatio')
   })
 
-  it('contains a pierced publish/send resolver so a rough publish point cannot become a recommended-video click', async () => {
+  it('keeps strict publish resolution for replay but never uses it to relocate a live visual teaching point', async () => {
     const source = await readFile(interactionPath, 'utf8')
     expect(source).toContain('function interactionWantsPublishTarget(targetHint)')
     expect(source).toContain('async function interactionResolvePiercedActionPoint')
     expect(source).toContain("'cdp-pierced-publish-action'")
-    expect(source).toContain("'cdp-ax-publish-action'")
     expect(source).toContain("'Accessibility.getFullAXTree'")
     expect(source).toContain('interactionPublishLabelScore')
-    expect(source).toContain('const piercedAction = piercedEditable ? undefined : await interactionResolvePiercedActionPoint')
-    expect(source).toContain('cdpPiercedAction')
-    expect(source).toContain('resolveExactPublishTarget')
-    expect(source).toContain('publishActionVerified')
-    expect(source).toContain('refusing a coordinate-only physical click')
+    expect(source).toContain('const piercedAction = visualAuthority || piercedEditable ? undefined : await interactionResolvePiercedActionPoint')
+    expect(source).toContain('if (!visualAuthority && wantsPublish')
+    expect(source).toContain('if (!visualAuthority && interactionWantsPublishTarget(targetHint))')
+    expect(source).toContain('live screenshot-bound teaching')
     expect(source).toMatch(/发布\|发表\|发送\|提交/)
   })
 
 
-  it('refuses a publish visual click before physical input when CURRENT DOM/Accessibility cannot verify a publish action', async () => {
-    const viewport = {
-      urlIdentity: 'https://example.test/video/1',
-      width: 1000, height: 800, offsetLeft: 0, offsetTop: 0, scale: 1,
-      scrollX: 0, scrollY: 1200, innerWidth: 1000, innerHeight: 800, devicePixelRatio: 1,
-    }
-    const mouseEvents: Array<{ method: string; params: any }> = []
-    const scripting = {
-      async executeScript(request: any) {
-        if (request.func?.name === 'interactionMainWorldViewportState') return [{ result: { ...viewport } }]
-        if (request.func?.name === 'interactionMainWorldVisualClick') {
-          return [{ result: {
-            ok: true,
-            selector: 'a.recommended-video',
-            tag: 'a',
-            role: 'link',
-            text: '旁边推荐视频',
-            clickX: 900,
-            clickY: 480,
-            stateSignature: 'recommended-video',
-            targetFocusedEditable: false,
-            publishActionVerified: false,
-          } }]
-        }
-        throw new Error(`unexpected script ${request.func?.name || 'anonymous'}`)
-      },
-    }
-    const debuggerApi = {
-      async attach() {},
-      async sendCommand(_target: any, method: string) {
-        if (method === 'DOM.getDocument') {
-          return {
-            root: {
-              nodeName: '#document',
-              backendNodeId: 1,
-              children: [{
-                nodeName: 'A',
-                backendNodeId: 20,
-                attributes: ['href', '/video/BV-wrong', 'class', 'recommended-video'],
-                children: [{ nodeType: 3, nodeName: '#text', nodeValue: '旁边推荐视频' }],
-              }],
-            },
-          }
-        }
-        if (method === 'Page.getLayoutMetrics') {
-          return { cssVisualViewport: { clientWidth: 1000, clientHeight: 800, pageX: 0, pageY: 1200 } }
-        }
-        if (method === 'Accessibility.getFullAXTree') return { nodes: [] }
-        if (method === 'Input.dispatchMouseEvent') {
-          mouseEvents.push({ method, params: {} })
-          return {}
-        }
-        throw new Error(`unexpected debugger command ${method}`)
-      },
-      async detach() {},
-    }
-    const tabs = {
-      get: async () => ({ id: 7, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
-      update: async (id: number) => ({ id, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
-      captureVisibleTab: async () => 'data:image/png;base64,AAAA',
-    }
-    const sandbox = await loadInteraction({ chrome: { tabs, scripting, debugger: debuggerApi } })
-    const shot = await sandbox.handleCommand('screenshot', { tabId: 7 })
-
-    await expect(sandbox.handleCommand('visualClick', {
-      tabId: 7,
-      frameId: shot.visualFrameId,
-      xRatio: 0.90,
-      yRatio: 0.60,
-      targetHint: '蓝色发布按钮',
-    })).rejects.toThrow(/requires an exact CURRENT publish action/)
-
-    expect(mouseEvents).toHaveLength(0)
-  })
-
-  it('rescues a rough visual publish point to a closed-shadow publish button instead of an ordinary video link', async () => {
+  it('does not let missing DOM publish proof block or relocate a live visual physical click', async () => {
     const viewport = {
       urlIdentity: 'https://example.test/video/1',
       width: 1000, height: 800, offsetLeft: 0, offsetTop: 0, scale: 1,
@@ -998,17 +923,23 @@ describe('Patrol screenshot tab readiness', () => {
         if (request.func?.name === 'interactionMainWorldViewportState') return [{ result: { ...viewport } }]
         if (request.func?.name === 'interactionMainWorldVisualClick') {
           const x = Number(request.args?.[0]), y = Number(request.args?.[1])
+          expect(request.args?.[8]).toBe(true)
           return [{ result: {
             ok: true,
-            selector: 'button.comment-publish',
-            tag: 'button',
-            role: 'button',
-            text: '发布',
-            className: 'comment-publish',
+            selector: 'a.recommended-video',
+            replaySelectorSafe: true,
+            selectorQuality: 'medium',
+            bindingActionable: true,
+            bindingSource: 'visual-hit-test-post-click-learning',
+            visualAuthority: true,
+            tag: 'a',
+            role: 'link',
+            text: '旁边推荐视频',
             clickX: x,
             clickY: y,
-            stateSignature: mouseEvents.length ? 'published' : 'ready',
+            stateSignature: 'recommended-video',
             targetFocusedEditable: false,
+            publishActionVerified: false,
           } }]
         }
         throw new Error(`unexpected script ${request.func?.name || 'anonymous'}`)
@@ -1017,51 +948,11 @@ describe('Patrol screenshot tab readiness', () => {
     const debuggerApi = {
       async attach() {},
       async sendCommand(_target: any, method: string, params: any) {
-        if (method === 'DOM.getDocument') {
-          return {
-            root: {
-              nodeName: '#document', backendNodeId: 1,
-              children: [
-                {
-                  nodeName: 'A', backendNodeId: 20,
-                  attributes: ['href', '/video/BV-wrong', 'class', 'recommended-video'],
-                  children: [{ nodeType: 3, nodeName: '#text', nodeValue: '旁边推荐视频' }],
-                },
-                {
-                  nodeName: 'BILI-COMMENT-EDITOR', backendNodeId: 30,
-                  shadowRoots: [{
-                    nodeName: '#document-fragment', backendNodeId: 31, shadowRootType: 'closed',
-                    children: [{
-                      nodeName: 'BUTTON', backendNodeId: 44,
-                      attributes: ['class', 'comment-publish', 'role', 'button'],
-                      children: [{ nodeType: 3, nodeName: '#text', nodeValue: '发布' }],
-                    }],
-                  }],
-                },
-              ],
-            },
-          }
-        }
-        if (method === 'Page.getLayoutMetrics') {
-          return { cssVisualViewport: { clientWidth: 1000, clientHeight: 800, pageX: 0, pageY: 1200 } }
-        }
-        if (method === 'DOM.getNodeForLocation') {
-          expect(params).toMatchObject({ x: 725, y: 611, includeUserAgentShadowDOM: true })
-          return { backendNodeId: 44 }
-        }
-        if (method === 'DOM.resolveNode') {
-          expect(params.backendNodeId).toBe(44)
-          return { object: { objectId: 'publish-44' } }
-        }
-        if (method === 'Runtime.callFunctionOn') {
-          expect(params.objectId).toBe('publish-44')
-          return { result: { value: { left: 680, top: 590, right: 770, bottom: 632, width: 90, height: 42 } } }
-        }
         if (method === 'Input.dispatchMouseEvent') {
           mouseEvents.push({ method, params })
           return {}
         }
-        throw new Error(`unexpected debugger command ${method}`)
+        throw new Error(`live visual authority must not pre-resolve DOM via ${method}`)
       },
       async detach() {},
     }
@@ -1081,20 +972,100 @@ describe('Patrol screenshot tab readiness', () => {
     })
 
     const pressed = mouseEvents.find(item => item.params?.type === 'mousePressed')
+    expect(pressed?.params).toMatchObject({ x: 900, y: 480, button: 'left' })
+    expect(clicked).toMatchObject({
+      ok: true,
+      requestedClickX: 900,
+      requestedClickY: 480,
+      resolvedClickX: 900,
+      resolvedClickY: 480,
+      xRatio: 0.9,
+      yRatio: 0.6,
+      visualSnapped: false,
+      visualAuthority: true,
+      bindingActionable: true,
+    })
+  })
+
+  it('learns a reusable DOM binding from the element under an exact successful visual point without moving that point', async () => {
+    const viewport = {
+      urlIdentity: 'https://example.test/video/1',
+      width: 1000, height: 800, offsetLeft: 0, offsetTop: 0, scale: 1,
+      scrollX: 0, scrollY: 1200, innerWidth: 1000, innerHeight: 800, devicePixelRatio: 1,
+    }
+    const mouseEvents: Array<{ method: string; params: any }> = []
+    const scripting = {
+      async executeScript(request: any) {
+        if (request.func?.name === 'interactionMainWorldViewportState') return [{ result: { ...viewport } }]
+        if (request.func?.name === 'interactionMainWorldVisualClick') {
+          const x = Number(request.args?.[0]), y = Number(request.args?.[1])
+          return [{ result: {
+            ok: true,
+            selector: 'button.comment-publish',
+            replaySelectorSafe: true,
+            selectorQuality: 'strong',
+            bindingActionable: true,
+            bindingSource: 'visual-hit-test-post-click-learning',
+            visualAuthority: true,
+            tag: 'button',
+            role: 'button',
+            text: '发布',
+            title: '发布',
+            ariaLabel: '发布',
+            className: 'comment-publish',
+            clickX: x,
+            clickY: y,
+            stateSignature: mouseEvents.length ? 'published' : 'ready',
+            targetFocusedEditable: false,
+          } }]
+        }
+        throw new Error(`unexpected script ${request.func?.name || 'anonymous'}`)
+      },
+    }
+    const debuggerApi = {
+      async attach() {},
+      async sendCommand(_target: any, method: string, params: any) {
+        if (method === 'Input.dispatchMouseEvent') {
+          mouseEvents.push({ method, params })
+          return {}
+        }
+        throw new Error(`unexpected debugger command ${method}`)
+      },
+      async detach() {},
+    }
+    const tabs = {
+      get: async () => ({ id: 7, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
+      update: async (id: number) => ({ id, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
+      captureVisibleTab: async () => 'data:image/png;base64,AAAA',
+    }
+    const sandbox = await loadInteraction({ chrome: { tabs, scripting, debugger: debuggerApi } })
+    const shot = await sandbox.handleCommand('screenshot', { tabId: 7 })
+    const clicked = await sandbox.handleCommand('visualClick', {
+      tabId: 7,
+      frameId: shot.visualFrameId,
+      xRatio: 0.725,
+      yRatio: 0.76375,
+      targetHint: '蓝色发布按钮',
+    })
+
+    const pressed = mouseEvents.find(item => item.params?.type === 'mousePressed')
     expect(pressed?.params).toMatchObject({ x: 725, y: 611, button: 'left' })
     expect(clicked).toMatchObject({
       ok: true,
-      cdpPiercedTarget: true,
-      cdpPiercedAction: true,
-      requestedClickX: 900,
-      requestedClickY: 480,
-      resolvedClickX: 725,
-      resolvedClickY: 611,
+      selectorHint: 'top-frame::button.comment-publish',
+      selectorReplaySafe: true,
+      selectorQuality: 'strong',
+      bindingActionable: true,
+      bindingSource: 'visual-hit-test-post-click-learning',
+      visualAuthority: true,
+      targetTag: 'button',
+      targetRole: 'button',
+      targetText: '发布',
       xRatio: 0.725,
       yRatio: 0.76375,
-      requestedXRatio: 0.90,
-      requestedYRatio: 0.60,
-      visualSnapped: true,
+      requestedXRatio: 0.725,
+      requestedYRatio: 0.76375,
+      visualSnapped: false,
     })
   })
 
