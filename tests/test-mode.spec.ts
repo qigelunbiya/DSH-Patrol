@@ -15,6 +15,7 @@ describe('Patrol test-mode guard policy', () => {
       injectStrictRecoveryPrompt: false,
       injectStrictVerificationPrompt: false,
       injectObservationPrompt: false,
+      browserControlMode: 'visual-grounding',
     })
   })
 
@@ -27,6 +28,7 @@ describe('Patrol test-mode guard policy', () => {
       injectStrictRecoveryPrompt: true,
       injectStrictVerificationPrompt: true,
       injectObservationPrompt: true,
+      browserControlMode: 'hybrid',
     })
   })
 
@@ -63,11 +65,14 @@ describe('Patrol test-mode guard policy', () => {
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/patrol_show.*stepId/s)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/不得把纠正继续追加到流程尾部/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/完整 patrol_validate/)
-    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/analyze 在 TEST MODE 是辅助工具/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/浏览器控制模式是 visual-grounding/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/UI-TARS/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/coordinate-authoritative/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/DOM\/Accessibility.*不得.*改写坐标/s)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/可以直接使用 patrol_click/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/browser_semantic_click \/ browser_click/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/用户可见语言规则不会因 TEST MODE 放宽/)
-    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/DOM、semantic、vision 之间没有硬编码先后顺序/)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/learned semantic.*learned selector.*guarded visual geometry/s)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/browser_navigate/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/固定列\/分裂表格/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/operational-click-fallbacks/)
