@@ -52,6 +52,8 @@ const SNAPSHOT_EVIDENCE_MAX_ELEMENTS = 24
 const SNAPSHOT_EVIDENCE_MAX_CHARS = 3000
 const OCR_EVIDENCE_MAX_CHARS = 2000
 const OBSERVATION_ERROR_MAX_CHARS = 800
+const VISUAL_SCREENSHOT_MAX_WIDTH = 1024
+const VISUAL_SCREENSHOT_JPEG_QUALITY = 68
 
 type ObservationImageStatus = 'attached' | 'not-requested' | 'tool-unavailable' | 'read-failed'
 
@@ -166,7 +168,7 @@ export function registerPatrolObservationTools(
       // blocks must not accumulate in the next local-Qwen request. The generic
       // toolResultPruner only trims text, so Patrol explicitly offloads old
       // image occurrences first and runs the text pruner as a separate pass.
-      if (args.includeImage === true) pruneHistoricalVisualContext(ctx, exec)
+      const visualContextReady = args.includeImage !== true || pruneHistoricalVisualContext(ctx, exec)
 
       // Screenshot capture establishes freshness and supplies bounded OCR.
       const shot = await runner.dispatch('browser_screenshot', compactObject({
@@ -177,7 +179,10 @@ export function registerPatrolObservationTools(
         // This avoids the old DPR=2 bug where "1024" still produced a ~2048px
         // model image and simultaneously keeps browser vision closer to the
         // geometry-faithful Desktop Automation frame.
-        ...(args.includeImage === true ? { maxWidth: 1536, quality: 72 } : {}),
+        ...(args.includeImage === true ? {
+          maxWidth: VISUAL_SCREENSHOT_MAX_WIDTH,
+          quality: VISUAL_SCREENSHOT_JPEG_QUALITY,
+        } : {}),
       }), exec)
       if (!shot.ok) {
         const bootstrap = await detectBootstrapObservation(runner, exec, args.tabId)
@@ -224,9 +229,22 @@ export function registerPatrolObservationTools(
         title = tab?.title ?? ''
       }
 
-      const imageAttempt: ImageAttachmentAttempt = args.includeImage === true
-        ? await tryReadScreenshotAsImage(ctx, exec, path)
-        : { status: 'not-requested' }
+      const targetPixelWidth = objectNumber(shot.value, 'targetPixelWidth')
+      const rasterBudgetConfirmed = targetPixelWidth !== undefined
+        && targetPixelWidth <= VISUAL_SCREENSHOT_MAX_WIDTH
+      const imageAttempt: ImageAttachmentAttempt = args.includeImage !== true
+        ? { status: 'not-requested' }
+        : !visualContextReady
+          ? {
+              status: 'read-failed',
+              error: 'Previous model-visible Patrol image could not be offloaded safely, so CURRENT screenshot was kept on disk but not attached. Continuing with compact OCR/DOM evidence to avoid image accumulation/OOM.',
+            }
+          : !rasterBudgetConfirmed
+            ? {
+                status: 'read-failed',
+                error: `CURRENT browser screenshot did not confirm the ${VISUAL_SCREENSHOT_MAX_WIDTH}px raster budget. The image stays on disk but is not attached to the model; restart/update the Patrol browser extension if this persists.`,
+              }
+            : await tryReadScreenshotAsImage(ctx, exec, path)
       const rawOcrText = objectRawString(shot.value, 'ocrText') ?? ''
       const ocrText = captchaInputPresent ? '' : shortEvidence(rawOcrText, OCR_EVIDENCE_MAX_CHARS)
 
@@ -383,9 +401,9 @@ async function currentTabMetadata(
   }
 }
 
-function pruneHistoricalVisualContext(ctx: Context, exec: ToolRunContext): void {
+function pruneHistoricalVisualContext(ctx: Context, exec: ToolRunContext): boolean {
   const agent = exec.agent as unknown as { session?: unknown } | undefined
-  if (agent?.session === undefined) return
+  if (agent?.session === undefined) return false
 
   // We are about to add one fresh CURRENT screenshot. Offload every older
   // tool-result image so the new screenshot is the only retained Patrol visual
@@ -400,6 +418,8 @@ function pruneHistoricalVisualContext(ctx: Context, exec: ToolRunContext): void 
   } else if (imageResult.error !== undefined) {
     ctx.logger.warn(`[dsh-patrol/vision] historical image offload unavailable: ${imageResult.error}`)
   }
+  const imageSurfaceReady = imagesBefore === 0
+    || (imageResult.applied && imageResult.retainedAfter === 0)
 
   let pruner: ToolResultPrunerLike | undefined
   try {
@@ -407,7 +427,7 @@ function pruneHistoricalVisualContext(ctx: Context, exec: ToolRunContext): void 
   } catch {
     pruner = undefined
   }
-  if (pruner === undefined) return
+  if (pruner === undefined) return imageSurfaceReady
   try {
     const result = pruner.pruneSession(agent.session)
     const pruned = Array.isArray(result.pruned) ? result.pruned.length : 0
@@ -418,6 +438,7 @@ function pruneHistoricalVisualContext(ctx: Context, exec: ToolRunContext): void 
   } catch (error: unknown) {
     ctx.logger.warn(`[dsh-patrol/vision] proactive visual-history text prune failed: ${error instanceof Error ? error.message : String(error)}`)
   }
+  return imageSurfaceReady
 }
 
 async function tryReadScreenshotAsImage(ctx: Context, exec: ToolRunContext, path: string): Promise<ImageAttachmentAttempt> {
