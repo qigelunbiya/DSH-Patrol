@@ -92,7 +92,7 @@ export function registerPatrolVisualClickTool(
 
       const evidence = options.visualEvidence?.consume(String(args.frameId), args.inspectionId)
       if (evidence?.ok === false) {
-        throw new Error(`visual click refused: ${evidence.reason}. A visualFrameId becomes usable when patrol_observe(includeImage=true) actually attaches that screenshot to the model and remains reusable while the browser still matches it.`)
+        throw new Error(`visual click refused: ${evidence.reason}. A visualFrameId is usable only after patrol_observe(includeImage=true) actually attached that screenshot to the model; after that it remains reusable while the browser still matches it.`)
       }
 
       const definition = await loadEditable(store, args.inspectionId, options.maxSteps)
@@ -118,7 +118,7 @@ export function registerPatrolVisualClickTool(
       }), exec)
       if (!clicked.ok) {
         return [
-          'Visual click failed before Patrol could confirm a physical click. The same frameId may be retried if CURRENT URL/scroll/zoom/viewport are still unchanged.',
+          'Visual click failed before Patrol could confirm a physical click, so this attempt does NOT consume the visual physical-click budget. The same frameId may be retried if CURRENT URL/scroll/zoom/viewport are still unchanged.',
           clicked.error ?? clicked.text ?? 'Unknown browser visual click error',
           'Reuse this frameId freely while the CURRENT page geometry still matches it; capture a new patrol_observe(includeImage=true) only after navigation, scroll, zoom, viewport/layout changes, or when a new screenshot is actually useful.',
         ].filter(Boolean).join('\n')
