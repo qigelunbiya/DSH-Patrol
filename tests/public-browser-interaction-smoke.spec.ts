@@ -89,7 +89,7 @@ describe('public real-browser Patrol interaction smoke', () => {
     const site = await localTestSite()
     const harness = await extensionHarness()
     try {
-      expect(harness.manifest.version).toBe('0.3.10')
+      expect(harness.manifest.version).toBe('0.3.11')
       await harness.page.goto(`${site.root}/add_remove_elements/`, { waitUntil: 'domcontentloaded', timeout: 20000 })
 
       const boundedShot = await harness.command('screenshot', { format: 'jpeg', maxWidth: 1024, quality: 68, coordinateGuide: true })
@@ -147,7 +147,7 @@ describe('public real-browser Patrol interaction smoke', () => {
         format: 'jpeg',
         maxWidth: 1024,
         quality: 78,
-        coordinateGuide: true,
+        actionMap: true,
         focusXRatio: 460 / 1280,
         focusYRatio: 325 / 800,
         focusWidthRatio: 0.25,
@@ -156,25 +156,25 @@ describe('public real-browser Patrol interaction smoke', () => {
       expect(focusedShot).toMatchObject({
         focusedVisual: true,
         captureMode: 'cdp-focused-region',
-        coordinateGuide: true,
+        actionMap: true,
+        actionCandidateCount: 1,
       })
+      expect(focusedShot.coordinateGuide).toBe(false)
       expect(focusedShot.captureWidth).toBeCloseTo(320, 0)
       expect(focusedShot.captureHeight).toBeCloseTo(240, 0)
       expect(focusedShot.modelRasterWidth).toBeLessThanOrEqual(1024)
       expect(focusedShot.modelRasterWidth).toBeGreaterThan(600)
 
-      const localX = (460 - focusedShot.captureClientLeft) / focusedShot.captureWidth
-      const localY = (325 - focusedShot.captureClientTop) / focusedShot.captureHeight
       const focusedRightClick = await harness.command('visualClick', {
         frameId: focusedShot.visualFrameId,
-        xRatio: localX,
-        yRatio: localY,
+        candidateId: 'A1',
         targetHint: '发布按钮',
         visualAuthority: true,
         pointerAction: 'right-click',
       })
       expect(focusedRightClick).toMatchObject({
         ok: true,
+        candidateId: 'A1',
         pointerAction: 'right-click',
         targetTag: 'button',
         targetText: '发布',
