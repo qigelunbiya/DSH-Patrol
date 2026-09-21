@@ -214,6 +214,53 @@ describe('browser visual fallback click teaching', () => {
 
 
 
+  it('supports mark/right-click visual calibration without recording a Runbook step', async () => {
+    for (const pointerAction of ['mark', 'right-click'] as const) {
+      const calls: Array<{ tool: string; args: JsonObject }> = []
+      const { store, tool, exec } = await setup(async (name, args) => {
+        calls.push({ tool: name, args })
+        if (name === 'browser_visual_click') {
+          return {
+            ok: true,
+            text: 'diagnostic',
+            value: {
+              ok: true,
+              xRatio: 0.58,
+              yRatio: 0.52,
+              requestedXRatio: 0.58,
+              requestedYRatio: 0.52,
+              pointerAction,
+              visualAuthority: true,
+              targetTag: 'button',
+              targetRole: 'button',
+              targetText: '发布',
+            },
+          }
+        }
+        throw new Error(`unexpected tool ${name}`)
+      })
+
+      const result = await tool.execute({
+        inspectionId: 'visual-click',
+        stepName: '校准发布按钮',
+        targetHint: '蓝色发布按钮',
+        frameId: 'browser-visual-current',
+        xRatio: 0.58,
+        yRatio: 0.52,
+        pointerAction,
+      }, exec)
+
+      expect(result).toContain('X=580, Y=520')
+      expect(result).toContain('NOT written to the Runbook')
+      expect(calls).toHaveLength(1)
+      expect(calls[0]).toMatchObject({
+        tool: 'browser_visual_click',
+        args: { pointerAction, xRatio: 0.58, yRatio: 0.52, visualAuthority: true },
+      })
+      expect((await store.load('visual-click')).steps).toHaveLength(0)
+    }
+  })
+
   it('keeps every live patrol visual teaching click coordinate-authoritative even when the flag is omitted', async () => {
     let authority: unknown
     const { tool, exec } = await setup(async (name, args) => {
