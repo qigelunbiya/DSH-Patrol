@@ -33,7 +33,10 @@ function snapshot(args) {
   const root = selectRoot(args.selector)
   const max = Number.isInteger(args.maxElements) ? Math.max(1, Math.min(args.maxElements, 500)) : 150
   const nodes = interactiveCandidates(root)
-  const visible = nodes.filter(element => args.includeHidden === true || isVisible(element))
+  const visible = nodes
+    .filter(element => args.includeHidden === true || isVisible(element))
+    .sort((left, right) => snapshotCandidatePriority(right) - snapshotCandidatePriority(left)
+      || snapshotCandidatePosition(left) - snapshotCandidatePosition(right))
   const elements = visible.slice(0, max).map(element => {
     const input = element instanceof HTMLInputElement ? element : null
     const sensitive = input !== null && (input.type === 'password' || SENSITIVE_INPUT.test(input.name) || SENSITIVE_INPUT.test(input.id) || SENSITIVE_INPUT.test(input.autocomplete))
@@ -41,7 +44,7 @@ function snapshot(args) {
       tag: element.tagName.toLowerCase(),
       role: semanticRole(element),
       text: compactText(element.innerText || element.textContent || element.getAttribute('aria-label') || element.getAttribute('placeholder') || element.getAttribute('title') || '', 240),
-      selector: stableSelector(element),
+      selector: element.getRootNode?.() === document ? stableSelector(element) : undefined,
       type: input?.type || undefined,
       name: input?.name || undefined,
       href: element instanceof HTMLAnchorElement ? element.href : undefined,
@@ -54,8 +57,74 @@ function snapshot(args) {
 
 function interactiveCandidates(root) {
   const selector = `${BASE_INTERACTIVE_SELECTOR},${CUSTOM_INTERACTIVE_SELECTOR}`
-  const nodes = [...root.querySelectorAll(selector)]
-  return nodes.filter(element => element.matches(BASE_INTERACTIVE_SELECTOR) || isLikelyClickable(element))
+  const nodes = deepQueryAll(root, selector)
+  const candidates = nodes.filter(element => element.matches(BASE_INTERACTIVE_SELECTOR) || isLikelyClickable(element))
+  const candidateSet = new Set(candidates)
+  return candidates.filter(element => {
+    // Prefer a real actionable ancestor over a nested decorative/custom node
+    // carrying the same card text. This is common on Bilibili/React video cards.
+    let parent = element.parentElement
+    for (let depth = 0; parent instanceof Element && depth < 5; depth += 1, parent = parent.parentElement) {
+      if (!candidateSet.has(parent) || !parent.matches?.(BASE_INTERACTIVE_SELECTOR)) continue
+      const childText = compactText(element.innerText || element.textContent || '', 180)
+      const parentText = compactText(parent.innerText || parent.textContent || '', 180)
+      if (!childText || !parentText || parentText.includes(childText)) return false
+    }
+    return true
+  })
+}
+
+function deepQueryAll(root, selector) {
+  const out = []
+  const roots = [root]
+  const seenRoots = new Set()
+  let scanned = 0
+  while (roots.length && seenRoots.size < 64 && scanned < 16000) {
+    const current = roots.shift()
+    if (!current || seenRoots.has(current) || typeof current.querySelectorAll !== 'function') continue
+    seenRoots.add(current)
+    let matches = []
+    let all = []
+    try { matches = [...current.querySelectorAll(selector)] } catch {}
+    try { all = [...current.querySelectorAll('*')] } catch {}
+    out.push(...matches)
+    scanned += all.length
+    for (const element of all) {
+      if (element?.shadowRoot && !seenRoots.has(element.shadowRoot)) roots.push(element.shadowRoot)
+    }
+  }
+  return [...new Set(out)]
+}
+
+function snapshotCandidatePriority(element) {
+  if (!(element instanceof Element)) return 0
+  let score = 0
+  if (element.matches?.(BASE_INTERACTIVE_SELECTOR)) score += 1000
+  const role = semanticRole(element)
+  if (role) score += 180
+  const tag = element.tagName.toLowerCase()
+  if (tag === 'a' && element.getAttribute('href')) score += 140
+  if (tag === 'button' || (element instanceof HTMLInputElement && ['button', 'submit'].includes(element.type))) score += 160
+  const label = compactText(
+    element.getAttribute('aria-label') || element.getAttribute('title')
+      || element.innerText || element.textContent || element.getAttribute('placeholder') || '',
+    200,
+  )
+  if (label.length >= 2 && label.length <= 160) score += 120
+  const rect = element.getBoundingClientRect()
+  const viewportArea = Math.max(1, (window.innerWidth || 1) * (window.innerHeight || 1))
+  const areaRatio = Math.max(0, rect.width) * Math.max(0, rect.height) / viewportArea
+  if (areaRatio <= 0.24) score += 80
+  else if (areaRatio > 0.65) score -= 240
+  if (element.getRootNode?.() !== document) score += 100
+  return score
+}
+
+function snapshotCandidatePosition(element) {
+  const rect = element?.getBoundingClientRect?.()
+  if (!rect) return Number.MAX_SAFE_INTEGER
+  return Math.max(0, Number(rect.top) || 0) * Math.max(1, window.innerWidth || 1)
+    + Math.max(0, Number(rect.left) || 0)
 }
 
 function isLikelyClickable(element) {
