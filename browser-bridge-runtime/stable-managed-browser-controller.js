@@ -287,6 +287,7 @@ export function createManagedBrowserController(options = {}) {
         || !capabilities.includes('visualPointerProbeV1')
         || !capabilities.includes('focusedVisualRegionV1')
         || !capabilities.includes('visualActionMapV1')
+        || !capabilities.includes('verifiedVisualActionPointV1')
       )
   }
 
