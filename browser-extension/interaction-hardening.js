@@ -270,7 +270,7 @@ async function interactionScreenshot(args) {
   }
 
   let coordinateGuide = false
-  if (args.coordinateGuide === true && !actionMap && format === 'jpeg') {
+  if ((args.coordinateGuide === true || (args.actionMap === true && !actionMap)) && !actionMap && format === 'jpeg') {
     const guided = await interactionOverlayCoordinateGuideInWorker(dataUrl, Math.max(78, quality))
     if (!guided?.dataUrl) throw new Error('Patrol could not render the visual coordinate guide')
     dataUrl = guided.dataUrl
