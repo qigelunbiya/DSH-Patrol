@@ -630,7 +630,10 @@ function interactionMainWorldCollectVisualActionCandidates(capture) {
       || compact(element.getAttribute?.('aria-label') || '')
       || compact(element.textContent || '').slice(0, 80)
     )
-    const tabIndex = Number(element.getAttribute?.('tabindex'))
+    const tabIndexAttr = element.getAttribute?.('tabindex')
+    const tabIndex = tabIndexAttr === null || tabIndexAttr === undefined || String(tabIndexAttr).trim() === ''
+      ? Number.NaN
+      : Number(tabIndexAttr)
     const weakPointerOnly = !strongAction && !editable
       && (labeledPointer || (Number.isFinite(tabIndex) && tabIndex >= 0 && pointerAction))
     if (!(strongAction || editable || weakPointerOnly)) continue
