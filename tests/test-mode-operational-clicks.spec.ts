@@ -10,7 +10,7 @@ describe('TEST MODE operational click fallbacks', () => {
     expect(source).toContain('strategy counters')
     expect(source).toContain("build=${TEST_MODE_BUILD_MARKER}")
     expect(source).toContain("test-real-visual-grounding-v13")
-    expect(source).toContain("browserControl=${runtimePolicy.browserControlMode}")
+    expect(source).toContain("browserStrategy=user-directed(default=hybrid)")
   })
 
   it('allows non-secret low-level interaction fallbacks in TEST MODE', () => {
