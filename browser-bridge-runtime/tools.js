@@ -202,13 +202,15 @@ export function registerTools(ctx, bridge, config = {}) {
     }),
     defineTool({
       name: 'browser_visual_click',
-      description: 'Internal Patrol primitive for a verified model-vision fallback click. Teaching binds normalized coordinates to a fresh screenshot frame; replay prefers the discovered selector and falls back to guarded URL/scroll/viewport coordinates.',
+      description: 'Internal Patrol primitive for vision-first browser teaching. Live teaching clicks the exact fresh screenshot point; successful hits learn semantic/DOM identity for replay. Replay tries learned semantic identity, then selector, then guarded URL/scroll/viewport geometry.',
       parameters: {
         xRatio: reqNum, yRatio: reqNum, frameId: optStr, selectorHint: optStr, urlIdentity: optStr,
         scrollX: optNum, scrollY: optNum, viewportWidth: optNum, viewportHeight: optNum, viewportScale: optNum,
         captureClientLeft: optNum, captureClientTop: optNum, captureWidth: optNum, captureHeight: optNum, captureMode: optStr,
         expectedTag: optStr, expectedRole: optStr, expectedTitle: optStr, expectedAriaLabel: optStr,
-        targetHint: optStr, targetTextHint: optStr, targetIdHint: optStr, targetClassHint: optStr, tabId: optInt,
+        targetHint: optStr, targetTextHint: optStr, targetIdHint: optStr, targetClassHint: optStr,
+        learnedLocatorText: optStr, learnedLocatorRole: optStr, learnedLocatorTag: optStr,
+        learnedSelectorQuality: optStr, learnedBindingSource: optStr, tabId: optInt,
       },
       output: {
         schema: {
@@ -219,7 +221,9 @@ export function registerTools(ctx, bridge, config = {}) {
             captureClientLeft: optNum, captureClientTop: optNum, captureWidth: optNum, captureHeight: optNum, captureMode: str,
             targetTag: str, targetRole: str, targetText: str, targetTitle: str, targetAriaLabel: str,
             targetId: str, targetClassName: str, targetStateChanged: bool, targetFocusedEditable: bool, stateEvidence: str, transport: str,
-            requestedClickX: optNum, requestedClickY: optNum, resolvedClickX: optNum, resolvedClickY: optNum, visualSnapped: bool, snapDistance: optNum, cdpPiercedTarget: bool, cdpPiercedActivator: bool, cdpPiercedFollowupEditor: bool, cdpPiercedAction: bool, unexpectedNavigation: bool, physicalClickUncertain: bool,
+            requestedClickX: optNum, requestedClickY: optNum, resolvedClickX: optNum, resolvedClickY: optNum,
+            visualSnapped: bool, snapDistance: optNum, selectorReplaySafe: bool, selectorQuality: str, bindingActionable: bool, bindingSource: str, visualAuthority: bool,
+            cdpPiercedTarget: bool, cdpPiercedActivator: bool, cdpPiercedFollowupEditor: bool, cdpPiercedAction: bool, unexpectedNavigation: bool, physicalClickUncertain: bool,
           },
         },
         render: (_args, value) => [{ type: 'text', text: `Visual browser click executed at (${Number(value.xRatio).toFixed(4)}, ${Number(value.yRatio).toFixed(4)}) via ${value.transport || 'visual'}${value.selectorHint ? `; reusable selector=${value.selectorHint}` : ''}.` }],
@@ -234,7 +238,9 @@ export function registerTools(ctx, bridge, config = {}) {
           captureWidth: args.captureWidth, captureHeight: args.captureHeight, captureMode: args.captureMode,
           expectedTag: args.expectedTag, expectedRole: args.expectedRole,
           expectedTitle: args.expectedTitle, expectedAriaLabel: args.expectedAriaLabel,
-          targetHint: args.targetHint, targetTextHint: args.targetTextHint, targetIdHint: args.targetIdHint, targetClassHint: args.targetClassHint, tabId: args.tabId,
+          targetHint: args.targetHint, targetTextHint: args.targetTextHint, targetIdHint: args.targetIdHint, targetClassHint: args.targetClassHint,
+          learnedLocatorText: args.learnedLocatorText, learnedLocatorRole: args.learnedLocatorRole, learnedLocatorTag: args.learnedLocatorTag,
+          learnedSelectorQuality: args.learnedSelectorQuality, learnedBindingSource: args.learnedBindingSource, tabId: args.tabId,
         }), timeoutMs), 'visualClick')
         return clean({
           ok: true, xRatio: value.xRatio ?? args.xRatio, yRatio: value.yRatio ?? args.yRatio,
@@ -250,7 +256,10 @@ export function registerTools(ctx, bridge, config = {}) {
           stateEvidence: value.stateEvidence, transport: value.transport,
           requestedClickX: value.requestedClickX, requestedClickY: value.requestedClickY,
           resolvedClickX: value.resolvedClickX, resolvedClickY: value.resolvedClickY,
-          visualSnapped: value.visualSnapped, snapDistance: value.snapDistance, cdpPiercedTarget: value.cdpPiercedTarget,
+          visualSnapped: value.visualSnapped, snapDistance: value.snapDistance,
+          selectorReplaySafe: value.selectorReplaySafe, selectorQuality: value.selectorQuality,
+          bindingActionable: value.bindingActionable, bindingSource: value.bindingSource, visualAuthority: value.visualAuthority,
+          cdpPiercedTarget: value.cdpPiercedTarget,
           cdpPiercedActivator: value.cdpPiercedActivator, cdpPiercedFollowupEditor: value.cdpPiercedFollowupEditor, cdpPiercedAction: value.cdpPiercedAction,
           unexpectedNavigation: value.unexpectedNavigation, physicalClickUncertain: value.physicalClickUncertain,
         })

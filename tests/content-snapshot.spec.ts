@@ -49,6 +49,7 @@ function setup(elements: FakeElement[]) {
     document,
     location: { href: 'https://example.test' },
     window: { innerWidth: 1280, innerHeight: 720 },
+    Element: FakeElement,
     HTMLInputElement: class {},
     HTMLAnchorElement: class {},
     getComputedStyle: (element: FakeElement) => element.style,
@@ -90,6 +91,34 @@ describe('browser content snapshot', () => {
       tag: 'span',
       text: '[RDP] [EMPTY]',
     }))
+  })
+
+  it('prioritizes a real visible link over generic cursor containers when the snapshot budget is tight', () => {
+    const generic = new FakeElement('DIV', rect(0, 0, 1280, 280))
+    generic.textContent = '顶部活动广告'
+    generic.innerText = '顶部活动广告'
+    generic.style.cursor = 'pointer'
+
+    const video = new FakeElement('A', rect(160, 320, 360, 210))
+    video.textContent = '我们无法找到外星文明的原因'
+    video.innerText = '我们无法找到外星文明的原因'
+    video.attributes.set('href', '/video/BV-test')
+
+    const context = setup([generic, video])
+    const value = JSON.parse(JSON.stringify(vm.runInContext('snapshot({ maxElements: 1 })', context)))
+
+    expect(value.elements).toHaveLength(1)
+    expect(value.elements[0]).toMatchObject({
+      tag: 'a',
+      role: 'link',
+      text: '我们无法找到外星文明的原因',
+    })
+  })
+
+  it('traverses open shadow roots instead of limiting CURRENT evidence to document.querySelectorAll', () => {
+    expect(source).toContain('function deepQueryAll(root, selector)')
+    expect(source).toContain('element?.shadowRoot')
+    expect(source).toContain('snapshotCandidatePriority')
   })
 
   it('excludes off-viewport duplicate navigation targets from the current snapshot', () => {

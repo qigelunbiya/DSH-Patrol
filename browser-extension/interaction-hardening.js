@@ -474,7 +474,7 @@ async function interactionVisualClick(args) {
   const frameId = typeof args.frameId === 'string' ? args.frameId.trim() : ''
   if (frameId) {
     const targetHint = typeof args.targetHint === 'string' ? args.targetHint.trim() : ''
-    if (targetHint.length < 2) throw new Error('live visualClick requires targetHint so CURRENT DOM can validate/correct the screenshot coordinate before physical input')
+    if (targetHint.length < 2) throw new Error('live visualClick requires targetHint as a business-intent label for post-click DOM/semantic learning and verification')
     const frame = interactionVisualFrames.get(frameId)
     if (!frame) throw new Error('browser visual frame is stale or unavailable; capture a fresh patrol_observe(includeImage=true)')
     if (frame.tabId !== tabId) throw new Error('browser visual frame belongs to a different tab; capture a fresh visual observation')
@@ -496,12 +496,45 @@ async function interactionVisualClick(args) {
       expectedTitle,
       expectedAriaLabel,
       targetHint,
+      true,
     )
     interactionVisualFrames.delete(frameId)
     return interactionVisualClickResult(clicked, frame, xRatio, yRatio, 'bound-current-visual-frame')
   }
 
   const selectorHint = typeof args.selectorHint === 'string' ? args.selectorHint.trim() : ''
+  const learnedLocatorText = typeof args.learnedLocatorText === 'string' ? args.learnedLocatorText.trim() : ''
+  const learnedLocatorRole = typeof args.learnedLocatorRole === 'string' ? args.learnedLocatorRole.trim() : ''
+  const learnedLocatorTag = typeof args.learnedLocatorTag === 'string' ? args.learnedLocatorTag.trim() : ''
+  if (learnedLocatorText && typeof semanticClickCommand === 'function') {
+    try {
+      const learned = await semanticClickCommand({
+        locatorText: learnedLocatorText,
+        ...(learnedLocatorRole ? { locatorRole: learnedLocatorRole } : {}),
+        ...(learnedLocatorTag ? { locatorTag: learnedLocatorTag } : {}),
+        ...(selectorHint ? { selectorHint } : {}),
+        task: typeof args.targetHint === 'string' ? args.targetHint : learnedLocatorText,
+        tabId,
+      })
+      if (learned?.ok === true) {
+        return {
+          ok: true,
+          selectorHint: typeof learned.selector === 'string' ? learned.selector : selectorHint,
+          xRatio,
+          yRatio,
+          transport: `visual-learned-semantic-replay+${learned.transport || 'atomic-semantic'}`,
+          targetStateChanged: learned.targetStateChanged === true,
+          ...(typeof learned.stateEvidence === 'string' ? { stateEvidence: learned.stateEvidence } : {}),
+          ...(typeof learned.tag === 'string' ? { targetTag: learned.tag } : {}),
+          ...(typeof learned.role === 'string' && learned.role ? { targetRole: learned.role } : {}),
+          ...(typeof learned.text === 'string' && learned.text ? { targetText: learned.text } : {}),
+        }
+      }
+    } catch {
+      // Learned semantic identity is an optimization. Dynamic pages may drift;
+      // selector and guarded coordinate replay remain available below.
+    }
+  }
   if (selectorHint) {
     try {
       const validated = await interactionValidateVisualReplaySelector(tabId, selectorHint, args)
@@ -1215,7 +1248,7 @@ function interactionSameProbeTarget(before, after) {
   return false
 }
 
-async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, targetHint = '') {
+async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, targetHint = '', visualAuthority = false) {
   if (!chrome.scripting?.executeScript) throw new Error('visualClick requires chrome.scripting')
   const captureLeft = Number.isFinite(Number(viewport.captureClientLeft)) ? Number(viewport.captureClientLeft) : Number(viewport.offsetLeft || 0)
   const captureTop = Number.isFinite(Number(viewport.captureClientTop)) ? Number(viewport.captureClientTop) : Number(viewport.offsetTop || 0)
@@ -1225,8 +1258,8 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
   const clientX = captureLeft + Math.max(1, Math.min(captureWidth - 1, captureWidth * xRatio))
   const clientY = captureTop + Math.max(1, Math.min(captureHeight - 1, captureHeight * yRatio))
 
-  const piercedEditable = await interactionResolvePiercedEditablePoint(tabId, targetHint, clientX, clientY)
-  const piercedAction = piercedEditable ? undefined : await interactionResolvePiercedActionPoint(tabId, targetHint, clientX, clientY)
+  const piercedEditable = visualAuthority ? undefined : await interactionResolvePiercedEditablePoint(tabId, targetHint, clientX, clientY)
+  const piercedAction = visualAuthority || piercedEditable ? undefined : await interactionResolvePiercedActionPoint(tabId, targetHint, clientX, clientY)
   const preResolved = piercedEditable || piercedAction
   const probeClientX = Number.isFinite(Number(preResolved?.x)) ? Number(preResolved.x) : clientX
   const probeClientY = Number.isFinite(Number(preResolved?.y)) ? Number(preResolved.y) : clientY
@@ -1261,7 +1294,7 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
           target: { tabId, frameIds: [0] },
           world: 'MAIN',
           func: interactionMainWorldVisualClick,
-          args: [probeClientX, probeClientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, true, targetHint],
+          args: [probeClientX, probeClientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, true, targetHint, visualAuthority],
         })
         probe = Array.isArray(probeResults) ? probeResults[0]?.result : undefined
         if (probe?.ok === false) throw new Error(probe.error || 'visual target probe failed')
@@ -1275,20 +1308,24 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
       const hasExpectedFingerprint = Boolean(expectedTag || expectedRole || expectedTitle || expectedAriaLabel)
       const hasTargetHint = Boolean(String(targetHint || '').trim())
       const wantsPublish = interactionWantsPublishTarget(targetHint)
-      if (wantsPublish && !piercedAction && probe?.publishActionVerified !== true) {
-        throw new Error('publish/send visual click requires an exact CURRENT publish action resolved from DOM/Accessibility; refusing a coordinate-only physical click')
+      if (!visualAuthority && wantsPublish && !piercedAction && probe?.publishActionVerified !== true) {
+        throw new Error('publish/send coordinate replay requires an exact CURRENT publish action resolved from DOM/Accessibility')
       }
-      const canDispatch = Boolean(preResolved)
+      const canDispatch = visualAuthority || Boolean(preResolved)
         || ((!hasExpectedFingerprint && !hasTargetHint) || (probe && typeof probe === 'object' && probe.ok !== false))
       if (canDispatch) {
         // CDP identity owns the final coordinate when available. MAIN-world
         // correction is used only when no pierced target was resolved.
-        let trustedX = preResolved
-          ? probeClientX
-          : Number.isFinite(Number(probe?.clickX)) ? Number(probe.clickX) : probeClientX
-        let trustedY = preResolved
-          ? probeClientY
-          : Number.isFinite(Number(probe?.clickY)) ? Number(probe.clickY) : probeClientY
+        let trustedX = visualAuthority
+          ? clientX
+          : preResolved
+            ? probeClientX
+            : Number.isFinite(Number(probe?.clickX)) ? Number(probe.clickX) : probeClientX
+        let trustedY = visualAuthority
+          ? clientY
+          : preResolved
+            ? probeClientY
+            : Number.isFinite(Number(probe?.clickY)) ? Number(probe.clickY) : probeClientY
         const clickedTarget = preResolved
           ? interactionPiercedDescriptor(preResolved, clientX, clientY, trustedX, trustedY)
           : probe
@@ -1344,7 +1381,7 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
             target: { tabId, frameIds: [0] },
             world: 'MAIN',
             func: interactionMainWorldVisualClick,
-            args: [trustedX, trustedY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, true, targetHint],
+            args: [trustedX, trustedY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, true, targetHint, visualAuthority],
           })
           afterProbe = Array.isArray(afterResults) ? afterResults[0]?.result : undefined
         } catch {}
@@ -1444,17 +1481,17 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
     }
   }
 
-  // A failed/unsupported debugger path must never weaken publish/send safety.
-  // Probe the MAIN world separately before the synthetic fallback and require
-  // the same exact business-action proof that the trusted-mouse path requires.
-  if (interactionWantsPublishTarget(targetHint)) {
+  // Coordinate replay keeps strict publish/send DOM proof. Live visual teaching
+  // does not: the screenshot point owns the click and business-state verification
+  // after the click decides whether it is teachable.
+  if (!visualAuthority && interactionWantsPublishTarget(targetHint)) {
     let fallbackProbe
     try {
       const fallbackProbeResults = await chrome.scripting.executeScript({
         target: { tabId, frameIds: [0] },
         world: 'MAIN',
         func: interactionMainWorldVisualClick,
-        args: [probeClientX, probeClientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, true, targetHint],
+        args: [probeClientX, probeClientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, true, targetHint, visualAuthority],
       })
       fallbackProbe = Array.isArray(fallbackProbeResults) ? fallbackProbeResults[0]?.result : undefined
     } catch (error) {
@@ -1477,7 +1514,7 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
       target: { tabId, frameIds: [0] },
       world: 'MAIN',
       func: interactionMainWorldVisualClick,
-      args: [probeClientX, probeClientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, false, targetHint],
+      args: [probeClientX, probeClientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, false, targetHint, visualAuthority],
     })
   } catch (error) {
     throw new Error([
@@ -1538,7 +1575,9 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
   const effectiveYRatio = resolvedY !== undefined && captureHeight > 0
     ? Math.max(0, Math.min(1, (resolvedY - captureTop) / captureHeight))
     : yRatio
-  const rawSelector = typeof clicked.selector === 'string' ? clicked.selector.trim() : ''
+  const rawSelector = clicked?.replaySelectorSafe === false
+    ? ''
+    : typeof clicked.selector === 'string' ? clicked.selector.trim() : ''
   const selectorHint = rawSelector
     ? (rawSelector.startsWith(INTERACTION_TOP_FRAME_PREFIX) ? rawSelector : `${INTERACTION_TOP_FRAME_PREFIX}${rawSelector}`)
     : ''
@@ -1581,6 +1620,11 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
     ...(Number.isFinite(Number(clicked.clickX)) ? { resolvedClickX: Number(clicked.clickX) } : {}),
     ...(Number.isFinite(Number(clicked.clickY)) ? { resolvedClickY: Number(clicked.clickY) } : {}),
     visualSnapped: clicked.visualSnapped === true,
+    selectorReplaySafe: clicked.replaySelectorSafe !== false,
+    ...(typeof clicked.selectorQuality === 'string' ? { selectorQuality: clicked.selectorQuality } : {}),
+    bindingActionable: clicked.bindingActionable === true,
+    ...(typeof clicked.bindingSource === 'string' ? { bindingSource: clicked.bindingSource } : {}),
+    visualAuthority: clicked.visualAuthority === true,
     cdpPiercedTarget: clicked.cdpPiercedTarget === true,
     cdpPiercedActivator: clicked.cdpPiercedActivator === true,
     cdpPiercedFollowupEditor: clicked.cdpPiercedFollowupEditor === true,
@@ -1590,7 +1634,7 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
   }
 }
 
-async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, probeOnly = false, targetHint = '') {
+async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, probeOnly = false, targetHint = '', visualAuthority = false) {
   const compact = value => String(value || '').replace(/\s+/g, ' ').trim()
   const roleOf = element => {
     const explicit = compact(element.getAttribute?.('role') || '').toLowerCase()
@@ -1955,7 +1999,12 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
   if (hitIsIframe && !probeOnly) throw new Error('visual click point lands on an iframe surface; synthetic MAIN-world click cannot safely enter a cross-origin frame')
   const initialTarget = hitIsIframe ? hit : chooseTarget(hit)
   if (!(initialTarget instanceof Element) || !visible(initialTarget) || disabled(initialTarget)) throw new Error('visual click target is not actionable')
-  const resolved = hitIsIframe ? { target: initialTarget, clickX: clientX, clickY: clientY, snapped: false } : resolveHintTarget(initialTarget, clientX, clientY)
+  // In live screenshot-bound teaching, the visual model owns the physical point.
+  // DOM/Shadow DOM is sampled AFTER/AT that point for learning; it is not allowed
+  // to silently relocate the click to a semantically guessed neighbor.
+  const resolved = hitIsIframe || visualAuthority
+    ? { target: initialTarget, clickX: clientX, clickY: clientY, snapped: false, visualAuthority: visualAuthority === true }
+    : resolveHintTarget(initialTarget, clientX, clientY)
   const target = resolved.target
   const clickX = resolved.clickX
   const clickY = resolved.clickY
@@ -1963,18 +2012,34 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
   const role = roleOf(target)
   const title = compact(target.getAttribute('title') || '')
   const ariaLabel = compact(target.getAttribute('aria-label') || '')
-  if (expectedTag && tag !== expectedTag) throw new Error('visual coordinate replay hit a different tag than teaching')
-  if (expectedRole && role !== expectedRole) throw new Error('visual coordinate replay hit a different role than teaching')
-  if (expectedTitle && title !== expectedTitle) throw new Error('visual coordinate replay hit a different title than teaching')
-  if (expectedAriaLabel && ariaLabel !== expectedAriaLabel) throw new Error('visual coordinate replay hit a different aria-label than teaching')
+  if (!visualAuthority && expectedTag && tag !== expectedTag) throw new Error('visual coordinate replay hit a different tag than teaching')
+  if (!visualAuthority && expectedRole && role !== expectedRole) throw new Error('visual coordinate replay hit a different role than teaching')
+  if (!visualAuthority && expectedTitle && title !== expectedTitle) throw new Error('visual coordinate replay hit a different title than teaching')
+  if (!visualAuthority && expectedAriaLabel && ariaLabel !== expectedAriaLabel) throw new Error('visual coordinate replay hit a different aria-label than teaching')
 
   const rect = target.getBoundingClientRect()
   if (clickX < rect.left - 1 || clickX > rect.right + 1 || clickY < rect.top - 1 || clickY > rect.bottom + 1) throw new Error('visual click target no longer contains the resolved point')
 
   const before = signature(target)
+  const targetRoot = target.getRootNode?.()
+  const replaySelectorSafe = targetRoot === document
+  const learnedSelector = replaySelectorSafe ? stableSelector(target) : ''
+  const selectorQuality = !learnedSelector
+    ? 'none'
+    : target.id || /\[(?:data-testid|data-test|data-cy|data-action|name|title|aria-label)=/.test(learnedSelector)
+      ? 'strong'
+      : /:nth-of-type\(/.test(learnedSelector) || learnedSelector.includes(' > ')
+        ? 'weak'
+        : 'medium'
+  const bindingActionable = isDirectlyActionable(target) || getComputedStyle(target).cursor === 'pointer'
   const descriptor = {
     ok: true,
-    selector: stableSelector(target),
+    selector: learnedSelector,
+    replaySelectorSafe,
+    selectorQuality,
+    bindingActionable,
+    bindingSource: visualAuthority ? 'visual-hit-test-post-click-learning' : 'dom-assisted-coordinate-replay',
+    visualAuthority: visualAuthority === true,
     tag,
     role,
     text: compact(target.innerText || target.textContent || target.getAttribute('aria-label') || target.getAttribute('title') || '').slice(0, 240),

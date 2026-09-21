@@ -36,6 +36,14 @@ describe('resilient browser snapshot layer', () => {
     expect(source).toContain('[title="')
   })
 
+  it('prioritizes actionable CURRENT viewport nodes and traverses open Shadow DOM in MAIN-world fallback', () => {
+    expect(source).toContain('const deepQueryAll = (startRoot, selector) =>')
+    expect(source).toContain('element?.shadowRoot')
+    expect(source).toContain('const priority = element =>')
+    expect(source).toContain('.sort((left, right) => priority(right) - priority(left)')
+    expect(source).toContain("element.getRootNode?.() === document ? stableSelector(element) : undefined")
+  })
+
   it('filters hidden/offscreen duplicates before semantic click resolution', () => {
     expect(source).toContain("style.display === 'none'")
     expect(source).toContain('getBoundingClientRect')

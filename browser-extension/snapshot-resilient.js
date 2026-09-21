@@ -156,6 +156,52 @@ function snapshotMainWorld(args = {}) {
   const unique = selector => {
     try { return document.querySelectorAll(selector).length === 1 } catch { return false }
   }
+  const deepQueryAll = (startRoot, selector) => {
+    const out = []
+    const roots = [startRoot]
+    const seenRoots = new Set()
+    let scanned = 0
+    while (roots.length && seenRoots.size < 64 && scanned < 16000) {
+      const current = roots.shift()
+      if (!current || seenRoots.has(current) || typeof current.querySelectorAll !== 'function') continue
+      seenRoots.add(current)
+      let matches = []
+      let all = []
+      try { matches = [...current.querySelectorAll(selector)] } catch {}
+      try { all = [...current.querySelectorAll('*')] } catch {}
+      out.push(...matches)
+      scanned += all.length
+      for (const element of all) {
+        if (element?.shadowRoot && !seenRoots.has(element.shadowRoot)) roots.push(element.shadowRoot)
+      }
+    }
+    return [...new Set(out)]
+  }
+  const priority = element => {
+    let score = 0
+    if (element.matches?.(BASE)) score += 1000
+    const semantic = role(element)
+    if (semantic) score += 180
+    const tag = element.tagName.toLowerCase()
+    if (tag === 'a' && element.getAttribute('href')) score += 140
+    if (tag === 'button' || (element instanceof HTMLInputElement && ['button', 'submit'].includes(element.type))) score += 160
+    const label = compact(element.getAttribute('aria-label') || element.getAttribute('title')
+      || element.innerText || element.textContent || element.getAttribute('placeholder') || '', 200)
+    if (label.length >= 2 && label.length <= 160) score += 120
+    const rect = element.getBoundingClientRect()
+    const area = Math.max(0, rect.width) * Math.max(0, rect.height)
+    const viewportArea = Math.max(1, (window.innerWidth || 1) * (window.innerHeight || 1))
+    const ratio = area / viewportArea
+    if (ratio <= 0.24) score += 80
+    else if (ratio > 0.65) score -= 240
+    if (element.getRootNode?.() !== document) score += 100
+    return score
+  }
+  const position = element => {
+    const rect = element.getBoundingClientRect()
+    return Math.max(0, Number(rect.top) || 0) * Math.max(1, window.innerWidth || 1)
+      + Math.max(0, Number(rect.left) || 0)
+  }
   const segment = node => {
     const tag = node.tagName.toLowerCase()
     const stableAttrs = ['data-testid', 'data-test', 'data-cy', 'menuid', 'data-menuid', 'data-menu-id', 'data-id', 'data-key', 'name', 'aria-controls']
@@ -208,10 +254,22 @@ function snapshotMainWorld(args = {}) {
     try { root = document.querySelector(args.selector) } catch { throw new Error(`invalid snapshot root selector: ${args.selector}`) }
     if (!root) throw new Error(`snapshot root not found: ${args.selector}`)
   }
-  let nodes
-  try { nodes = [...root.querySelectorAll(`${BASE},${CUSTOM}`)] } catch { nodes = [] }
+  const nodes = deepQueryAll(root, `${BASE},${CUSTOM}`)
   const interactive = nodes.filter(likelyClickable)
-  const shown = interactive.filter(element => args.includeHidden === true || visible(element))
+  const candidateSet = new Set(interactive)
+  const deduped = interactive.filter(element => {
+    let parent = element.parentElement
+    for (let depth = 0; parent instanceof Element && depth < 5; depth += 1, parent = parent.parentElement) {
+      if (!candidateSet.has(parent) || !parent.matches?.(BASE)) continue
+      const childText = compact(element.innerText || element.textContent || '', 180)
+      const parentText = compact(parent.innerText || parent.textContent || '', 180)
+      if (!childText || !parentText || parentText.includes(childText)) return false
+    }
+    return true
+  })
+  const shown = deduped
+    .filter(element => args.includeHidden === true || visible(element))
+    .sort((left, right) => priority(right) - priority(left) || position(left) - position(right))
   const elements = shown.slice(0, max).map(element => {
     const input = element instanceof HTMLInputElement ? element : null
     const sensitive = input !== null && (input.type === 'password' || SENSITIVE.test(input.name) || SENSITIVE.test(input.id) || SENSITIVE.test(input.autocomplete))
@@ -223,7 +281,7 @@ function snapshotMainWorld(args = {}) {
       tag: element.tagName.toLowerCase(),
       role: role(element),
       text: text || undefined,
-      selector: stableSelector(element),
+      selector: element.getRootNode?.() === document ? stableSelector(element) : undefined,
       type: input?.type || undefined,
       name: input?.name || undefined,
       href: element instanceof HTMLAnchorElement ? element.href : undefined,
