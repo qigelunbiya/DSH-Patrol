@@ -2,7 +2,7 @@ const DEFAULT_ATTEMPT_TIMEOUT_MS = 10_000
 const DEFAULT_INITIAL_CONNECT_WAIT_MS = 18_000
 const DEFAULT_REPAIR_WAIT_MS = 8_000
 const DEFAULT_POLL_MS = 100
-const TAB_TRANSITION_TTL_MS = 5_000
+const TAB_TRANSITION_TTL_MS = 30_000
 const TAB_TRANSITION_DELAYS_MS = [0, 60, 140, 300, 600]
 
 const PAGE_BRIDGE_RETRYABLE = new Set([
@@ -15,7 +15,7 @@ const TRANSPORT_REPLAY_SAFE = new Set([
   'captureImageCode', 'count', 'screenshot', 'captchaDemoInfo', 'captchaDemoTarget',
 ])
 
-const TAB_TRANSITION_ACTIONS = new Set(['click', 'semanticClick'])
+const TAB_TRANSITION_ACTIONS = new Set(['click', 'semanticClick', 'visualClick'])
 const TAB_TRANSITION_READS = new Set(['snapshot', 'readPage', 'challengeSignals', 'count', 'screenshot'])
 
 export function createResilientBrowserBridge(service, options = {}) {
