@@ -44,7 +44,7 @@ export function registerPatrolVisualClickTool(
   const outcomes = options.clickOutcomes ?? createPatrolClickOutcomeTracker()
   const tool = defineTool({
     name: 'patrol_visual_click_target',
-    description: 'Screenshot-bound browser teaching click. After patrol_observe(includeImage=true), click the CURRENT screenshot point. visualAuthority=true is reserved for an explicit user request to use vision-only/coordinate-authoritative patrol; otherwise the click uses normal hybrid assistance. After the physical click, Patrol verifies the business result and learns reusable DOM/semantic identity for replay. Never use for image-code/CAPTCHA.',
+    description: 'Screenshot-bound browser teaching click. After patrol_observe(includeImage=true), live teaching always clicks the exact CURRENT screenshot point without DOM/Accessibility relocation. A visualFrameId may be reused repeatedly while the browser remains on the same URL/scroll/zoom/viewport. After the physical click, Patrol verifies the business result and learns reusable DOM/semantic identity for replay. Never use for image-code/CAPTCHA.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
@@ -53,7 +53,7 @@ export function registerPatrolVisualClickTool(
       yRatio: { type: 'number', required: true },
       targetHint: { type: 'string', required: true, description: 'Concrete CURRENT business intent, e.g. 评论输入框/发布按钮/点赞按钮/完整视频标题. It labels post-click verification and learned DOM/semantic binding; it does not authorize or relocate the live screenshot coordinate.' },
       expectedVisualText: { type: 'string', description: 'Exact visible label/title read from the attached CURRENT screenshot. Required for navigation/card/video visual clicks so Patrol can verify the chosen screenshot point belongs to that exact item before trusted input and verify the destination afterwards.' },
-      visualAuthority: { type: 'boolean', description: 'Set true ONLY when the user explicitly requires vision-only/visual-model patrol. True makes the model-selected screenshot coordinate authoritative and forbids pre-click DOM relocation. Omit/false for the default AUTO/HYBRID behavior.' },
+      visualAuthority: { type: 'boolean', description: 'Backward-compatible flag. Live patrol_visual_click_target teaching is coordinate-authoritative regardless of this value; replay may still use learned semantic/selector recovery.' },
       tabId: { type: 'integer' },
       expectedText: { type: 'string' },
       expectationMode: { type: 'string', enum: ['contains', 'not-contains'] },
@@ -70,7 +70,7 @@ export function registerPatrolVisualClickTool(
         throw new Error('xRatio/yRatio must be finite numbers between 0 and 1')
       }
       if (!/^browser-visual-[a-z0-9-]+$/i.test(String(args.frameId ?? '').trim())) {
-        throw new Error('frameId must be the visualFrameId returned by the immediately preceding patrol_observe(includeImage=true), not the screenshot file name/path. If patrol_observe has no visualFrameId, check browser_status: visualClick must be yes.')
+        throw new Error('frameId must be a visualFrameId returned by patrol_observe(includeImage=true), not the screenshot file name/path. Previously returned frameIds remain reusable while the CURRENT tab/URL/scroll/zoom/viewport still match that screenshot.')
       }
       assertSafePersistentText(args.stepName, 'stepName')
       if (typeof args.targetHint !== 'string' || args.targetHint.trim().length < 2) {
@@ -92,7 +92,7 @@ export function registerPatrolVisualClickTool(
 
       const evidence = options.visualEvidence?.consume(String(args.frameId), args.inspectionId)
       if (evidence?.ok === false) {
-        throw new Error(`visual click refused: ${evidence.reason}. A visualFrameId is usable only when patrol_observe(includeImage=true) actually attached the CURRENT screenshot to the model.`)
+        throw new Error(`visual click refused: ${evidence.reason}. A visualFrameId becomes usable when patrol_observe(includeImage=true) actually attaches that screenshot to the model and remains reusable while the browser still matches it.`)
       }
 
       const definition = await loadEditable(store, args.inspectionId, options.maxSteps)
@@ -102,7 +102,11 @@ export function registerPatrolVisualClickTool(
       const beforeState = expectation.expectation === undefined || isVisualNavigation
         ? await capturePageState(runner, exec, args.tabId)
         : undefined
-      const visualAuthority = args.visualAuthority === true
+      // A live patrol_visual_click_target is a visual action by definition.
+      // Keep the screenshot coordinate authoritative even if the model forgets
+      // to pass visualAuthority=true; AUTO/HYBRID decides which tool to choose,
+      // not whether this visual tool may silently relocate its live point.
+      const visualAuthority = true
       const clicked = await runner.dispatch('browser_visual_click', compactObject({
         frameId: args.frameId,
         xRatio: args.xRatio,
@@ -114,9 +118,9 @@ export function registerPatrolVisualClickTool(
       }), exec)
       if (!clicked.ok) {
         return [
-          'Visual fallback failed before Patrol could confirm a physical click, so this attempt does NOT consume the visual physical-click budget.',
+          'Visual click failed before Patrol could confirm a physical click. The same frameId may be retried if CURRENT URL/scroll/zoom/viewport are still unchanged.',
           clicked.error ?? clicked.text ?? 'Unknown browser visual click error',
-          'Capture a fresh patrol_observe(includeImage=true) and retry with its new visualFrameId if useful. There is no fixed visual-screenshot count ceiling; older model-visible image blocks are offloaded and oversized text tool results are pruned before new visual attachments.',
+          'Reuse this frameId freely while the CURRENT page geometry still matches it; capture a new patrol_observe(includeImage=true) only after navigation, scroll, zoom, viewport/layout changes, or when a new screenshot is actually useful.',
         ].filter(Boolean).join('\n')
       }
       outcomes.recordVisualPhysicalClick(args)
