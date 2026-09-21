@@ -480,7 +480,8 @@ describe('Patrol screenshot tab readiness', () => {
   it('gives live visual teaching exact coordinate authority while keeping DOM-assisted replay guarded', async () => {
     const source = await readFile(interactionPath, 'utf8')
     expect(source).toContain("visualAuthority = false")
-    expect(source).toMatch(/targetHint,\r?\n\s+true,/)
+    expect(source).toContain('const visualAuthority = args.visualAuthority === true')
+    expect(source).toMatch(/targetHint,\r?\n\s+visualAuthority,/)
     expect(source).toContain('const resolveHintTarget = (initialTarget, originalX, originalY) =>')
     expect(source).toContain('visualAuthority ? undefined : await interactionResolvePiercedEditablePoint')
     expect(source).toContain('let trustedX = visualAuthority')
