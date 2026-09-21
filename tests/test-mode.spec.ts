@@ -68,7 +68,7 @@ describe('Patrol test-mode guard policy', () => {
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/浏览器控制模式是 visual-grounding/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/UI-TARS/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/coordinate-authoritative/)
-    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/DOM\/Accessibility.*不得.*改写坐标/s)
+    expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toContain('不允许 DOM/Accessibility 在点击前全局搜索后把坐标改写到别的控件')
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/可以直接使用 patrol_click/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/browser_semantic_click \/ browser_click/)
     expect(PATROL_TEST_MODE_OVERRIDE_PROMPT).toMatch(/用户可见语言规则不会因 TEST MODE 放宽/)
