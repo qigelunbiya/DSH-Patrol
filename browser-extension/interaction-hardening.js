@@ -542,54 +542,124 @@ function interactionMainWorldCollectVisualActionCandidates(capture) {
     }
   }
 
+  const roleOf = element => compact(element.getAttribute?.('role') || '').toLowerCase()
+  const tagOf = element => element.tagName?.toLowerCase?.() || ''
+  const typeOf = element => compact(element.getAttribute?.('type') || '').toLowerCase()
+  const isEditable = element => {
+    const tag = tagOf(element)
+    const role = roleOf(element)
+    const type = typeOf(element)
+    return element.isContentEditable === true || tag === 'textarea'
+      || (tag === 'input' && !['button','submit','reset','checkbox','radio','range','file','color','hidden'].includes(type))
+      || role === 'textbox' || role === 'searchbox'
+  }
+  const isStrongAction = element => {
+    const tag = tagOf(element)
+    const role = roleOf(element)
+    const type = typeOf(element)
+    if (tag === 'a') return element.hasAttribute('href')
+    if (tag === 'input') return type !== 'hidden'
+    return strongTags.has(tag)
+      || interactiveRoles.has(role)
+      || element.isContentEditable === true
+      || typeof element.onclick === 'function'
+      || element.hasAttribute('onclick')
+  }
+  const hasStrongActionDescendant = element => {
+    if (!(element instanceof Element)) return false
+    let descendants = []
+    try { descendants = [...element.querySelectorAll('a[href],button,input:not([type="hidden"]),textarea,select,summary,[role="button"],[role="link"],[role="textbox"],[role="checkbox"],[role="radio"],[role="switch"],[contenteditable="true"],[contenteditable="plaintext-only"],[onclick]')] } catch {}
+    return descendants.some(child => child instanceof Element && child !== element)
+  }
+  const within = (element, hit) => element === hit || (hit instanceof Node && element.contains(hit))
+  const safePointFor = (element, rect) => {
+    const insetX = Math.min(Math.max(3, rect.width * 0.16), Math.max(3, rect.width / 2 - 1))
+    const insetY = Math.min(Math.max(3, rect.height * 0.16), Math.max(3, rect.height / 2 - 1))
+    const points = [
+      [rect.left + rect.width / 2, rect.top + rect.height / 2],
+      [rect.left + insetX, rect.top + rect.height / 2],
+      [rect.right - insetX, rect.top + rect.height / 2],
+      [rect.left + rect.width / 2, rect.top + insetY],
+      [rect.left + rect.width / 2, rect.bottom - insetY],
+      [rect.left + insetX, rect.top + insetY],
+      [rect.right - insetX, rect.top + insetY],
+      [rect.left + insetX, rect.bottom - insetY],
+      [rect.right - insetX, rect.bottom - insetY],
+    ]
+    for (const [x,y] of points) {
+      if (x < capLeft || x > capRight || y < capTop || y > capBottom) continue
+      let hit
+      try { hit = document.elementFromPoint(x, y) } catch {}
+      if (!(hit instanceof Element)) continue
+      let shadowHit = hit
+      let guard = 0
+      while (shadowHit instanceof Element && shadowHit.shadowRoot && guard < 8) {
+        const inner = shadowHit.shadowRoot.elementFromPoint?.(x, y)
+        if (!(inner instanceof Element) || inner === shadowHit) break
+        shadowHit = inner
+        guard += 1
+      }
+      if (within(element, shadowHit)) return { x, y, hitTag: tagOf(shadowHit) }
+    }
+    return undefined
+  }
+
   const candidates = []
   const captureArea = capWidth * capHeight
   for (const element of elements) {
-    const tag = element.tagName?.toLowerCase?.() || ''
-    const role = compact(element.getAttribute?.('role') || '').toLowerCase()
+    const tag = tagOf(element)
+    const role = roleOf(element)
+    const type = typeOf(element)
     const style = getComputedStyle(element)
     if (!style || style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) continue
-    const rect = element.getBoundingClientRect()
-    const left = Math.max(capLeft, Number(rect.left))
-    const top = Math.max(capTop, Number(rect.top))
-    const right = Math.min(capRight, Number(rect.right))
-    const bottom = Math.min(capBottom, Number(rect.bottom))
+    const rawRect = element.getBoundingClientRect()
+    const left = Math.max(capLeft, Number(rawRect.left))
+    const top = Math.max(capTop, Number(rawRect.top))
+    const right = Math.min(capRight, Number(rawRect.right))
+    const bottom = Math.min(capBottom, Number(rawRect.bottom))
     const width = right - left
     const height = bottom - top
     if (![left,top,right,bottom,width,height].every(Number.isFinite) || width < 8 || height < 8) continue
-
-    const type = compact(element.getAttribute?.('type') || '').toLowerCase()
     if (tag === 'input' && type === 'hidden') continue
-    const editable = element.isContentEditable === true || tag === 'textarea'
-      || (tag === 'input' && !['button','submit','reset','checkbox','radio','range','file','color'].includes(type))
-      || role === 'textbox' || role === 'searchbox'
-    const nativeAction = strongTags.has(tag) && (tag !== 'a' || element.hasAttribute('href'))
-    const explicitAction = interactiveRoles.has(role)
-      || typeof element.onclick === 'function'
-      || element.hasAttribute('onclick')
-    const tabIndex = Number(element.getAttribute?.('tabindex'))
+
+    const editable = isEditable(element)
+    const strongAction = isStrongAction(element)
     const pointerAction = style.cursor === 'pointer'
     const labeledPointer = pointerAction && Boolean(
       compact(element.getAttribute?.('title') || '')
       || compact(element.getAttribute?.('aria-label') || '')
       || compact(element.textContent || '').slice(0, 80)
     )
-    if (!(editable || nativeAction || explicitAction || labeledPointer || (Number.isFinite(tabIndex) && tabIndex >= 0 && pointerAction))) continue
+    const tabIndex = Number(element.getAttribute?.('tabindex'))
+    const weakPointerOnly = !strongAction && !editable
+      && (labeledPointer || (Number.isFinite(tabIndex) && tabIndex >= 0 && pointerAction))
+    if (!(strongAction || editable || weakPointerOnly)) continue
+
+    // A broad pointer-styled card wrapper must never compete with the real
+    // anchor/button nested inside it. This was the main source of Bilibili
+    // "correct box, no navigation" failures.
+    if (weakPointerOnly && hasStrongActionDescendant(element)) continue
 
     const area = width * height
     if (!editable && area > captureArea * 0.38) continue
     if (!editable && (width > capWidth * 0.88 || height > capHeight * 0.75)) continue
 
+    const clippedRect = { left, top, right, bottom, width, height }
+    const safePoint = safePointFor(element, clippedRect)
+    if (!safePoint) continue
+
     let score = 0
-    if (nativeAction) score += 500
-    if (explicitAction) score += 420
-    if (interactiveRoles.has(role)) score += 350
-    if (editable) score += 300
-    if (pointerAction) score += 180
+    if (tag === 'a' && element.hasAttribute('href')) score += 780
+    else if (tag === 'button') score += 740
+    else if (strongAction) score += 560
+    if (interactiveRoles.has(role)) score += 420
+    if (editable) score += 360
+    if (pointerAction) score += 120
     if (compact(element.getAttribute?.('aria-label') || '')) score += 80
     if (compact(element.getAttribute?.('title') || '')) score += 60
     if (area < 24000) score += 60
     if (area < 8000) score += 40
+    if (weakPointerOnly) score -= 220
 
     candidates.push({
       tag,
@@ -597,11 +667,24 @@ function interactionMainWorldCollectVisualActionCandidates(capture) {
       text: compact(element.innerText || element.textContent || '').slice(0, 120),
       title: compact(element.getAttribute?.('title') || ''),
       ariaLabel: compact(element.getAttribute?.('aria-label') || ''),
+      href: tag === 'a' ? compact(element.getAttribute?.('href') || '') : '',
       id: compact(element.id || ''),
       className: compact([...(element.classList || [])].join(' ')).slice(0, 220),
       left, top, width, height,
       centerX: left + width / 2,
       centerY: top + height / 2,
+      safeX: safePoint.x,
+      safeY: safePoint.y,
+      safePointKind: safePoint.hitTag ? `verified-hit:${safePoint.hitTag}` : 'verified-hit',
+      activationKind: tag === 'a' && element.hasAttribute('href')
+        ? 'anchor'
+        : tag === 'button' || role === 'button'
+          ? 'button'
+          : editable
+            ? 'editable'
+            : weakPointerOnly
+              ? 'pointer-wrapper'
+              : 'interactive',
       score,
     })
   }
@@ -614,8 +697,8 @@ function interactionMainWorldCollectVisualActionCandidates(capture) {
       const iy = Math.max(0, Math.min(existing.top + existing.height, candidate.top + candidate.height) - Math.max(existing.top, candidate.top))
       const intersection = ix * iy
       const smaller = Math.min(existing.width * existing.height, candidate.width * candidate.height)
-      const centersClose = Math.hypot(existing.centerX - candidate.centerX, existing.centerY - candidate.centerY) <= 4
-      return (smaller > 0 && intersection / smaller > 0.90) || centersClose
+      const centersClose = Math.hypot(existing.safeX - candidate.safeX, existing.safeY - candidate.safeY) <= 4
+      return (smaller > 0 && intersection / smaller > 0.94 && existing.activationKind === candidate.activationKind) || centersClose
     })
     if (!duplicate) kept.push(candidate)
     if (kept.length >= 60) break
@@ -624,7 +707,6 @@ function interactionMainWorldCollectVisualActionCandidates(capture) {
   kept.sort((a,b) => a.top - b.top || a.left - b.left)
   return kept.map((candidate,index) => ({ ...candidate, candidateId: `A${index + 1}` }))
 }
-
 async function interactionOverlayActionMapInWorker(source, candidates, captureGeometry, jpegQuality) {
   if (typeof OffscreenCanvas !== 'function' || typeof createImageBitmap !== 'function') return undefined
   if (typeof dataUrlToBlob !== 'function' || typeof blobToDataUrl !== 'function') return undefined
@@ -983,8 +1065,14 @@ async function interactionVisualClick(args) {
       const captureTop = Number(frame.captureClientTop || 0)
       const captureWidth = Number(frame.captureWidth || frame.width || 0)
       const captureHeight = Number(frame.captureHeight || frame.height || 0)
-      xRatio = (Number(selectedCandidate.centerX) - captureLeft) / captureWidth
-      yRatio = (Number(selectedCandidate.centerY) - captureTop) / captureHeight
+      const selectedX = Number.isFinite(Number(selectedCandidate.safeX))
+        ? Number(selectedCandidate.safeX)
+        : Number(selectedCandidate.centerX)
+      const selectedY = Number.isFinite(Number(selectedCandidate.safeY))
+        ? Number(selectedCandidate.safeY)
+        : Number(selectedCandidate.centerY)
+      xRatio = (selectedX - captureLeft) / captureWidth
+      yRatio = (selectedY - captureTop) / captureHeight
     }
     if (!Number.isFinite(xRatio) || !Number.isFinite(yRatio)
       || xRatio < 0 || xRatio > 1 || yRatio < 0 || yRatio > 1) {
@@ -1037,6 +1125,7 @@ async function interactionVisualClick(args) {
         inputTransport: 'chrome-debugger',
       }, frame, xRatio, yRatio, 'bound-current-visual-frame')
     }
+    const visualTabsBefore = await interactionTabBaseline(tabId)
     const clicked = await interactionPerformVisualClick(
       tabId,
       xRatio,
@@ -1050,7 +1139,18 @@ async function interactionVisualClick(args) {
       visualAuthority,
       expectedVisualText,
     )
-    if (requestedCandidateId && clicked && typeof clicked === 'object') clicked.candidateId = requestedCandidateId
+    const opened = await interactionAdoptSingleOpenedTab(tabId, visualTabsBefore)
+    if (opened && clicked && typeof clicked === 'object') {
+      clicked.openedTabId = opened.id
+      clicked.openedTabUrl = typeof opened.url === 'string' ? opened.url : ''
+      clicked.stateEvidence = `visual click opened child tab ${opened.id}${opened.url ? ` (${opened.url})` : ''}`
+    }
+    if (requestedCandidateId && clicked && typeof clicked === 'object') {
+      clicked.candidateId = requestedCandidateId
+      clicked.actionCandidateKind = selectedCandidate?.activationKind || ''
+      clicked.actionCandidateHref = selectedCandidate?.href || ''
+      clicked.actionCandidateSafePoint = selectedCandidate?.safePointKind || ''
+    }
     return interactionVisualClickResult(clicked, frame, xRatio, yRatio, requestedCandidateId ? 'bound-action-map-candidate' : 'bound-current-visual-frame')
   }
 
@@ -2311,6 +2411,11 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
     physicalClickUncertain: clicked.physicalClickUncertain === true,
     ...(typeof clicked.pointerAction === 'string' ? { pointerAction: clicked.pointerAction } : {}),
     ...(typeof clicked.candidateId === 'string' ? { candidateId: clicked.candidateId } : {}),
+    ...(typeof clicked.actionCandidateKind === 'string' && clicked.actionCandidateKind ? { actionCandidateKind: clicked.actionCandidateKind } : {}),
+    ...(typeof clicked.actionCandidateHref === 'string' && clicked.actionCandidateHref ? { actionCandidateHref: clicked.actionCandidateHref } : {}),
+    ...(typeof clicked.actionCandidateSafePoint === 'string' && clicked.actionCandidateSafePoint ? { actionCandidateSafePoint: clicked.actionCandidateSafePoint } : {}),
+    ...(Number.isInteger(clicked.openedTabId) ? { openedTabId: clicked.openedTabId } : {}),
+    ...(typeof clicked.openedTabUrl === 'string' && clicked.openedTabUrl ? { openedTabUrl: clicked.openedTabUrl } : {}),
     ...(Number.isFinite(Number(clicked.snapDistance)) ? { snapDistance: Number(clicked.snapDistance) } : {}),
   }
 }
