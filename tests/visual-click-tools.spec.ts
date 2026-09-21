@@ -81,8 +81,8 @@ describe('browser visual fallback click teaching', () => {
           text: 'visual clicked',
           value: {
             ok: true,
-            xRatio: 0.1609375,
-            yRatio: 0.7666666667,
+            xRatio: 0.17,
+            yRatio: 0.81,
             requestedXRatio: 0.17,
             requestedYRatio: 0.81,
             selectorHint: 'top-frame::.video-like',
@@ -108,8 +108,13 @@ describe('browser visual fallback click teaching', () => {
             requestedClickY: 583,
             resolvedClickX: 218,
             resolvedClickY: 576,
-            visualSnapped: true,
-            snapDistance: 14.8,
+            visualSnapped: false,
+            snapDistance: 0,
+            selectorReplaySafe: true,
+            selectorQuality: 'strong',
+            bindingActionable: true,
+            bindingSource: 'visual-hit-test-post-click-learning',
+            visualAuthority: true,
             targetStateChanged: true,
             stateEvidence: 'clicked visual target DOM state changed',
             transport: 'bound-current-visual-frame',
@@ -129,15 +134,21 @@ describe('browser visual fallback click teaching', () => {
     }, exec)
 
     expect(result).toContain('browser_visual_click')
-    expect(result).toContain('Coordinate corrected before click')
+    expect(result).toContain('exact model-selected screenshot point')
+    expect(result).toContain('Learned reusable DOM/semantic binding')
     const saved = await store.load('visual-click')
     expect(saved.steps).toHaveLength(1)
     expect(saved.steps[0]).toMatchObject({
       tool: 'browser_visual_click',
       arguments: {
-        xRatio: 0.1609375,
-        yRatio: 0.7666666667,
+        xRatio: 0.17,
+        yRatio: 0.81,
         selectorHint: 'top-frame::.video-like',
+        learnedLocatorText: '点赞',
+        learnedLocatorRole: 'button',
+        learnedLocatorTag: 'div',
+        learnedSelectorQuality: 'strong',
+        learnedBindingSource: 'visual-hit-test-post-click-learning',
         urlIdentity: 'https://www.bilibili.com/video/BV-test',
         viewportWidth: 1280,
         viewportHeight: 720,
@@ -208,9 +219,62 @@ describe('browser visual fallback click teaching', () => {
     }
     const result = await tool.execute(args, exec)
     expect(result).toMatch(/NOT recorded/)
-    expect(result).toMatch(/点赞\/like/)
+    expect(result).toMatch(/no meaningful CURRENT target\/page\/DOM state change|post-click hit binding/i)
     expect((await store.load('visual-click')).steps).toHaveLength(0)
     expect(outcomes.unverifiedPhysicalClicks(args)).toBe(1)
+  })
+
+  it('records a verified visual navigation even when no reusable DOM binding can be learned', async () => {
+    let reads = 0
+    const { store, tool, exec } = await setup(async (name) => {
+      if (name === 'browser_read_page') {
+        reads += 1
+        const url = reads === 1 ? 'https://www.bilibili.com/' : 'https://www.bilibili.com/video/BV-vision'
+        return { ok: true, text: 'page', value: { ok: true, url, text: 'page' } }
+      }
+      if (name === 'browser_snapshot') {
+        const url = reads <= 1 ? 'https://www.bilibili.com/' : 'https://www.bilibili.com/video/BV-vision'
+        return { ok: true, text: 'snapshot', value: { ok: true, url, elements: [] } }
+      }
+      if (name === 'browser_visual_click') return {
+        ok: true,
+        text: 'visual clicked',
+        value: {
+          ok: true,
+          xRatio: 0.42, yRatio: 0.55,
+          requestedXRatio: 0.42, requestedYRatio: 0.55,
+          selectorReplaySafe: false,
+          bindingActionable: false,
+          bindingSource: 'visual-hit-test-post-click-learning',
+          visualAuthority: true,
+          urlIdentity: 'https://www.bilibili.com/',
+          viewportWidth: 1280, viewportHeight: 720,
+          captureClientLeft: 0, captureClientTop: 0, captureWidth: 1280, captureHeight: 720,
+          captureMode: 'cdp-css-visual-viewport',
+          scrollX: 0, scrollY: 0,
+          targetTag: 'div',
+          targetText: '',
+          targetStateChanged: false,
+        },
+      }
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    const result = await tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '打开截图中选中的视频',
+      targetHint: '截图中“我们无法找到外星文明”视频卡片',
+      frameId: 'browser-visual-current',
+      xRatio: 0.42,
+      yRatio: 0.55,
+    }, exec)
+
+    expect(result).toContain('No trustworthy DOM binding was available')
+    const saved = await store.load('visual-click')
+    expect(saved.steps).toHaveLength(1)
+    expect((saved.steps[0] as any).arguments.learnedLocatorText).toBeUndefined()
+    expect((saved.steps[0] as any).arguments.selectorHint).toBeUndefined()
+    expect((saved.steps[0] as any).arguments.xRatio).toBe(0.42)
   })
 
   it('does not record or auto-retry when a trusted physical click outcome is uncertain', async () => {
@@ -357,7 +421,7 @@ describe('browser visual fallback click teaching', () => {
     }
     const result = await tool.execute(args, exec)
     expect(result).toMatch(/NOT recorded/)
-    expect(result).toMatch(/whole bili-comments container|bili-comments/)
+    expect(result).toMatch(/no meaningful CURRENT target\/page\/DOM state change|comment editor/i)
     expect((await store.load('visual-click')).steps).toHaveLength(0)
     expect(outcomes.unverifiedPhysicalClicks(args)).toBe(1)
   })
