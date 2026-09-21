@@ -208,7 +208,7 @@ export function registerTools(ctx, bridge, config = {}) {
         scrollX: optNum, scrollY: optNum, viewportWidth: optNum, viewportHeight: optNum, viewportScale: optNum,
         captureClientLeft: optNum, captureClientTop: optNum, captureWidth: optNum, captureHeight: optNum, captureMode: optStr,
         expectedTag: optStr, expectedRole: optStr, expectedTitle: optStr, expectedAriaLabel: optStr,
-        targetHint: optStr, targetTextHint: optStr, targetIdHint: optStr, targetClassHint: optStr,
+        targetHint: optStr, expectedVisualText: optStr, targetTextHint: optStr, targetIdHint: optStr, targetClassHint: optStr,
         learnedLocatorText: optStr, learnedLocatorRole: optStr, learnedLocatorTag: optStr,
         learnedSelectorQuality: optStr, learnedBindingSource: optStr, teachingControlMode: optStr, visualAuthority: optBool, tabId: optInt,
       },
