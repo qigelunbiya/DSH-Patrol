@@ -939,6 +939,17 @@ describe('Patrol screenshot tab readiness', () => {
     expect(shot.captureScale).toBeCloseTo(1536 / 2880)
   })
 
+  it('enforces the final encoded JPEG pixel budget after every capture branch', async () => {
+    const source = await readFile(interactionPath, 'utf8')
+    const finalGuard = source.indexOf('Final encoded-raster postcondition')
+    const viewportRead = source.indexOf('const after = await interactionViewportState(tabId)')
+    expect(finalGuard).toBeGreaterThan(0)
+    expect(viewportRead).toBeGreaterThan(finalGuard)
+    expect(source.slice(finalGuard, viewportRead)).toContain('interactionResizeCapturedDataUrlInWorker(dataUrl, requestedMaxWidth, quality)')
+    expect(source.slice(finalGuard, viewportRead)).toContain('Number(bounded.width) > requestedMaxWidth + 1')
+    expect(source.slice(finalGuard, viewportRead)).toContain('could not enforce the requested visual screenshot pixel budget')
+  })
+
   it('keeps an extension-worker OffscreenCanvas fallback when page MAIN-world resize is unavailable', async () => {
     const source = await readFile(interactionPath, 'utf8')
     expect(source).toContain('interactionResizeCapturedDataUrlInWorker')
