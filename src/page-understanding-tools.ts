@@ -60,7 +60,7 @@ export const PATROL_PAGE_UNDERSTANDING_PROMPT = `DSH Patrol 页面理解与执�
 - 浏览器操作方法首先服从用户最近一条明确指令：用户未指定方法时，DOM/semantic、CURRENT selector、浏览器视觉都是可选执行方法，不规定固定优先级，按 CURRENT 证据选择最可靠的方法；用户明确要求只用视觉时，业务动作必须来自 model-visible CURRENT screenshot，并给 patrol_visual_click_target 传 visualAuthority=true，禁止静默改用 DOM 点击；用户明确禁止视觉时，不得 includeImage=true、不得 patrol_visual_click_target，也不得猜截图坐标。patrol_analyze_step 是可选结构化证据工具，不是视觉调用的前置许可。
 - patrol_analyze_step 永远不写 Runbook。需要表格行身份、弹窗上下文、iframe 或同名目标消歧时，它会把“行身份 + 行内动作”绑定，例如“目标地址 + RDP”。不要把分析器给出的 selector 再扩写成更长的 nth-of-type，也不要在没有新证据时连续猜 selector。
 - selector 只接受当前浏览器 querySelector 层支持的 CSS。严禁 jQuery/Playwright/XPath 方言：:contains(...)、:has-text(...)、text=...、//...、.//...、xpath=...。locatorText 已知时优先只传 locatorText 给 patrol_click_target；若 locatorText 已提供但 selector hint 是非法方言，运行时会丢弃这个可选 hint 而继续语义定位。
-- 一种方法失败不会锁死其他方法。DOM/semantic 未命中后可以切换视觉，视觉未命中后也可以回到 DOM/semantic；不要为了满足固定次数而重复 analyze/read/snapshot 或编造 CSS。已经有证据确认开关型业务点击成功后，不要再次点击同一目标把状态反向切回。
+- 一种方法失败不会锁死其他方法。DOM/semantic 未命中后可以切换视觉，视觉未命中后也可以回到 DOM/semantic；不要为了满足固定次数而重复 analyze/read/snapshot 或编造 CSS。页面规划器不再使用视觉点击次数、失败次数或物理点击预算做 HARD STOP；需要继续尝试时可以继续。已经有证据确认开关型业务点击成功后，模型应根据 CURRENT 状态主动避免再次点击把状态反向切回，而不是依赖次数锁死工具。
 - patrol_visual_click_target 只能使用 patrol_observe(includeImage=true) 真正附加到模型上下文的 CURRENT image：observe 必须明确显示 MODEL-VISIBLE image attached、visualClickReady=true，并返回 visualFrameId（渲染为 Visual click frame READY）；DOM/OCR-only observation 不产生可用视觉点击凭证，严禁凭文本猜坐标。AUTO/HYBRID 只决定“是否选择视觉工具”，一旦调用 patrol_visual_click_target，现场教学点击始终以模型选择的截图坐标为物理权威，DOM/Accessibility 不得在点击前吸附或改写坐标；visualAuthority 参数仅保留兼容。visualFrameId 不再按时间或点击次数失效，同一 frame 可重复使用；但底层每次仍核对 tab、URL、scroll、zoom、viewport，页面几何变化后必须重新观察。视频/卡片/详情导航还必须提供 expectedVisualText=截图中实际可见的完整标题，并在跳转后复核，不能只凭“click 已发出”宣称成功。
 - 视觉截图不设固定次数上限。模型可以在页面/滚动/布局变化后按需重新 patrol_observe(includeImage=true) 获取新的 CURRENT frame；每次新视觉附件前 Patrol 会通过 Harness image/offload 把旧工具图片移出模型可见输入，并单独裁剪过大的文本工具结果，同时保持 DPR-aware 的有界截图尺寸，避免旧图片堆积把本地 Qwen 推到 CUDA OOM / 503。不要无状态变化地机械重复同一张截图，但不得因为“已经看过两次”而阻止真正需要的新视觉观察。
 - 教学成功后的 browser_visual_click 会反向学习 visual hit 对应的 semantic locator / stable selector；重放顺序是 learned semantic → learned selector → guarded visual geometry。用户明确要求视觉专用的教学轮次可以纯视觉完成复杂 UI，但未来无人值守重放仍优先复用已学习到的稳定语义/DOM 身份。所有方法都必须以 CURRENT 业务状态验证为准，不能仅因为工具发出了 click 就宣称成功。
@@ -112,22 +112,16 @@ function createStrategyNeutralPlanningGuard(outcomes: PatrolClickOutcomeTracker)
     }
 
     if (name === 'patrol_visual_click_target') {
+      // Visual teaching/recovery is intentionally not count-gated. A model may
+      // reuse the same CURRENT frame and retry coordinates as many times as
+      // needed. Safety comes from CURRENT page/geometry validation plus
+      // post-click business-state verification, not from an attempt counter.
       alignBusinessState(state, businessKey(args.stepName, undefined))
-      if (toggleLikeBusinessAction(args)
-        && outcomes.visualPhysicalClicks(args) >= 1
-        && outcomes.unverifiedPhysicalClicks(args) === 0) {
-        return strategyHardStop('这个开关型业务目标已经有一次已验证的视觉物理点击，禁止重复点击以免把状态反向切回')
-      }
       return undefined
     }
 
     if (CLICK_TOOLS.has(name)) {
       alignBusinessState(state, businessKey(args.stepName, args.locatorText))
-      if (toggleLikeBusinessAction(args)
-        && outcomes.visualPhysicalClicks(args) >= 1
-        && outcomes.unverifiedPhysicalClicks(args) === 0) {
-        return strategyHardStop('这个开关型业务目标已经有一次已验证的视觉物理点击，禁止重复点击以免把状态反向切回')
-      }
       return undefined
     }
 
@@ -159,7 +153,7 @@ function unsupportedSelectorSyntax(name: string, args: Record<string, unknown>):
     'DSH Patrol selector 语法保护：本次调用未执行。',
     `当前浏览器 selector 层只接受 CSS，拒绝不支持的 selector ${JSON.stringify(selector)}。`,
     '不要使用 :contains(...), :has-text(...), text=..., XPath //..././/...；请使用 CURRENT snapshot/analyze 返回的 CSS（例如唯一的 [title="..."]）。',
-    '该非法 selector 不计入业务点击的两次策略预算。',
+    '该非法 selector 不会消耗或锁死任何视觉/业务点击次数；修正定位后可继续尝试。',
   ].join(' ')
 }
 
@@ -167,13 +161,6 @@ function alignBusinessState(state: PlanningGuardState, key: string): void {
   if (!key || state.businessKey === key) return
   if (state.businessKey && (state.businessKey.includes(key) || key.includes(state.businessKey))) return
   state.businessKey = key
-}
-
-function toggleLikeBusinessAction(args: Record<string, unknown>): boolean {
-  const text = [args.stepName, args.locatorText, args.targetHint]
-    .filter(value => typeof value === 'string')
-    .join(' ')
-  return /(点赞|取消点赞|收藏|取消收藏|关注|取消关注|订阅|取消订阅|开关|勾选|取消勾选|\blike\b|\bfavorite\b|\bfollow\b|\bsubscribe\b|\btoggle\b|checkbox)/i.test(text)
 }
 
 function businessKey(primary: unknown, locator: unknown): string {
@@ -185,10 +172,6 @@ function businessKey(primary: unknown, locator: unknown): string {
     .replace(/(?:节点|菜单项|菜单|选项)$/g, '')
     .replace(/\d{6,}/g, '#')
     .slice(0, 220)
-}
-
-function strategyHardStop(reason = '同一业务点击的安全恢复预算已耗尽'): string {
-  return `DSH Patrol 页面规划器 HARD STOP：${reason}。本次操作未继续执行。禁止继续 DOM selector 或视觉坐标尝试；请报告当前页面无法安全完成该业务目标。`
 }
 
 export function registerPatrolPageUnderstandingTools(
