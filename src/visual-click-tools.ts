@@ -7,7 +7,7 @@ import { stepExecutionNotes } from './step-notes.js'
 import { installTeachingRunbookFilter } from './teaching-runbook-filter.js'
 import type { PatrolRunner } from './runner.js'
 import { assertPersistedTaskChecklist, type PatrolStore } from './store.js'
-import type { InspectionDefinition, InspectionStep, JsonObject, StepCondition, TextExpectation, ToolStep } from './types.js'
+import type { InspectionDefinition, InspectionStep, JsonObject, JsonValue, StepCondition, TextExpectation, ToolStep } from './types.js'
 import type { PatrolVisualEvidenceRegistry } from './visual-evidence-registry.js'
 
 const TEXT_OUTPUT = {
@@ -239,6 +239,21 @@ export function registerPatrolVisualClickTool(
         : undefined
       const learnedLocatorRole = learnedLocatorText === undefined ? undefined : objectString(clicked.value, 'targetRole')
       const learnedLocatorTag = learnedLocatorText === undefined ? undefined : objectString(clicked.value, 'targetTag')
+      const replayPlan = visualReplayPlan(compactObject({
+        learnedLocatorText,
+        learnedLocatorRole,
+        learnedLocatorTag,
+        selectorHint: selectorReplaySafe ? selectorHint : undefined,
+        xRatio: effectiveXRatio,
+        yRatio: effectiveYRatio,
+      }) as {
+        learnedLocatorText?: string
+        learnedLocatorRole?: string
+        learnedLocatorTag?: string
+        selectorHint?: string
+        xRatio: number
+        yRatio: number
+      })
       const stepArguments = compactObject({
         // Live teaching persists the exact screenshot point selected by vision.
         // DOM/semantic identity is learned from that hit afterwards and is tried
@@ -251,6 +266,7 @@ export function registerPatrolVisualClickTool(
         learnedLocatorTag,
         learnedSelectorQuality: objectString(clicked.value, 'selectorQuality'),
         learnedBindingSource: objectString(clicked.value, 'bindingSource'),
+        replayPlan,
         teachingControlMode: options.browserControlMode,
         urlIdentity,
         viewportWidth,
@@ -461,6 +477,35 @@ function learnedVisualLocatorText(value: unknown): string | undefined {
   return undefined
 }
 
+function visualReplayPlan(input: {
+  learnedLocatorText?: string
+  learnedLocatorRole?: string
+  learnedLocatorTag?: string
+  selectorHint?: string
+  xRatio: number
+  yRatio: number
+}): JsonObject {
+  const fallback = {
+    tool: 'browser_visual_click',
+    mode: 'guarded-visual-coordinate',
+    xRatio: input.xRatio,
+    yRatio: input.yRatio,
+  }
+  const secondary = input.selectorHint === undefined
+    ? undefined
+    : { tool: 'browser_click', selector: input.selectorHint }
+  const primary = input.learnedLocatorText === undefined
+    ? secondary ?? fallback
+    : compactObject({
+        tool: 'browser_visual_click',
+        mode: 'learned-semantic',
+        learnedLocatorText: input.learnedLocatorText,
+        learnedLocatorRole: input.learnedLocatorRole,
+        learnedLocatorTag: input.learnedLocatorTag,
+      })
+  return compactObject({ primary, secondary, fallback })
+}
+
 async function loadEditable(store: PatrolStore, inspectionId: string, maxSteps: number): Promise<InspectionDefinition> {
   const definition = await store.load(inspectionId)
   if (definition.status !== 'draft') throw new Error(`inspection ${definition.id} is ${definition.status}, not draft; call patrol_begin_edit before teaching a visual click`)
@@ -485,7 +530,7 @@ function optionalCondition(sourceStepId: string | undefined, expectedText: strin
   if (sourceStepId === undefined || expectedText === undefined) throw new Error('conditional steps require both conditionSourceStepId and conditionExpectedText')
   return { when: { sourceStepId, mode: mode === 'not-contains' ? 'not-contains' : 'contains', value: expectedText, caseSensitive: false } }
 }
-function compactObject(value: Record<string, string | number | boolean | undefined>): JsonObject {
+function compactObject(value: Record<string, JsonValue | undefined>): JsonObject {
   const out: JsonObject = {}
   for (const [key, child] of Object.entries(value)) if (child !== undefined) out[key] = child
   return out

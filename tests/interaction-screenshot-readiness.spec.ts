@@ -1172,4 +1172,112 @@ describe('Patrol screenshot tab readiness', () => {
     })
   })
 
+  it('learns the clickable ancestor when the exact visual point lands on an inner icon/text node', async () => {
+    const source = await readFile(interactionPath, 'utf8')
+    const events: string[] = []
+    class FakeMouseEvent {
+      type: string
+      constructor(type: string) { this.type = type }
+    }
+    const sandbox: Record<string, any> = {
+      console,
+      sendDomCommand: async () => ({ ok: true }),
+      handleCommand: async () => ({ ok: true }),
+      resolveTabId: async (tabId: number | undefined) => tabId ?? 7,
+      tabInfo: (tab: any) => ({ ...tab }),
+      safeError: (error: unknown) => error instanceof Error ? error.message : String(error),
+      parseFrameSelector: (selector: string) => ({ selector, topFrame: true }),
+      patrolFrames: async () => [],
+      stableFrameUrl: (value: string) => value,
+      setTimeout: (callback: () => void) => { callback(); return 0 },
+      innerWidth: 1000,
+      innerHeight: 800,
+      PointerEvent: class PointerEvent extends FakeMouseEvent {},
+      MouseEvent: FakeMouseEvent,
+      Element: class Element {},
+      HTMLInputElement: class HTMLInputElement {},
+      HTMLTextAreaElement: class HTMLTextAreaElement {},
+      ShadowRoot: class ShadowRoot {},
+      document: undefined,
+      getComputedStyle: (element: any) => element.style ?? { display: 'block', visibility: 'visible', opacity: 1, cursor: 'default' },
+    }
+    sandbox.window = sandbox
+    class FakeElement extends sandbox.Element {
+      tagName: string
+      id = ''
+      parentElement: any = null
+      children: any[] = []
+      classList: any
+      style: any
+      attrs: Record<string, string>
+      textContent = ''
+      innerText = ''
+      isConnected = true
+      constructor(tag: string, attrs: Record<string, string> = {}, text = '') {
+        super()
+        this.tagName = tag.toUpperCase()
+        this.attrs = attrs
+        this.id = attrs.id ?? ''
+        this.textContent = text
+        this.innerText = text
+        this.style = { display: 'block', visibility: 'visible', opacity: 1, cursor: attrs.cursor ?? 'default' }
+        const classes = (attrs.class ?? '').split(/\s+/).filter(Boolean)
+        this.classList = { [Symbol.iterator]: function* () { yield* classes }, contains: (name: string) => classes.includes(name) }
+      }
+      getAttribute(name: string) { return this.attrs[name] ?? null }
+      matches(selector: string) {
+        if (selector.includes(':disabled')) return false
+        if (selector.includes('[aria-disabled="true"]')) return this.attrs['aria-disabled'] === 'true'
+        if (selector.includes('button') && this.tagName.toLowerCase() === 'button') return true
+        if (selector.includes('[role="button"]') && this.attrs.role === 'button') return true
+        return false
+      }
+      closest(selector: string) {
+        let node: any = this
+        while (node) {
+          if (node.matches(selector)) return node
+          node = node.parentElement
+        }
+        return null
+      }
+      getBoundingClientRect() {
+        if (this.tagName.toLowerCase() === 'button') return { left: 700, top: 590, right: 800, bottom: 640, width: 100, height: 50 }
+        return { left: 735, top: 605, right: 765, bottom: 625, width: 30, height: 20 }
+      }
+      getRootNode() { return sandbox.document }
+      focus() {}
+      dispatchEvent(event: any) { events.push(`${this.tagName.toLowerCase()}:${event.type}`); return true }
+      click() { events.push(`${this.tagName.toLowerCase()}:click`); this.attrs['data-state'] = 'clicked' }
+    }
+    const button = new FakeElement('button', { class: 'comment-publish', title: '发布', 'aria-label': '发布' }, '发布')
+    const icon = new FakeElement('span', { class: 'button-icon' }, '')
+    icon.parentElement = button
+    button.children = [icon]
+    sandbox.document = {
+      documentElement: new FakeElement('html'),
+      elementFromPoint: () => icon,
+      querySelectorAll: (selector: string) => selector === 'button.comment-publish' ? [button] : [],
+    }
+    vm.runInNewContext(source, sandbox, { filename: 'interaction-hardening.js' })
+
+    const result = await sandbox.interactionMainWorldVisualClick(750, 615, '', '', '', '', false, '蓝色发布按钮', true)
+
+    expect(events).toContain('button:click')
+    expect(result).toMatchObject({
+      ok: true,
+      selector: 'button.comment-publish',
+      selectorQuality: 'medium',
+      bindingActionable: true,
+      tag: 'button',
+      role: 'button',
+      text: '发布',
+      title: '发布',
+      ariaLabel: '发布',
+      targetStateChanged: true,
+      clickX: 750,
+      clickY: 615,
+      visualSnapped: false,
+    })
+  })
+
 })

@@ -156,6 +156,25 @@ describe('browser visual fallback click teaching', () => {
         learnedLocatorTag: 'div',
         learnedSelectorQuality: 'strong',
         learnedBindingSource: 'visual-hit-test-post-click-learning',
+        replayPlan: {
+          primary: {
+            tool: 'browser_visual_click',
+            mode: 'learned-semantic',
+            learnedLocatorText: '点赞',
+            learnedLocatorRole: 'button',
+            learnedLocatorTag: 'div',
+          },
+          secondary: {
+            tool: 'browser_click',
+            selector: 'top-frame::.video-like',
+          },
+          fallback: {
+            tool: 'browser_visual_click',
+            mode: 'guarded-visual-coordinate',
+            xRatio: 0.17,
+            yRatio: 0.81,
+          },
+        },
         teachingControlMode: 'visual-grounding',
         urlIdentity: 'https://www.bilibili.com/video/BV-test',
         viewportWidth: 1280,

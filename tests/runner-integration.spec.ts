@@ -329,6 +329,59 @@ describe('PatrolRunner integration safety', () => {
     expect(calls).toEqual(['browser_snapshot', 'browser_click', 'browser_read_page'])
   })
 
+  it('keeps visual replayPlan in the Runbook but strips it before dispatching browser_visual_click', async () => {
+    const calls: Array<{ name: string; arguments: any }> = []
+    const { runner, exec } = await setup(async input => {
+      calls.push({ name: input.name, arguments: input.arguments })
+      if (input.name === 'browser_visual_click') {
+        return {
+          isError: false,
+          value: { ok: true, xRatio: 0.25, yRatio: 0.5 },
+          content: [{ type: 'text', text: 'visual clicked' }],
+        }
+      }
+      throw new Error(`unexpected tool ${input.name}`)
+    })
+
+    const replayPlan = {
+      primary: { tool: 'browser_visual_click', mode: 'learned-semantic', learnedLocatorText: '发布' },
+      secondary: { tool: 'browser_click', selector: 'top-frame::button.publish' },
+      fallback: { tool: 'browser_visual_click', mode: 'guarded-visual-coordinate', xRatio: 0.25, yRatio: 0.5 },
+    }
+    const def = definition([{
+      id: 'step-001',
+      kind: 'tool',
+      name: '点击发布按钮',
+      tool: 'browser_visual_click',
+      arguments: {
+        learnedLocatorText: '发布',
+        selectorHint: 'top-frame::button.publish',
+        urlIdentity: 'https://example.com',
+        viewportWidth: 1000,
+        viewportHeight: 800,
+        scrollX: 0,
+        scrollY: 0,
+        xRatio: 0.25,
+        yRatio: 0.5,
+        replayPlan,
+      },
+      recordedAt: at,
+    }])
+
+    const { report } = await runner.run(def, exec)
+
+    expect(report.status).toBe('passed')
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.arguments).toMatchObject({
+      learnedLocatorText: '发布',
+      selectorHint: 'top-frame::button.publish',
+      xRatio: 0.25,
+      yRatio: 0.5,
+    })
+    expect(calls[0]?.arguments.replayPlan).toBeUndefined()
+    expect((def.steps[0] as any).arguments.replayPlan).toEqual(replayPlan)
+  })
+
   it('waits for page/bridge settling and recovers a stale business click from the human checklist', async () => {
     const calls: string[] = []
     let snapshots = 0

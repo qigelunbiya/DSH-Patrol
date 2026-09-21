@@ -766,6 +766,9 @@ function missingProviderResult(tool: string): DispatchResult {
 
 function prepareRuntimeArguments(step: ToolStep, previousResults: readonly StepRunResult[]): JsonObject {
   let runtime = resolveArtifactReferences(step.arguments, previousResults)
+  if (step.tool === 'browser_visual_click' && 'replayPlan' in runtime) {
+    runtime = Object.fromEntries(Object.entries(runtime).filter(([key]) => key !== 'replayPlan')) as JsonObject
+  }
 
   if (step.tool !== 'browser_type_credential') {
     const refs: string[] = []
