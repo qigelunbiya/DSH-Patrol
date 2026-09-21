@@ -12,8 +12,6 @@ const INTERACTION_TOP_FRAME_PREFIX = 'top-frame::'
 const INTERACTION_FRAME_PREFIX = 'frame-url('
 const INTERACTION_SCREENSHOT_READY_TIMEOUT_MS = 3000
 const INTERACTION_SCREENSHOT_READY_POLL_MS = 100
-const INTERACTION_VISUAL_FRAME_TTL_MS = 120000
-const INTERACTION_VISUAL_FRAME_MAX = 12
 const interactionVisualFrames = new Map()
 let interactionVisualFrameSequence = 0
 const interactionPreviousSendDomCommand = sendDomCommand
@@ -434,9 +432,11 @@ function interactionSameViewport(left, right, tolerance = 1) {
 }
 
 function interactionPruneVisualFrames() {
-  const now = Date.now()
+  // Visual frames intentionally have no time-to-live or use-count limit.
+  // CURRENT-page freshness is enforced at click time by tab + URL + scroll +
+  // zoom + viewport equality, so an unchanged screenshot can be retried freely.
   for (const [id, frame] of interactionVisualFrames) {
-    if (!frame || now - Number(frame.createdAt || 0) > INTERACTION_VISUAL_FRAME_TTL_MS) interactionVisualFrames.delete(id)
+    if (!frame || !Number.isInteger(frame.tabId)) interactionVisualFrames.delete(id)
   }
 }
 
@@ -508,11 +508,6 @@ function interactionRegisterVisualFrame(tabId, before, after, captureGeometry) {
     captureMode: String(geometry.captureMode || 'unknown'),
   }
   interactionVisualFrames.set(frameId, frame)
-  while (interactionVisualFrames.size > INTERACTION_VISUAL_FRAME_MAX) {
-    const oldest = interactionVisualFrames.keys().next().value
-    if (!oldest) break
-    interactionVisualFrames.delete(oldest)
-  }
   return {
     visualFrameId: frameId,
     urlIdentity: frame.urlIdentity,
@@ -544,7 +539,7 @@ async function interactionVisualClick(args) {
     const targetHint = typeof args.targetHint === 'string' ? args.targetHint.trim() : ''
     if (targetHint.length < 2) throw new Error('live visualClick requires targetHint as a business-intent label for post-click DOM/semantic learning and verification')
     const frame = interactionVisualFrames.get(frameId)
-    if (!frame) throw new Error('browser visual frame is stale or unavailable; capture a fresh patrol_observe(includeImage=true)')
+    if (!frame) throw new Error('browser visual frame is unavailable; use a visualFrameId previously returned by patrol_observe(includeImage=true)')
     if (frame.tabId !== tabId) throw new Error('browser visual frame belongs to a different tab; capture a fresh visual observation')
     const current = await interactionViewportState(tabId)
     if (!interactionSameViewport(frame, current, 2)) {
@@ -569,7 +564,6 @@ async function interactionVisualClick(args) {
       visualAuthority,
       expectedVisualText,
     )
-    interactionVisualFrames.delete(frameId)
     return interactionVisualClickResult(clicked, frame, xRatio, yRatio, 'bound-current-visual-frame')
   }
 
