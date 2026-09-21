@@ -60,6 +60,9 @@ describe('Patrol page understanding planner', () => {
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).not.toMatch(/DOM 永远优先|视觉像素只允许作为最后兜底/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/不规定固定优先级/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/可以直接 patrol_observe\(includeImage=true\)/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/coordinate-authoritative visual grounding/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/禁止在点击前用 DOM\/Accessibility 全局搜索把视觉点改写到另一个控件/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/learned semantic.*learned selector.*归一化 xRatio\/yRatio/s)
   })
 
   it('does not hard-stop method switching after unverified physical clicks', () => {
