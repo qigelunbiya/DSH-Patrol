@@ -29,6 +29,7 @@ interface StateChangeVerification {
 export interface PatrolVisualClickOptions {
   maxSteps: number
   clickOutcomes?: PatrolClickOutcomeTracker
+  browserControlMode?: 'visual-grounding' | 'hybrid'
 }
 
 export function registerPatrolVisualClickTool(
@@ -83,11 +84,13 @@ export function registerPatrolVisualClickTool(
       const definition = await loadEditable(store, args.inspectionId, options.maxSteps)
       const expectation = optionalExpectation(args.expectedText, args.expectationMode, args.caseSensitive)
       const beforeState = expectation.expectation === undefined ? await capturePageState(runner, exec, args.tabId) : undefined
+      const visualAuthority = options.browserControlMode === 'visual-grounding'
       const clicked = await runner.dispatch('browser_visual_click', compactObject({
         frameId: args.frameId,
         xRatio: args.xRatio,
         yRatio: args.yRatio,
         targetHint: args.targetHint,
+        visualAuthority,
         tabId: args.tabId,
       }), exec)
       if (!clicked.ok) {
@@ -209,6 +212,7 @@ export function registerPatrolVisualClickTool(
         learnedLocatorTag,
         learnedSelectorQuality: objectString(clicked.value, 'selectorQuality'),
         learnedBindingSource: objectString(clicked.value, 'bindingSource'),
+        teachingControlMode: options.browserControlMode,
         urlIdentity,
         viewportWidth,
         viewportHeight,
@@ -262,7 +266,7 @@ export function registerPatrolVisualClickTool(
         `Executed and recorded ${step.id} (browser_visual_click) after CURRENT visual-state verification.`,
         `Visual point saved for replay: xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; model-requested=(${args.xRatio.toFixed(4)}, ${args.yRatio.toFixed(4)}); capture=${captureWidth ?? viewportWidth}x${captureHeight ?? viewportHeight} CSS px at (${captureClientLeft ?? 0}, ${captureClientTop ?? 0}).`,
         objectBoolean(clicked.value, 'visualAuthority') === true
-          ? 'Live teaching used the exact model-selected screenshot point; DOM/Shadow-DOM did not relocate it before physical input.'
+          ? 'TEST visual-grounding used the exact model-selected screenshot point; DOM/Shadow-DOM did not relocate it before physical input.'
           : objectBoolean(clicked.value, 'visualSnapped') === true
             ? `Replay coordinate was corrected against CURRENT learned evidence by ${objectNumber(clicked.value, 'snapDistance')?.toFixed(1) ?? '?'} CSS px.`
             : 'Replay used the recorded visual geometry without correction.',
