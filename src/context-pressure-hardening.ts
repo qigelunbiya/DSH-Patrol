@@ -413,9 +413,9 @@ export function registerPatrolContextPressureGuard(ctx: Context): () => void {
           retryAttempt: state.attempts,
         })
         ctx.logger.warn(
-          `[dsh-patrol/context-pressure] recovery exhausted route=${route.provider}/${route.model} turn=${payload.turn} step=${payload.step}`,
+          `[dsh-patrol/context-pressure] recovery exhausted route=${route.provider}/${route.model} turn=${payload.turn} step=${payload.step}; terminating Patrol recovery without delegating to generic retries`,
         )
-        return next()
+        return undefined
       }
 
       // Failed-request recovery must not call compaction.summarize() on the same
@@ -436,8 +436,8 @@ export function registerPatrolContextPressureGuard(ctx: Context): () => void {
           sameStepRecentOom,
           retryAttempt: state.attempts,
         })
-        ctx.logger.warn('[dsh-patrol/context-pressure] raw OOM had no model-free reduction; preserving original failure instead of blind retry')
-        return next()
+        ctx.logger.warn('[dsh-patrol/context-pressure] raw OOM had no model-free reduction; preserving original failure without delegating to a generic blind retry')
+        return undefined
       }
 
       state.attempts += 1
