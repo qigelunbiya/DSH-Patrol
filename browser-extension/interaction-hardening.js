@@ -209,6 +209,28 @@ async function interactionScreenshot(args) {
     }
   }
 
+  // Final encoded-raster postcondition. Do not trust a particular capture
+  // branch (or an older DPR assumption) to have honored maxWidth: decode the
+  // exact JPEG that will be returned to Patrol and enforce the physical-pixel
+  // budget one last time inside the extension worker. This makes the contract
+  // observable rather than advisory.
+  if (format === 'jpeg' && Number.isFinite(requestedMaxWidth) && requestedMaxWidth >= 480) {
+    const bounded = await interactionResizeCapturedDataUrlInWorker(dataUrl, requestedMaxWidth, quality)
+    if (!bounded?.dataUrl) {
+      throw new Error('Patrol could not enforce the requested visual screenshot pixel budget in the extension worker')
+    }
+    if (Number(bounded.width) > requestedMaxWidth + 1) {
+      throw new Error(`Patrol visual screenshot remained ${bounded.width}px wide after maxWidth=${requestedMaxWidth} enforcement`)
+    }
+    dataUrl = bounded.dataUrl
+    if (Number.isFinite(Number(bounded.scale))) {
+      captureScale *= Number(bounded.scale)
+      if (Number(bounded.scale) < 0.995) compactVisual = true
+    }
+    targetPixelWidth = requestedMaxWidth
+    captureDevicePixelRatio = Math.max(1, Number(before?.devicePixelRatio || captureDevicePixelRatio || 1))
+  }
+
   const after = await interactionViewportState(tabId)
   const visualFrame = interactionRegisterVisualFrame(tabId, before, after, captureGeometry)
 
