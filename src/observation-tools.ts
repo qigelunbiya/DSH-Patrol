@@ -247,7 +247,7 @@ export function registerPatrolObservationTools(
       const rawVisualFrameId = objectString(shot.value, 'visualFrameId')
       const visualFrameId = imageAttempt.image === undefined ? undefined : rawVisualFrameId
       const visualClickReady = imageAttempt.image !== undefined && visualFrameId !== undefined
-      if (visualClickReady) visualEvidence?.mark(visualFrameId, args.inspectionId, exec.rootCallId)
+      if (visualClickReady) visualEvidence?.mark(visualFrameId, args.inspectionId)
       const urlIdentity = objectString(shot.value, 'urlIdentity')
       const viewportWidth = objectNumber(shot.value, 'viewportWidth')
       const viewportHeight = objectNumber(shot.value, 'viewportHeight')
