@@ -85,7 +85,7 @@ describe('public real-browser Patrol interaction smoke', () => {
     const site = await localTestSite()
     const harness = await extensionHarness()
     try {
-      expect(harness.manifest.version).toBe('0.3.7')
+      expect(harness.manifest.version).toBe('0.3.8')
       await harness.page.goto(`${site.root}/add_remove_elements/`, { waitUntil: 'domcontentloaded', timeout: 20000 })
 
       const boundedShot = await harness.command('screenshot', { format: 'jpeg', maxWidth: 1024, quality: 68 })
