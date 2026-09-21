@@ -904,9 +904,87 @@ describe('Patrol screenshot tab readiness', () => {
     expect(source).toContain('interactionPublishLabelScore')
     expect(source).toContain('const piercedAction = piercedEditable ? undefined : await interactionResolvePiercedActionPoint')
     expect(source).toContain('cdpPiercedAction')
+    expect(source).toContain('resolveExactPublishTarget')
+    expect(source).toContain('publishActionVerified')
+    expect(source).toContain('refusing a coordinate-only physical click')
     expect(source).toMatch(/发布\|发表\|发送\|提交/)
   })
 
+
+  it('refuses a publish visual click before physical input when CURRENT DOM/Accessibility cannot verify a publish action', async () => {
+    const viewport = {
+      urlIdentity: 'https://example.test/video/1',
+      width: 1000, height: 800, offsetLeft: 0, offsetTop: 0, scale: 1,
+      scrollX: 0, scrollY: 1200, innerWidth: 1000, innerHeight: 800, devicePixelRatio: 1,
+    }
+    const mouseEvents: Array<{ method: string; params: any }> = []
+    const scripting = {
+      async executeScript(request: any) {
+        if (request.func?.name === 'interactionMainWorldViewportState') return [{ result: { ...viewport } }]
+        if (request.func?.name === 'interactionMainWorldVisualClick') {
+          return [{ result: {
+            ok: true,
+            selector: 'a.recommended-video',
+            tag: 'a',
+            role: 'link',
+            text: '旁边推荐视频',
+            clickX: 900,
+            clickY: 480,
+            stateSignature: 'recommended-video',
+            targetFocusedEditable: false,
+            publishActionVerified: false,
+          } }]
+        }
+        throw new Error(`unexpected script ${request.func?.name || 'anonymous'}`)
+      },
+    }
+    const debuggerApi = {
+      async attach() {},
+      async sendCommand(_target: any, method: string) {
+        if (method === 'DOM.getDocument') {
+          return {
+            root: {
+              nodeName: '#document',
+              backendNodeId: 1,
+              children: [{
+                nodeName: 'A',
+                backendNodeId: 20,
+                attributes: ['href', '/video/BV-wrong', 'class', 'recommended-video'],
+                children: [{ nodeType: 3, nodeName: '#text', nodeValue: '旁边推荐视频' }],
+              }],
+            },
+          }
+        }
+        if (method === 'Page.getLayoutMetrics') {
+          return { cssVisualViewport: { clientWidth: 1000, clientHeight: 800, pageX: 0, pageY: 1200 } }
+        }
+        if (method === 'Accessibility.getFullAXTree') return { nodes: [] }
+        if (method === 'Input.dispatchMouseEvent') {
+          mouseEvents.push({ method, params: {} })
+          return {}
+        }
+        throw new Error(`unexpected debugger command ${method}`)
+      },
+      async detach() {},
+    }
+    const tabs = {
+      get: async () => ({ id: 7, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
+      update: async (id: number) => ({ id, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
+      captureVisibleTab: async () => 'data:image/png;base64,AAAA',
+    }
+    const sandbox = await loadInteraction({ chrome: { tabs, scripting, debugger: debuggerApi } })
+    const shot = await sandbox.handleCommand('screenshot', { tabId: 7 })
+
+    await expect(sandbox.handleCommand('visualClick', {
+      tabId: 7,
+      frameId: shot.visualFrameId,
+      xRatio: 0.90,
+      yRatio: 0.60,
+      targetHint: '蓝色发布按钮',
+    })).rejects.toThrow(/requires an exact CURRENT publish action/)
+
+    expect(mouseEvents).toHaveLength(0)
+  })
 
   it('rescues a rough visual publish point to a closed-shadow publish button instead of an ordinary video link', async () => {
     const viewport = {

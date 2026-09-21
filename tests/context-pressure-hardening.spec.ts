@@ -239,6 +239,66 @@ describe('mounted Patrol local-Qwen hardening', () => {
   })
 
 
+  it('drops the newest retained Patrol image after CUDA OOM and retries the failed model request without it', async () => {
+    vi.useFakeTimers()
+    try {
+      const ctx = new Context()
+      const current = agent() as any
+      const image = { type: 'image', attachment: { attachmentId: 'current-visual' }, offloaded: false }
+      const event = {
+        type: 'tool/result',
+        message: { role: 'user', content: [{ type: 'tool-result', content: [image] }] },
+      }
+      current.session.surface.nodes = [1]
+      current.session.eventAt = (seq: number) => seq === 1 ? event : undefined
+      current.session.deriveEventMessage = (value: any) => value.message
+      current.session.append = (type: string, data: any) => {
+        if (type !== 'image/offload') throw new Error(`unexpected event ${type}`)
+        for (const target of data.targets) {
+          if (target.seq === 1 && target.imageIndexes.includes(0)) image.offloaded = true
+        }
+        current.session.surface.replaceGeneration += 1
+        return { seq: 2 }
+      }
+
+      const pruneSession = vi.fn(() => ({ pruned: [], charsRemoved: 0 }))
+      ctx.provide('tokenMeter', { measure: () => ({ totalTokens: 1_500 }) })
+      ctx.provide('toolResultPruner', { pruneSession })
+      registerPatrolContextPressureGuard(ctx)
+
+      await ctx.waterfall(
+        'agent/pre-step',
+        payload(current, 1, 1) as never,
+        async () => ({ kind: 'enter' as const, messages: [] }),
+      )
+
+      // The pre-step intentionally retains the newest CURRENT visual.
+      expect(image.offloaded).toBe(false)
+
+      const failure = {
+        code: 'internal_server_error',
+        message: '500: CUDA out of memory. Tried to allocate 672.00 MiB.',
+      }
+      const pending = ctx.waterfall(
+        'agent/request-error',
+        {
+          agent: current, turn: 1, step: 1, provider: 'cliproxy', failure,
+          signal: new AbortController().signal,
+        } as never,
+        async () => undefined,
+      )
+      await vi.runAllTimersAsync()
+      const result = await pending
+
+      expect(image.offloaded).toBe(true)
+      expect(result).toMatchObject({ kind: 'retry' })
+      expect(failure.message).toContain('CUDA/GPU OOM')
+      await ctx.fiber.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not delegate a raw CUDA OOM to generic retries when no model-free reduction occurred', async () => {
     const ctx = new Context()
     const current = agent()
