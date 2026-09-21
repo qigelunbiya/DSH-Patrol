@@ -157,9 +157,30 @@ async function interactionScreenshot(args) {
   let modelRasterWidth
   let modelRasterHeight
   let captureGeometry = interactionVisibleTabCaptureGeometry(before)
+  const focusRegion = interactionNormalizeVisualFocusRegion(before, args)
+  let focusedVisual = false
+
+  if (focusRegion && format === 'jpeg' && Number.isFinite(requestedMaxWidth) && requestedMaxWidth >= 480) {
+    try {
+      const focused = await interactionCaptureFocusedScreenshot(tabId, requestedMaxWidth, quality, before, focusRegion)
+      if (focused?.dataUrl) {
+        dataUrl = focused.dataUrl
+        captureScale = focused.scale
+        compactVisual = true
+        focusedVisual = true
+        targetPixelWidth = focused.targetPixelWidth
+        captureDevicePixelRatio = focused.devicePixelRatio
+        captureGeometry = focused.captureGeometry
+      }
+    } catch {
+      // Focus capture is a visual-precision enhancement. Fall back to the full
+      // viewport screenshot rather than losing CURRENT-page observability.
+    }
+  }
 
   const estimatedPhysicalWidth = Number(before?.width || 0) * Math.max(1, Number(before?.devicePixelRatio || 1))
-  if (format === 'jpeg'
+  if (!dataUrl
+    && format === 'jpeg'
     && Number.isFinite(requestedMaxWidth)
     && requestedMaxWidth >= 480
     && estimatedPhysicalWidth > requestedMaxWidth) {
@@ -255,12 +276,121 @@ async function interactionScreenshot(args) {
     compactVisual,
     captureScale,
     coordinateGuide,
+    focusedVisual,
+    ...(focusedVisual && focusRegion ? {
+      focusCenterXRatio: focusRegion.centerXRatio,
+      focusCenterYRatio: focusRegion.centerYRatio,
+      focusWidthRatio: focusRegion.widthRatio,
+      focusHeightRatio: focusRegion.heightRatio,
+    } : {}),
     ...(coordinateGuide ? { coordinateGridUnits: 1000 } : {}),
     ...(Number.isFinite(modelRasterWidth) ? { modelRasterWidth } : {}),
     ...(Number.isFinite(modelRasterHeight) ? { modelRasterHeight } : {}),
     ...(Number.isFinite(Number(targetPixelWidth)) ? { targetPixelWidth: Number(targetPixelWidth) } : {}),
     ...(Number.isFinite(Number(captureDevicePixelRatio)) ? { captureDevicePixelRatio: Number(captureDevicePixelRatio) } : {}),
     ...(visualFrame || {}),
+  }
+}
+
+function interactionNormalizeVisualFocusRegion(viewport, args = {}) {
+  if (!viewport || typeof viewport !== 'object') return undefined
+  const centerXRatio = Number(args.focusXRatio)
+  const centerYRatio = Number(args.focusYRatio)
+  if (!Number.isFinite(centerXRatio) || !Number.isFinite(centerYRatio)
+    || centerXRatio < 0 || centerXRatio > 1 || centerYRatio < 0 || centerYRatio > 1) return undefined
+  const viewportWidth = Number(viewport.width || viewport.innerWidth || 0)
+  const viewportHeight = Number(viewport.height || viewport.innerHeight || 0)
+  if (!Number.isFinite(viewportWidth) || !Number.isFinite(viewportHeight)
+    || viewportWidth <= 0 || viewportHeight <= 0) return undefined
+
+  const requestedWidthRatio = Number(args.focusWidthRatio)
+  const requestedHeightRatio = Number(args.focusHeightRatio)
+  const widthRatio = Number.isFinite(requestedWidthRatio)
+    ? Math.max(0.12, Math.min(0.72, requestedWidthRatio))
+    : 0.30
+  const heightRatio = Number.isFinite(requestedHeightRatio)
+    ? Math.max(0.12, Math.min(0.72, requestedHeightRatio))
+    : 0.34
+
+  const width = Math.max(120, Math.min(viewportWidth, viewportWidth * widthRatio))
+  const height = Math.max(100, Math.min(viewportHeight, viewportHeight * heightRatio))
+  const centerX = viewportWidth * centerXRatio
+  const centerY = viewportHeight * centerYRatio
+  const left = Math.max(0, Math.min(viewportWidth - width, centerX - width / 2))
+  const top = Math.max(0, Math.min(viewportHeight - height, centerY - height / 2))
+  return {
+    left, top, width, height,
+    centerXRatio, centerYRatio,
+    widthRatio: width / viewportWidth,
+    heightRatio: height / viewportHeight,
+  }
+}
+
+async function interactionCaptureFocusedScreenshot(tabId, maxWidth, quality, before, focusRegion) {
+  if (!chrome.debugger?.attach || !chrome.debugger?.sendCommand || !chrome.debugger?.detach) return undefined
+  const target = { tabId }
+  let attached = false
+  try {
+    await chrome.debugger.attach(target, '1.3')
+    attached = true
+    const metrics = await chrome.debugger.sendCommand(target, 'Page.getLayoutMetrics')
+    const viewport = metrics?.cssVisualViewport || metrics?.visualViewport
+    const viewportWidth = Number(viewport?.clientWidth)
+    const viewportHeight = Number(viewport?.clientHeight)
+    if (![viewportWidth, viewportHeight].every(Number.isFinite) || viewportWidth <= 0 || viewportHeight <= 0) return undefined
+
+    const left = Math.max(0, Math.min(viewportWidth - 1, Number(focusRegion.left)))
+    const top = Math.max(0, Math.min(viewportHeight - 1, Number(focusRegion.top)))
+    const width = Math.max(1, Math.min(viewportWidth - left, Number(focusRegion.width)))
+    const height = Math.max(1, Math.min(viewportHeight - top, Number(focusRegion.height)))
+    const devicePixelRatio = Math.max(1, Number(before?.devicePixelRatio || 1))
+    const physicalWidth = width * devicePixelRatio
+    // Unlike the full-page path, a focused crop may be rendered above native
+    // CSS scale (up to 2x) so small controls become materially larger to the
+    // vision model while the final raster remains within maxWidth.
+    const scale = Math.max(0.25, Math.min(2, maxWidth / Math.max(1, physicalWidth)))
+    const pageX = Number(viewport?.pageX || 0)
+    const pageY = Number(viewport?.pageY || 0)
+    const shot = await chrome.debugger.sendCommand(target, 'Page.captureScreenshot', {
+      format: 'jpeg',
+      quality,
+      fromSurface: true,
+      captureBeyondViewport: false,
+      clip: {
+        x: pageX + left,
+        y: pageY + top,
+        width,
+        height,
+        scale,
+      },
+    })
+    if (!shot || typeof shot.data !== 'string' || !shot.data) return undefined
+
+    const scrollX = Number(before?.scrollX || 0)
+    const scrollY = Number(before?.scrollY || 0)
+    const visualLeft = Number.isFinite(Number(viewport?.pageX))
+      ? Number(viewport.pageX) - scrollX + left
+      : Number(before?.offsetLeft || 0) + left
+    const visualTop = Number.isFinite(Number(viewport?.pageY))
+      ? Number(viewport.pageY) - scrollY + top
+      : Number(before?.offsetTop || 0) + top
+    return {
+      dataUrl: `data:image/jpeg;base64,${shot.data}`,
+      scale,
+      devicePixelRatio,
+      targetPixelWidth: maxWidth,
+      captureGeometry: {
+        captureClientLeft: visualLeft,
+        captureClientTop: visualTop,
+        captureWidth: width,
+        captureHeight: height,
+        captureMode: 'cdp-focused-region',
+      },
+    }
+  } finally {
+    if (attached) {
+      try { await chrome.debugger.detach(target) } catch {}
+    }
   }
 }
 
@@ -547,7 +677,9 @@ function interactionCurrentReplayCaptureGeometry(viewport, recordedMode = '') {
     captureHeight,
     captureMode: recordedMode === 'cdp-css-visual-viewport'
       ? 'cdp-css-visual-viewport'
-      : 'legacy-viewport-current',
+      : recordedMode === 'cdp-focused-region'
+        ? 'cdp-focused-region'
+        : 'legacy-viewport-current',
   }
 }
 
