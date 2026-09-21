@@ -24,6 +24,10 @@ async function localTestSite() {
       response.end('<!doctype html><a class="hamburger" href="#menu" aria-label="打开侧栏菜单" style="display:inline-block;width:10px;height:10px"><span></span></a><a href="#other" style="display:inline-block;width:10px;height:10px"><span></span></a>')
       return
     }
+    if (request.url === '/visual') {
+      response.end('<!doctype html><button id="target" style="position:fixed;left:400px;top:300px;width:120px;height:50px" oncontextmenu="this.dataset.context=\'yes\';event.preventDefault()">发布</button>')
+      return
+    }
     response.statusCode = 404
     response.end('not found')
   })
@@ -85,11 +89,16 @@ describe('public real-browser Patrol interaction smoke', () => {
     const site = await localTestSite()
     const harness = await extensionHarness()
     try {
-      expect(harness.manifest.version).toBe('0.3.8')
+      expect(harness.manifest.version).toBe('0.3.9')
       await harness.page.goto(`${site.root}/add_remove_elements/`, { waitUntil: 'domcontentloaded', timeout: 20000 })
 
-      const boundedShot = await harness.command('screenshot', { format: 'jpeg', maxWidth: 1024, quality: 68 })
+      const boundedShot = await harness.command('screenshot', { format: 'jpeg', maxWidth: 1024, quality: 68, coordinateGuide: true })
       expect(boundedShot.compactVisual).toBe(true)
+      expect(boundedShot.coordinateGuide).toBe(true)
+      expect(boundedShot.coordinateGridUnits).toBe(1000)
+      expect(boundedShot.modelRasterWidth).toBeLessThanOrEqual(1024)
+      expect(boundedShot.ocrDataUrl).toMatch(/^data:image\/jpeg;base64,/)
+      expect(boundedShot.dataUrl).not.toBe(boundedShot.ocrDataUrl)
       const boundedDimensions = await harness.page.evaluate(async dataUrl => {
         const image = new Image()
         image.decoding = 'async'
@@ -103,6 +112,34 @@ describe('public real-browser Patrol interaction smoke', () => {
       }, boundedShot.dataUrl)
       expect(boundedDimensions.width).toBeLessThanOrEqual(1024)
       expect(boundedDimensions.width).toBeGreaterThan(0)
+
+      await harness.page.goto(`${site.root}/visual`, { waitUntil: 'domcontentloaded', timeout: 20000 })
+      const visualShot = await harness.command('screenshot', { format: 'jpeg', maxWidth: 1024, quality: 68, coordinateGuide: true })
+      const xRatio = 460 / 1280
+      const yRatio = 325 / 800
+      const marked = await harness.command('visualClick', {
+        frameId: visualShot.visualFrameId,
+        xRatio,
+        yRatio,
+        targetHint: '发布按钮',
+        visualAuthority: true,
+        pointerAction: 'mark',
+      })
+      expect(marked).toMatchObject({ ok: true, pointerAction: 'mark', visualSnapped: false })
+      expect(await harness.page.$('#__dsh_patrol_visual_marker')).not.toBeNull()
+
+      const rightClicked = await harness.command('visualClick', {
+        frameId: visualShot.visualFrameId,
+        xRatio,
+        yRatio,
+        targetHint: '发布按钮',
+        visualAuthority: true,
+        pointerAction: 'right-click',
+      })
+      expect(rightClicked).toMatchObject({ ok: true, pointerAction: 'right-click', visualSnapped: false })
+      expect(await harness.page.$eval('#target', element => element.dataset.context)).toBe('yes')
+
+      await harness.page.goto(`${site.root}/add_remove_elements/`, { waitUntil: 'domcontentloaded', timeout: 20000 })
 
       await expect(harness.command('semanticClick', {
         locatorText: 'Missing target',
