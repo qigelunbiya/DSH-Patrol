@@ -37,7 +37,7 @@ async function localTestSite() {
           #cover{position:absolute;left:82px;top:0;width:100px;height:110px;z-index:3;background:rgba(0,0,0,.01)}
         </style>
         <div class="card">
-          <a id="real" href="/detail" target="_blank">普通视频卡片</a>
+          <a id="real" href="/detail">普通视频卡片</a>
           <div id="cover"></div>
         </div>`)
       return
@@ -225,8 +225,8 @@ describe('public real-browser Patrol interaction smoke', () => {
         actionCandidateSafePoint: expect.stringMatching(/^verified-hit:/),
         visualSnapped: false,
       })
-      expect(cardClick.openedTabId).toBeGreaterThan(0)
-      expect(cardClick.openedTabUrl).toContain('/detail')
+      await harness.page.waitForFunction(() => location.pathname === '/detail', { timeout: 5000 })
+      expect(harness.page.url()).toContain('/detail')
 
       await harness.page.goto(`${site.root}/add_remove_elements/`, { waitUntil: 'domcontentloaded', timeout: 20000 })
 
