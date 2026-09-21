@@ -40,6 +40,7 @@ import { registerPatrolTools } from './tools.js'
 import { PATROL_TOTP_PROMPT, registerPatrolTotpTools } from './totp-tools.js'
 import { PATROL_TRANSIENT_INPUT_PROMPT, registerPatrolTransientInputTools } from './transient-input-tools.js'
 import { registerPatrolVisualClickTool } from './visual-click-tools.js'
+import { createPatrolVisualEvidenceRegistry } from './visual-evidence-registry.js'
 import { registerPatrolWorkspaceTools } from './workspace-tools.js'
 
 export * from './types.js'
@@ -90,7 +91,7 @@ export const inject = ['tools', 'userQuestions']
 const DEFAULT_STORAGE_PATH = resolve(process.cwd(), '.dsh-patrol')
 const DEFAULT_MAX_STEPS = 200
 const DEFAULT_REPORT_MAX_CHARS = 30_000
-const TEST_MODE_BUILD_MARKER = 'test-ui-tars-grounding-v12'
+const TEST_MODE_BUILD_MARKER = 'test-real-visual-grounding-v13'
 const TEST_MODE_DIRECT_BROWSER_ALLOWED = new Set([
   'browser_status',
   'browser_list_tabs',
@@ -160,6 +161,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const recoveryGuard = createPatrolRecoveryGuard()
   const verificationGuard = createManualVerificationGuard()
   const clickOutcomes = createPatrolClickOutcomeTracker()
+  const visualEvidence = createPatrolVisualEvidenceRegistry()
   const planningGuard = runtimePolicy.testMode
     ? createPatrolTestModePlanningGuard(clickOutcomes)
     : createPatrolPlanningGuard(clickOutcomes)
@@ -199,7 +201,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     'dsh-patrol: semantic current-page click target resolver',
   )
   ctx.effect(
-    () => registerPatrolVisualClickTool(ctx, store, runner, { maxSteps: resolved.maxSteps, clickOutcomes, browserControlMode: runtimePolicy.browserControlMode }),
+    () => registerPatrolVisualClickTool(ctx, store, runner, { maxSteps: resolved.maxSteps, clickOutcomes, browserControlMode: runtimePolicy.browserControlMode, visualEvidence }),
     'dsh-patrol: recordable screenshot-bound browser visual grounding',
   )
   ctx.effect(
@@ -211,7 +213,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     'dsh-patrol: deterministic native select recording',
   )
   ctx.effect(
-    () => registerPatrolObservationTools(ctx, store, runner, observationGate),
+    () => registerPatrolObservationTools(ctx, store, runner, observationGate, visualEvidence),
     'dsh-patrol: current-state visual observation',
   )
   ctx.effect(

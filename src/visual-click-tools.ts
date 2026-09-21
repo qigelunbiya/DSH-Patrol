@@ -8,6 +8,7 @@ import { installTeachingRunbookFilter } from './teaching-runbook-filter.js'
 import type { PatrolRunner } from './runner.js'
 import { assertPersistedTaskChecklist, type PatrolStore } from './store.js'
 import type { InspectionDefinition, InspectionStep, JsonObject, StepCondition, TextExpectation, ToolStep } from './types.js'
+import type { PatrolVisualEvidenceRegistry } from './visual-evidence-registry.js'
 
 const TEXT_OUTPUT = {
   schema: { type: 'string' as const },
@@ -18,6 +19,7 @@ const IMAGE_CODE_HINT = /(captcha|image[-_ ]?code|img[-_ ]?code|验证码|校验
 
 interface PageState {
   url: string
+  title: string
   text: string
   elementSignatures: Set<string>
 }
@@ -30,6 +32,7 @@ export interface PatrolVisualClickOptions {
   maxSteps: number
   clickOutcomes?: PatrolClickOutcomeTracker
   browserControlMode?: 'visual-grounding' | 'hybrid'
+  visualEvidence?: PatrolVisualEvidenceRegistry
 }
 
 export function registerPatrolVisualClickTool(
@@ -50,6 +53,7 @@ export function registerPatrolVisualClickTool(
       xRatio: { type: 'number', required: true },
       yRatio: { type: 'number', required: true },
       targetHint: { type: 'string', required: true, description: 'Concrete CURRENT business intent, e.g. 评论输入框/发布按钮/点赞按钮/完整视频标题. It labels post-click verification and learned DOM/semantic binding; it does not authorize or relocate the live screenshot coordinate.' },
+      expectedVisualText: { type: 'string', description: 'Exact visible label/title read from the attached CURRENT screenshot. Required for navigation/card/video visual clicks so Patrol can verify the chosen screenshot point belongs to that exact item before trusted input and verify the destination afterwards.' },
       tabId: { type: 'integer' },
       expectedText: { type: 'string' },
       expectationMode: { type: 'string', enum: ['contains', 'not-contains'] },
@@ -73,6 +77,11 @@ export function registerPatrolVisualClickTool(
         throw new Error('targetHint is required for visual clicks as the business-intent label used for post-click verification and learned DOM/semantic binding')
       }
       assertSafePersistentText(args.targetHint, 'targetHint')
+      if (args.expectedVisualText !== undefined) assertSafePersistentText(args.expectedVisualText, 'expectedVisualText')
+      if (navigationLikeBusinessAction(args.stepName, args.targetHint)
+        && (typeof args.expectedVisualText !== 'string' || args.expectedVisualText.trim().length < 4)) {
+        throw new Error('navigation/card visual clicks require expectedVisualText copied from the model-visible CURRENT screenshot; generic labels such as “视频卡片区域” are not sufficient')
+      }
       if (args.expectedText !== undefined) assertSafePersistentText(args.expectedText, 'expectedText')
       if (args.conditionExpectedText !== undefined) assertSafePersistentText(args.conditionExpectedText, 'conditionExpectedText')
       if (args.notes !== undefined) assertSafePersistentText(args.notes, 'step notes')
@@ -81,15 +90,25 @@ export function registerPatrolVisualClickTool(
         throw new Error('browser visual click is forbidden for image-code/CAPTCHA. Keep the existing Patrol Windows/local OCR image-code solver path.')
       }
 
+      const evidence = options.visualEvidence?.consume(String(args.frameId), args.inspectionId, exec.rootCallId)
+      if (evidence?.ok === false) {
+        throw new Error(`visual click refused: ${evidence.reason}. A visualFrameId is usable only when patrol_observe(includeImage=true) actually attached the CURRENT screenshot to the model.`)
+      }
+
       const definition = await loadEditable(store, args.inspectionId, options.maxSteps)
       const expectation = optionalExpectation(args.expectedText, args.expectationMode, args.caseSensitive)
-      const beforeState = expectation.expectation === undefined ? await capturePageState(runner, exec, args.tabId) : undefined
+      const isVisualNavigation = navigationLikeBusinessAction(args.stepName, args.targetHint)
+        && typeof args.expectedVisualText === 'string' && args.expectedVisualText.trim().length >= 4
+      const beforeState = expectation.expectation === undefined || isVisualNavigation
+        ? await capturePageState(runner, exec, args.tabId)
+        : undefined
       const visualAuthority = options.browserControlMode === 'visual-grounding'
       const clicked = await runner.dispatch('browser_visual_click', compactObject({
         frameId: args.frameId,
         xRatio: args.xRatio,
         yRatio: args.yRatio,
         targetHint: args.targetHint,
+        expectedVisualText: args.expectedVisualText,
         visualAuthority,
         tabId: args.tabId,
       }), exec)
@@ -125,7 +144,27 @@ export function registerPatrolVisualClickTool(
       let verificationMethod: NonNullable<ToolStep['teaching']>['method']
       let verificationEvidence = ''
       let verificationAttempts = 1
-      if (expectation.expectation !== undefined) {
+      if (isVisualNavigation) {
+        const verified = await verifyAutomaticStateChange(
+          runner,
+          exec,
+          beforeState,
+          args.tabId,
+          args.targetHint,
+          args.expectedVisualText,
+        )
+        verificationAttempts = verified.attempts
+        if (!verified.ok) {
+          outcomes.recordUnverifiedPhysicalClick(args)
+          return [
+            'Visual navigation was physically executed but was NOT recorded because the destination does not match the exact item selected from the model-visible screenshot.',
+            verified.evidence,
+            clicked.text,
+          ].filter(Boolean).join('\n')
+        }
+        verificationMethod = 'state-change'
+        verificationEvidence = verified.evidence ?? `navigation reached the screenshot-selected item ${JSON.stringify(args.expectedVisualText)}`
+      } else if (expectation.expectation !== undefined) {
         const verified = await verifyPostClickExpectation(
           (toolName, toolArgs, toolExec) => runner.dispatch(toolName, toolArgs, toolExec),
           exec,
@@ -150,7 +189,7 @@ export function registerPatrolVisualClickTool(
         verificationMethod = 'state-change'
         verificationEvidence = objectString(clicked.value, 'stateEvidence') ?? 'clicked visual target focused an editable control'
       } else {
-        const verified = await verifyAutomaticStateChange(runner, exec, beforeState, args.tabId, args.targetHint)
+        const verified = await verifyAutomaticStateChange(runner, exec, beforeState, args.tabId, args.targetHint, args.expectedVisualText)
         verificationAttempts = verified.attempts
         if (!verified.ok) {
           outcomes.recordUnverifiedPhysicalClick(args)
@@ -206,7 +245,7 @@ export function registerPatrolVisualClickTool(
         // first on replay; guarded geometry remains the final fallback.
         xRatio: effectiveXRatio,
         yRatio: effectiveYRatio,
-        selectorHint: selectorReplaySafe ? selectorHint : undefined,
+        selectorHint: selectorReplaySafe && bindingActionable ? selectorHint : undefined,
         learnedLocatorText,
         learnedLocatorRole,
         learnedLocatorTag,
@@ -229,6 +268,7 @@ export function registerPatrolVisualClickTool(
         expectedTitle: objectString(clicked.value, 'targetTitle'),
         expectedAriaLabel: objectString(clicked.value, 'targetAriaLabel'),
         targetHint: args.targetHint.trim(),
+        expectedVisualText: args.expectedVisualText?.trim(),
         targetTextHint: objectString(clicked.value, 'targetText'),
         targetIdHint: objectString(clicked.value, 'targetId'),
         targetClassHint: objectString(clicked.value, 'targetClassName'),
@@ -263,7 +303,7 @@ export function registerPatrolVisualClickTool(
       outcomes.recordVerified(args)
 
       return [
-        `Executed and recorded ${step.id} (browser_visual_click) after CURRENT visual-state verification.`,
+        `Executed and recorded ${step.id} (browser_visual_click) after CURRENT model-visible visual-state verification.`,
         `Visual point saved for replay: xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; model-requested=(${args.xRatio.toFixed(4)}, ${args.yRatio.toFixed(4)}); capture=${captureWidth ?? viewportWidth}x${captureHeight ?? viewportHeight} CSS px at (${captureClientLeft ?? 0}, ${captureClientTop ?? 0}).`,
         objectBoolean(clicked.value, 'visualAuthority') === true
           ? 'TEST visual-grounding used the exact model-selected screenshot point; DOM/Shadow-DOM did not relocate it before physical input.'
@@ -291,11 +331,12 @@ async function capturePageState(runner: PatrolRunner, exec: ToolRunContext, tabI
   if (!page.ok && !snapshot.ok) return undefined
   return {
     url: objectString(page.value, 'url') ?? objectString(snapshot.value, 'url') ?? '',
+    title: objectString(page.value, 'title') ?? objectString(snapshot.value, 'title') ?? '',
     text: normalizePageText(objectString(page.value, 'text') ?? page.text ?? ''),
     elementSignatures: snapshotElementSignatures(snapshot.value),
   }
 }
-async function verifyAutomaticStateChange(runner: PatrolRunner, exec: ToolRunContext, before: PageState | undefined, tabId: number | undefined, targetHint?: string): Promise<StateChangeVerification> {
+async function verifyAutomaticStateChange(runner: PatrolRunner, exec: ToolRunContext, before: PageState | undefined, tabId: number | undefined, targetHint?: string, expectedVisualText?: string): Promise<StateChangeVerification> {
   if (before === undefined) return { ok: false, attempts: 0 }
   for (let index = 0; index < AUTO_VERIFY_DELAYS_MS.length; index += 1) {
     const delayMs = AUTO_VERIFY_DELAYS_MS[index]!
@@ -309,11 +350,35 @@ async function verifyAutomaticStateChange(runner: PatrolRunner, exec: ToolRunCon
         evidence: `unexpected navigation for in-page control ${JSON.stringify(targetHint ?? '')}: ${safeStateUrl(before.url)} -> ${safeStateUrl(after.url)}`,
       }
     }
+    if (before.url && after.url && before.url !== after.url && expectedVisualText) {
+      const destinationEvidence = normalizePageText(`${after.title} ${after.text}`)
+      const wanted = normalizePageText(expectedVisualText)
+      if (!visualTextContains(destinationEvidence, wanted)) {
+        return {
+          ok: false,
+          attempts: index + 1,
+          evidence: `navigation reached a different destination than the visually selected item: expected ${JSON.stringify(expectedVisualText)}, CURRENT destination title=${JSON.stringify(after.title || '(untitled)')}`,
+        }
+      }
+    }
     const evidence = stateChangeEvidence(before, after)
     if (evidence !== undefined) return { ok: true, attempts: index + 1, evidence }
   }
   return { ok: false, attempts: AUTO_VERIFY_DELAYS_MS.length }
 }
+function navigationLikeBusinessAction(stepName: string | undefined, targetHint: string | undefined): boolean {
+  const text = normalizePageText([stepName, targetHint].filter(Boolean).join(' '))
+  if (!text || inPageControlHint(text)) return false
+  return /(?:点击|打开|进入|选择|访问|跳转).*(?:视频|卡片|封面|详情|文章|结果|链接)|(?:视频|卡片|封面|详情).*(?:打开|进入|跳转)/i.test(text)
+}
+
+function visualTextContains(haystack: string, needle: string): boolean {
+  const compact = (value: string) => value.replace(/[^\p{L}\p{N}]+/gu, '')
+  const left = compact(haystack)
+  const right = compact(needle)
+  return right.length >= 4 && (left.includes(right) || (left.length >= 8 && right.includes(left)))
+}
+
 function inPageControlHint(targetHint: string | undefined): boolean {
   const hint = normalizePageText(targetHint ?? '')
   return /点赞|投币|收藏|评论|回复|输入框|编辑框|发布|发表|发送|提交|like|favorite|comment|reply|post|send|submit/.test(hint)

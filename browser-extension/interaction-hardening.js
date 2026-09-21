@@ -487,6 +487,7 @@ async function interactionVisualClick(args) {
     const expectedTitle = typeof args.expectedTitle === 'string' ? args.expectedTitle.trim() : ''
     const expectedAriaLabel = typeof args.expectedAriaLabel === 'string' ? args.expectedAriaLabel.trim() : ''
     const visualAuthority = args.visualAuthority === true
+    const expectedVisualText = typeof args.expectedVisualText === 'string' ? args.expectedVisualText.trim() : ''
     const clicked = await interactionPerformVisualClick(
       tabId,
       xRatio,
@@ -498,6 +499,7 @@ async function interactionVisualClick(args) {
       expectedAriaLabel,
       targetHint,
       visualAuthority,
+      expectedVisualText,
     )
     interactionVisualFrames.delete(frameId)
     return interactionVisualClickResult(clicked, frame, xRatio, yRatio, 'bound-current-visual-frame')
@@ -1240,6 +1242,17 @@ function interactionPiercedDescriptor(resolved, requestedX, requestedY, clickX, 
   }
 }
 
+function interactionPiercedEditableIsLocalToVisualPoint(resolved, x, y) {
+  const rect = resolved?.rect
+  if (!rect || ![rect.left, rect.top, rect.width, rect.height].every(value => Number.isFinite(Number(value)))) return false
+  const left = Number(rect.left), top = Number(rect.top)
+  const right = left + Number(rect.width), bottom = top + Number(rect.height)
+  const margin = 32
+  if (Number(x) >= left - margin && Number(x) <= right + margin && Number(y) >= top - margin && Number(y) <= bottom + margin) return true
+  const distance = Number(resolved?.distance)
+  return Number.isFinite(distance) && distance <= 180
+}
+
 function interactionSameProbeTarget(before, after) {
   if (!before || !after || typeof before !== 'object' || typeof after !== 'object') return false
   if (before.selector && after.selector && before.selector === after.selector) return true
@@ -1249,7 +1262,7 @@ function interactionSameProbeTarget(before, after) {
   return false
 }
 
-async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, targetHint = '', visualAuthority = false) {
+async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, targetHint = '', visualAuthority = false, expectedVisualText = '') {
   if (!chrome.scripting?.executeScript) throw new Error('visualClick requires chrome.scripting')
   const captureLeft = Number.isFinite(Number(viewport.captureClientLeft)) ? Number(viewport.captureClientLeft) : Number(viewport.offsetLeft || 0)
   const captureTop = Number.isFinite(Number(viewport.captureClientTop)) ? Number(viewport.captureClientTop) : Number(viewport.offsetTop || 0)
@@ -1295,7 +1308,7 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
           target: { tabId, frameIds: [0] },
           world: 'MAIN',
           func: interactionMainWorldVisualClick,
-          args: [probeClientX, probeClientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, true, targetHint, visualAuthority],
+          args: [probeClientX, probeClientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, true, targetHint, visualAuthority, expectedVisualText],
         })
         probe = Array.isArray(probeResults) ? probeResults[0]?.result : undefined
         if (probe?.ok === false) throw new Error(probe.error || 'visual target probe failed')
@@ -1336,6 +1349,30 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
         await new Promise(resolve => setTimeout(resolve, piercedEditable?.kind === 'activator' ? 180 : 260))
 
         let activatedEditor
+        let postVisualEditorFocus = false
+        if (visualAuthority && interactionWantsEditableTarget(targetHint)) {
+          let currentFocus
+          try { currentFocus = await interactionFocusedEditorProbe(tabId, false) } catch {}
+          if (currentFocus?.focusUsable !== true) {
+            try {
+              const mountedEditor = await interactionResolvePiercedEditablePoint(tabId, targetHint, clientX, clientY)
+              if (mountedEditor?.kind === 'editable'
+                && interactionPiercedEditableIsLocalToVisualPoint(mountedEditor, clientX, clientY)
+                && Number.isFinite(Number(mountedEditor.x))
+                && Number.isFinite(Number(mountedEditor.y))) {
+                const nextX = Number(mountedEditor.x)
+                const nextY = Number(mountedEditor.y)
+                if (await interactionVerifyPiercedTargetHit(tabId, mountedEditor.backendNodeId, nextX, nextY)) {
+                  await interactionDispatchTrustedMouseClick(tabId, nextX, nextY)
+                  nativeMouseDispatched = true
+                  activatedEditor = mountedEditor
+                  postVisualEditorFocus = true
+                  await new Promise(resolve => setTimeout(resolve, 180))
+                }
+              }
+            } catch {}
+          }
+        }
         if (piercedEditable?.kind === 'activator' && interactionWantsEditableTarget(targetHint)) {
           try {
             activatedEditor = await interactionResolvePiercedEditablePoint(tabId, targetHint, trustedX, trustedY)
@@ -1382,7 +1419,7 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
             target: { tabId, frameIds: [0] },
             world: 'MAIN',
             func: interactionMainWorldVisualClick,
-            args: [trustedX, trustedY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, true, targetHint, visualAuthority],
+            args: [trustedX, trustedY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, true, targetHint, visualAuthority, expectedVisualText],
           })
           afterProbe = Array.isArray(afterResults) ? afterResults[0]?.result : undefined
         } catch {}
@@ -1429,10 +1466,11 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
           targetFocusedEditable,
           requestedClickX: clientX,
           requestedClickY: clientY,
-          clickX: trustedX,
-          clickY: trustedY,
-          visualSnapped: snapDistance > 0.5,
-          snapDistance,
+          clickX: visualAuthority ? clientX : trustedX,
+          clickY: visualAuthority ? clientY : trustedY,
+          visualSnapped: visualAuthority ? false : snapDistance > 0.5,
+          snapDistance: visualAuthority ? 0 : snapDistance,
+          postVisualEditorFocus,
           cdpPiercedTarget: Boolean(preResolved),
           cdpPiercedActivator: piercedEditable?.kind === 'activator',
           cdpPiercedFollowupEditor: activatedEditor?.kind === 'editable',
@@ -1443,17 +1481,19 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
             ? 'in-page visual control unexpectedly navigated away; never treat this as business success'
             : editorClearedAfterPublish
               ? 'comment editor cleared after trusted publish/send click'
-              : targetStateChanged
-                ? preResolved
-                  ? 'trusted native click changed verified business state after CDP target resolution'
-                  : 'trusted native click changed the same pre-click visual target own DOM state'
-                : targetFocusedEditable
-                  ? activatedEditor?.kind === 'editable'
-                    ? 'trusted native click activated the comment editor and then focused its mounted editable control'
-                    : piercedEditable
-                      ? 'trusted native click focused an editor resolved through pierced Shadow DOM/editor targeting'
-                      : 'trusted native click focused an editable control'
-                  : '',
+              : postVisualEditorFocus
+                ? 'exact visual click activated the local comment component; a post-click Shadow-DOM focus recovery then focused its mounted editable control'
+                : targetStateChanged
+                  ? preResolved
+                    ? 'trusted native click changed verified business state after CDP target resolution'
+                    : 'trusted native click changed the same pre-click visual target own DOM state'
+                  : targetFocusedEditable
+                    ? activatedEditor?.kind === 'editable'
+                      ? 'trusted native click activated the comment editor and then focused its mounted editable control'
+                      : piercedEditable
+                        ? 'trusted native click focused an editor resolved through pierced Shadow DOM/editor targeting'
+                        : 'trusted native click focused an editable control'
+                    : '',
           inputTransport: 'chrome-debugger',
         }
       }
@@ -1492,7 +1532,7 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
         target: { tabId, frameIds: [0] },
         world: 'MAIN',
         func: interactionMainWorldVisualClick,
-        args: [probeClientX, probeClientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, true, targetHint, visualAuthority],
+        args: [probeClientX, probeClientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, true, targetHint, visualAuthority, expectedVisualText],
       })
       fallbackProbe = Array.isArray(fallbackProbeResults) ? fallbackProbeResults[0]?.result : undefined
     } catch (error) {
@@ -1515,7 +1555,7 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
       target: { tabId, frameIds: [0] },
       world: 'MAIN',
       func: interactionMainWorldVisualClick,
-      args: [probeClientX, probeClientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, false, targetHint, visualAuthority],
+      args: [probeClientX, probeClientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, false, targetHint, visualAuthority, expectedVisualText],
     })
   } catch (error) {
     throw new Error([
@@ -1629,13 +1669,14 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
     cdpPiercedTarget: clicked.cdpPiercedTarget === true,
     cdpPiercedActivator: clicked.cdpPiercedActivator === true,
     cdpPiercedFollowupEditor: clicked.cdpPiercedFollowupEditor === true,
+    postVisualEditorFocus: clicked.postVisualEditorFocus === true,
     cdpPiercedAction: clicked.cdpPiercedAction === true,
     physicalClickUncertain: clicked.physicalClickUncertain === true,
     ...(Number.isFinite(Number(clicked.snapDistance)) ? { snapDistance: Number(clicked.snapDistance) } : {}),
   }
 }
 
-async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, probeOnly = false, targetHint = '', visualAuthority = false) {
+async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, probeOnly = false, targetHint = '', visualAuthority = false, expectedVisualText = '') {
   const compact = value => String(value || '').replace(/\s+/g, ' ').trim()
   const roleOf = element => {
     const explicit = compact(element.getAttribute?.('role') || '').toLowerCase()
@@ -1881,6 +1922,12 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
       context !== element ? context.innerText : '',
     ].filter(Boolean).join(' '))
   }
+  const visualPointMatchesExpectedText = (element, expected) => {
+    const wanted = normalizeHint(expected)
+    if (wanted.length < 4) return true
+    const evidence = normalizeHint(targetEvidence(element))
+    return evidence.includes(wanted) || (evidence.length >= 8 && wanted.includes(evidence))
+  }
   const hintScore = element => {
     const rawHint = compact(targetHint)
     if (!rawHint) return 0
@@ -2000,6 +2047,9 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
   if (hitIsIframe && !probeOnly) throw new Error('visual click point lands on an iframe surface; synthetic MAIN-world click cannot safely enter a cross-origin frame')
   const initialTarget = hitIsIframe ? hit : chooseTarget(hit)
   if (!(initialTarget instanceof Element) || !visible(initialTarget) || disabled(initialTarget)) throw new Error('visual click target is not actionable')
+  if (visualAuthority && compact(expectedVisualText) && !visualPointMatchesExpectedText(initialTarget, expectedVisualText)) {
+    throw new Error(`visual screenshot point is not inside the item labeled ${JSON.stringify(expectedVisualText)}; refusing trusted input without relocating the coordinate`)
+  }
   // In live screenshot-bound teaching, the visual model owns the physical point.
   // DOM/Shadow DOM is sampled AFTER/AT that point for learning; it is not allowed
   // to silently relocate the click to a semantically guessed neighbor.

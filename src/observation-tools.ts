@@ -6,6 +6,7 @@ import type { PatrolBootstrapObservationKind, PatrolObservationGate } from './ob
 import { PatrolRunner } from './runner.js'
 import { PatrolStore } from './store.js'
 import { countRetainedToolResultImages, offloadHistoricalToolResultImages } from './image-context-hardening.js'
+import type { PatrolVisualEvidenceRegistry } from './visual-evidence-registry.js'
 
 const IMAGE_SCHEMA = {
   type: 'object',
@@ -78,6 +79,7 @@ export function registerPatrolObservationTools(
   store: PatrolStore,
   runner: PatrolRunner,
   gate: PatrolObservationGate,
+  visualEvidence?: PatrolVisualEvidenceRegistry,
 ): () => void {
   const observe = defineTool({
     name: 'patrol_observe',
@@ -99,6 +101,7 @@ export function registerPatrolObservationTools(
           imageError: { type: 'string' },
           path: { type: 'string' },
           visualFrameId: { type: 'string' },
+          visualClickReady: { type: 'boolean' },
           urlIdentity: { type: 'string' },
           viewportWidth: { type: 'number' },
           viewportHeight: { type: 'number' },
@@ -119,7 +122,7 @@ export function registerPatrolObservationTools(
           image: IMAGE_SCHEMA,
         },
       },
-      render: (_args, value) => {
+      render: (args, value) => {
         if (value.observationKind !== 'visual') {
           const noTab = value.observationKind === 'bootstrap-no-tab'
           return [{
@@ -139,8 +142,9 @@ export function registerPatrolObservationTools(
         const lines = [
           `CURRENT page: ${value.title || '(untitled)'}${value.url ? ` - ${value.url}` : ''}`,
           `Fresh screenshot saved: ${value.path}`,
-          ...(value.visualFrameId ? [`Visual click frame: ${value.visualFrameId}; viewport=${value.viewportWidth ?? '?'}x${value.viewportHeight ?? '?'}; capture=${value.captureWidth ?? value.viewportWidth ?? '?'}x${value.captureHeight ?? value.viewportHeight ?? '?'} at (${value.captureClientLeft ?? 0}, ${value.captureClientTop ?? 0}); scroll=(${value.scrollX ?? '?'}, ${value.scrollY ?? '?'})`] : []),
-          `Evidence: ${hasImage ? 'explicit image + compact OCR/DOM' : 'compact OCR/DOM (image not attached by default)'}`,
+          ...(value.visualFrameId ? [`Visual click frame READY: ${value.visualFrameId}; viewport=${value.viewportWidth ?? '?'}x${value.viewportHeight ?? '?'}; capture=${value.captureWidth ?? value.viewportWidth ?? '?'}x${value.captureHeight ?? value.viewportHeight ?? '?'} at (${value.captureClientLeft ?? 0}, ${value.captureClientTop ?? 0}); scroll=(${value.scrollX ?? '?'}, ${value.scrollY ?? '?'})`] : []),
+          `Evidence: ${hasImage ? 'MODEL-VISIBLE image attached + compact OCR/DOM' : 'compact OCR/DOM only'}`,
+          ...(args.includeImage === true && !hasImage ? ['VISUAL CLICK DISABLED: includeImage=true did not produce a model-visible image; do not guess screenshot coordinates.'] : []),
         ]
 
         if (value.ocrTextWithheld === true) {
@@ -150,7 +154,7 @@ export function registerPatrolObservationTools(
         }
         if (value.snapshotText) lines.push(`DOM:\n${value.snapshotText}`)
         if (value.imageError) lines.push(`Image note: ${value.imageError}`)
-        if (!hasImage) lines.push('Do not repeat observe merely to get image pixels. Re-run once with includeImage=true only when visual evidence is necessary.')
+        if (!hasImage && args.includeImage !== true) lines.push('Use patrol_observe(includeImage=true) when visual evidence is actually needed; visual clicking is unavailable from this DOM/OCR-only observation.')
 
         const blocks: any[] = [{ type: 'text', text: lines.join('\n') }]
         if (value.image !== undefined) blocks.push({ type: 'image', attachment: value.image })
@@ -229,9 +233,6 @@ export function registerPatrolObservationTools(
         title = tab?.title ?? ''
       }
 
-      const targetPixelWidth = objectNumber(shot.value, 'targetPixelWidth')
-      const rasterBudgetConfirmed = targetPixelWidth !== undefined
-        && targetPixelWidth <= VISUAL_SCREENSHOT_MAX_WIDTH
       const imageAttempt: ImageAttachmentAttempt = args.includeImage !== true
         ? { status: 'not-requested' }
         : !visualContextReady
@@ -239,16 +240,14 @@ export function registerPatrolObservationTools(
               status: 'read-failed',
               error: 'Previous model-visible Patrol image could not be offloaded safely, so CURRENT screenshot was kept on disk but not attached. Continuing with compact OCR/DOM evidence to avoid image accumulation/OOM.',
             }
-          : !rasterBudgetConfirmed
-            ? {
-                status: 'read-failed',
-                error: `CURRENT browser screenshot did not confirm the ${VISUAL_SCREENSHOT_MAX_WIDTH}px raster budget. The image stays on disk but is not attached to the model; restart/update the Patrol browser extension if this persists.`,
-              }
-            : await tryReadScreenshotAsImage(ctx, exec, path)
+          : await readBoundedScreenshotAsImage(ctx, exec, path)
       const rawOcrText = objectRawString(shot.value, 'ocrText') ?? ''
       const ocrText = captchaInputPresent ? '' : shortEvidence(rawOcrText, OCR_EVIDENCE_MAX_CHARS)
 
-      const visualFrameId = objectString(shot.value, 'visualFrameId')
+      const rawVisualFrameId = objectString(shot.value, 'visualFrameId')
+      const visualFrameId = imageAttempt.image === undefined ? undefined : rawVisualFrameId
+      const visualClickReady = imageAttempt.image !== undefined && visualFrameId !== undefined
+      if (visualClickReady) visualEvidence?.mark(visualFrameId, args.inspectionId, exec.rootCallId)
       const urlIdentity = objectString(shot.value, 'urlIdentity')
       const viewportWidth = objectNumber(shot.value, 'viewportWidth')
       const viewportHeight = objectNumber(shot.value, 'viewportHeight')
@@ -272,6 +271,7 @@ export function registerPatrolObservationTools(
         ...(imageAttempt.error === undefined ? {} : { imageError: imageAttempt.error }),
         path,
         ...(visualFrameId === undefined ? {} : { visualFrameId }),
+        visualClickReady,
         ...(urlIdentity === undefined ? {} : { urlIdentity }),
         ...(viewportWidth === undefined ? {} : { viewportWidth }),
         ...(viewportHeight === undefined ? {} : { viewportHeight }),
@@ -439,6 +439,27 @@ function pruneHistoricalVisualContext(ctx: Context, exec: ToolRunContext): boole
     ctx.logger.warn(`[dsh-patrol/vision] proactive visual-history text prune failed: ${error instanceof Error ? error.message : String(error)}`)
   }
   return imageSurfaceReady
+}
+
+async function readBoundedScreenshotAsImage(ctx: Context, exec: ToolRunContext, path: string): Promise<ImageAttachmentAttempt> {
+  const attempt = await tryReadScreenshotAsImage(ctx, exec, path)
+  if (attempt.image === undefined) return attempt
+  const width = objectNumber(attempt.image, 'width')
+  if (width !== undefined && width <= VISUAL_SCREENSHOT_MAX_WIDTH) return attempt
+
+  const agent = exec.agent as unknown as { session?: unknown } | undefined
+  if (agent?.session !== undefined) {
+    const offloaded = offloadHistoricalToolResultImages(agent.session, 0)
+    if (offloaded.error !== undefined) {
+      ctx.logger.warn(`[dsh-patrol/vision] oversized CURRENT read_image could not be offloaded: ${offloaded.error}`)
+    }
+  }
+  return {
+    status: 'read-failed',
+    error: width === undefined
+      ? 'CURRENT read_image did not report attachment width, so Patrol cannot prove the model-visible screenshot is within its visual raster budget. Visual clicking is disabled for this frame.'
+      : `CURRENT model-visible screenshot is ${width}px wide, above the ${VISUAL_SCREENSHOT_MAX_WIDTH}px Patrol budget. Visual clicking is disabled for this frame; update/restart the Patrol browser extension so maxWidth is honored.`,
+  }
 }
 
 async function tryReadScreenshotAsImage(ctx: Context, exec: ToolRunContext, path: string): Promise<ImageAttachmentAttempt> {
