@@ -1481,19 +1481,19 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
             ? 'in-page visual control unexpectedly navigated away; never treat this as business success'
             : editorClearedAfterPublish
               ? 'comment editor cleared after trusted publish/send click'
-              : targetStateChanged
-                ? preResolved
-                  ? 'trusted native click changed verified business state after CDP target resolution'
-                  : 'trusted native click changed the same pre-click visual target own DOM state'
-                : targetFocusedEditable
-                  ? postVisualEditorFocus
-                    ? 'exact visual click activated the local comment component; a post-click Shadow-DOM focus recovery then focused its mounted editable control'
-                    : activatedEditor?.kind === 'editable'
+              : postVisualEditorFocus
+                ? 'exact visual click activated the local comment component; a post-click Shadow-DOM focus recovery then focused its mounted editable control'
+                : targetStateChanged
+                  ? preResolved
+                    ? 'trusted native click changed verified business state after CDP target resolution'
+                    : 'trusted native click changed the same pre-click visual target own DOM state'
+                  : targetFocusedEditable
+                    ? activatedEditor?.kind === 'editable'
                       ? 'trusted native click activated the comment editor and then focused its mounted editable control'
-                    : piercedEditable
-                      ? 'trusted native click focused an editor resolved through pierced Shadow DOM/editor targeting'
-                      : 'trusted native click focused an editable control'
-                  : '',
+                      : piercedEditable
+                        ? 'trusted native click focused an editor resolved through pierced Shadow DOM/editor targeting'
+                        : 'trusted native click focused an editable control'
+                    : '',
           inputTransport: 'chrome-debugger',
         }
       }
