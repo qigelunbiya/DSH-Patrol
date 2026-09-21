@@ -228,16 +228,11 @@ describe('Patrol screenshot tab readiness', () => {
     expect(debuggerCalls[1]?.params).toMatchObject({ type: 'mousePressed', x: 200, y: 600, button: 'left' })
   })
 
-  it('corrects an offset visual comment point to a real textbox inside closed Shadow DOM via CDP pierce', async () => {
+  it('keeps the exact live visual comment point even when a different closed-shadow editor could be semantically resolved', async () => {
     const viewport = {
       urlIdentity: 'https://example.test/video/1',
-      width: 1000,
-      height: 800,
-      offsetLeft: 0,
-      offsetTop: 0,
-      scale: 1,
-      scrollX: 0,
-      scrollY: 1200,
+      width: 1000, height: 800, offsetLeft: 0, offsetTop: 0, scale: 1,
+      scrollX: 0, scrollY: 1200,
     }
     const debuggerCalls: Array<{ method: string; params: any }> = []
     const mouseEvents: Array<{ method: string; params: any }> = []
@@ -245,9 +240,15 @@ describe('Patrol screenshot tab readiness', () => {
       async executeScript(request: any) {
         if (request.func?.name === 'interactionMainWorldViewportState') return [{ result: { ...viewport } }]
         if (request.func?.name === 'interactionMainWorldVisualClick') {
+          expect(request.args?.[8]).toBe(true)
           return [{ result: {
             ok: true,
             selector: 'bili-comment-editor',
+            replaySelectorSafe: true,
+            selectorQuality: 'medium',
+            bindingActionable: true,
+            bindingSource: 'visual-hit-test-post-click-learning',
+            visualAuthority: true,
             tag: 'bili-comment-editor',
             role: '',
             text: 'wifi 连接中……检测到粉丝评论输出电波……',
@@ -278,52 +279,11 @@ describe('Patrol screenshot tab readiness', () => {
       async attach() {},
       async sendCommand(_target: any, method: string, params: any) {
         debuggerCalls.push({ method, params })
-        if (method === 'DOM.getDocument') {
-          expect(params).toEqual({ depth: -1, pierce: true })
-          return {
-            root: {
-              nodeName: '#document',
-              backendNodeId: 1,
-              children: [{
-                nodeName: 'BILI-COMMENTS',
-                backendNodeId: 10,
-                attributes: ['class', 'comments'],
-                children: [{
-                  nodeName: 'BILI-COMMENT-EDITOR',
-                  backendNodeId: 11,
-                  attributes: ['data-placeholder', 'wifi 连接中……检测到粉丝评论输出电波……', 'class', 'comment-editor'],
-                  shadowRoots: [{
-                    nodeName: '#document-fragment',
-                    backendNodeId: 12,
-                    shadowRootType: 'closed',
-                    children: [{
-                      nodeName: 'DIV',
-                      backendNodeId: 42,
-                      attributes: ['contenteditable', 'true', 'role', 'textbox', 'class', 'rich-textarea'],
-                    }],
-                  }],
-                }],
-              }],
-            },
-          }
-        }
-        if (method === 'DOM.getNodeForLocation') {
-          expect(params).toMatchObject({ x: 570, y: 632, includeUserAgentShadowDOM: true })
-          return { backendNodeId: 42 }
-        }
-        if (method === 'DOM.resolveNode') {
-          expect(params).toEqual({ backendNodeId: 42 })
-          return { object: { objectId: 'closed-editor-42' } }
-        }
-        if (method === 'Runtime.callFunctionOn') {
-          expect(params.objectId).toBe('closed-editor-42')
-          return { result: { value: { left: 420, top: 610, right: 720, bottom: 654, width: 300, height: 44 } } }
-        }
         if (method === 'Input.dispatchMouseEvent') {
           mouseEvents.push({ method, params })
           return {}
         }
-        throw new Error(`unexpected debugger command ${method}`)
+        throw new Error(`live visual authority must not pre-resolve a different DOM target via ${method}`)
       },
       async detach() {},
     }
@@ -338,23 +298,27 @@ describe('Patrol screenshot tab readiness', () => {
     })
 
     const pressed = mouseEvents.find(item => item.params?.type === 'mousePressed')
-    expect(pressed?.params).toMatchObject({ x: 570, y: 632, button: 'left' })
+    expect(pressed?.params).toMatchObject({ x: 300, y: 624, button: 'left' })
     expect(clicked).toMatchObject({
       ok: true,
-      cdpPiercedTarget: true,
-      visualSnapped: true,
+      cdpPiercedTarget: false,
+      visualAuthority: true,
+      visualSnapped: false,
       requestedClickX: 300,
       requestedClickY: 624,
-      resolvedClickX: 570,
-      resolvedClickY: 632,
-      xRatio: 0.57,
-      yRatio: 0.79,
+      resolvedClickX: 300,
+      resolvedClickY: 624,
+      xRatio: 0.30,
+      yRatio: 0.78,
       requestedXRatio: 0.30,
       requestedYRatio: 0.78,
       targetFocusedEditable: true,
     })
-    expect(clicked.stateEvidence).toMatch(/pierced Shadow DOM/)
-    expect(debuggerCalls.some(call => call.method === 'DOM.getDocument')).toBe(true)
+    expect(debuggerCalls.map(call => call.method)).toEqual([
+      'Input.dispatchMouseEvent',
+      'Input.dispatchMouseEvent',
+      'Input.dispatchMouseEvent',
+    ])
   })
 
   it('types Unicode text through trusted CURRENT browser focus for shadow/editor fallbacks', async () => {
