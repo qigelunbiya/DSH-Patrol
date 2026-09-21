@@ -116,7 +116,7 @@ describe('stable managed Patrol browser controller', () => {
           name: 'dsh-patrol-browser-extension',
           version: refreshes > 0 ? '0.3.2' : '0.3.1',
           capabilities: refreshes > 0
-            ? ['captureImageCode', 'semanticClick', 'visualClick', 'trustedVisualClick', 'trustedFocusedType', 'trustedSemanticClick', 'clickOpenedTabAdoption', 'compactVisualCapture', 'boundedVisualCaptureV2', 'reusableVisualFramesV1']
+            ? ['captureImageCode', 'semanticClick', 'visualClick', 'trustedVisualClick', 'trustedFocusedType', 'trustedSemanticClick', 'clickOpenedTabAdoption', 'compactVisualCapture', 'boundedVisualCaptureV2', 'reusableVisualFramesV1', 'visualCoordinateGuideV1', 'visualPointerProbeV1']
             : ['captureImageCode', 'semanticClick', 'visualClick'],
         }
       },
@@ -173,7 +173,7 @@ describe('stable managed Patrol browser controller', () => {
         state.origin = `chrome-extension://${extensionId}`
         state.extension = {
           name: 'dsh-patrol-browser-extension',
-          version: refreshes > 0 ? '0.3.8' : '0.3.6',
+          version: refreshes > 0 ? '0.3.9' : '0.3.6',
           capabilities: refreshes > 0
             ? [...currentCapabilities, 'boundedVisualCaptureV2', 'reusableVisualFramesV1']
             : currentCapabilities,
@@ -224,9 +224,9 @@ describe('stable managed Patrol browser controller', () => {
         state.origin = `chrome-extension://${extensionId}`
         state.extension = {
           name: 'dsh-patrol-browser-extension',
-          version: refreshes > 0 ? '0.3.8' : '0.3.7',
+          version: refreshes > 0 ? '0.3.9' : '0.3.7',
           capabilities: refreshes > 0
-            ? ['captureImageCode', 'semanticClick', 'visualClick', 'trustedVisualClick', 'trustedFocusedType', 'trustedSemanticClick', 'clickOpenedTabAdoption', 'compactVisualCapture', 'boundedVisualCaptureV2', 'reusableVisualFramesV1']
+            ? ['captureImageCode', 'semanticClick', 'visualClick', 'trustedVisualClick', 'trustedFocusedType', 'trustedSemanticClick', 'clickOpenedTabAdoption', 'compactVisualCapture', 'boundedVisualCaptureV2', 'reusableVisualFramesV1', 'visualCoordinateGuideV1', 'visualPointerProbeV1']
             : ['captureImageCode', 'semanticClick', 'visualClick', 'trustedVisualClick', 'trustedFocusedType', 'trustedSemanticClick', 'clickOpenedTabAdoption', 'compactVisualCapture', 'boundedVisualCaptureV2'],
         }
       },
@@ -278,7 +278,7 @@ describe('stable managed Patrol browser controller', () => {
         state.extension = {
           name: 'dsh-patrol-browser-extension',
           version: '0.3.1',
-          capabilities: ['captureImageCode', 'semanticClick', 'boundedVisualCaptureV2', 'reusableVisualFramesV1'],
+          capabilities: ['captureImageCode', 'semanticClick', 'boundedVisualCaptureV2', 'reusableVisualFramesV1', 'visualCoordinateGuideV1', 'visualPointerProbeV1'],
         }
       },
     }
