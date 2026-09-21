@@ -8,6 +8,7 @@ import { registerPatrolVisualClickTool } from '../src/visual-click-tools.ts'
 import { createPatrolClickOutcomeTracker } from '../src/click-retry-state.ts'
 import { PatrolStore } from '../src/store.ts'
 import type { InspectionDefinition, JsonObject } from '../src/types.ts'
+import { createPatrolVisualEvidenceRegistry, type PatrolVisualEvidenceRegistry } from '../src/visual-evidence-registry.ts'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -18,6 +19,7 @@ async function setup(
   dispatch: (tool: string, args: JsonObject) => Promise<any>,
   clickOutcomes?: any,
   browserControlMode: 'visual-grounding' | 'hybrid' = 'visual-grounding',
+  visualEvidence?: PatrolVisualEvidenceRegistry,
 ) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-visual-click-'))
   roots.push(root)
@@ -34,7 +36,7 @@ async function setup(
       },
     },
   } as unknown as Context
-  registerPatrolVisualClickTool(ctx, store, { dispatch } as any, { maxSteps: 20, clickOutcomes, browserControlMode })
+  registerPatrolVisualClickTool(ctx, store, { dispatch } as any, { maxSteps: 20, clickOutcomes, browserControlMode, visualEvidence })
   const tool = definitions.find(item => item.name === 'patrol_visual_click_target')
   if (!tool) throw new Error('patrol_visual_click_target not registered')
   const exec = {
@@ -224,6 +226,7 @@ describe('browser visual fallback click teaching', () => {
       inspectionId: 'visual-click',
       stepName: '打开视频',
       targetHint: '目标视频',
+      expectedVisualText: '目标视频',
       frameId: 'browser-visual-current',
       xRatio: 0.4,
       yRatio: 0.5,
@@ -276,12 +279,15 @@ describe('browser visual fallback click teaching', () => {
     const { store, tool, exec } = await setup(async (name) => {
       if (name === 'browser_read_page') {
         reads += 1
-        const url = reads === 1 ? 'https://www.bilibili.com/' : 'https://www.bilibili.com/video/BV-vision'
-        return { ok: true, text: 'page', value: { ok: true, url, text: 'page' } }
+        const before = reads === 1
+        const url = before ? 'https://www.bilibili.com/' : 'https://www.bilibili.com/video/BV-vision'
+        const title = before ? '哔哩哔哩首页' : '我们无法找到外星文明_哔哩哔哩_bilibili'
+        const text = before ? '首页视频流' : '我们无法找到外星文明 视频详情'
+        return { ok: true, text, value: { ok: true, url, title, text } }
       }
       if (name === 'browser_snapshot') {
         const url = reads <= 1 ? 'https://www.bilibili.com/' : 'https://www.bilibili.com/video/BV-vision'
-        return { ok: true, text: 'snapshot', value: { ok: true, url, elements: [] } }
+        return { ok: true, text: 'snapshot', value: { ok: true, url, title: reads <= 1 ? '哔哩哔哩首页' : '我们无法找到外星文明_哔哩哔哩_bilibili', elements: [] } }
       }
       if (name === 'browser_visual_click') return {
         ok: true,
@@ -311,6 +317,7 @@ describe('browser visual fallback click teaching', () => {
       inspectionId: 'visual-click',
       stepName: '打开截图中选中的视频',
       targetHint: '截图中“我们无法找到外星文明”视频卡片',
+      expectedVisualText: '我们无法找到外星文明',
       frameId: 'browser-visual-current',
       xRatio: 0.42,
       yRatio: 0.55,
@@ -322,6 +329,43 @@ describe('browser visual fallback click teaching', () => {
     expect((saved.steps[0] as any).arguments.learnedLocatorText).toBeUndefined()
     expect((saved.steps[0] as any).arguments.selectorHint).toBeUndefined()
     expect((saved.steps[0] as any).arguments.xRatio).toBe(0.42)
+  })
+
+  it('refuses navigation/card visual clicks that do not carry exact screenshot text', async () => {
+    const calls: string[] = []
+    const { tool, exec } = await setup(async (name) => {
+      calls.push(name)
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    await expect(tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '点击视频进入详情页',
+      targetHint: '视频卡片区域',
+      frameId: 'browser-visual-current',
+      xRatio: 0.3,
+      yRatio: 0.35,
+    }, exec)).rejects.toThrow(/require expectedVisualText.*model-visible CURRENT screenshot/i)
+    expect(calls).toEqual([])
+  })
+
+  it('refuses a visual frame that was never attached to the model in the CURRENT turn', async () => {
+    const calls: string[] = []
+    const visualEvidence = createPatrolVisualEvidenceRegistry()
+    const { tool, exec } = await setup(async (name) => {
+      calls.push(name)
+      throw new Error(`unexpected tool ${name}`)
+    }, undefined, 'visual-grounding', visualEvidence)
+
+    await expect(tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '给视频点赞',
+      targetHint: '点赞按钮',
+      frameId: 'browser-visual-current',
+      xRatio: 0.2,
+      yRatio: 0.8,
+    }, exec)).rejects.toThrow(/not backed by a model-visible.*CURRENT turn|visualFrameId.*actually attached/i)
+    expect(calls).toEqual([])
   })
 
   it('does not record or auto-retry when a trusted physical click outcome is uncertain', async () => {
