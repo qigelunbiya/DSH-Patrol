@@ -88,6 +88,10 @@ export function registerPatrolObservationTools(
       inspectionId: { type: 'string', required: true },
       tabId: { type: 'integer' },
       includeImage: { type: 'boolean', description: 'Attach the CURRENT screenshot image to model context. Default false; use only when OCR/DOM evidence is insufficient.' },
+      focusXRatio: { type: 'number', description: 'Optional coarse X center (0..1) for a focused visual crop. Use after a full-frame visual estimate when the target is small or a calibration mark missed.' },
+      focusYRatio: { type: 'number', description: 'Optional coarse Y center (0..1) for a focused visual crop. Requires includeImage=true and focusXRatio.' },
+      focusWidthRatio: { type: 'number', description: 'Focused crop width as a fraction of the CURRENT visual viewport. Default 0.30; clamped to 0.12..0.72.' },
+      focusHeightRatio: { type: 'number', description: 'Focused crop height as a fraction of the CURRENT visual viewport. Default 0.34; clamped to 0.12..0.72.' },
     },
     output: {
       schema: {
@@ -115,6 +119,11 @@ export function registerPatrolObservationTools(
           coordinateGridUnits: { type: 'number' },
           modelRasterWidth: { type: 'number' },
           modelRasterHeight: { type: 'number' },
+          focusedVisual: { type: 'boolean' },
+          focusCenterXRatio: { type: 'number' },
+          focusCenterYRatio: { type: 'number' },
+          focusWidthRatio: { type: 'number' },
+          focusHeightRatio: { type: 'number' },
           scrollX: { type: 'number' },
           scrollY: { type: 'number' },
           url: { type: 'string' },
@@ -149,7 +158,9 @@ export function registerPatrolObservationTools(
           ...(value.visualFrameId ? [`Visual click frame READY: ${value.visualFrameId}; viewport=${value.viewportWidth ?? '?'}x${value.viewportHeight ?? '?'}; capture=${value.captureWidth ?? value.viewportWidth ?? '?'}x${value.captureHeight ?? value.viewportHeight ?? '?'} at (${value.captureClientLeft ?? 0}, ${value.captureClientTop ?? 0}); scroll=(${value.scrollX ?? '?'}, ${value.scrollY ?? '?'})`] : []),
           `Evidence: ${hasImage ? 'MODEL-VISIBLE image attached + compact OCR/DOM' : 'compact OCR/DOM only'}`,
           ...(hasImage && value.coordinateGuide === true ? [
-            `VISUAL COORDINATE GUIDE: the attached raster is ${value.modelRasterWidth ?? value.image?.width ?? '?'}x${value.modelRasterHeight ?? value.image?.height ?? '?'} px and contains an XY/1000 overlay. Read the target from that overlay: xRatio=X/1000, yRatio=Y/1000. Never infer coordinates from OS screen size, CSS viewport size, or the chat UI preview width.`,
+            value.focusedVisual === true
+              ? `FOCUSED VISUAL FRAME: this image is a zoomed CURRENT-page crop centered near full-frame (${Number(value.focusCenterXRatio ?? 0).toFixed(3)}, ${Number(value.focusCenterYRatio ?? 0).toFixed(3)}), covering about ${Math.round(Number(value.focusWidthRatio ?? 0) * 100)}% x ${Math.round(Number(value.focusHeightRatio ?? 0) * 100)}% of the viewport. The attached crop itself has an XY/1000 overlay. For patrol_visual_click_target use the target position INSIDE THIS CROP: xRatio=X/1000, yRatio=Y/1000. Do NOT reuse the coarse full-frame ratio as the click ratio.`
+              : `VISUAL COORDINATE GUIDE: the attached raster is ${value.modelRasterWidth ?? value.image?.width ?? '?'}x${value.modelRasterHeight ?? value.image?.height ?? '?'} px and contains an XY/1000 overlay. Read the target from that overlay: xRatio=X/1000, yRatio=Y/1000. Never infer coordinates from OS screen size, CSS viewport size, or the chat UI preview width.`,
           ] : []),
           ...(args.includeImage === true && !hasImage ? ['VISUAL CLICK DISABLED: includeImage=true did not produce a model-visible image; do not guess screenshot coordinates.'] : []),
         ]
@@ -172,9 +183,26 @@ export function registerPatrolObservationTools(
       card: 'generic',
       title: 'Observe current browser state',
       kind: 'other',
-      rawInput: { inspectionId: args.inspectionId, tabId: args.tabId, includeImage: args.includeImage === true },
+      rawInput: {
+        inspectionId: args.inspectionId,
+        tabId: args.tabId,
+        includeImage: args.includeImage === true,
+        ...(args.focusXRatio === undefined ? {} : { focusXRatio: args.focusXRatio }),
+        ...(args.focusYRatio === undefined ? {} : { focusYRatio: args.focusYRatio }),
+      },
     }),
     async execute(args, exec: ToolRunContext) {
+      const focusRequested = args.focusXRatio !== undefined || args.focusYRatio !== undefined
+        || args.focusWidthRatio !== undefined || args.focusHeightRatio !== undefined
+      if (focusRequested) {
+        if (args.includeImage !== true) throw new Error('focused visual observation requires includeImage=true')
+        if (!Number.isFinite(args.focusXRatio) || !Number.isFinite(args.focusYRatio)
+          || Number(args.focusXRatio) < 0 || Number(args.focusXRatio) > 1
+          || Number(args.focusYRatio) < 0 || Number(args.focusYRatio) > 1) {
+          throw new Error('focused visual observation requires focusXRatio/focusYRatio between 0 and 1')
+        }
+      }
+
       // Visual capture is unlimited by count, but previous screenshot image
       // blocks must not accumulate in the next local-Qwen request. The generic
       // toolResultPruner only trims text, so Patrol explicitly offloads old
@@ -194,6 +222,12 @@ export function registerPatrolObservationTools(
           maxWidth: VISUAL_SCREENSHOT_MAX_WIDTH,
           quality: VISUAL_SCREENSHOT_JPEG_QUALITY,
           coordinateGuide: true,
+          ...(focusRequested ? {
+            focusXRatio: Number(args.focusXRatio),
+            focusYRatio: Number(args.focusYRatio),
+            ...(args.focusWidthRatio === undefined ? {} : { focusWidthRatio: Number(args.focusWidthRatio) }),
+            ...(args.focusHeightRatio === undefined ? {} : { focusHeightRatio: Number(args.focusHeightRatio) }),
+          } : {}),
         } : {}),
       }), exec)
       if (!shot.ok) {
@@ -269,6 +303,11 @@ export function registerPatrolObservationTools(
       const coordinateGridUnits = objectNumber(shot.value, 'coordinateGridUnits')
       const modelRasterWidth = objectNumber(shot.value, 'modelRasterWidth')
       const modelRasterHeight = objectNumber(shot.value, 'modelRasterHeight')
+      const focusedVisual = objectBoolean(shot.value, 'focusedVisual') === true
+      const focusCenterXRatio = objectNumber(shot.value, 'focusCenterXRatio')
+      const focusCenterYRatio = objectNumber(shot.value, 'focusCenterYRatio')
+      const focusWidthRatio = objectNumber(shot.value, 'focusWidthRatio')
+      const focusHeightRatio = objectNumber(shot.value, 'focusHeightRatio')
       const scrollX = objectNumber(shot.value, 'scrollX')
       const scrollY = objectNumber(shot.value, 'scrollY')
 
@@ -297,6 +336,11 @@ export function registerPatrolObservationTools(
         ...(coordinateGridUnits === undefined ? {} : { coordinateGridUnits }),
         ...(modelRasterWidth === undefined ? {} : { modelRasterWidth }),
         ...(modelRasterHeight === undefined ? {} : { modelRasterHeight }),
+        focusedVisual,
+        ...(focusCenterXRatio === undefined ? {} : { focusCenterXRatio }),
+        ...(focusCenterYRatio === undefined ? {} : { focusCenterYRatio }),
+        ...(focusWidthRatio === undefined ? {} : { focusWidthRatio }),
+        ...(focusHeightRatio === undefined ? {} : { focusHeightRatio }),
         ...(scrollX === undefined ? {} : { scrollX }),
         ...(scrollY === undefined ? {} : { scrollY }),
         ...(url ? { url } : {}),
