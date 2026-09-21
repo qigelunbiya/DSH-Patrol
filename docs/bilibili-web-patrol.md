@@ -62,6 +62,8 @@ Bilibili 的点赞属于 toggle 动作，误点两次会恢复原状态。
 `patrol_observe(includeImage=true)` 返回的图片必须是真正进入模型上下文的 CURRENT 截图。
 
 - 看到 `MODEL-VISIBLE image attached` 和 `Visual click frame READY` 后才能计算 `xRatio/yRatio`。
+- 模型可见截图带有 `XY/1000` 坐标网格，网格不会改变截图尺寸、裁剪或点击几何。直接读取目标中心附近的网格值，例如 X580/Y520，然后使用 `xRatio=0.580`、`yRatio=0.520`。不要根据 Windows 屏幕分辨率、CSS viewport 或聊天界面缩放后的预览宽度重新估算。
+- 发布按钮这类小目标，若第一次视觉点位不确定，优先先用 `pointerAction=mark` 在页面画临时红色十字核对；需要验证原生上下文菜单时可用 `pointerAction=right-click`。这些诊断动作不写入 Runbook，也不会消耗视觉重试次数。
 - `visualFrameId` 不再因为时间、点击一次、或累计截图数量而失效；只要 CURRENT tab、URL、scroll、zoom、viewport 与截图一致，就可以重复使用任意次数。页面发生滚动、缩放、跳转、标签页切换或 viewport/布局几何变化后，旧截图坐标不再对应 CURRENT 页面，此时应重新观察。
 - 扩展会把高 DPR 的截图限制在 Patrol 的模型栅格预算内。若 CDP 压缩或页面 MAIN-world canvas 不可用，扩展 service worker 会使用 OffscreenCanvas 做最终降采样；上层仍会以 `read_image` 实际宽度为最终安全检查。
 - 若图片没有成功附加，不得根据 OCR/DOM 文本假装自己“看到了截图”，更不能猜坐标。
