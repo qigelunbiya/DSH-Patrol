@@ -81,7 +81,9 @@ describe('current-page observation evidence fallback', () => {
 
     expect(value.evidenceMode).toBe('image')
     expect(value.imageStatus).toBe('attached')
-    expect(value.image).toMatchObject({ attachmentId: 'img-1', mediaType: 'image/png' })
+    expect(value.image).toMatchObject({ attachmentId: 'img-1', mediaType: 'image/png', width: 100 })
+    expect(value.visualClickReady).toBe(true)
+    expect(value.visualFrameId).toBe('browser-visual-current')
     expect(harness.readImageCalls).toBe(1)
     expect(harness.screenshotArgs[0]).toMatchObject({ format: 'jpeg', maxWidth: 1024, quality: 68 })
     expect(harness.observed).toHaveLength(1)
@@ -98,14 +100,28 @@ describe('current-page observation evidence fallback', () => {
     expect(harness.screenshotArgs).toHaveLength(4)
   })
 
-  it('refuses to attach a visual screenshot when the browser does not confirm the raster budget', async () => {
+  it('trusts the actual read_image attachment dimensions even when older browser metadata omits targetPixelWidth', async () => {
     const harness = setupObservationHarness({ readImage: 'success', captcha: false, omitRasterBudget: true })
+    const value = await harness.tool.execute({ inspectionId: 'demo', includeImage: true }, harness.exec)
+
+    expect(value.evidenceMode).toBe('image')
+    expect(value.imageStatus).toBe('attached')
+    expect(value.visualClickReady).toBe(true)
+    expect(value.visualFrameId).toBe('browser-visual-current')
+    expect(harness.readImageCalls).toBe(1)
+  })
+
+  it('refuses an actually oversized model attachment and withholds the visual frame', async () => {
+    const harness = setupObservationHarness({ readImage: 'success', captcha: false, imageWidth: 1600 })
     const value = await harness.tool.execute({ inspectionId: 'demo', includeImage: true }, harness.exec)
 
     expect(value.evidenceMode).toBe('screenshot-ocr-snapshot')
     expect(value.imageStatus).toBe('read-failed')
-    expect(value.imageError).toMatch(/1024px raster budget/i)
-    expect(harness.readImageCalls).toBe(0)
+    expect(value.imageError).toMatch(/1600px wide.*1024px Patrol budget/i)
+    expect(value.visualClickReady).toBe(false)
+    expect(value.visualFrameId).toBeUndefined()
+    expect(value.image).toBeUndefined()
+    expect(harness.readImageCalls).toBe(1)
   })
 
   it('falls back to compact evidence when explicit image attachment is unavailable', async () => {
@@ -151,6 +167,7 @@ function setupObservationHarness(options: {
   captcha: boolean
   prune?: boolean
   omitRasterBudget?: boolean
+  imageWidth?: number
 }) {
   const definitions: any[] = []
   const observed: Array<{ inspectionId: string; rootCallId: unknown }> = []
@@ -189,7 +206,7 @@ function setupObservationHarness(options: {
                 attachmentId: 'img-1',
                 mediaType: 'image/png',
                 bytes: 123,
-                width: 100,
+                width: options.imageWidth ?? 100,
                 height: 50,
               },
             },
@@ -222,6 +239,17 @@ function setupObservationHarness(options: {
             path: 'C:\\workspace\\current.png',
             ocrStatus: 'recognized',
             ocrText: options.captcha ? 'LOGIN\nGLTK\n验证码' : `LOGIN\nUsername\nPassword\n${'status '.repeat(500)}`,
+            visualFrameId: 'browser-visual-current',
+            urlIdentity: 'https://example.com/login',
+            viewportWidth: 1280,
+            viewportHeight: 720,
+            captureClientLeft: 0,
+            captureClientTop: 0,
+            captureWidth: 1280,
+            captureHeight: 720,
+            captureMode: 'cdp-css-visual-viewport',
+            scrollX: 0,
+            scrollY: 0,
             ...(args.format === 'jpeg' && options.omitRasterBudget !== true ? { targetPixelWidth: 1024, compactVisual: true } : {}),
           },
         }
