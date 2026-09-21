@@ -73,8 +73,10 @@ export function registerPatrolVisualClickTool(
     async execute(args, exec: ToolRunContext) {
       const candidateId = typeof args.candidateId === 'string' ? args.candidateId.trim().toUpperCase() : ''
       const hasCandidate = /^A[1-9]\d*$/i.test(candidateId)
-      const hasPoint = Number.isFinite(args.xRatio) && Number.isFinite(args.yRatio)
-        && args.xRatio >= 0 && args.xRatio <= 1 && args.yRatio >= 0 && args.yRatio <= 1
+      const pointX = typeof args.xRatio === 'number' ? args.xRatio : Number.NaN
+      const pointY = typeof args.yRatio === 'number' ? args.yRatio : Number.NaN
+      const hasPoint = Number.isFinite(pointX) && Number.isFinite(pointY)
+        && pointX >= 0 && pointX <= 1 && pointY >= 0 && pointY <= 1
       if (!hasCandidate && !hasPoint) {
         throw new Error('visual click requires either candidateId=A# from a VISUAL ACTION MAP or xRatio/yRatio between 0 and 1')
       }
@@ -111,8 +113,8 @@ export function registerPatrolVisualClickTool(
         const probed = await runner.dispatch('browser_visual_click', compactObject({
           frameId: args.frameId,
           candidateId: hasCandidate ? candidateId : undefined,
-          xRatio: hasPoint ? args.xRatio : undefined,
-          yRatio: hasPoint ? args.yRatio : undefined,
+          xRatio: hasPoint ? pointX : undefined,
+          yRatio: hasPoint ? pointY : undefined,
           targetHint: args.targetHint,
           expectedVisualText: args.expectedVisualText,
           visualAuthority: true,
@@ -135,7 +137,7 @@ export function registerPatrolVisualClickTool(
         return [
           hasCandidate
             ? `Visual pointer diagnostic ${pointerAction} executed on vision-selected action-map candidate ${candidateId}; browser geometry supplied the exact control center.`
-            : `Visual pointer diagnostic ${pointerAction} executed at exact frame coordinate xRatio=${args.xRatio.toFixed(4)}, yRatio=${args.yRatio.toFixed(4)} (X=${Math.round(args.xRatio * 1000)}, Y=${Math.round(args.yRatio * 1000)} on the XY/1000 guide).`,
+            : `Visual pointer diagnostic ${pointerAction} executed at exact frame coordinate xRatio=${pointX.toFixed(4)}, yRatio=${pointY.toFixed(4)} (X=${Math.round(pointX * 1000)}, Y=${Math.round(pointY * 1000)} on the XY/1000 guide).`,
           pointerAction === 'mark'
             ? 'A temporary red crosshair was drawn on the page for visual calibration; no click was issued.'
             : pointerAction === 'hover'
@@ -161,8 +163,8 @@ export function registerPatrolVisualClickTool(
       const clicked = await runner.dispatch('browser_visual_click', compactObject({
         frameId: args.frameId,
         candidateId: hasCandidate ? candidateId : undefined,
-        xRatio: hasPoint ? args.xRatio : undefined,
-        yRatio: hasPoint ? args.yRatio : undefined,
+        xRatio: hasPoint ? pointX : undefined,
+        yRatio: hasPoint ? pointY : undefined,
         targetHint: args.targetHint,
         expectedVisualText: args.expectedVisualText,
         visualAuthority,
@@ -287,8 +289,8 @@ export function registerPatrolVisualClickTool(
         return 'Visual click reached a verified state but returned incomplete replay geometry, so it was NOT persisted. Capture a fresh visual observation and reteach the target.'
       }
 
-      const effectiveXRatio = objectNumber(clicked.value, 'xRatio') ?? (hasPoint ? args.xRatio : undefined)
-      const effectiveYRatio = objectNumber(clicked.value, 'yRatio') ?? (hasPoint ? args.yRatio : undefined)
+      const effectiveXRatio = objectNumber(clicked.value, 'xRatio') ?? (hasPoint ? pointX : undefined)
+      const effectiveYRatio = objectNumber(clicked.value, 'yRatio') ?? (hasPoint ? pointY : undefined)
       if (effectiveXRatio === undefined || effectiveYRatio === undefined
         || !Number.isFinite(effectiveXRatio) || !Number.isFinite(effectiveYRatio)) {
         outcomes.recordUnverifiedPhysicalClick(args)
@@ -384,7 +386,7 @@ export function registerPatrolVisualClickTool(
         `Executed and recorded ${step.id} (browser_visual_click) after CURRENT model-visible visual-state verification.`,
         hasCandidate
           ? `Visual action-map candidate ${candidateId} resolved by CURRENT browser geometry to xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; this exact center was saved for replay. The model selected the labeled box, not a free pixel coordinate.`
-          : `Visual point saved for replay: xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; model-requested=(${args.xRatio.toFixed(4)}, ${args.yRatio.toFixed(4)}); capture=${captureWidth ?? viewportWidth}x${captureHeight ?? viewportHeight} CSS px at (${captureClientLeft ?? 0}, ${captureClientTop ?? 0}).`,
+          : `Visual point saved for replay: xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; model-requested=(${pointX.toFixed(4)}, ${pointY.toFixed(4)}); capture=${captureWidth ?? viewportWidth}x${captureHeight ?? viewportHeight} CSS px at (${captureClientLeft ?? 0}, ${captureClientTop ?? 0}).`,
         objectBoolean(clicked.value, 'visualAuthority') === true
           ? (hasCandidate
               ? 'Visual grounding used the model-selected action-map label; DOM/CDP contributed only the CURRENT interactive rectangle geometry and did not choose the business target.'
