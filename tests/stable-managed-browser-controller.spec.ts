@@ -175,7 +175,7 @@ describe('stable managed Patrol browser controller', () => {
           name: 'dsh-patrol-browser-extension',
           version: refreshes > 0 ? '0.3.9' : '0.3.6',
           capabilities: refreshes > 0
-            ? [...currentCapabilities, 'boundedVisualCaptureV2', 'reusableVisualFramesV1']
+            ? [...currentCapabilities, 'boundedVisualCaptureV2', 'reusableVisualFramesV1', 'visualCoordinateGuideV1', 'visualPointerProbeV1']
             : currentCapabilities,
         }
       },
@@ -207,7 +207,7 @@ describe('stable managed Patrol browser controller', () => {
 
     await expect(controller.ensureStarted()).resolves.toMatchObject({ connected: true })
     expect(refreshes).toBe(1)
-    expect(state.extension?.version).toBe('0.3.8')
+    expect(state.extension?.version).toBe('0.3.9')
     expect(state.extension?.capabilities).toContain('boundedVisualCaptureV2')
     await controller.dispose()
   })
