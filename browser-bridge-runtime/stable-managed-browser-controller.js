@@ -154,7 +154,7 @@ export function createManagedBrowserController(options = {}) {
           logger.warn?.(`[dsh-patrol/managed-browser] optional trusted visual-click refresh failed; basic DOM patrol remains available: ${errorMessage(error)}`)
         }
         if (missingRequiredCapability()) {
-          throw new Error('Patrol extension connected but is still missing a required semanticClick/boundedVisualCaptureV2 capability after in-place refresh')
+          throw new Error('Patrol extension connected but is still missing a required semanticClick/boundedVisualCaptureV2/reusableVisualFramesV1 capability after in-place refresh')
         }
       }
 
@@ -282,6 +282,7 @@ export function createManagedBrowserController(options = {}) {
       && (
         !capabilities.includes('semanticClick')
         || !capabilities.includes('boundedVisualCaptureV2')
+        || !capabilities.includes('reusableVisualFramesV1')
       )
   }
 
