@@ -214,7 +214,7 @@ describe('browser visual fallback click teaching', () => {
 
 
 
-  it('defaults visual teaching to hybrid assistance unless the user explicitly requests visual authority', async () => {
+  it('keeps every live patrol visual teaching click coordinate-authoritative even when the flag is omitted', async () => {
     let authority: unknown
     const { tool, exec } = await setup(async (name, args) => {
       if (name === 'browser_read_page') return { ok: true, text: 'before', value: { ok: true, url: 'https://www.bilibili.com/', text: 'before' } }
@@ -234,7 +234,7 @@ describe('browser visual fallback click teaching', () => {
             scrollX: 0, scrollY: 0,
             targetStateChanged: true,
             stateEvidence: 'changed',
-            visualAuthority: false,
+            visualAuthority: true,
           },
         }
       }
@@ -251,7 +251,7 @@ describe('browser visual fallback click teaching', () => {
       yRatio: 0.5,
     }, exec)
 
-    expect(authority).toBe(false)
+    expect(authority).toBe(true)
   })
 
   it('rejects unrelated dynamic-page false positives such as clicking the Bilibili sending bar for a like target', async () => {
