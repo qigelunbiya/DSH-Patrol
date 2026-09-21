@@ -108,7 +108,7 @@ describe('Patrol page understanding planner', () => {
     })).toBeUndefined()
   })
 
-  it('still protects an already verified visual toggle from an accidental repeat click', () => {
+  it('never hard-stops repeated visual teaching attempts by click count, even for toggle controls', () => {
     const outcomes = createPatrolClickOutcomeTracker()
     const guard = createPatrolPlanningGuard(outcomes)
     const args = {
@@ -119,9 +119,14 @@ describe('Patrol page understanding planner', () => {
       xRatio: 0.1,
       yRatio: 0.8,
     }
-    outcomes.recordVisualPhysicalClick(args)
+    for (let index = 0; index < 20; index += 1) {
+      outcomes.recordVisualPhysicalClick(args)
+      if (index % 2 === 0) outcomes.recordUnverifiedPhysicalClick(args)
+      expect(guard({ name: 'patrol_visual_click_target', arguments: args })).toBeUndefined()
+    }
     outcomes.recordVerified(args)
-    expect(guard({ name: 'patrol_visual_click_target', arguments: args })).toMatch(/已验证的视觉物理点击|HARD STOP/)
+    expect(guard({ name: 'patrol_visual_click_target', arguments: args })).toBeUndefined()
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/不再使用视觉点击次数、失败次数或物理点击预算做 HARD STOP/)
   })
 
   it('binds a row identity to the action selector instead of clicking an ambiguous RDP label', () => {
