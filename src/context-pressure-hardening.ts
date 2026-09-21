@@ -420,7 +420,17 @@ export function registerPatrolContextPressureGuard(ctx: Context): () => void {
 
       // Failed-request recovery must not call compaction.summarize() on the same
       // unavailable model. Reduce only durable/model-free pressure here.
-      const imageReduced = offloadImages(ctx, agent, 1, 'post-failure Patrol image offload')
+      // If the failed request is an explicit CUDA OOM, the newest image is
+      // part of the failed request itself. Retaining it would resend the same
+      // expensive visual payload and can make "recovery" a no-op. Drop all
+      // model-visible Patrol images for the retry; later steps may capture a
+      // fresh bounded screenshot if vision is still required.
+      const imageReduced = offloadImages(
+        ctx,
+        agent,
+        oom ? 0 : 1,
+        oom ? 'post-OOM Patrol image offload' : 'post-failure Patrol image offload',
+      )
       const pruner = readToolResultPruner(ctx)
       const textReduced = pruneOnce(ctx, pruner, agent, 'post-failure Patrol text history prune')
       const tokenMeter = readTokenMeter(ctx)
