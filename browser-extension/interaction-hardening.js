@@ -1274,6 +1274,10 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
 
       const hasExpectedFingerprint = Boolean(expectedTag || expectedRole || expectedTitle || expectedAriaLabel)
       const hasTargetHint = Boolean(String(targetHint || '').trim())
+      const wantsPublish = interactionWantsPublishTarget(targetHint)
+      if (wantsPublish && !piercedAction && probe?.publishActionVerified !== true) {
+        throw new Error('publish/send visual click requires an exact CURRENT publish action resolved from DOM/Accessibility; refusing a coordinate-only physical click')
+      }
       const canDispatch = Boolean(preResolved)
         || ((!hasExpectedFingerprint && !hasTargetHint) || (probe && typeof probe === 'object' && probe.ok !== false))
       if (canDispatch) {
@@ -1673,6 +1677,62 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     '[role="button"]', '[role="link"]', '[role="menuitem"]', '[role="tab"]',
     '[onclick]', '[data-action]', '[tabindex]:not([tabindex="-1"])',
   ].join(',')
+  const wantsPublishTarget = /发布|发表|发送|提交|\bpost\b|\bsend\b|\bsubmit\b/i.test(String(targetHint || ''))
+  const exactPublishLabel = element => {
+    if (!(element instanceof Element)) return false
+    const raw = compact([
+      element.getAttribute?.('aria-label'),
+      element.getAttribute?.('title'),
+      element instanceof HTMLInputElement ? element.value : '',
+      element.innerText,
+      element.textContent,
+    ].filter(Boolean).join(' ')).replace(/\s+/g, '').toLowerCase()
+    return /^(发布|发表|发送|提交|post|send|submit)$/.test(raw)
+  }
+  const resolveExactPublishTarget = (originalX, originalY) => {
+    const candidates = []
+    for (const element of deepQueryAll('*')) {
+      if (!visible(element) || disabled(element) || !exactPublishLabel(element)) continue
+      const tag = element.tagName?.toLowerCase?.() || ''
+      const role = roleOf(element)
+      const style = getComputedStyle(element)
+      const actionable = element.matches?.(actionableSelector)
+        || role === 'button'
+        || tag === 'button'
+        || (tag === 'input' && ['button', 'submit'].includes(String(element.type || '').toLowerCase()))
+        || style.cursor === 'pointer'
+      if (!actionable) continue
+      if (tag === 'a' && role !== 'button' && !/(?:send|submit|publish|post|comment-action|btn|button)/i.test(
+        compact([element.id, element.getAttribute?.('class'), element.getAttribute?.('data-action')].filter(Boolean).join(' ')),
+      )) continue
+      const rect = element.getBoundingClientRect()
+      if (rect.width < 24 || rect.height < 16 || rect.width > innerWidth * 0.5 || rect.height > Math.min(180, innerHeight * 0.28)) continue
+      if (rect.right <= 0 || rect.bottom <= 0 || rect.left >= innerWidth || rect.top >= innerHeight) continue
+      const centerX = rect.left + rect.width / 2
+      const centerY = rect.top + rect.height / 2
+      candidates.push({
+        target: element,
+        rect,
+        clickX: centerX,
+        clickY: centerY,
+        distance: Math.hypot(centerX - originalX, centerY - originalY),
+        strength: (tag === 'button' ? 4 : 0) + (role === 'button' ? 3 : 0) + (style.cursor === 'pointer' ? 1 : 0),
+      })
+    }
+    candidates.sort((left, right) => right.strength - left.strength || left.distance - right.distance)
+    if (!candidates.length) return undefined
+    const best = candidates[0]
+    const runnerUp = candidates[1]
+    if (runnerUp && runnerUp.strength === best.strength && Math.abs(runnerUp.distance - best.distance) < 8) return undefined
+    return {
+      target: best.target,
+      clickX: best.clickX,
+      clickY: best.clickY,
+      snapped: Math.hypot(best.clickX - originalX, best.clickY - originalY) > 0.5,
+      snapDistance: Math.hypot(best.clickX - originalX, best.clickY - originalY),
+      publishActionVerified: true,
+    }
+  }
   const chooseTarget = hit => {
     const semantic = hit.closest?.(actionableSelector)
     if (semantic && visible(semantic) && !disabled(semantic)) return semantic
@@ -1771,6 +1831,11 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     const hintCore = hintCoreOf(rawHint)
     const hasIntent = /点赞|大拇指|\blike\b|thumb|评论|回复|\bcomment\b|\breply\b|搜索|\bsearch\b|发布|发表|发送|提交|\bpost\b|\bsend\b|\bsubmit\b/i.test(rawHint)
     const wantsEditable = /评论.*(?:输入|编辑)|回复.*(?:输入|编辑)|输入框|编辑框|comment.*(?:input|editor)|reply.*(?:input|editor)/i.test(rawHint)
+    if (wantsPublishTarget) {
+      const publish = resolveExactPublishTarget(originalX, originalY)
+      if (!publish) throw new Error('CURRENT DOM has no unique exact publish/send action; refusing a coordinate-only click')
+      return publish
+    }
     if (!rawHint || (!hasIntent && hintCore.length < 3)) return { target: initialTarget, clickX: originalX, clickY: originalY, snapped: false }
     if (hintScore(initialTarget) > 0
       && !isBroadShellTarget(initialTarget)
@@ -1901,6 +1966,7 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
     clickY,
     visualSnapped: resolved.snapped === true,
     rawPointPreserved: resolved.rawPointPreserved === true,
+    publishActionVerified: resolved.publishActionVerified === true,
     snapDistance: Number.isFinite(Number(resolved.snapDistance)) ? Number(resolved.snapDistance) : Math.hypot(clickX - clientX, clickY - clientY),
   }
   if (probeOnly) return descriptor
