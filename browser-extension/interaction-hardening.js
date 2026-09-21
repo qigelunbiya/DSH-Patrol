@@ -1128,7 +1128,6 @@ async function interactionVisualClick(args) {
         inputTransport: 'chrome-debugger',
       }, frame, xRatio, yRatio, 'bound-current-visual-frame')
     }
-    const visualTabsBefore = await interactionTabBaseline(tabId)
     const clicked = await interactionPerformVisualClick(
       tabId,
       xRatio,
@@ -1142,12 +1141,6 @@ async function interactionVisualClick(args) {
       visualAuthority,
       expectedVisualText,
     )
-    const opened = await interactionAdoptSingleOpenedTab(tabId, visualTabsBefore)
-    if (opened && clicked && typeof clicked === 'object') {
-      clicked.openedTabId = opened.id
-      clicked.openedTabUrl = typeof opened.url === 'string' ? opened.url : ''
-      clicked.stateEvidence = `visual click opened child tab ${opened.id}${opened.url ? ` (${opened.url})` : ''}`
-    }
     if (requestedCandidateId && clicked && typeof clicked === 'object') {
       clicked.candidateId = requestedCandidateId
       clicked.actionCandidateKind = selectedCandidate?.activationKind || ''
