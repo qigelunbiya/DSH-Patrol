@@ -55,6 +55,7 @@ async function extensionHarness() {
   const worker = await target.worker()
   if (!worker) throw new Error('Patrol extension service worker is unavailable')
   const page = await browser.newPage()
+  await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 2 })
 
   async function tabId() {
     const url = page.url()
@@ -84,8 +85,24 @@ describe('public real-browser Patrol interaction smoke', () => {
     const site = await localTestSite()
     const harness = await extensionHarness()
     try {
-      expect(harness.manifest.version).toBe('0.3.6')
+      expect(harness.manifest.version).toBe('0.3.7')
       await harness.page.goto(`${site.root}/add_remove_elements/`, { waitUntil: 'domcontentloaded', timeout: 20000 })
+
+      const boundedShot = await harness.command('screenshot', { format: 'jpeg', maxWidth: 1024, quality: 68 })
+      expect(boundedShot.compactVisual).toBe(true)
+      const boundedDimensions = await harness.page.evaluate(async dataUrl => {
+        const image = new Image()
+        image.decoding = 'async'
+        const loaded = new Promise((resolve, reject) => {
+          image.onload = () => resolve(true)
+          image.onerror = () => reject(new Error('smoke screenshot decode failed'))
+        })
+        image.src = dataUrl
+        await loaded
+        return { width: image.naturalWidth, height: image.naturalHeight }
+      }, boundedShot.dataUrl)
+      expect(boundedDimensions.width).toBeLessThanOrEqual(1024)
+      expect(boundedDimensions.width).toBeGreaterThan(0)
 
       await expect(harness.command('semanticClick', {
         locatorText: 'Missing target',
