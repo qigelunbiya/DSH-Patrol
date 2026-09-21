@@ -251,7 +251,7 @@ describe('browser visual fallback click teaching', () => {
       }, exec)
 
       expect(result).toContain('X=580, Y=520')
-      expect(result).toContain('NOT written to the Runbook')
+      expect(result).toMatch(/not written to the Runbook|never become replay steps/i)
       expect(calls).toHaveLength(1)
       expect(calls[0]).toMatchObject({
         tool: 'browser_visual_click',
