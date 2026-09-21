@@ -1444,6 +1444,33 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
     }
   }
 
+  // A failed/unsupported debugger path must never weaken publish/send safety.
+  // Probe the MAIN world separately before the synthetic fallback and require
+  // the same exact business-action proof that the trusted-mouse path requires.
+  if (interactionWantsPublishTarget(targetHint)) {
+    let fallbackProbe
+    try {
+      const fallbackProbeResults = await chrome.scripting.executeScript({
+        target: { tabId, frameIds: [0] },
+        world: 'MAIN',
+        func: interactionMainWorldVisualClick,
+        args: [probeClientX, probeClientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, true, targetHint],
+      })
+      fallbackProbe = Array.isArray(fallbackProbeResults) ? fallbackProbeResults[0]?.result : undefined
+    } catch (error) {
+      throw new Error([
+        nativeError,
+        `publish/send safety probe failed before synthetic fallback: ${safeError(error)}`,
+      ].filter(Boolean).join('; '))
+    }
+    if (fallbackProbe?.publishActionVerified !== true) {
+      throw new Error([
+        nativeError,
+        'publish/send visual click requires an exact CURRENT publish action resolved from DOM/Accessibility; refusing a coordinate-only physical click',
+      ].filter(Boolean).join('; '))
+    }
+  }
+
   let results
   try {
     results = await chrome.scripting.executeScript({
