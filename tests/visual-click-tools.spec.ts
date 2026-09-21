@@ -349,7 +349,7 @@ describe('browser visual fallback click teaching', () => {
       frameId: 'browser-visual-current',
       xRatio: 0.5,
       yRatio: 0.8,
-    }, exec)).rejects.toThrow(/targetHint is required.*validate\/correct/i)
+    }, exec)).rejects.toThrow(/targetHint is required.*business-intent label.*post-click verification/i)
     expect(calls).toEqual([])
   })
 
