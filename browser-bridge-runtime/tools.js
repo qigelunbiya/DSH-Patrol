@@ -210,7 +210,7 @@ export function registerTools(ctx, bridge, config = {}) {
         expectedTag: optStr, expectedRole: optStr, expectedTitle: optStr, expectedAriaLabel: optStr,
         targetHint: optStr, targetTextHint: optStr, targetIdHint: optStr, targetClassHint: optStr,
         learnedLocatorText: optStr, learnedLocatorRole: optStr, learnedLocatorTag: optStr,
-        learnedSelectorQuality: optStr, learnedBindingSource: optStr, tabId: optInt,
+        learnedSelectorQuality: optStr, learnedBindingSource: optStr, teachingControlMode: optStr, visualAuthority: optBool, tabId: optInt,
       },
       output: {
         schema: {
@@ -240,7 +240,8 @@ export function registerTools(ctx, bridge, config = {}) {
           expectedTitle: args.expectedTitle, expectedAriaLabel: args.expectedAriaLabel,
           targetHint: args.targetHint, targetTextHint: args.targetTextHint, targetIdHint: args.targetIdHint, targetClassHint: args.targetClassHint,
           learnedLocatorText: args.learnedLocatorText, learnedLocatorRole: args.learnedLocatorRole, learnedLocatorTag: args.learnedLocatorTag,
-          learnedSelectorQuality: args.learnedSelectorQuality, learnedBindingSource: args.learnedBindingSource, tabId: args.tabId,
+          learnedSelectorQuality: args.learnedSelectorQuality, learnedBindingSource: args.learnedBindingSource,
+          teachingControlMode: args.teachingControlMode, visualAuthority: args.visualAuthority, tabId: args.tabId,
         }), timeoutMs), 'visualClick')
         return clean({
           ok: true, xRatio: value.xRatio ?? args.xRatio, yRatio: value.yRatio ?? args.yRatio,
