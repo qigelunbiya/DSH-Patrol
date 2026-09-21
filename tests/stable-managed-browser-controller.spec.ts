@@ -258,7 +258,7 @@ describe('stable managed Patrol browser controller', () => {
 
     await expect(controller.ensureStarted()).resolves.toMatchObject({ connected: true })
     expect(refreshes).toBe(1)
-    expect(state.extension?.version).toBe('0.3.8')
+    expect(state.extension?.version).toBe('0.3.9')
     expect(state.extension?.capabilities).toContain('reusableVisualFramesV1')
     await controller.dispose()
   })
