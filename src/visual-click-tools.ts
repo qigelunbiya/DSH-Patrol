@@ -90,7 +90,7 @@ export function registerPatrolVisualClickTool(
         throw new Error('browser visual click is forbidden for image-code/CAPTCHA. Keep the existing Patrol Windows/local OCR image-code solver path.')
       }
 
-      const evidence = options.visualEvidence?.consume(String(args.frameId), args.inspectionId, exec.rootCallId)
+      const evidence = options.visualEvidence?.consume(String(args.frameId), args.inspectionId)
       if (evidence?.ok === false) {
         throw new Error(`visual click refused: ${evidence.reason}. A visualFrameId is usable only when patrol_observe(includeImage=true) actually attached the CURRENT screenshot to the model.`)
       }
