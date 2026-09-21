@@ -255,8 +255,22 @@ async function interactionScreenshot(args) {
   }
 
   const ocrDataUrl = dataUrl
+  let actionCandidates = []
+  let actionMap = false
+  if (args.actionMap === true && format === 'jpeg') {
+    actionCandidates = await interactionCollectVisualActionCandidates(tabId, captureGeometry)
+    if (actionCandidates.length > 0) {
+      const mapped = await interactionOverlayActionMapInWorker(dataUrl, actionCandidates, captureGeometry, Math.max(80, quality))
+      if (!mapped?.dataUrl) throw new Error('Patrol could not render the visual action map')
+      dataUrl = mapped.dataUrl
+      modelRasterWidth = Number(mapped.width)
+      modelRasterHeight = Number(mapped.height)
+      actionMap = true
+    }
+  }
+
   let coordinateGuide = false
-  if (args.coordinateGuide === true && format === 'jpeg') {
+  if (args.coordinateGuide === true && !actionMap && format === 'jpeg') {
     const guided = await interactionOverlayCoordinateGuideInWorker(dataUrl, Math.max(78, quality))
     if (!guided?.dataUrl) throw new Error('Patrol could not render the visual coordinate guide')
     dataUrl = guided.dataUrl
@@ -266,7 +280,7 @@ async function interactionScreenshot(args) {
   }
 
   const after = await interactionViewportState(tabId)
-  const visualFrame = interactionRegisterVisualFrame(tabId, before, after, captureGeometry)
+  const visualFrame = interactionRegisterVisualFrame(tabId, before, after, captureGeometry, actionCandidates)
 
   return {
     ok: true,
@@ -276,6 +290,8 @@ async function interactionScreenshot(args) {
     compactVisual,
     captureScale,
     coordinateGuide,
+    actionMap,
+    ...(actionMap ? { actionCandidateCount: actionCandidates.length } : {}),
     focusedVisual,
     ...(focusedVisual && focusRegion ? {
       focusCenterXRatio: focusRegion.centerXRatio,
@@ -470,6 +486,192 @@ async function interactionResizeCapturedDataUrlInWorker(source, targetWidth, jpe
       originalWidth,
       originalHeight,
     }
+  } finally {
+    if (typeof bitmap.close === 'function') bitmap.close()
+  }
+}
+
+async function interactionCollectVisualActionCandidates(tabId, captureGeometry) {
+  if (!chrome.scripting?.executeScript || !captureGeometry) return []
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [0] },
+      world: 'MAIN',
+      func: interactionMainWorldCollectVisualActionCandidates,
+      args: [{
+        left: Number(captureGeometry.captureClientLeft || 0),
+        top: Number(captureGeometry.captureClientTop || 0),
+        width: Number(captureGeometry.captureWidth || 0),
+        height: Number(captureGeometry.captureHeight || 0),
+      }],
+    })
+    const value = Array.isArray(results) ? results[0]?.result : undefined
+    return Array.isArray(value) ? value.slice(0, 60) : []
+  } catch {
+    return []
+  }
+}
+
+function interactionMainWorldCollectVisualActionCandidates(capture) {
+  const compact = value => String(value || '').replace(/\s+/g, ' ').trim()
+  const capLeft = Number(capture?.left || 0)
+  const capTop = Number(capture?.top || 0)
+  const capWidth = Number(capture?.width || 0)
+  const capHeight = Number(capture?.height || 0)
+  const capRight = capLeft + capWidth
+  const capBottom = capTop + capHeight
+  if (![capLeft, capTop, capWidth, capHeight].every(Number.isFinite) || capWidth <= 0 || capHeight <= 0) return []
+
+  const interactiveRoles = new Set([
+    'button','link','checkbox','radio','switch','tab','menuitem','option',
+    'combobox','textbox','searchbox','spinbutton','slider',
+  ])
+  const strongTags = new Set(['button','a','input','textarea','select','summary'])
+  const roots = [document]
+  const elements = []
+  const seen = new Set()
+  while (roots.length && elements.length < 12000) {
+    const root = roots.pop()
+    let nodes = []
+    try { nodes = [...root.querySelectorAll('*')] } catch {}
+    for (const element of nodes) {
+      if (!(element instanceof Element) || seen.has(element)) continue
+      seen.add(element)
+      elements.push(element)
+      if (element.shadowRoot) roots.push(element.shadowRoot)
+    }
+  }
+
+  const candidates = []
+  const captureArea = capWidth * capHeight
+  for (const element of elements) {
+    const tag = element.tagName?.toLowerCase?.() || ''
+    const role = compact(element.getAttribute?.('role') || '').toLowerCase()
+    const style = getComputedStyle(element)
+    if (!style || style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) continue
+    const rect = element.getBoundingClientRect()
+    const left = Math.max(capLeft, Number(rect.left))
+    const top = Math.max(capTop, Number(rect.top))
+    const right = Math.min(capRight, Number(rect.right))
+    const bottom = Math.min(capBottom, Number(rect.bottom))
+    const width = right - left
+    const height = bottom - top
+    if (![left,top,right,bottom,width,height].every(Number.isFinite) || width < 8 || height < 8) continue
+
+    const type = compact(element.getAttribute?.('type') || '').toLowerCase()
+    if (tag === 'input' && type === 'hidden') continue
+    const editable = element.isContentEditable === true || tag === 'textarea'
+      || (tag === 'input' && !['button','submit','reset','checkbox','radio','range','file','color'].includes(type))
+      || role === 'textbox' || role === 'searchbox'
+    const nativeAction = strongTags.has(tag) && (tag !== 'a' || element.hasAttribute('href'))
+    const explicitAction = interactiveRoles.has(role)
+      || typeof element.onclick === 'function'
+      || element.hasAttribute('onclick')
+    const tabIndex = Number(element.getAttribute?.('tabindex'))
+    const pointerAction = style.cursor === 'pointer'
+    const labeledPointer = pointerAction && Boolean(
+      compact(element.getAttribute?.('title') || '')
+      || compact(element.getAttribute?.('aria-label') || '')
+      || compact(element.textContent || '').slice(0, 80)
+    )
+    if (!(editable || nativeAction || explicitAction || labeledPointer || (Number.isFinite(tabIndex) && tabIndex >= 0 && pointerAction))) continue
+
+    const area = width * height
+    if (!editable && area > captureArea * 0.38) continue
+    if (!editable && (width > capWidth * 0.88 || height > capHeight * 0.75)) continue
+
+    let score = 0
+    if (nativeAction) score += 500
+    if (explicitAction) score += 420
+    if (interactiveRoles.has(role)) score += 350
+    if (editable) score += 300
+    if (pointerAction) score += 180
+    if (compact(element.getAttribute?.('aria-label') || '')) score += 80
+    if (compact(element.getAttribute?.('title') || '')) score += 60
+    if (area < 24000) score += 60
+    if (area < 8000) score += 40
+
+    candidates.push({
+      tag,
+      role,
+      text: compact(element.innerText || element.textContent || '').slice(0, 120),
+      title: compact(element.getAttribute?.('title') || ''),
+      ariaLabel: compact(element.getAttribute?.('aria-label') || ''),
+      id: compact(element.id || ''),
+      className: compact([...(element.classList || [])].join(' ')).slice(0, 220),
+      left, top, width, height,
+      centerX: left + width / 2,
+      centerY: top + height / 2,
+      score,
+    })
+  }
+
+  candidates.sort((a,b) => b.score - a.score || a.top - b.top || a.left - b.left)
+  const kept = []
+  for (const candidate of candidates) {
+    const duplicate = kept.some(existing => {
+      const ix = Math.max(0, Math.min(existing.left + existing.width, candidate.left + candidate.width) - Math.max(existing.left, candidate.left))
+      const iy = Math.max(0, Math.min(existing.top + existing.height, candidate.top + candidate.height) - Math.max(existing.top, candidate.top))
+      const intersection = ix * iy
+      const smaller = Math.min(existing.width * existing.height, candidate.width * candidate.height)
+      const centersClose = Math.hypot(existing.centerX - candidate.centerX, existing.centerY - candidate.centerY) <= 4
+      return (smaller > 0 && intersection / smaller > 0.90) || centersClose
+    })
+    if (!duplicate) kept.push(candidate)
+    if (kept.length >= 60) break
+  }
+
+  kept.sort((a,b) => a.top - b.top || a.left - b.left)
+  return kept.map((candidate,index) => ({ ...candidate, candidateId: `A${index + 1}` }))
+}
+
+async function interactionOverlayActionMapInWorker(source, candidates, captureGeometry, jpegQuality) {
+  if (typeof OffscreenCanvas !== 'function' || typeof createImageBitmap !== 'function') return undefined
+  if (typeof dataUrlToBlob !== 'function' || typeof blobToDataUrl !== 'function') return undefined
+  const bitmap = await createImageBitmap(dataUrlToBlob(source))
+  try {
+    const width = Number(bitmap.width || 0)
+    const height = Number(bitmap.height || 0)
+    const capLeft = Number(captureGeometry?.captureClientLeft || 0)
+    const capTop = Number(captureGeometry?.captureClientTop || 0)
+    const capWidth = Number(captureGeometry?.captureWidth || 0)
+    const capHeight = Number(captureGeometry?.captureHeight || 0)
+    if (![width,height,capWidth,capHeight].every(Number.isFinite) || width <= 0 || height <= 0 || capWidth <= 0 || capHeight <= 0) return undefined
+    const canvas = new OffscreenCanvas(width, height)
+    const context = canvas.getContext('2d', { alpha: false })
+    if (!context) return undefined
+    context.drawImage(bitmap, 0, 0, width, height)
+
+    const sx = width / capWidth
+    const sy = height / capHeight
+    const fontPx = Math.max(13, Math.min(22, Math.round(width / 52)))
+    context.font = `700 ${fontPx}px sans-serif`
+    context.textBaseline = 'top'
+    for (const candidate of candidates) {
+      const x = (Number(candidate.left) - capLeft) * sx
+      const y = (Number(candidate.top) - capTop) * sy
+      const w = Number(candidate.width) * sx
+      const h = Number(candidate.height) * sy
+      if (![x,y,w,h].every(Number.isFinite) || w < 2 || h < 2) continue
+      context.strokeStyle = 'rgba(255,45,45,0.96)'
+      context.lineWidth = Math.max(2, Math.round(width / 500))
+      context.strokeRect(x, y, w, h)
+      const label = String(candidate.candidateId || '')
+      const metrics = context.measureText(label)
+      const boxW = Math.ceil(metrics.width) + 8
+      const boxH = fontPx + 7
+      const labelX = Math.max(0, Math.min(width - boxW, x))
+      const labelY = Math.max(0, Math.min(height - boxH, y - boxH))
+      context.fillStyle = 'rgba(255,230,0,0.96)'
+      context.fillRect(labelX, labelY, boxW, boxH)
+      context.fillStyle = 'rgba(0,0,0,0.98)'
+      context.fillText(label, labelX + 4, labelY + 3)
+    }
+    const blob = await canvas.convertToBlob({
+      type: 'image/jpeg',
+      quality: Math.max(0.68, Math.min(0.95, Number(jpegQuality) / 100)),
+    })
+    return { dataUrl: await blobToDataUrl(blob), width, height }
   } finally {
     if (typeof bitmap.close === 'function') bitmap.close()
   }
@@ -709,7 +911,7 @@ function interactionCurrentReplayCaptureGeometry(viewport, recordedMode = '', re
   }
 }
 
-function interactionRegisterVisualFrame(tabId, before, after, captureGeometry) {
+function interactionRegisterVisualFrame(tabId, before, after, captureGeometry, actionCandidates = []) {
   if (!interactionSameViewport(before, after, 1)) return undefined
   const geometry = captureGeometry || interactionVisibleTabCaptureGeometry(before)
   if (!geometry
@@ -739,6 +941,7 @@ function interactionRegisterVisualFrame(tabId, before, after, captureGeometry) {
     captureWidth: Number(geometry.captureWidth),
     captureHeight: Number(geometry.captureHeight),
     captureMode: String(geometry.captureMode || 'unknown'),
+    actionCandidates: Array.isArray(actionCandidates) ? actionCandidates.map(candidate => ({ ...candidate })) : [],
   }
   interactionVisualFrames.set(frameId, frame)
   return {
@@ -759,21 +962,34 @@ function interactionRegisterVisualFrame(tabId, before, after, captureGeometry) {
 
 async function interactionVisualClick(args) {
   const tabId = await resolveTabId(args.tabId)
-  const xRatio = Number(args.xRatio)
-  const yRatio = Number(args.yRatio)
-  if (!Number.isFinite(xRatio) || !Number.isFinite(yRatio)
-    || xRatio < 0 || xRatio > 1 || yRatio < 0 || yRatio > 1) {
-    throw new Error('visualClick requires xRatio/yRatio between 0 and 1')
-  }
-
   interactionPruneVisualFrames()
   const frameId = typeof args.frameId === 'string' ? args.frameId.trim() : ''
+  const requestedCandidateId = typeof args.candidateId === 'string' ? args.candidateId.trim().toUpperCase() : ''
+  let xRatio = Number(args.xRatio)
+  let yRatio = Number(args.yRatio)
   if (frameId) {
     const targetHint = typeof args.targetHint === 'string' ? args.targetHint.trim() : ''
     if (targetHint.length < 2) throw new Error('live visualClick requires targetHint as a business-intent label for post-click DOM/semantic learning and verification')
     const frame = interactionVisualFrames.get(frameId)
     if (!frame) throw new Error('browser visual frame is unavailable; use a visualFrameId previously returned by patrol_observe(includeImage=true)')
     if (frame.tabId !== tabId) throw new Error('browser visual frame belongs to a different tab; capture a fresh visual observation')
+    let selectedCandidate
+    if (requestedCandidateId) {
+      selectedCandidate = Array.isArray(frame.actionCandidates)
+        ? frame.actionCandidates.find(candidate => String(candidate?.candidateId || '').toUpperCase() === requestedCandidateId)
+        : undefined
+      if (!selectedCandidate) throw new Error(`visual action candidate ${requestedCandidateId} is unavailable on this frame; capture a fresh patrol_observe(includeImage=true, actionMap=true)`)
+      const captureLeft = Number(frame.captureClientLeft || 0)
+      const captureTop = Number(frame.captureClientTop || 0)
+      const captureWidth = Number(frame.captureWidth || frame.width || 0)
+      const captureHeight = Number(frame.captureHeight || frame.height || 0)
+      xRatio = (Number(selectedCandidate.centerX) - captureLeft) / captureWidth
+      yRatio = (Number(selectedCandidate.centerY) - captureTop) / captureHeight
+    }
+    if (!Number.isFinite(xRatio) || !Number.isFinite(yRatio)
+      || xRatio < 0 || xRatio > 1 || yRatio < 0 || yRatio > 1) {
+      throw new Error('visualClick requires either candidateId from an action-map frame or xRatio/yRatio between 0 and 1')
+    }
     const current = await interactionViewportState(tabId)
     if (!interactionSameViewport(frame, current, 2)) {
       throw new Error('browser visual frame is stale: URL/scroll/zoom/viewport changed after screenshot; capture a fresh visual observation')
@@ -815,6 +1031,7 @@ async function interactionVisualClick(args) {
         snapDistance: 0,
         visualAuthority: true,
         pointerAction,
+        ...(requestedCandidateId ? { candidateId: requestedCandidateId } : {}),
         targetStateChanged: false,
         stateEvidence: `visual pointer diagnostic ${pointerAction} executed at the exact screenshot coordinate`,
         inputTransport: 'chrome-debugger',
@@ -833,7 +1050,13 @@ async function interactionVisualClick(args) {
       visualAuthority,
       expectedVisualText,
     )
-    return interactionVisualClickResult(clicked, frame, xRatio, yRatio, 'bound-current-visual-frame')
+    if (requestedCandidateId && clicked && typeof clicked === 'object') clicked.candidateId = requestedCandidateId
+    return interactionVisualClickResult(clicked, frame, xRatio, yRatio, requestedCandidateId ? 'bound-action-map-candidate' : 'bound-current-visual-frame')
+  }
+
+  if (!Number.isFinite(xRatio) || !Number.isFinite(yRatio)
+    || xRatio < 0 || xRatio > 1 || yRatio < 0 || yRatio > 1) {
+    throw new Error('visualClick replay requires xRatio/yRatio between 0 and 1')
   }
 
   const selectorHint = typeof args.selectorHint === 'string' ? args.selectorHint.trim() : ''
@@ -2087,6 +2310,7 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
     cdpPiercedAction: clicked.cdpPiercedAction === true,
     physicalClickUncertain: clicked.physicalClickUncertain === true,
     ...(typeof clicked.pointerAction === 'string' ? { pointerAction: clicked.pointerAction } : {}),
+    ...(typeof clicked.candidateId === 'string' ? { candidateId: clicked.candidateId } : {}),
     ...(Number.isFinite(Number(clicked.snapDistance)) ? { snapDistance: Number(clicked.snapDistance) } : {}),
   }
 }
