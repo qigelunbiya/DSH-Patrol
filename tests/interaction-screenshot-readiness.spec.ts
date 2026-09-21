@@ -125,6 +125,7 @@ describe('Patrol screenshot tab readiness', () => {
     const clicked = await sandbox.handleCommand('visualClick', {
       tabId: 7,
       frameId: shot.visualFrameId,
+      visualAuthority: true,
       xRatio: 0.2,
       yRatio: 0.8,
       expectedTitle: '点赞',
@@ -152,6 +153,7 @@ describe('Patrol screenshot tab readiness', () => {
     await expect(sandbox.handleCommand('visualClick', {
       tabId: 7,
       frameId: shot.visualFrameId,
+      visualAuthority: true,
       xRatio: 0.2,
       yRatio: 0.8,
       targetHint: '点赞按钮',
@@ -212,6 +214,7 @@ describe('Patrol screenshot tab readiness', () => {
     const clicked = await sandbox.handleCommand('visualClick', {
       tabId: 7,
       frameId: shot.visualFrameId,
+      visualAuthority: true,
       xRatio: 0.2,
       yRatio: 0.75,
       targetHint: '点赞按钮',
@@ -292,6 +295,7 @@ describe('Patrol screenshot tab readiness', () => {
     const clicked = await sandbox.handleCommand('visualClick', {
       tabId: 7,
       frameId: shot.visualFrameId,
+      visualAuthority: true,
       xRatio: 0.30,
       yRatio: 0.78,
       targetHint: 'wifi连接中的评论输入框',
@@ -569,6 +573,7 @@ describe('Patrol screenshot tab readiness', () => {
     await sandbox.handleCommand('visualClick', {
       tabId: 7,
       frameId: shot.visualFrameId,
+      visualAuthority: true,
       xRatio: 0.25,
       yRatio: 0.5,
       targetHint: 'Target button',
@@ -930,6 +935,7 @@ describe('Patrol screenshot tab readiness', () => {
     const clicked = await sandbox.handleCommand('visualClick', {
       tabId: 7,
       frameId: shot.visualFrameId,
+      visualAuthority: true,
       xRatio: 0.90,
       yRatio: 0.60,
       targetHint: '蓝色发布按钮',
@@ -1007,6 +1013,7 @@ describe('Patrol screenshot tab readiness', () => {
     const clicked = await sandbox.handleCommand('visualClick', {
       tabId: 7,
       frameId: shot.visualFrameId,
+      visualAuthority: true,
       xRatio: 0.725,
       yRatio: 0.76375,
       targetHint: '蓝色发布按钮',
