@@ -659,10 +659,36 @@ function interactionVisibleTabCaptureGeometry(viewport) {
   }
 }
 
-function interactionCurrentReplayCaptureGeometry(viewport, recordedMode = '') {
+function interactionCurrentReplayCaptureGeometry(viewport, recordedMode = '', recorded = {}) {
   if (!viewport || typeof viewport !== 'object') return undefined
   if (recordedMode === 'capture-visible-tab-layout-viewport') {
     return interactionVisibleTabCaptureGeometry(viewport)
+  }
+  if (recordedMode === 'cdp-focused-region') {
+    const recordedViewportWidth = Number(recorded.viewportWidth)
+    const recordedViewportHeight = Number(recorded.viewportHeight)
+    const recordedLeft = Number(recorded.captureClientLeft)
+    const recordedTop = Number(recorded.captureClientTop)
+    const recordedWidth = Number(recorded.captureWidth)
+    const recordedHeight = Number(recorded.captureHeight)
+    const currentWidth = Number(viewport.width)
+    const currentHeight = Number(viewport.height)
+    if ([recordedViewportWidth, recordedViewportHeight, recordedLeft, recordedTop, recordedWidth, recordedHeight, currentWidth, currentHeight].every(Number.isFinite)
+      && recordedViewportWidth > 0 && recordedViewportHeight > 0 && recordedWidth > 0 && recordedHeight > 0
+      && currentWidth > 0 && currentHeight > 0) {
+      const leftRatio = recordedLeft / recordedViewportWidth
+      const topRatio = recordedTop / recordedViewportHeight
+      const widthRatio = recordedWidth / recordedViewportWidth
+      const heightRatio = recordedHeight / recordedViewportHeight
+      return {
+        captureClientLeft: Number(viewport.offsetLeft || 0) + leftRatio * currentWidth,
+        captureClientTop: Number(viewport.offsetTop || 0) + topRatio * currentHeight,
+        captureWidth: widthRatio * currentWidth,
+        captureHeight: heightRatio * currentHeight,
+        captureMode: 'cdp-focused-region',
+      }
+    }
+    return undefined
   }
   const captureClientLeft = Number(viewport.offsetLeft || 0)
   const captureClientTop = Number(viewport.offsetTop || 0)
@@ -902,7 +928,7 @@ async function interactionVisualClick(args) {
   const recordedCaptureMode = typeof args.captureMode === 'string' && args.captureMode.trim()
     ? args.captureMode.trim()
     : 'legacy-viewport'
-  const replayCapture = interactionCurrentReplayCaptureGeometry(current, recordedCaptureMode)
+  const replayCapture = interactionCurrentReplayCaptureGeometry(current, recordedCaptureMode, args)
   if (!replayCapture) throw new Error('visualClick replay could not derive CURRENT capture geometry')
   const recordedCaptureWidth = Number(args.captureWidth)
   const recordedCaptureHeight = Number(args.captureHeight)
