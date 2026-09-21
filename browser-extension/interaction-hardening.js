@@ -154,6 +154,8 @@ async function interactionScreenshot(args) {
   let compactVisual = false
   let targetPixelWidth
   let captureDevicePixelRatio
+  let modelRasterWidth
+  let modelRasterHeight
   let captureGeometry = interactionVisibleTabCaptureGeometry(before)
 
   const estimatedPhysicalWidth = Number(before?.width || 0) * Math.max(1, Number(before?.devicePixelRatio || 1))
@@ -221,6 +223,8 @@ async function interactionScreenshot(args) {
       throw new Error(`Patrol visual screenshot remained ${bounded.width}px wide after maxWidth=${requestedMaxWidth} enforcement`)
     }
     dataUrl = bounded.dataUrl
+    modelRasterWidth = Number(bounded.width)
+    modelRasterHeight = Number(bounded.height)
     if (Number.isFinite(Number(bounded.scale))) {
       captureScale *= Number(bounded.scale)
       if (Number(bounded.scale) < 0.995) compactVisual = true
@@ -229,15 +233,31 @@ async function interactionScreenshot(args) {
     captureDevicePixelRatio = Math.max(1, Number(before?.devicePixelRatio || captureDevicePixelRatio || 1))
   }
 
+  const ocrDataUrl = dataUrl
+  let coordinateGuide = false
+  if (args.coordinateGuide === true && format === 'jpeg') {
+    const guided = await interactionOverlayCoordinateGuideInWorker(dataUrl, Math.max(78, quality))
+    if (!guided?.dataUrl) throw new Error('Patrol could not render the visual coordinate guide')
+    dataUrl = guided.dataUrl
+    coordinateGuide = true
+    modelRasterWidth = Number(guided.width)
+    modelRasterHeight = Number(guided.height)
+  }
+
   const after = await interactionViewportState(tabId)
   const visualFrame = interactionRegisterVisualFrame(tabId, before, after, captureGeometry)
 
   return {
     ok: true,
     dataUrl,
+    ...(coordinateGuide ? { ocrDataUrl } : {}),
     bytes: Math.floor(dataUrl.length * 0.75),
     compactVisual,
     captureScale,
+    coordinateGuide,
+    ...(coordinateGuide ? { coordinateGridUnits: 1000 } : {}),
+    ...(Number.isFinite(modelRasterWidth) ? { modelRasterWidth } : {}),
+    ...(Number.isFinite(modelRasterHeight) ? { modelRasterHeight } : {}),
     ...(Number.isFinite(Number(targetPixelWidth)) ? { targetPixelWidth: Number(targetPixelWidth) } : {}),
     ...(Number.isFinite(Number(captureDevicePixelRatio)) ? { captureDevicePixelRatio: Number(captureDevicePixelRatio) } : {}),
     ...(visualFrame || {}),
@@ -320,6 +340,61 @@ async function interactionResizeCapturedDataUrlInWorker(source, targetWidth, jpe
       originalWidth,
       originalHeight,
     }
+  } finally {
+    if (typeof bitmap.close === 'function') bitmap.close()
+  }
+}
+
+async function interactionOverlayCoordinateGuideInWorker(source, jpegQuality) {
+  if (typeof OffscreenCanvas !== 'function' || typeof createImageBitmap !== 'function') return undefined
+  if (typeof dataUrlToBlob !== 'function' || typeof blobToDataUrl !== 'function') return undefined
+  const bitmap = await createImageBitmap(dataUrlToBlob(source))
+  try {
+    const width = Number(bitmap.width || 0)
+    const height = Number(bitmap.height || 0)
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return undefined
+    const canvas = new OffscreenCanvas(width, height)
+    const context = canvas.getContext('2d', { alpha: false })
+    if (!context) return undefined
+    context.drawImage(bitmap, 0, 0, width, height)
+
+    // Overlay only; never crop/pad/resize. xRatio/yRatio therefore continue to
+    // map 1:1 to the screenshot-bound capture geometry. The guide exists solely
+    // to stop multimodal models from guessing OS/UI preview pixel dimensions.
+    const fontPx = Math.max(10, Math.min(16, Math.round(width / 80)))
+    context.font = `600 ${fontPx}px sans-serif`
+    context.textBaseline = 'top'
+    context.lineWidth = 1
+
+    for (let step = 50; step < 1000; step += 50) {
+      const x = width * step / 1000
+      const y = height * step / 1000
+      const major = step % 100 === 0
+      context.strokeStyle = major ? 'rgba(255,64,64,0.30)' : 'rgba(255,255,255,0.14)'
+      context.beginPath(); context.moveTo(x, 0); context.lineTo(x, height); context.stroke()
+      context.beginPath(); context.moveTo(0, y); context.lineTo(width, y); context.stroke()
+    }
+
+    const label = (text, x, y) => {
+      const metrics = context.measureText(text)
+      const boxW = Math.ceil(metrics.width) + 6
+      const boxH = fontPx + 5
+      context.fillStyle = 'rgba(0,0,0,0.66)'
+      context.fillRect(Math.max(0, x - 2), Math.max(0, y - 1), boxW, boxH)
+      context.fillStyle = 'rgba(255,255,255,0.96)'
+      context.fillText(text, Math.max(1, x + 1), Math.max(0, y + 1))
+    }
+    for (let step = 100; step < 1000; step += 100) {
+      label(`X${step}`, width * step / 1000 + 2, 2)
+      label(`Y${step}`, 2, height * step / 1000 + 2)
+    }
+    label('XY/1000', 3, 3)
+
+    const blob = await canvas.convertToBlob({
+      type: 'image/jpeg',
+      quality: Math.max(0.60, Math.min(0.95, Number(jpegQuality) / 100)),
+    })
+    return { dataUrl: await blobToDataUrl(blob), width, height }
   } finally {
     if (typeof bitmap.close === 'function') bitmap.close()
   }
@@ -551,6 +626,42 @@ async function interactionVisualClick(args) {
     const expectedAriaLabel = typeof args.expectedAriaLabel === 'string' ? args.expectedAriaLabel.trim() : ''
     const visualAuthority = args.visualAuthority === true
     const expectedVisualText = typeof args.expectedVisualText === 'string' ? args.expectedVisualText.trim() : ''
+    const pointerAction = ['left-click', 'right-click', 'hover', 'mark'].includes(String(args.pointerAction || ''))
+      ? String(args.pointerAction)
+      : 'left-click'
+    if (pointerAction !== 'left-click') {
+      const captureLeft = Number(frame.captureClientLeft || 0)
+      const captureTop = Number(frame.captureClientTop || 0)
+      const captureWidth = Number(frame.captureWidth || frame.width || 0)
+      const captureHeight = Number(frame.captureHeight || frame.height || 0)
+      const clientX = captureLeft + Math.max(1, Math.min(captureWidth - 1, captureWidth * xRatio))
+      const clientY = captureTop + Math.max(1, Math.min(captureHeight - 1, captureHeight * yRatio))
+      const descriptor = await interactionDescribeVisualPoint(tabId, clientX, clientY)
+      if (pointerAction === 'mark') {
+        await interactionShowVisualMarker(tabId, clientX, clientY, xRatio, yRatio)
+      } else if (pointerAction === 'hover') {
+        await interactionDispatchTrustedMouseAction(tabId, clientX, clientY, 'hover')
+        await interactionShowVisualMarker(tabId, clientX, clientY, xRatio, yRatio)
+      } else if (pointerAction === 'right-click') {
+        await interactionShowVisualMarker(tabId, clientX, clientY, xRatio, yRatio)
+        await interactionDispatchTrustedMouseAction(tabId, clientX, clientY, 'right-click')
+      }
+      return interactionVisualClickResult({
+        ...descriptor,
+        ok: true,
+        clickX: clientX,
+        clickY: clientY,
+        requestedClickX: clientX,
+        requestedClickY: clientY,
+        visualSnapped: false,
+        snapDistance: 0,
+        visualAuthority: true,
+        pointerAction,
+        targetStateChanged: false,
+        stateEvidence: `visual pointer diagnostic ${pointerAction} executed at the exact screenshot coordinate`,
+        inputTransport: 'chrome-debugger',
+      }, frame, xRatio, yRatio, 'bound-current-visual-frame')
+    }
     const clicked = await interactionPerformVisualClick(
       tabId,
       xRatio,
@@ -1635,7 +1746,7 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
   return { ...value, inputTransport: 'synthetic-main-world' }
 }
 
-async function interactionDispatchTrustedMouseClick(tabId, clientX, clientY) {
+async function interactionDispatchTrustedMouseAction(tabId, clientX, clientY, action = 'left-click') {
   const target = { tabId }
   let attached = false
   let mousePressed = false
@@ -1645,12 +1756,15 @@ async function interactionDispatchTrustedMouseClick(tabId, clientX, clientY) {
     await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
       type: 'mouseMoved', x: clientX, y: clientY, button: 'none', buttons: 0,
     })
+    if (action === 'hover') return { physicalClickDispatched: false }
+    const button = action === 'right-click' ? 'right' : 'left'
+    const buttons = button === 'right' ? 2 : 1
     await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
-      type: 'mousePressed', x: clientX, y: clientY, button: 'left', buttons: 1, clickCount: 1,
+      type: 'mousePressed', x: clientX, y: clientY, button, buttons, clickCount: 1,
     })
     mousePressed = true
     await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
-      type: 'mouseReleased', x: clientX, y: clientY, button: 'left', buttons: 0, clickCount: 1,
+      type: 'mouseReleased', x: clientX, y: clientY, button, buttons: 0, clickCount: 1,
     })
     return { physicalClickDispatched: true }
   } catch (error) {
@@ -1662,6 +1776,86 @@ async function interactionDispatchTrustedMouseClick(tabId, clientX, clientY) {
     if (attached) {
       try { await chrome.debugger.detach(target) } catch {}
     }
+  }
+}
+
+async function interactionDispatchTrustedMouseClick(tabId, clientX, clientY) {
+  return await interactionDispatchTrustedMouseAction(tabId, clientX, clientY, 'left-click')
+}
+
+async function interactionDescribeVisualPoint(tabId, clientX, clientY) {
+  if (!chrome.scripting?.executeScript) return { ok: true }
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [0] },
+      world: 'MAIN',
+      func: (x, y) => {
+        const compact = value => String(value || '').replace(/\s+/g, ' ').trim()
+        let element = document.elementFromPoint(x, y)
+        let guard = 0
+        while (element instanceof Element && element.shadowRoot && guard < 8) {
+          const inner = element.shadowRoot.elementFromPoint?.(x, y)
+          if (!(inner instanceof Element) || inner === element) break
+          element = inner
+          guard += 1
+        }
+        if (!(element instanceof Element)) return { ok: true }
+        const role = compact(element.getAttribute('role') || '')
+        return {
+          ok: true,
+          tag: element.tagName.toLowerCase(),
+          role,
+          text: compact(element.innerText || element.textContent || '').slice(0, 240),
+          title: compact(element.getAttribute('title') || ''),
+          ariaLabel: compact(element.getAttribute('aria-label') || ''),
+          id: compact(element.id || ''),
+          className: compact([...(element.classList || [])].join(' ')),
+          replaySelectorSafe: false,
+          visualAuthority: true,
+        }
+      },
+      args: [clientX, clientY],
+    })
+    const value = Array.isArray(results) ? results[0]?.result : undefined
+    return value && typeof value === 'object' ? value : { ok: true }
+  } catch {
+    return { ok: true }
+  }
+}
+
+async function interactionShowVisualMarker(tabId, clientX, clientY, xRatio, yRatio) {
+  if (!chrome.scripting?.executeScript) return false
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [0] },
+      world: 'MAIN',
+      func: (x, y, xr, yr) => {
+        document.getElementById('__dsh_patrol_visual_marker')?.remove()
+        const marker = document.createElement('div')
+        marker.id = '__dsh_patrol_visual_marker'
+        marker.style.cssText = [
+          'position:fixed','z-index:2147483647','pointer-events:none',
+          'width:22px','height:22px','margin-left:-11px','margin-top:-11px',
+          'border:3px solid #ff2d2d','border-radius:50%','box-sizing:border-box',
+          'left:'+x+'px','top:'+y+'px','background:rgba(255,255,255,.15)',
+          'box-shadow:0 0 0 2px rgba(255,255,255,.95),0 0 8px rgba(0,0,0,.85)',
+        ].join(';')
+        const h = document.createElement('div')
+        h.style.cssText = 'position:absolute;left:-10px;top:8px;width:36px;height:2px;background:#ff2d2d'
+        const v = document.createElement('div')
+        v.style.cssText = 'position:absolute;left:8px;top:-10px;width:2px;height:36px;background:#ff2d2d'
+        const label = document.createElement('div')
+        label.textContent = 'X'+Math.round(xr*1000)+' Y'+Math.round(yr*1000)
+        label.style.cssText = 'position:absolute;left:16px;top:16px;padding:2px 4px;background:rgba(0,0,0,.8);color:white;font:12px monospace;white-space:nowrap;border-radius:3px'
+        marker.append(h, v, label)
+        document.documentElement.appendChild(marker)
+        setTimeout(() => marker.remove(), 12000)
+      },
+      args: [clientX, clientY, xRatio, yRatio],
+    })
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -1734,6 +1928,7 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
     postVisualEditorFocus: clicked.postVisualEditorFocus === true,
     cdpPiercedAction: clicked.cdpPiercedAction === true,
     physicalClickUncertain: clicked.physicalClickUncertain === true,
+    ...(typeof clicked.pointerAction === 'string' ? { pointerAction: clicked.pointerAction } : {}),
     ...(Number.isFinite(Number(clicked.snapDistance)) ? { snapDistance: Number(clicked.snapDistance) } : {}),
   }
 }
