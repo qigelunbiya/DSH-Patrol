@@ -486,6 +486,7 @@ async function interactionVisualClick(args) {
     const expectedRole = typeof args.expectedRole === 'string' ? args.expectedRole.trim().toLowerCase() : ''
     const expectedTitle = typeof args.expectedTitle === 'string' ? args.expectedTitle.trim() : ''
     const expectedAriaLabel = typeof args.expectedAriaLabel === 'string' ? args.expectedAriaLabel.trim() : ''
+    const visualAuthority = args.visualAuthority === true
     const clicked = await interactionPerformVisualClick(
       tabId,
       xRatio,
@@ -496,7 +497,7 @@ async function interactionVisualClick(args) {
       expectedTitle,
       expectedAriaLabel,
       targetHint,
-      true,
+      visualAuthority,
     )
     interactionVisualFrames.delete(frameId)
     return interactionVisualClickResult(clicked, frame, xRatio, yRatio, 'bound-current-visual-frame')
