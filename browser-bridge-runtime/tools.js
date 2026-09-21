@@ -210,7 +210,8 @@ export function registerTools(ctx, bridge, config = {}) {
         expectedTag: optStr, expectedRole: optStr, expectedTitle: optStr, expectedAriaLabel: optStr,
         targetHint: optStr, expectedVisualText: optStr, targetTextHint: optStr, targetIdHint: optStr, targetClassHint: optStr,
         learnedLocatorText: optStr, learnedLocatorRole: optStr, learnedLocatorTag: optStr,
-        learnedSelectorQuality: optStr, learnedBindingSource: optStr, teachingControlMode: optStr, visualAuthority: optBool, tabId: optInt,
+        learnedSelectorQuality: optStr, learnedBindingSource: optStr, teachingControlMode: optStr, visualAuthority: optBool,
+        pointerAction: { type: 'string', enum: ['left-click', 'right-click', 'hover', 'mark'] }, tabId: optInt,
       },
       output: {
         schema: {
@@ -224,6 +225,7 @@ export function registerTools(ctx, bridge, config = {}) {
             requestedClickX: optNum, requestedClickY: optNum, resolvedClickX: optNum, resolvedClickY: optNum,
             visualSnapped: bool, snapDistance: optNum, selectorReplaySafe: bool, selectorQuality: str, bindingActionable: bool, bindingSource: str, visualAuthority: bool,
             cdpPiercedTarget: bool, cdpPiercedActivator: bool, cdpPiercedFollowupEditor: bool, postVisualEditorFocus: bool, cdpPiercedAction: bool, unexpectedNavigation: bool, physicalClickUncertain: bool,
+            pointerAction: str,
           },
         },
         render: (_args, value) => [{ type: 'text', text: `Visual browser click executed at (${Number(value.xRatio).toFixed(4)}, ${Number(value.yRatio).toFixed(4)}) via ${value.transport || 'visual'}${value.selectorHint ? `; reusable selector=${value.selectorHint}` : ''}.` }],
@@ -241,7 +243,7 @@ export function registerTools(ctx, bridge, config = {}) {
           targetHint: args.targetHint, expectedVisualText: args.expectedVisualText, targetTextHint: args.targetTextHint, targetIdHint: args.targetIdHint, targetClassHint: args.targetClassHint,
           learnedLocatorText: args.learnedLocatorText, learnedLocatorRole: args.learnedLocatorRole, learnedLocatorTag: args.learnedLocatorTag,
           learnedSelectorQuality: args.learnedSelectorQuality, learnedBindingSource: args.learnedBindingSource,
-          teachingControlMode: args.teachingControlMode, visualAuthority: args.visualAuthority, tabId: args.tabId,
+          teachingControlMode: args.teachingControlMode, visualAuthority: args.visualAuthority, pointerAction: args.pointerAction, tabId: args.tabId,
         }), timeoutMs), 'visualClick')
         return clean({
           ok: true, xRatio: value.xRatio ?? args.xRatio, yRatio: value.yRatio ?? args.yRatio,
@@ -263,6 +265,7 @@ export function registerTools(ctx, bridge, config = {}) {
           cdpPiercedTarget: value.cdpPiercedTarget,
           cdpPiercedActivator: value.cdpPiercedActivator, cdpPiercedFollowupEditor: value.cdpPiercedFollowupEditor, postVisualEditorFocus: value.postVisualEditorFocus, cdpPiercedAction: value.cdpPiercedAction,
           unexpectedNavigation: value.unexpectedNavigation, physicalClickUncertain: value.physicalClickUncertain,
+          pointerAction: value.pointerAction,
         })
       },
     }),
@@ -372,7 +375,7 @@ export function registerTools(ctx, bridge, config = {}) {
     defineTool({
       name: 'browser_screenshot',
       description: 'Capture the active tab to the CURRENT Harness workspace and run bundled Windows OCR. In CAPTCHA test mode, conventional image-code pages are explicitly OCR-readable; only non-image-code verification challenges remain suppressed. Headless/scheduled executions without a session workspace fall back to the Patrol bridge temporary directory.',
-      parameters: { tabId: optInt, format: { type: 'string', enum: ['png', 'jpeg'] }, maxWidth: optInt, quality: optInt },
+      parameters: { tabId: optInt, format: { type: 'string', enum: ['png', 'jpeg'] }, maxWidth: optInt, quality: optInt, coordinateGuide: optBool },
       output: {
         schema: {
           type: 'object',
@@ -406,6 +409,10 @@ export function registerTools(ctx, bridge, config = {}) {
             captureScale: optNum,
             targetPixelWidth: optNum,
             captureDevicePixelRatio: optNum,
+            coordinateGuide: bool,
+            coordinateGridUnits: optNum,
+            modelRasterWidth: optNum,
+            modelRasterHeight: optNum,
           },
         },
         render: (_args, value) => [{ type: 'text', text: renderScreenshotResult(value) }],
@@ -417,10 +424,11 @@ export function registerTools(ctx, bridge, config = {}) {
           format: args.format ?? 'png',
           maxWidth: args.maxWidth,
           quality: args.quality,
+          coordinateGuide: args.coordinateGuide,
         }, timeoutMs), 'screenshot')
         const workspaceRoot = exec?.agent?.session?.header?.cwd
         const path = bridge.saveScreenshot(value.dataUrl, workspaceRoot)
-        const ocr = await inspectScreenshotOcr(bridge, exec, args.tabId, value.dataUrl, timeoutMs)
+        const ocr = await inspectScreenshotOcr(bridge, exec, args.tabId, value.ocrDataUrl ?? value.dataUrl, timeoutMs)
         return clean({
           ok: true,
           path,
@@ -446,6 +454,10 @@ export function registerTools(ctx, bridge, config = {}) {
           captureScale: value.captureScale,
           targetPixelWidth: value.targetPixelWidth,
           captureDevicePixelRatio: value.captureDevicePixelRatio,
+          coordinateGuide: value.coordinateGuide,
+          coordinateGridUnits: value.coordinateGridUnits,
+          modelRasterWidth: value.modelRasterWidth,
+          modelRasterHeight: value.modelRasterHeight,
         })
       },
     }),
