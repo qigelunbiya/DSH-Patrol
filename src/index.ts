@@ -90,7 +90,7 @@ export const inject = ['tools', 'userQuestions']
 const DEFAULT_STORAGE_PATH = resolve(process.cwd(), '.dsh-patrol')
 const DEFAULT_MAX_STEPS = 200
 const DEFAULT_REPORT_MAX_CHARS = 30_000
-const TEST_MODE_BUILD_MARKER = 'test-bypass-v11-operational-browser'
+const TEST_MODE_BUILD_MARKER = 'test-visual-grounding-v12'
 const TEST_MODE_DIRECT_BROWSER_ALLOWED = new Set([
   'browser_status',
   'browser_list_tabs',
@@ -200,7 +200,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   )
   ctx.effect(
     () => registerPatrolVisualClickTool(ctx, store, runner, { maxSteps: resolved.maxSteps, clickOutcomes }),
-    'dsh-patrol: recordable screenshot-bound browser visual click fallback',
+    'dsh-patrol: recordable screenshot-bound browser visual grounding',
   )
   ctx.effect(
     () => registerPatrolPageUnderstandingTools(ctx, store, runner, clickOutcomes),
@@ -252,6 +252,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       `guards=${runtimePolicy.installGuards ? 'enabled' : 'operational-click-fallbacks'}`,
       `strictPrompts=${runtimePolicy.injectStrictWorkflowPrompt ? 'enabled' : 'disabled'}`,
       `visualCaptchaFallback=${runtimePolicy.testMode ? 'enabled' : 'disabled'}`,
+      `browserControl=${runtimePolicy.testMode ? 'visual-grounding+dom-replay' : 'hybrid'}`,
       'desktopAutomation=windows-uia+keyboard+ocr+coordinates',
       'desktopPermissions=unrestricted',
       `build=${TEST_MODE_BUILD_MARKER}`,
@@ -407,5 +408,5 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
   const guardMode = runtimePolicy.testMode ? 'test-operational-click-fallbacks' : 'normal-strict'
   const plannerMode = runtimePolicy.testMode ? 'advisory' : 'strict'
-  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; guard-mode=${guardMode}; build=${TEST_MODE_BUILD_MARKER}; scheduler=enabled; credential helper=optional; transient sensitive replay=enabled; encrypted TOTP profile replay=enabled; semantic click resolver=enabled; browser visual fallback=enabled; page-understanding-planner=${plannerMode}; native select=enabled; task-checklist=required; secret-safe creation=enabled; flat action tools=enabled; OpenXML Excel v5 tools=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled; desktop automation=enabled; desktop permissions=unrestricted`)
+  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; guard-mode=${guardMode}; build=${TEST_MODE_BUILD_MARKER}; scheduler=enabled; credential helper=optional; transient sensitive replay=enabled; encrypted TOTP profile replay=enabled; semantic click resolver=enabled; browser visual grounding=enabled; page-understanding-planner=${plannerMode}; native select=enabled; task-checklist=required; secret-safe creation=enabled; flat action tools=enabled; OpenXML Excel v5 tools=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled; desktop automation=enabled; desktop permissions=unrestricted`)
 }
