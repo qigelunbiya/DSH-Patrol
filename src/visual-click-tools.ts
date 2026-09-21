@@ -97,7 +97,11 @@ export function registerPatrolVisualClickTool(
 
       const definition = await loadEditable(store, args.inspectionId, options.maxSteps)
       const expectation = optionalExpectation(args.expectedText, args.expectationMode, args.caseSensitive)
-      const beforeState = expectation.expectation === undefined ? await capturePageState(runner, exec, args.tabId) : undefined
+      const isVisualNavigation = navigationLikeBusinessAction(args.stepName, args.targetHint)
+        && typeof args.expectedVisualText === 'string' && args.expectedVisualText.trim().length >= 4
+      const beforeState = expectation.expectation === undefined || isVisualNavigation
+        ? await capturePageState(runner, exec, args.tabId)
+        : undefined
       const visualAuthority = options.browserControlMode === 'visual-grounding'
       const clicked = await runner.dispatch('browser_visual_click', compactObject({
         frameId: args.frameId,
@@ -140,7 +144,27 @@ export function registerPatrolVisualClickTool(
       let verificationMethod: NonNullable<ToolStep['teaching']>['method']
       let verificationEvidence = ''
       let verificationAttempts = 1
-      if (expectation.expectation !== undefined) {
+      if (isVisualNavigation) {
+        const verified = await verifyAutomaticStateChange(
+          runner,
+          exec,
+          beforeState,
+          args.tabId,
+          args.targetHint,
+          args.expectedVisualText,
+        )
+        verificationAttempts = verified.attempts
+        if (!verified.ok) {
+          outcomes.recordUnverifiedPhysicalClick(args)
+          return [
+            'Visual navigation was physically executed but was NOT recorded because the destination does not match the exact item selected from the model-visible screenshot.',
+            verified.evidence,
+            clicked.text,
+          ].filter(Boolean).join('\n')
+        }
+        verificationMethod = 'state-change'
+        verificationEvidence = verified.evidence ?? `navigation reached the screenshot-selected item ${JSON.stringify(args.expectedVisualText)}`
+      } else if (expectation.expectation !== undefined) {
         const verified = await verifyPostClickExpectation(
           (toolName, toolArgs, toolExec) => runner.dispatch(toolName, toolArgs, toolExec),
           exec,
@@ -221,7 +245,7 @@ export function registerPatrolVisualClickTool(
         // first on replay; guarded geometry remains the final fallback.
         xRatio: effectiveXRatio,
         yRatio: effectiveYRatio,
-        selectorHint: selectorReplaySafe ? selectorHint : undefined,
+        selectorHint: selectorReplaySafe && bindingActionable ? selectorHint : undefined,
         learnedLocatorText,
         learnedLocatorRole,
         learnedLocatorTag,
