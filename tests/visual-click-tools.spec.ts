@@ -214,6 +214,86 @@ describe('browser visual fallback click teaching', () => {
 
 
 
+  it('accepts a vision-selected action-map candidate without model-provided x/y and persists resolved geometry', async () => {
+    const calls: Array<{ tool: string; args: JsonObject }> = []
+    const { store, tool, exec } = await setup(async (name, args) => {
+      calls.push({ tool: name, args })
+      if (name === 'browser_read_page') {
+        return { ok: true, text: '视频页面', value: { ok: true, url: 'https://www.bilibili.com/video/BV-test', text: '视频页面' } }
+      }
+      if (name === 'browser_snapshot') {
+        return { ok: true, text: 'snapshot', value: { ok: true, url: 'https://www.bilibili.com/video/BV-test', elements: [] } }
+      }
+      if (name === 'browser_visual_click') {
+        expect(args).toMatchObject({
+          frameId: 'browser-visual-current',
+          candidateId: 'A4',
+          visualAuthority: true,
+          pointerAction: 'left-click',
+        })
+        expect(args.xRatio).toBeUndefined()
+        expect(args.yRatio).toBeUndefined()
+        return {
+          ok: true,
+          text: 'candidate clicked',
+          value: {
+            ok: true,
+            candidateId: 'A4',
+            xRatio: 0.1825,
+            yRatio: 0.8125,
+            requestedXRatio: 0.1825,
+            requestedYRatio: 0.8125,
+            selectorHint: 'top-frame::.video-like',
+            urlIdentity: 'https://www.bilibili.com/video/BV-test',
+            viewportWidth: 1280,
+            viewportHeight: 720,
+            viewportScale: 1,
+            captureClientLeft: 0,
+            captureClientTop: 0,
+            captureWidth: 1280,
+            captureHeight: 720,
+            captureMode: 'cdp-focused-region',
+            scrollX: 0,
+            scrollY: 480,
+            targetTag: 'div',
+            targetRole: 'button',
+            targetText: '2.1万',
+            targetTitle: '点赞',
+            targetAriaLabel: '点赞',
+            selectorReplaySafe: true,
+            selectorQuality: 'strong',
+            bindingActionable: true,
+            bindingSource: 'visual-action-map-post-click-learning',
+            visualAuthority: true,
+            targetStateChanged: true,
+            stateEvidence: 'like activated',
+            transport: 'bound-action-map-candidate',
+          },
+        }
+      }
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    const result = await tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '给视频点赞',
+      targetHint: '播放器下方左侧的大拇指点赞按钮',
+      frameId: 'browser-visual-current',
+      candidateId: 'A4',
+    }, exec)
+
+    expect(result).toContain('candidate A4')
+    expect(result).toContain('model selected the labeled box')
+    const saved = await store.load('visual-click')
+    expect(saved.steps).toHaveLength(1)
+    expect((saved.steps[0] as any).arguments).toMatchObject({
+      xRatio: 0.1825,
+      yRatio: 0.8125,
+      targetHint: '播放器下方左侧的大拇指点赞按钮',
+    })
+    expect((saved.steps[0] as any).arguments.candidateId).toBeUndefined()
+  })
+
   it('supports mark/right-click visual calibration without recording a Runbook step', async () => {
     for (const pointerAction of ['mark', 'right-click'] as const) {
       const calls: Array<{ tool: string; args: JsonObject }> = []
