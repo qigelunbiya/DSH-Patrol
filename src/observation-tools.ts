@@ -88,6 +88,7 @@ export function registerPatrolObservationTools(
       inspectionId: { type: 'string', required: true },
       tabId: { type: 'integer' },
       includeImage: { type: 'boolean', description: 'Attach the CURRENT screenshot image to model context. Default false; use only when OCR/DOM evidence is insufficient.' },
+      actionMap: { type: 'boolean', description: 'Overlay stable A1/A2/... boxes around CURRENT interactive controls. Intended for precise visual selection of small targets; the model chooses a box id instead of guessing a pixel center.' },
       focusXRatio: { type: 'number', description: 'Optional coarse X center (0..1) for a focused visual crop. Use after a full-frame visual estimate when the target is small or a calibration mark missed.' },
       focusYRatio: { type: 'number', description: 'Optional coarse Y center (0..1) for a focused visual crop. Requires includeImage=true and focusXRatio.' },
       focusWidthRatio: { type: 'number', description: 'Focused crop width as a fraction of the CURRENT visual viewport. Default 0.30; clamped to 0.12..0.72.' },
@@ -116,6 +117,8 @@ export function registerPatrolObservationTools(
           captureHeight: { type: 'number' },
           captureMode: { type: 'string' },
           coordinateGuide: { type: 'boolean' },
+          actionMap: { type: 'boolean' },
+          actionCandidateCount: { type: 'integer' },
           coordinateGridUnits: { type: 'number' },
           modelRasterWidth: { type: 'number' },
           modelRasterHeight: { type: 'number' },
@@ -162,6 +165,9 @@ export function registerPatrolObservationTools(
               ? `FOCUSED VISUAL FRAME: this image is a zoomed CURRENT-page crop centered near full-frame (${Number(value.focusCenterXRatio ?? 0).toFixed(3)}, ${Number(value.focusCenterYRatio ?? 0).toFixed(3)}), covering about ${Math.round(Number(value.focusWidthRatio ?? 0) * 100)}% x ${Math.round(Number(value.focusHeightRatio ?? 0) * 100)}% of the viewport. The attached crop itself has an XY/1000 overlay. For patrol_visual_click_target use the target position INSIDE THIS CROP: xRatio=X/1000, yRatio=Y/1000. Do NOT reuse the coarse full-frame ratio as the click ratio.`
               : `VISUAL COORDINATE GUIDE: the attached raster is ${value.modelRasterWidth ?? value.image?.width ?? '?'}x${value.modelRasterHeight ?? value.image?.height ?? '?'} px and contains an XY/1000 overlay. Read the target from that overlay: xRatio=X/1000, yRatio=Y/1000. Never infer coordinates from OS screen size, CSS viewport size, or the chat UI preview width.`,
           ] : []),
+          ...(hasImage && value.actionMap === true ? [
+            `VISUAL ACTION MAP READY: ${value.actionCandidateCount ?? 0} CURRENT interactive control(s) are outlined with A1/A2/... labels. For small buttons/icons, visually choose the label covering the intended control and call patrol_visual_click_target with candidateId=that label. Do NOT estimate xRatio/yRatio when a correct action-map candidate exists. The browser will click that candidate's captured control center; DOM text is not used to choose the candidate.`,
+          ] : []),
           ...(args.includeImage === true && !hasImage ? ['VISUAL CLICK DISABLED: includeImage=true did not produce a model-visible image; do not guess screenshot coordinates.'] : []),
         ]
 
@@ -187,6 +193,7 @@ export function registerPatrolObservationTools(
         inspectionId: args.inspectionId,
         tabId: args.tabId,
         includeImage: args.includeImage === true,
+        actionMap: args.actionMap === true,
         ...(args.focusXRatio === undefined ? {} : { focusXRatio: args.focusXRatio }),
         ...(args.focusYRatio === undefined ? {} : { focusYRatio: args.focusYRatio }),
       },
@@ -194,6 +201,9 @@ export function registerPatrolObservationTools(
     async execute(args, exec: ToolRunContext) {
       const focusRequested = args.focusXRatio !== undefined || args.focusYRatio !== undefined
         || args.focusWidthRatio !== undefined || args.focusHeightRatio !== undefined
+      if (args.actionMap === true && args.includeImage !== true) {
+        throw new Error('visual action-map observation requires includeImage=true')
+      }
       if (focusRequested) {
         if (args.includeImage !== true) throw new Error('focused visual observation requires includeImage=true')
         if (!Number.isFinite(args.focusXRatio) || !Number.isFinite(args.focusYRatio)
@@ -221,7 +231,8 @@ export function registerPatrolObservationTools(
         ...(args.includeImage === true ? {
           maxWidth: VISUAL_SCREENSHOT_MAX_WIDTH,
           quality: VISUAL_SCREENSHOT_JPEG_QUALITY,
-          coordinateGuide: true,
+          coordinateGuide: args.actionMap !== true,
+          actionMap: args.actionMap === true,
           ...(focusRequested ? {
             focusXRatio: Number(args.focusXRatio),
             focusYRatio: Number(args.focusYRatio),
@@ -300,6 +311,8 @@ export function registerPatrolObservationTools(
       const captureHeight = objectNumber(shot.value, 'captureHeight')
       const captureMode = objectString(shot.value, 'captureMode')
       const coordinateGuide = objectBoolean(shot.value, 'coordinateGuide') === true
+      const actionMap = objectBoolean(shot.value, 'actionMap') === true
+      const actionCandidateCount = objectNumber(shot.value, 'actionCandidateCount')
       const coordinateGridUnits = objectNumber(shot.value, 'coordinateGridUnits')
       const modelRasterWidth = objectNumber(shot.value, 'modelRasterWidth')
       const modelRasterHeight = objectNumber(shot.value, 'modelRasterHeight')
@@ -333,6 +346,8 @@ export function registerPatrolObservationTools(
         ...(captureHeight === undefined ? {} : { captureHeight }),
         ...(captureMode === undefined ? {} : { captureMode }),
         coordinateGuide,
+        actionMap,
+        ...(actionCandidateCount === undefined ? {} : { actionCandidateCount }),
         ...(coordinateGridUnits === undefined ? {} : { coordinateGridUnits }),
         ...(modelRasterWidth === undefined ? {} : { modelRasterWidth }),
         ...(modelRasterHeight === undefined ? {} : { modelRasterHeight }),
