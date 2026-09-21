@@ -7,7 +7,7 @@
 页面动作有三种策略，优先级以用户当前任务中的明确要求为准：
 
 1. **用户未指定方式**：使用默认 AUTO/HYBRID。根据 CURRENT 页面证据在 DOM/semantic、稳定 selector、视觉之间选择最可靠的方法，不规定“必须先 DOM”或“必须先视觉”。
-2. **用户明确要求只用视觉模型**：必须先 `patrol_observe(includeImage=true)`，确认输出包含 `MODEL-VISIBLE image attached`、`visualClickReady=true` 和新的 `visualFrameId`。随后使用 `patrol_visual_click_target(..., visualAuthority=true)`。业务点击不能偷偷改用 DOM/semantic 来完成；DOM 只可在点击后用于命中身份学习和结果验证。
+2. **用户明确要求只用视觉模型**：必须先 `patrol_observe(includeImage=true)`，确认输出包含 `MODEL-VISIBLE image attached`、`visualClickReady=true` 和 `visualFrameId`。随后使用 `patrol_visual_click_target(..., visualAuthority=true)`。现场视觉点击始终以截图坐标为物理权威，不允许 DOM/semantic 在点击前把点位吸附到别处；DOM 只可在点击后用于命中身份学习和结果验证。同一个 `visualFrameId` 在页面几何不变时可以重复使用，不需要每点击一次重新截图。
 3. **用户明确禁止视觉**：不得调用 `patrol_observe(includeImage=true)`、`patrol_visual_click_target` 或猜测截图坐标。使用 `patrol_observe(includeImage=false)`、`patrol_snapshot`、`patrol_read_page`、`patrol_click_target` 等非视觉证据完成。
 
 普通图片字符验证码属于专用认证流程，继续走 Patrol 的本地/Windows OCR solver；不要把通用“视觉专用”页面策略套到验证码识别上。
@@ -20,7 +20,7 @@
 - 选中候选视频后，**先保存它在首页上看到的完整标题**，再点击。
 - DOM 策略优先使用“完整标题 + 当前卡片上下文”做唯一定位；不要使用过宽的“任意包含 /video/ 的链接”、第一个链接、或第一个标题节点等选择器。
 - 视觉策略必须把首页截图里实际看见的完整视频标题放入 `expectedVisualText`，点击标题/封面所在同一卡片的可点击区域。
-- 如果点击打开新标签页，Patrol 应采用该新标签页作为 CURRENT 页面，而不是继续把源首页当成详情页。
+- 如果点击打开新标签页，Patrol 应自动把后续 snapshot/read/screenshot 验证重定向到该新标签页，而不是继续把源首页当成详情页；视觉点击与普通点击都必须支持这一点。
 
 ### 进入详情后的强校验
 
@@ -35,7 +35,7 @@
 Bilibili 的点赞属于 toggle 动作，误点两次会恢复原状态。
 
 - 点击前尽量读取当前点赞状态；若已有激活/已点赞证据，不要再次点击。
-- 只允许一次经过验证的物理点击。
+- 未验证成功前允许使用同一 CURRENT visualFrameId 继续修正点位重试；一旦已经验证为“已点赞”，不要再次点击 toggle 按钮，以免把状态切回未点赞。
 - 点击后验证按钮状态、ARIA/类状态、计数变化或其它 CURRENT 状态证据；只有“工具发出 click”不能算成功。
 - 已验证成功后禁止为了“确认一下”再点一次。
 
@@ -62,7 +62,7 @@ Bilibili 的点赞属于 toggle 动作，误点两次会恢复原状态。
 `patrol_observe(includeImage=true)` 返回的图片必须是真正进入模型上下文的 CURRENT 截图。
 
 - 看到 `MODEL-VISIBLE image attached` 和 `Visual click frame READY` 后才能计算 `xRatio/yRatio`。
-- 页面发生滚动、缩放、跳转、标签页切换或显著布局变化后，旧 `visualFrameId` 立即视为过期，应重新观察。
+- `visualFrameId` 不再因为时间、点击一次、或累计截图数量而失效；只要 CURRENT tab、URL、scroll、zoom、viewport 与截图一致，就可以重复使用任意次数。页面发生滚动、缩放、跳转、标签页切换或 viewport/布局几何变化后，旧截图坐标不再对应 CURRENT 页面，此时应重新观察。
 - 扩展会把高 DPR 的截图限制在 Patrol 的模型栅格预算内。若 CDP 压缩或页面 MAIN-world canvas 不可用，扩展 service worker 会使用 OffscreenCanvas 做最终降采样；上层仍会以 `read_image` 实际宽度为最终安全检查。
 - 若图片没有成功附加，不得根据 OCR/DOM 文本假装自己“看到了截图”，更不能猜坐标。
 
