@@ -289,7 +289,8 @@ export function registerPatrolVisualClickTool(
 
       const effectiveXRatio = objectNumber(clicked.value, 'xRatio') ?? (hasPoint ? args.xRatio : undefined)
       const effectiveYRatio = objectNumber(clicked.value, 'yRatio') ?? (hasPoint ? args.yRatio : undefined)
-      if (!Number.isFinite(effectiveXRatio) || !Number.isFinite(effectiveYRatio)) {
+      if (effectiveXRatio === undefined || effectiveYRatio === undefined
+        || !Number.isFinite(effectiveXRatio) || !Number.isFinite(effectiveYRatio)) {
         outcomes.recordUnverifiedPhysicalClick(args)
         return 'Visual click reached a verified state but did not return effective normalized geometry, so it was NOT persisted.'
       }
