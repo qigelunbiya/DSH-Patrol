@@ -9,7 +9,8 @@ describe('TEST MODE operational click fallbacks', () => {
     expect(source).toContain('createPatrolTestModePlanningGuard(clickOutcomes)')
     expect(source).toContain('strategy counters')
     expect(source).toContain("build=${TEST_MODE_BUILD_MARKER}")
-    expect(source).toContain("test-bypass-v11-operational-browser")
+    expect(source).toContain("test-ui-tars-grounding-v12")
+    expect(source).toContain("browserControl=${runtimePolicy.browserControlMode}")
   })
 
   it('allows non-secret low-level interaction fallbacks in TEST MODE', () => {
