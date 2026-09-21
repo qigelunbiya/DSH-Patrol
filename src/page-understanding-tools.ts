@@ -61,9 +61,9 @@ export const PATROL_PAGE_UNDERSTANDING_PROMPT = `DSH Patrol 页面理解与执�
 - patrol_analyze_step 永远不写 Runbook。需要表格行身份、弹窗上下文、iframe 或同名目标消歧时，它会把“行身份 + 行内动作”绑定，例如“目标地址 + RDP”。不要把分析器给出的 selector 再扩写成更长的 nth-of-type，也不要在没有新证据时连续猜 selector。
 - selector 只接受当前浏览器 querySelector 层支持的 CSS。严禁 jQuery/Playwright/XPath 方言：:contains(...)、:has-text(...)、text=...、//...、.//...、xpath=...。locatorText 已知时优先只传 locatorText 给 patrol_click_target；若 locatorText 已提供但 selector hint 是非法方言，运行时会丢弃这个可选 hint 而继续语义定位。
 - 一种方法失败不会锁死其他方法。DOM/semantic 未命中后可以切换视觉，视觉未命中后也可以回到 DOM/semantic；不要为了满足固定次数而重复 analyze/read/snapshot 或编造 CSS。已经有证据确认开关型业务点击成功后，不要再次点击同一目标把状态反向切回。
-- patrol_visual_click_target 必须使用 patrol_observe(includeImage=true) 返回的 CURRENT visualFrameId；底层会核对 tab、URL、scroll、zoom、viewport。targetHint 会参与点击前的业务控件验证和高置信语义救援：视觉点明显落到无关推荐卡片/播放器小窗时必须拒绝；若 CURRENT DOM/Accessibility 能唯一解析出目标控件（例如“发布”按钮、评论编辑器、完整视频标题），允许改用该唯一控件的真实盒模型。不能把视觉点静默吸到一个大容器或相邻无关控件。
+- patrol_visual_click_target 必须使用 patrol_observe(includeImage=true) 返回的 CURRENT visualFrameId；底层会核对 tab、URL、scroll、zoom、viewport。Live teaching 的 CURRENT frame 采用 coordinate-authoritative visual grounding：截图坐标就是物理点击坐标，禁止在点击前用 DOM/Accessibility 全局搜索把视觉点改写到另一个控件。targetHint 在教学时是业务意图与点击后验证/学习标签；点击后再通过实际命中点反查 DOM/open Shadow DOM/Accessibility，学习可复用 binding。
 - 视觉截图不设固定次数上限。模型可以在页面/滚动/布局变化后按需重新 patrol_observe(includeImage=true) 获取新的 CURRENT frame；每次新视觉附件前 Patrol 会通过 Harness image/offload 把旧工具图片移出模型可见输入，并单独裁剪过大的文本工具结果，同时保持 DPR-aware 的有界截图尺寸，避免旧图片堆积把本地 Qwen 推到 CUDA OOM / 503。不要无状态变化地机械重复同一张截图，但不得因为“已经看过两次”而阻止真正需要的新视觉观察。
-- 教学成功后的 browser_visual_click 重放优先使用视觉命中时发现的 stable selector；selector 漂移时才恢复记录的 URL/scroll/viewport 并使用归一化 xRatio/yRatio。所有方法都必须以 CURRENT 业务状态验证为准，不能仅因为工具发出了 click 就宣称成功。
+- 教学成功后的 browser_visual_click 会把视觉实际命中的 DOM/AX 目标反向绑定成 learned semantic locator / stable selector / fingerprint；重放优先 learned semantic，其次 learned selector，只有这些无法安全命中时才恢复记录的 URL/scroll/viewport 并使用归一化 xRatio/yRatio。所有方法都必须以 CURRENT 业务状态验证为准，不能仅因为工具发出了 click 就宣称成功。
 - 不要为每个内部工具调用向用户重复“我再观察一下/我再试一下/让我换个选择器”。只有需要用户输入/确认、遇到不可恢复阻塞、或任务最终完成时才发自然语言说明。任何没有新工具结果或新页面证据支持的 selector 推测最多写一次。
 - 教学轨迹不等于 Runbook。诊断 snapshot/read、失败点击、重复输入、临时等待都不是最终流程。任务完成后必须 patrol_finalize_flow，只保留真正完成 taskChecklist 的已验证业务路径，再确认流程。
 - targetUrl/browser_navigate 必须是纯 http/https URL。若对话渲染成 Markdown 链接 [url](url)，还原 href 后再调用工具，禁止把 Markdown 链接字符串写进 Flow JSON。
