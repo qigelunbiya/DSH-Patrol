@@ -201,7 +201,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     'dsh-patrol: semantic current-page click target resolver',
   )
   ctx.effect(
-    () => registerPatrolVisualClickTool(ctx, store, runner, { maxSteps: resolved.maxSteps, clickOutcomes, browserControlMode: runtimePolicy.browserControlMode, visualEvidence }),
+    () => registerPatrolVisualClickTool(ctx, store, runner, { maxSteps: resolved.maxSteps, clickOutcomes, visualEvidence }),
     'dsh-patrol: recordable screenshot-bound browser visual grounding',
   )
   ctx.effect(
@@ -254,7 +254,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       `guards=${runtimePolicy.installGuards ? 'enabled' : 'operational-click-fallbacks'}`,
       `strictPrompts=${runtimePolicy.injectStrictWorkflowPrompt ? 'enabled' : 'disabled'}`,
       `visualCaptchaFallback=${runtimePolicy.testMode ? 'enabled' : 'disabled'}`,
-      `browserControl=${runtimePolicy.browserControlMode}`,
+      'browserStrategy=user-directed(default=hybrid)',
       'desktopAutomation=windows-uia+keyboard+ocr+coordinates',
       'desktopPermissions=unrestricted',
       `build=${TEST_MODE_BUILD_MARKER}`,

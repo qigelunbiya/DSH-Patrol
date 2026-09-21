@@ -31,7 +31,6 @@ interface StateChangeVerification {
 export interface PatrolVisualClickOptions {
   maxSteps: number
   clickOutcomes?: PatrolClickOutcomeTracker
-  browserControlMode?: 'visual-grounding' | 'hybrid'
   visualEvidence?: PatrolVisualEvidenceRegistry
 }
 
@@ -45,7 +44,7 @@ export function registerPatrolVisualClickTool(
   const outcomes = options.clickOutcomes ?? createPatrolClickOutcomeTracker()
   const tool = defineTool({
     name: 'patrol_visual_click_target',
-    description: 'Vision-first browser teaching click. After patrol_observe(includeImage=true), click the exact CURRENT screenshot point like a human: xRatio=centerX/imageWidth and yRatio=centerY/imageHeight. targetHint labels the intended business action, but CURRENT DOM is NOT a pre-click permission gate and must not relocate a live visual point. After the physical click, Patrol verifies the business result, reverse-binds the hit DOM/Shadow-DOM/Accessibility identity when trustworthy, and stores semantic/selector replay first with guarded visual geometry as fallback. Never use for image-code/CAPTCHA.',
+    description: 'Screenshot-bound browser teaching click. After patrol_observe(includeImage=true), click the CURRENT screenshot point. visualAuthority=true is reserved for an explicit user request to use vision-only/coordinate-authoritative patrol; otherwise the click uses normal hybrid assistance. After the physical click, Patrol verifies the business result and learns reusable DOM/semantic identity for replay. Never use for image-code/CAPTCHA.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
@@ -54,6 +53,7 @@ export function registerPatrolVisualClickTool(
       yRatio: { type: 'number', required: true },
       targetHint: { type: 'string', required: true, description: 'Concrete CURRENT business intent, e.g. 评论输入框/发布按钮/点赞按钮/完整视频标题. It labels post-click verification and learned DOM/semantic binding; it does not authorize or relocate the live screenshot coordinate.' },
       expectedVisualText: { type: 'string', description: 'Exact visible label/title read from the attached CURRENT screenshot. Required for navigation/card/video visual clicks so Patrol can verify the chosen screenshot point belongs to that exact item before trusted input and verify the destination afterwards.' },
+      visualAuthority: { type: 'boolean', description: 'Set true ONLY when the user explicitly requires vision-only/visual-model patrol. True makes the model-selected screenshot coordinate authoritative and forbids pre-click DOM relocation. Omit/false for the default AUTO/HYBRID behavior.' },
       tabId: { type: 'integer' },
       expectedText: { type: 'string' },
       expectationMode: { type: 'string', enum: ['contains', 'not-contains'] },
@@ -102,7 +102,7 @@ export function registerPatrolVisualClickTool(
       const beforeState = expectation.expectation === undefined || isVisualNavigation
         ? await capturePageState(runner, exec, args.tabId)
         : undefined
-      const visualAuthority = options.browserControlMode === 'visual-grounding'
+      const visualAuthority = args.visualAuthority === true
       const clicked = await runner.dispatch('browser_visual_click', compactObject({
         frameId: args.frameId,
         xRatio: args.xRatio,
@@ -267,7 +267,7 @@ export function registerPatrolVisualClickTool(
         learnedSelectorQuality: objectString(clicked.value, 'selectorQuality'),
         learnedBindingSource: objectString(clicked.value, 'bindingSource'),
         replayPlan,
-        teachingControlMode: options.browserControlMode,
+        teachingControlMode: visualAuthority ? 'visual-grounding' : 'hybrid',
         urlIdentity,
         viewportWidth,
         viewportHeight,

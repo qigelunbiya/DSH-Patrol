@@ -18,7 +18,6 @@ afterEach(async () => {
 async function setup(
   dispatch: (tool: string, args: JsonObject) => Promise<any>,
   clickOutcomes?: any,
-  browserControlMode: 'visual-grounding' | 'hybrid' = 'visual-grounding',
   visualEvidence?: PatrolVisualEvidenceRegistry,
 ) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-visual-click-'))
@@ -36,7 +35,7 @@ async function setup(
       },
     },
   } as unknown as Context
-  registerPatrolVisualClickTool(ctx, store, { dispatch } as any, { maxSteps: 20, clickOutcomes, browserControlMode, visualEvidence })
+  registerPatrolVisualClickTool(ctx, store, { dispatch } as any, { maxSteps: 20, clickOutcomes, visualEvidence })
   const tool = definitions.find(item => item.name === 'patrol_visual_click_target')
   if (!tool) throw new Error('patrol_visual_click_target not registered')
   const exec = {
@@ -138,6 +137,7 @@ describe('browser visual fallback click teaching', () => {
       frameId: 'browser-visual-current',
       xRatio: 0.17,
       yRatio: 0.81,
+      visualAuthority: true,
     }, exec)
 
     expect(result).toContain('browser_visual_click')
@@ -214,7 +214,7 @@ describe('browser visual fallback click teaching', () => {
 
 
 
-  it('keeps NORMAL/hybrid teaching DOM-assisted by passing visualAuthority=false', async () => {
+  it('defaults visual teaching to hybrid assistance unless the user explicitly requests visual authority', async () => {
     let authority: unknown
     const { tool, exec } = await setup(async (name, args) => {
       if (name === 'browser_read_page') return { ok: true, text: 'before', value: { ok: true, url: 'https://www.bilibili.com/', text: 'before' } }
@@ -239,7 +239,7 @@ describe('browser visual fallback click teaching', () => {
         }
       }
       throw new Error(`unexpected tool ${name}`)
-    }, undefined, 'hybrid')
+    })
 
     await tool.execute({
       inspectionId: 'visual-click',
@@ -374,7 +374,7 @@ describe('browser visual fallback click teaching', () => {
     const { tool, exec } = await setup(async (name) => {
       calls.push(name)
       throw new Error(`unexpected tool ${name}`)
-    }, undefined, 'visual-grounding', visualEvidence)
+    }, undefined, visualEvidence)
 
     await expect(tool.execute({
       inspectionId: 'visual-click',

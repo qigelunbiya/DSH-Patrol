@@ -939,6 +939,16 @@ describe('Patrol screenshot tab readiness', () => {
     expect(shot.captureScale).toBeCloseTo(1536 / 2880)
   })
 
+  it('keeps an extension-worker OffscreenCanvas fallback when page MAIN-world resize is unavailable', async () => {
+    const source = await readFile(interactionPath, 'utf8')
+    expect(source).toContain('interactionResizeCapturedDataUrlInWorker')
+    expect(source).toContain("typeof OffscreenCanvas !== 'function'")
+    expect(source).toContain('await createImageBitmap(dataUrlToBlob(source))')
+    expect(source).toContain("canvas.convertToBlob({")
+    expect(source).toContain("type: 'image/jpeg'")
+    expect(source).toMatch(/if \(!resized\?\.dataUrl\)[\s\S]*interactionResizeCapturedDataUrlInWorker/)
+  })
+
   it('treats maxWidth as a final raster-pixel budget on high-DPR browser pages', async () => {
     const viewport = {
       urlIdentity: 'https://example.test/video/1',

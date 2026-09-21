@@ -183,17 +183,28 @@ async function interactionScreenshot(args) {
       ...(format === 'jpeg' ? { quality } : {}),
     })
     if (format === 'jpeg' && Number.isFinite(requestedMaxWidth) && requestedMaxWidth >= 480) {
+      let resized
       try {
-        const resized = await interactionResizeCapturedDataUrl(tabId, dataUrl, requestedMaxWidth, quality)
-        if (resized?.dataUrl) {
-          dataUrl = resized.dataUrl
-          captureScale = resized.scale
-          compactVisual = resized.scale < 0.995
-          targetPixelWidth = requestedMaxWidth
-          captureDevicePixelRatio = Math.max(1, Number(before?.devicePixelRatio || 1))
-        }
+        resized = await interactionResizeCapturedDataUrl(tabId, dataUrl, requestedMaxWidth, quality)
       } catch {
-        // Keep the captured frame if in-page canvas resizing is unavailable.
+        // Some sites/CSP/page lifecycles make MAIN-world Image/canvas resizing
+        // unavailable. The extension worker fallback below is independent of
+        // page JavaScript and is the final physical-raster budget enforcement.
+      }
+      if (!resized?.dataUrl) {
+        try {
+          resized = await interactionResizeCapturedDataUrlInWorker(dataUrl, requestedMaxWidth, quality)
+        } catch {
+          // Upper Patrol layers still verify the actual read_image dimensions
+          // and will refuse an oversized frame rather than guess coordinates.
+        }
+      }
+      if (resized?.dataUrl) {
+        dataUrl = resized.dataUrl
+        captureScale = resized.scale
+        compactVisual = resized.scale < 0.995
+        targetPixelWidth = requestedMaxWidth
+        captureDevicePixelRatio = Math.max(1, Number(before?.devicePixelRatio || 1))
       }
     }
   }
@@ -256,6 +267,41 @@ async function interactionMainWorldResizeCapturedDataUrl(source, targetWidth, jp
     height,
     originalWidth,
     originalHeight,
+  }
+}
+
+async function interactionResizeCapturedDataUrlInWorker(source, targetWidth, jpegQuality) {
+  if (typeof OffscreenCanvas !== 'function' || typeof createImageBitmap !== 'function') return undefined
+  if (typeof dataUrlToBlob !== 'function' || typeof blobToDataUrl !== 'function') return undefined
+  const bitmap = await createImageBitmap(dataUrlToBlob(source))
+  try {
+    const originalWidth = Number(bitmap.width || 0)
+    const originalHeight = Number(bitmap.height || 0)
+    if (!Number.isFinite(originalWidth) || !Number.isFinite(originalHeight) || originalWidth <= 0 || originalHeight <= 0) return undefined
+    const scale = Math.min(1, Number(targetWidth) / originalWidth)
+    if (scale >= 0.995) {
+      return { dataUrl: source, scale: 1, width: originalWidth, height: originalHeight, originalWidth, originalHeight }
+    }
+    const width = Math.max(1, Math.round(originalWidth * scale))
+    const height = Math.max(1, Math.round(originalHeight * scale))
+    const canvas = new OffscreenCanvas(width, height)
+    const context = canvas.getContext('2d', { alpha: false })
+    if (!context) throw new Error('extension worker screenshot resize canvas unavailable')
+    context.drawImage(bitmap, 0, 0, originalWidth, originalHeight, 0, 0, width, height)
+    const blob = await canvas.convertToBlob({
+      type: 'image/jpeg',
+      quality: Math.max(0.25, Math.min(0.95, Number(jpegQuality) / 100)),
+    })
+    return {
+      dataUrl: await blobToDataUrl(blob),
+      scale,
+      width,
+      height,
+      originalWidth,
+      originalHeight,
+    }
+  } finally {
+    if (typeof bitmap.close === 'function') bitmap.close()
   }
 }
 

@@ -58,8 +58,11 @@ describe('Patrol page understanding planner', () => {
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/image\/offload.*旧工具图片移出模型可见输入/s)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).not.toMatch(/最多向模型附加两张|两张视觉截图/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).not.toMatch(/DOM 永远优先|视觉像素只允许作为最后兜底/)
-    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/不规定固定优先级/)
-    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/可以直接 patrol_observe\(includeImage=true\)/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/用户最近一条明确指令/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/用户未指定方法时.*不规定固定优先级/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/只用视觉.*visualAuthority=true/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/明确禁止视觉.*不得 includeImage=true/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).not.toMatch(/TEST MODE 是 UI-TARS 风格 visual-grounding/)
   })
 
   it('does not hard-stop method switching after unverified physical clicks', () => {
