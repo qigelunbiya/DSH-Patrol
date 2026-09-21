@@ -83,7 +83,7 @@ describe('current-page observation evidence fallback', () => {
     expect(value.imageStatus).toBe('attached')
     expect(value.image).toMatchObject({ attachmentId: 'img-1', mediaType: 'image/png' })
     expect(harness.readImageCalls).toBe(1)
-    expect(harness.screenshotArgs[0]).toMatchObject({ format: 'jpeg', maxWidth: 1536, quality: 72 })
+    expect(harness.screenshotArgs[0]).toMatchObject({ format: 'jpeg', maxWidth: 1024, quality: 68 })
     expect(harness.observed).toHaveLength(1)
   })
 
@@ -96,6 +96,16 @@ describe('current-page observation evidence fallback', () => {
     expect(harness.pruneCalls).toBe(4)
     expect(harness.readImageCalls).toBe(4)
     expect(harness.screenshotArgs).toHaveLength(4)
+  })
+
+  it('refuses to attach a visual screenshot when the browser does not confirm the raster budget', async () => {
+    const harness = setupObservationHarness({ readImage: 'success', captcha: false, omitRasterBudget: true })
+    const value = await harness.tool.execute({ inspectionId: 'demo', includeImage: true }, harness.exec)
+
+    expect(value.evidenceMode).toBe('screenshot-ocr-snapshot')
+    expect(value.imageStatus).toBe('read-failed')
+    expect(value.imageError).toMatch(/1024px raster budget/i)
+    expect(harness.readImageCalls).toBe(0)
   })
 
   it('falls back to compact evidence when explicit image attachment is unavailable', async () => {
@@ -140,6 +150,7 @@ function setupObservationHarness(options: {
   readImage: 'missing' | 'failed' | 'success'
   captcha: boolean
   prune?: boolean
+  omitRasterBudget?: boolean
 }) {
   const definitions: any[] = []
   const observed: Array<{ inspectionId: string; rootCallId: unknown }> = []
@@ -211,6 +222,7 @@ function setupObservationHarness(options: {
             path: 'C:\\workspace\\current.png',
             ocrStatus: 'recognized',
             ocrText: options.captcha ? 'LOGIN\nGLTK\n验证码' : `LOGIN\nUsername\nPassword\n${'status '.repeat(500)}`,
+            ...(args.format === 'jpeg' && options.omitRasterBudget !== true ? { targetPixelWidth: 1024, compactVisual: true } : {}),
           },
         }
       }
