@@ -2,20 +2,16 @@ import { describe, expect, it } from 'vitest'
 import { createPatrolVisualEvidenceRegistry } from '../src/visual-evidence-registry.ts'
 
 describe('Patrol model-visible visual evidence registry', () => {
-  it('allows exactly one observe-to-click handoff even though the two model tool calls have different rootCallIds', () => {
-    let now = 1000
-    const registry = createPatrolVisualEvidenceRegistry(() => now)
-
-    // patrol_observe and patrol_visual_click_target are separate model-requested
-    // root tool calls in Harness. The frame gate must therefore be independent
-    // of ToolRunContext.rootCallId.
+  it('allows repeated observe-to-click handoffs for the same model-visible frame', () => {
+    const registry = createPatrolVisualEvidenceRegistry()
     registry.mark('browser-visual-current', 'demo')
 
     expect(registry.consume('browser-visual-current', 'demo')).toEqual({ ok: true })
-    expect(registry.consume('browser-visual-current', 'demo')).toMatchObject({ ok: false })
+    expect(registry.consume('browser-visual-current', 'demo')).toEqual({ ok: true })
+    expect(registry.consume('browser-visual-current', 'demo')).toEqual({ ok: true })
   })
 
-  it('rejects frames from another inspection or expired visual evidence', () => {
+  it('rejects frames from another inspection but does not expire model-visible evidence by time', () => {
     let now = 1000
     const registry = createPatrolVisualEvidenceRegistry(() => now)
 
@@ -25,20 +21,20 @@ describe('Patrol model-visible visual evidence registry', () => {
       reason: expect.stringMatching(/different inspection/i),
     })
 
-    registry.mark('browser-visual-expired', 'demo')
-    now += 120_001
-    expect(registry.consume('browser-visual-expired', 'demo')).toMatchObject({
-      ok: false,
-      reason: expect.stringMatching(/not backed by a recent model-visible/i),
-    })
+    registry.mark('browser-visual-old', 'demo')
+    now += 24 * 60 * 60 * 1000
+    expect(registry.consume('browser-visual-old', 'demo')).toEqual({ ok: true })
   })
 
-  it('lets the browser extension own CURRENT-page freshness while the registry owns only model visibility and single use', () => {
-    const registry = createPatrolVisualEvidenceRegistry(() => 1000)
+  it('uses clearInspection as the lifecycle cleanup boundary while the extension owns CURRENT-page freshness', () => {
+    const registry = createPatrolVisualEvidenceRegistry()
     registry.mark('browser-visual-current', 'demo')
 
-    // URL/scroll/zoom/viewport staleness is validated by interactionVisualClick
-    // against the extension's bound visual frame after this registry handoff.
     expect(registry.consume('browser-visual-current', 'demo')).toEqual({ ok: true })
+    registry.clearInspection('demo')
+    expect(registry.consume('browser-visual-current', 'demo')).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(/not backed by a model-visible/i),
+    })
   })
 })
