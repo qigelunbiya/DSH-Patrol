@@ -325,6 +325,133 @@ describe('Patrol screenshot tab readiness', () => {
     ])
   })
 
+  it('recovers a newly mounted local Shadow-DOM editor only after the exact visual click', async () => {
+    const viewport = {
+      urlIdentity: 'https://example.test/video/1',
+      width: 1000, height: 800, offsetLeft: 0, offsetTop: 0, scale: 1,
+      scrollX: 0, scrollY: 1200,
+    }
+    let pressedCount = 0
+    const pressedPoints: Array<{ x: number; y: number }> = []
+    const scripting = {
+      async executeScript(request: any) {
+        if (request.func?.name === 'interactionMainWorldViewportState') return [{ result: { ...viewport } }]
+        if (request.func?.name === 'interactionMainWorldVisualClick') {
+          return [{ result: {
+            ok: true,
+            selector: 'bili-comment-editor',
+            replaySelectorSafe: true,
+            selectorQuality: 'medium',
+            bindingActionable: true,
+            bindingSource: 'visual-hit-test-post-click-learning',
+            visualAuthority: true,
+            tag: 'bili-comment-editor',
+            role: '',
+            text: '哎哟，不错哦，发条评论吧',
+            stateSignature: pressedCount > 0 ? 'activated-host' : 'idle-host',
+            targetFocusedEditable: false,
+            clickX: request.args?.[0],
+            clickY: request.args?.[1],
+          } }]
+        }
+        if (request.func?.name === 'interactionMainWorldFocusedEditor') {
+          return [{ result: {
+            ok: true,
+            focusUsable: pressedCount >= 2,
+            focusedTag: pressedCount >= 2 ? 'div' : 'bili-comment-editor',
+            focusKind: pressedCount >= 2 ? 'editable' : 'custom-focus-host',
+            observedText: '',
+          } }]
+        }
+        throw new Error(`unexpected executeScript function ${request.func?.name || 'anonymous'}`)
+      },
+    }
+    const debuggerApi = {
+      async attach() {},
+      async sendCommand(_target: any, method: string, params: any) {
+        if (method === 'Input.dispatchMouseEvent') {
+          if (params?.type === 'mousePressed') {
+            pressedCount += 1
+            pressedPoints.push({ x: params.x, y: params.y })
+          }
+          return {}
+        }
+        if (method === 'DOM.getDocument') {
+          return {
+            root: {
+              nodeName: '#document',
+              backendNodeId: 1,
+              children: pressedCount >= 1
+                ? [{
+                    nodeName: 'BILI-COMMENT-EDITOR',
+                    backendNodeId: 20,
+                    attributes: ['class', 'comment-editor', 'data-placeholder', '哎哟，不错哦，发条评论吧'],
+                    shadowRoots: [{
+                      nodeName: '#document-fragment',
+                      backendNodeId: 21,
+                      children: [{
+                        nodeName: 'DIV',
+                        backendNodeId: 30,
+                        attributes: ['contenteditable', 'true', 'role', 'textbox', 'class', 'comment-editor-input'],
+                      }],
+                    }],
+                  }]
+                : [],
+            },
+          }
+        }
+        if (method === 'DOM.resolveNode' && params.backendNodeId === 30) return { object: { objectId: 'editor-30' } }
+        if (method === 'Runtime.callFunctionOn' && params.objectId === 'editor-30') {
+          return { result: { value: { left: 280, top: 600, right: 680, bottom: 650, width: 400, height: 50 } } }
+        }
+        if (method === 'DOM.getNodeForLocation') return { backendNodeId: 30 }
+        throw new Error(`unexpected debugger command ${method}`)
+      },
+      async detach() {},
+    }
+    const tabs = {
+      get: async () => ({ id: 7, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
+      update: async (id: number) => ({ id, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
+      captureVisibleTab: async () => 'data:image/png;base64,AAAA',
+    }
+    const sandbox = await loadInteraction({ chrome: { tabs, scripting, debugger: debuggerApi } })
+    const shot = await sandbox.handleCommand('screenshot', { tabId: 7 })
+    const clicked = await sandbox.handleCommand('visualClick', {
+      tabId: 7,
+      frameId: shot.visualFrameId,
+      visualAuthority: true,
+      xRatio: 0.30,
+      yRatio: 0.78,
+      targetHint: '哎哟，不错哦，发条评论吧 评论输入框',
+    })
+
+    expect(pressedPoints[0]).toEqual({ x: 300, y: 624 })
+    expect(pressedPoints[1]).toEqual({ x: 480, y: 625 })
+    expect(clicked).toMatchObject({
+      ok: true,
+      visualAuthority: true,
+      requestedClickX: 300,
+      requestedClickY: 624,
+      resolvedClickX: 300,
+      resolvedClickY: 624,
+      visualSnapped: false,
+      targetFocusedEditable: true,
+      postVisualEditorFocus: true,
+      cdpPiercedFollowupEditor: true,
+    })
+    expect(clicked.stateEvidence).toMatch(/post-click Shadow-DOM focus recovery/)
+  })
+
+  it('checks exact visual item text before trusted input without relocating the point', async () => {
+    const source = await readFile(interactionPath, 'utf8')
+    const verifyIndex = source.indexOf('visualPointMatchesExpectedText(initialTarget, expectedVisualText)')
+    const dispatchIndex = source.indexOf('await interactionDispatchTrustedMouseClick(tabId, trustedX, trustedY)')
+    expect(verifyIndex).toBeGreaterThan(0)
+    expect(dispatchIndex).toBeGreaterThan(verifyIndex)
+    expect(source).toContain('visual screenshot point is not inside the item labeled')
+    expect(source).toContain('refusing trusted input without relocating the coordinate')
+  })
+
   it('types Unicode text through trusted CURRENT browser focus for shadow/editor fallbacks', async () => {
     const debuggerCalls: Array<{ method: string; params: any }> = []
     const scripting = {
@@ -490,6 +617,8 @@ describe('Patrol screenshot tab readiness', () => {
     expect(source).toContain("bindingSource: visualAuthority ? 'visual-hit-test-post-click-learning'")
     expect(source).toContain('visual-learned-semantic-replay')
     expect(source).toContain('physicalClickUncertain')
+    expect(source).toContain('interactionPiercedEditableIsLocalToVisualPoint')
+    expect(source).toContain('postVisualEditorFocus')
   })
 
   it('falls back from a stale explicit tab id to the CURRENT active browser tab', async () => {
