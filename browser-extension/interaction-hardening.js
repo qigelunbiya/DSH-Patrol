@@ -1283,7 +1283,7 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
   let nativeMouseDispatched = false
   let probe
   let beforeFocusedEditor
-  if (!visualAuthority && interactionWantsPublishTarget(targetHint)) {
+  if (interactionWantsPublishTarget(targetHint)) {
     try { beforeFocusedEditor = await interactionFocusedEditorProbe(tabId, false) } catch {}
   }
 
@@ -1481,10 +1481,10 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
     }
   }
 
-  // A failed/unsupported debugger path must never weaken publish/send safety.
-  // Probe the MAIN world separately before the synthetic fallback and require
-  // the same exact business-action proof that the trusted-mouse path requires.
-  if (interactionWantsPublishTarget(targetHint)) {
+  // Coordinate replay keeps strict publish/send DOM proof. Live visual teaching
+  // does not: the screenshot point owns the click and business-state verification
+  // after the click decides whether it is teachable.
+  if (!visualAuthority && interactionWantsPublishTarget(targetHint)) {
     let fallbackProbe
     try {
       const fallbackProbeResults = await chrome.scripting.executeScript({
