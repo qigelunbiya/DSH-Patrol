@@ -110,15 +110,19 @@ describe('current Patrol behavior prompt', () => {
   })
 
 
-  it('uses strategy-neutral browser clicking and Desktop-style exact visual frame ratios', () => {
-    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/不要强制固定 DOM-first 或 vision-last/)
+  it('uses vision-first teaching with post-click DOM learning and Desktop-style exact visual ratios', () => {
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/视觉可直接执行、DOM\/语义负责学习和重放/)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/DOM 当成视觉点击的前置许可/)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/语义\/DOM 定位失败一次时.*立即.*patrol_observe\(includeImage=true\).*patrol_visual_click_target/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/targetHint.*事后验证\/学习标签.*不得在点击前要求 DOM 证明/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/learned semantic.*learned selector.*guarded visual coordinate/)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/Desktop Automation.*frame-bound/)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/xRatio=centerX\/imageWidth/)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/yRatio=centerY\/imageHeight/)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/可点击控件内部的几何中心点/)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/视觉截图没有固定次数上限/)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/附加新图前主动裁剪历史大型工具\/图片结果/)
-    expect(PATROL_BEHAVIOR_PROMPT).not.toMatch(/浏览器点击必须坚持 DOM-first/)
+    expect(PATROL_BEHAVIOR_PROMPT).not.toMatch(/页面点击必须优先使用 patrol_click_target/)
   })
 
 })
