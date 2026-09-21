@@ -386,6 +386,28 @@ function interactionVisibleTabCaptureGeometry(viewport) {
   }
 }
 
+function interactionCurrentReplayCaptureGeometry(viewport, recordedMode = '') {
+  if (!viewport || typeof viewport !== 'object') return undefined
+  if (recordedMode === 'capture-visible-tab-layout-viewport') {
+    return interactionVisibleTabCaptureGeometry(viewport)
+  }
+  const captureClientLeft = Number(viewport.offsetLeft || 0)
+  const captureClientTop = Number(viewport.offsetTop || 0)
+  const captureWidth = Number(viewport.width)
+  const captureHeight = Number(viewport.height)
+  if (![captureClientLeft, captureClientTop, captureWidth, captureHeight].every(Number.isFinite)
+    || captureWidth <= 0 || captureHeight <= 0) return undefined
+  return {
+    captureClientLeft,
+    captureClientTop,
+    captureWidth,
+    captureHeight,
+    captureMode: recordedMode === 'cdp-css-visual-viewport'
+      ? 'cdp-css-visual-viewport'
+      : 'legacy-viewport-current',
+  }
+}
+
 function interactionRegisterVisualFrame(tabId, before, after, captureGeometry) {
   if (!interactionSameViewport(before, after, 1)) return undefined
   const geometry = captureGeometry || interactionVisibleTabCaptureGeometry(before)
@@ -536,14 +558,25 @@ async function interactionVisualClick(args) {
   if (widthRatio < 0.80 || widthRatio > 1.20 || heightRatio < 0.80 || heightRatio > 1.20) {
     throw new Error('visualClick replay viewport differs too much from teaching; refusing coordinate fallback')
   }
-  current = {
-    ...current,
-    captureClientLeft: Number.isFinite(Number(args.captureClientLeft)) ? Number(args.captureClientLeft) : current.offsetLeft,
-    captureClientTop: Number.isFinite(Number(args.captureClientTop)) ? Number(args.captureClientTop) : current.offsetTop,
-    captureWidth: Number.isFinite(Number(args.captureWidth)) ? Number(args.captureWidth) : current.width,
-    captureHeight: Number.isFinite(Number(args.captureHeight)) ? Number(args.captureHeight) : current.height,
-    captureMode: typeof args.captureMode === 'string' && args.captureMode.trim() ? args.captureMode.trim() : 'legacy-viewport',
+  const recordedCaptureMode = typeof args.captureMode === 'string' && args.captureMode.trim()
+    ? args.captureMode.trim()
+    : 'legacy-viewport'
+  const replayCapture = interactionCurrentReplayCaptureGeometry(current, recordedCaptureMode)
+  if (!replayCapture) throw new Error('visualClick replay could not derive CURRENT capture geometry')
+  const recordedCaptureWidth = Number(args.captureWidth)
+  const recordedCaptureHeight = Number(args.captureHeight)
+  if (Number.isFinite(recordedCaptureWidth) && recordedCaptureWidth > 0) {
+    const ratio = replayCapture.captureWidth / recordedCaptureWidth
+    if (ratio < 0.80 || ratio > 1.20) throw new Error('visualClick replay CURRENT capture width differs too much from teaching')
   }
+  if (Number.isFinite(recordedCaptureHeight) && recordedCaptureHeight > 0) {
+    const ratio = replayCapture.captureHeight / recordedCaptureHeight
+    if (ratio < 0.80 || ratio > 1.20) throw new Error('visualClick replay CURRENT capture height differs too much from teaching')
+  }
+  // xRatio/yRatio are normalized against the final corrected teaching point.
+  // Always project them through CURRENT capture geometry; replaying the old
+  // absolute capture rectangle would re-introduce offset after a small resize.
+  current = { ...current, ...replayCapture }
 
   const expectedTag = typeof args.expectedTag === 'string' ? args.expectedTag.trim().toLowerCase() : ''
   const expectedRole = typeof args.expectedRole === 'string' ? args.expectedRole.trim().toLowerCase() : ''
@@ -1078,7 +1111,9 @@ async function interactionResolvePiercedEditablePoint(tabId, targetHint, origina
       } catch {}
     }
     if (!measured.length) return undefined
-    measured.sort((left, right) => (right.kind === 'editable' ? 1 : 0) - (left.kind === 'editable' ? 1 : 0) || right.score - left.score || left.distance - right.distance)
+    measured.sort((left, right) => right.score - left.score
+      || (right.kind === 'editable' ? 1 : 0) - (left.kind === 'editable' ? 1 : 0)
+      || left.distance - right.distance)
     const best = measured[0]
     const runnerUp = measured[1]
     if (runnerUp && runnerUp.score === best.score && (!hasOrigin || Math.abs(runnerUp.distance - best.distance) < 8)) return undefined
