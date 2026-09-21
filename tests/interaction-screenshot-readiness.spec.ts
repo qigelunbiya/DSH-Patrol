@@ -19,6 +19,19 @@ async function loadInteraction(overrides: Record<string, unknown> = {}) {
     stableFrameUrl: (value: string) => value,
     setTimeout: (callback: () => void) => { callback(); return 0 },
     clearTimeout: () => {},
+    // interaction-hardening runs in an MV3 service worker in production, where
+    // these image primitives are available. Most VM tests use synthetic data
+    // URLs and exercise geometry rather than image decoding, so provide a
+    // no-op "already bounded" decoder by default. Individual tests can still
+    // override these globals when they need to exercise physical resizing.
+    dataUrlToBlob: (value: string) => ({ __dataUrl: value }),
+    blobToDataUrl: async (blob: any) => blob?.__dataUrl ?? 'data:image/jpeg;base64,WORKER',
+    createImageBitmap: async () => ({
+      width: 1,
+      height: 1,
+      close() {},
+    }),
+    OffscreenCanvas: class OffscreenCanvas {},
     chrome: {
       tabs: {
         get: async () => ({ id: 7, windowId: 2, status: 'complete', url: 'https://example.test/' }),
