@@ -41,14 +41,14 @@ export function registerPatrolVisualClickTool(
   const outcomes = options.clickOutcomes ?? createPatrolClickOutcomeTracker()
   const tool = defineTool({
     name: 'patrol_visual_click_target',
-    description: 'Browser model-vision click using the same frame-bound principle as Desktop Automation. The model may choose vision directly when useful. First call patrol_observe(includeImage=true), then use the exact CURRENT attachment as the full frame, choose the clickable control\'s interior center (not a rough region), and pass xRatio=centerX/imageWidth and yRatio=centerY/imageHeight with the returned visualFrameId plus a concrete targetHint. Patrol binds that point to the exact screenshot geometry; DOM/Shadow-DOM evidence may reject or uniquely rescue a mismatched point but must not silently validate an unrelated nearby control. Never use for image-code/CAPTCHA.',
+    description: 'Vision-first browser teaching click. After patrol_observe(includeImage=true), click the exact CURRENT screenshot point like a human: xRatio=centerX/imageWidth and yRatio=centerY/imageHeight. targetHint labels the intended business action, but CURRENT DOM is NOT a pre-click permission gate and must not relocate a live visual point. After the physical click, Patrol verifies the business result, reverse-binds the hit DOM/Shadow-DOM/Accessibility identity when trustworthy, and stores semantic/selector replay first with guarded visual geometry as fallback. Never use for image-code/CAPTCHA.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
       frameId: { type: 'string', required: true },
       xRatio: { type: 'number', required: true },
       yRatio: { type: 'number', required: true },
-      targetHint: { type: 'string', required: true, description: 'Concrete CURRENT business target, e.g. 评论输入框/发布按钮/点赞按钮/完整视频标题. Use the visible control label when available. Required so Patrol can reject an unrelated hit before physical mouse input.' },
+      targetHint: { type: 'string', required: true, description: 'Concrete CURRENT business intent, e.g. 评论输入框/发布按钮/点赞按钮/完整视频标题. It labels post-click verification and learned DOM/semantic binding; it does not authorize or relocate the live screenshot coordinate.' },
       tabId: { type: 'integer' },
       expectedText: { type: 'string' },
       expectationMode: { type: 'string', enum: ['contains', 'not-contains'] },
@@ -69,7 +69,7 @@ export function registerPatrolVisualClickTool(
       }
       assertSafePersistentText(args.stepName, 'stepName')
       if (typeof args.targetHint !== 'string' || args.targetHint.trim().length < 2) {
-        throw new Error('targetHint is required for visual clicks so Patrol can validate/correct the screenshot coordinate against the CURRENT DOM before physical mouse input')
+        throw new Error('targetHint is required for visual clicks as the business-intent label used for post-click verification and learned DOM/semantic binding')
       }
       assertSafePersistentText(args.targetHint, 'targetHint')
       if (args.expectedText !== undefined) assertSafePersistentText(args.expectedText, 'expectedText')
@@ -109,13 +109,13 @@ export function registerPatrolVisualClickTool(
       }
 
       const mismatch = visualTargetMismatch(args.targetHint, clicked.value)
-      if (mismatch !== undefined) {
+      if (objectBoolean(clicked.value, 'unexpectedNavigation') === true) {
         outcomes.recordUnverifiedPhysicalClick(args)
         return [
-          'Visual physical click executed but was NOT recorded because it hit a target inconsistent with the requested business control.',
-          mismatch,
+          'Visual physical click executed at the model-selected screenshot point but was NOT recorded because an in-page business control unexpectedly navigated away.',
+          mismatch ?? objectString(clicked.value, 'stateEvidence') ?? 'unexpected navigation',
           clicked.text,
-          'Do not report this checklist item as completed. Use CURRENT DOM/Accessibility evidence or capture another fresh visual frame as needed; do not reuse this consumed frame.',
+          'The live visual coordinate was not DOM-relocated. Capture a fresh CURRENT frame after returning to the intended page and choose the visible control itself.',
         ].filter(Boolean).join('\n')
       }
 
@@ -162,6 +162,16 @@ export function registerPatrolVisualClickTool(
         verificationEvidence = verified.evidence ?? 'CURRENT page/DOM changed after visual click'
       }
 
+      if (mismatch !== undefined) {
+        outcomes.recordUnverifiedPhysicalClick(args)
+        return [
+          'Visual click was physically executed, but the post-click hit binding contradicts the requested business control, so this teaching step was NOT recorded.',
+          mismatch,
+          'DOM evidence was used only after the visual click; it did not move or block the model-selected point.',
+          clicked.text,
+        ].filter(Boolean).join('\n')
+      }
+
       const selectorHint = objectString(clicked.value, 'selectorHint')
       const urlIdentity = objectString(clicked.value, 'urlIdentity')
       const viewportWidth = objectNumber(clicked.value, 'viewportWidth')
@@ -180,13 +190,25 @@ export function registerPatrolVisualClickTool(
 
       const effectiveXRatio = objectNumber(clicked.value, 'xRatio') ?? args.xRatio
       const effectiveYRatio = objectNumber(clicked.value, 'yRatio') ?? args.yRatio
+      const bindingActionable = objectBoolean(clicked.value, 'bindingActionable') === true
+      const selectorReplaySafe = objectBoolean(clicked.value, 'selectorReplaySafe') !== false
+      const learnedLocatorText = bindingActionable
+        ? learnedVisualLocatorText(clicked.value)
+        : undefined
+      const learnedLocatorRole = learnedLocatorText === undefined ? undefined : objectString(clicked.value, 'targetRole')
+      const learnedLocatorTag = learnedLocatorText === undefined ? undefined : objectString(clicked.value, 'targetTag')
       const stepArguments = compactObject({
-        // Persist the point that was ACTUALLY clicked after DOM/CDP correction,
-        // not the model's rough screenshot guess. Coordinate replay therefore
-        // reproduces teaching even when the live click snapped to a better point.
+        // Live teaching persists the exact screenshot point selected by vision.
+        // DOM/semantic identity is learned from that hit afterwards and is tried
+        // first on replay; guarded geometry remains the final fallback.
         xRatio: effectiveXRatio,
         yRatio: effectiveYRatio,
-        selectorHint,
+        selectorHint: selectorReplaySafe ? selectorHint : undefined,
+        learnedLocatorText,
+        learnedLocatorRole,
+        learnedLocatorTag,
+        learnedSelectorQuality: objectString(clicked.value, 'selectorQuality'),
+        learnedBindingSource: objectString(clicked.value, 'bindingSource'),
         urlIdentity,
         viewportWidth,
         viewportHeight,
@@ -239,14 +261,16 @@ export function registerPatrolVisualClickTool(
       return [
         `Executed and recorded ${step.id} (browser_visual_click) after CURRENT visual-state verification.`,
         `Visual point saved for replay: xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; model-requested=(${args.xRatio.toFixed(4)}, ${args.yRatio.toFixed(4)}); capture=${captureWidth ?? viewportWidth}x${captureHeight ?? viewportHeight} CSS px at (${captureClientLeft ?? 0}, ${captureClientTop ?? 0}).`,
-        objectBoolean(clicked.value, 'visualSnapped') === true
-          ? `Coordinate corrected before click: requested=(${objectNumber(clicked.value, 'requestedClickX') ?? '?'}, ${objectNumber(clicked.value, 'requestedClickY') ?? '?'}), resolved=(${objectNumber(clicked.value, 'resolvedClickX') ?? '?'}, ${objectNumber(clicked.value, 'resolvedClickY') ?? '?'}), delta=${objectNumber(clicked.value, 'snapDistance')?.toFixed(1) ?? '?'} CSS px${objectBoolean(clicked.value, 'cdpPiercedFollowupEditor') === true
-            ? ' via CDP comment-editor activation + mounted textbox focus'
-            : objectBoolean(clicked.value, 'cdpPiercedTarget') === true ? ' via CDP pierced editor targeting' : ''}.`
-          : 'Coordinate passed CURRENT DOM target validation without correction.',
-        selectorHint
-          ? `Replay prefers discovered selector ${JSON.stringify(selectorHint)}, then uses guarded normalized coordinates only if selector replay fails.`
-          : 'Replay uses the recorded normalized visual point with URL/scroll/viewport guards.',
+        objectBoolean(clicked.value, 'visualAuthority') === true
+          ? 'Live teaching used the exact model-selected screenshot point; DOM/Shadow-DOM did not relocate it before physical input.'
+          : objectBoolean(clicked.value, 'visualSnapped') === true
+            ? `Replay coordinate was corrected against CURRENT learned evidence by ${objectNumber(clicked.value, 'snapDistance')?.toFixed(1) ?? '?'} CSS px.`
+            : 'Replay used the recorded visual geometry without correction.',
+        learnedLocatorText
+          ? `Learned reusable DOM/semantic binding from the successful visual hit: text=${JSON.stringify(learnedLocatorText)}${learnedLocatorRole ? `, role=${learnedLocatorRole}` : ''}${learnedLocatorTag ? `, tag=${learnedLocatorTag}` : ''}. Replay tries this semantic identity first, then the learned selector, then guarded visual geometry.`
+          : selectorHint
+            ? `No trustworthy semantic label was learned; replay tries discovered selector ${JSON.stringify(selectorHint)} before guarded visual geometry.`
+            : 'No trustworthy DOM binding was available; replay keeps guarded normalized visual geometry as fallback.',
         `Verification: ${verificationMethod}, ${verificationEvidence}, attempts=${verificationAttempts}.`,
         clicked.text,
       ].filter(Boolean).join('\n')
@@ -352,6 +376,20 @@ function visualTargetMismatch(targetHint: string | undefined, value: unknown): s
   const expected = groups.find(group => group.hint.test(hint))
   if (expected === undefined || expected.evidence.test(haystack)) return undefined
   return `targetHint expects ${expected.label}, but CURRENT clicked DOM evidence was ${JSON.stringify(haystack.slice(0, 320) || '(empty)')}`
+}
+
+function learnedVisualLocatorText(value: unknown): string | undefined {
+  const candidates = [
+    objectString(value, 'targetAriaLabel'),
+    objectString(value, 'targetTitle'),
+    objectString(value, 'targetText'),
+  ]
+  for (const candidate of candidates) {
+    const text = candidate?.replace(/\s+/g, ' ').trim()
+    if (!text || text.length < 2 || text.length > 180 || /^\d[\d,.万亿kKmM+\s]*$/.test(text)) continue
+    return text
+  }
+  return undefined
 }
 
 async function loadEditable(store: PatrolStore, inspectionId: string, maxSteps: number): Promise<InspectionDefinition> {
