@@ -220,20 +220,58 @@ describe('mounted Patrol local-Qwen hardening', () => {
         await expect(pending).resolves.toMatchObject({ kind: 'retry' })
       }
 
+      const downstreamRetry = vi.fn(async () => ({ kind: 'retry' as const }))
       const exhausted = await ctx.waterfall(
         'agent/request-error',
         {
           agent: current, turn: 1, step: 1, provider: 'cliproxy', failure,
           signal: new AbortController().signal,
         } as never,
-        async () => ({ kind: 'throw' as const }),
+        downstreamRetry,
       )
-      expect(exhausted).toMatchObject({ kind: 'throw' })
+      expect(exhausted).toBeUndefined()
+      expect(downstreamRetry).not.toHaveBeenCalled()
       expect(compactIfNeeded).not.toHaveBeenCalled()
       await ctx.fiber.dispose()
     } finally {
       vi.useRealTimers()
     }
+  })
+
+
+  it('does not delegate a raw CUDA OOM to generic retries when no model-free reduction occurred', async () => {
+    const ctx = new Context()
+    const current = agent()
+    const pruneSession = vi.fn(() => ({ pruned: [], charsRemoved: 0 }))
+    ctx.provide('tokenMeter', { measure: () => ({ totalTokens: 1_500 }) })
+    ctx.provide('toolResultPruner', { pruneSession })
+    registerPatrolContextPressureGuard(ctx)
+
+    await ctx.waterfall(
+      'agent/pre-step',
+      payload(current, 1, 1) as never,
+      async () => ({ kind: 'enter' as const, messages: [] }),
+    )
+
+    const failure = {
+      code: 'internal_server_error',
+      message: 'CUDA out of memory while allocating tensor',
+    }
+    const downstreamRetry = vi.fn(async () => ({ kind: 'retry' as const }))
+    const result = await ctx.waterfall(
+      'agent/request-error',
+      {
+        agent: current, turn: 1, step: 1, provider: 'cliproxy', failure,
+        signal: new AbortController().signal,
+      } as never,
+      downstreamRetry,
+    )
+
+    expect(result).toBeUndefined()
+    expect(downstreamRetry).not.toHaveBeenCalled()
+    expect(pruneSession).toHaveBeenCalled()
+    expect(failure.message).toContain('CUDA/GPU OOM')
+    await ctx.fiber.dispose()
   })
 
 })
