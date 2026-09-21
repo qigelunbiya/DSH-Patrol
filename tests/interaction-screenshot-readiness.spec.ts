@@ -617,6 +617,132 @@ describe('Patrol screenshot tab readiness', () => {
   })
 
 
+  it('replays corrected normalized visual ratios against CURRENT capture geometry after a small viewport resize', async () => {
+    const currentViewport = {
+      urlIdentity: 'https://example.test/video/1',
+      width: 1100,
+      height: 880,
+      offsetLeft: 0,
+      offsetTop: 0,
+      scale: 1,
+      scrollX: 0,
+      scrollY: 400,
+      innerWidth: 1100,
+      innerHeight: 880,
+      devicePixelRatio: 1,
+    }
+    let visualArgs: any[] | undefined
+    const scripting = {
+      async executeScript(request: any) {
+        if (request.func?.name === 'interactionMainWorldViewportState') return [{ result: { ...currentViewport } }]
+        if (String(request.func).includes('window.scrollTo')) return [{ result: undefined }]
+        if (request.func?.name === 'interactionMainWorldVisualClick') {
+          visualArgs = request.args
+          return [{ result: {
+            ok: true,
+            selector: '',
+            tag: 'button',
+            role: 'button',
+            text: 'Target',
+            stateSignature: 'target',
+            targetStateChanged: true,
+            targetFocusedEditable: false,
+            clickX: request.args?.[0],
+            clickY: request.args?.[1],
+          } }]
+        }
+        throw new Error(`unexpected executeScript function ${request.func?.name || 'anonymous'}`)
+      },
+    }
+    const tabs = {
+      get: async () => ({ id: 7, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
+      update: async (id: number) => ({ id, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
+      captureVisibleTab: async () => 'data:image/png;base64,AAAA',
+    }
+    const sandbox = await loadInteraction({ chrome: { tabs, scripting } })
+
+    const clicked = await sandbox.handleCommand('visualClick', {
+      tabId: 7,
+      xRatio: 0.60,
+      yRatio: 0.80,
+      targetHint: 'Target button',
+      urlIdentity: 'https://example.test/video/1',
+      viewportWidth: 1000,
+      viewportHeight: 800,
+      scrollX: 0,
+      scrollY: 400,
+      captureClientLeft: 0,
+      captureClientTop: 0,
+      captureWidth: 1000,
+      captureHeight: 800,
+      captureMode: 'cdp-css-visual-viewport',
+    })
+
+    expect(visualArgs?.[0]).toBeCloseTo(660)
+    expect(visualArgs?.[1]).toBeCloseTo(704)
+    expect(clicked).toMatchObject({
+      ok: true,
+      captureClientLeft: 0,
+      captureClientTop: 0,
+      captureWidth: 1100,
+      captureHeight: 880,
+      xRatio: 0.60,
+      yRatio: 0.80,
+    })
+  })
+
+  it('ranks a semantically matching comment-editor activator above an unrelated editable search input', async () => {
+    const debuggerApi = {
+      async attach() {},
+      async sendCommand(_target: any, method: string, params: any) {
+        if (method === 'DOM.getDocument') {
+          return {
+            root: {
+              nodeName: '#document',
+              backendNodeId: 1,
+              children: [
+                {
+                  nodeName: 'INPUT',
+                  backendNodeId: 20,
+                  attributes: ['type', 'search', 'placeholder', '搜索'],
+                },
+                {
+                  nodeName: 'BILI-COMMENT-EDITOR',
+                  backendNodeId: 30,
+                  attributes: ['class', 'comment-editor', 'data-placeholder', '发表评论'],
+                },
+              ],
+            },
+          }
+        }
+        if (method === 'DOM.resolveNode') {
+          if (params.backendNodeId === 20) return { object: { objectId: 'search-20' } }
+          if (params.backendNodeId === 30) return { object: { objectId: 'comment-30' } }
+        }
+        if (method === 'Runtime.callFunctionOn') {
+          if (params.objectId === 'search-20') {
+            return { result: { value: { left: 100, top: 20, right: 400, bottom: 56, width: 300, height: 36 } } }
+          }
+          if (params.objectId === 'comment-30') {
+            return { result: { value: { left: 300, top: 600, right: 800, bottom: 650, width: 500, height: 50 } } }
+          }
+        }
+        throw new Error(`unexpected debugger command ${method}`)
+      },
+      async detach() {},
+    }
+    const sandbox = await loadInteraction({ chrome: { tabs: {}, scripting: {}, debugger: debuggerApi } })
+    const resolved = await sandbox.interactionResolvePiercedEditablePoint(7, '评论输入框', 520, 620)
+
+    expect(resolved).toMatchObject({
+      backendNodeId: 30,
+      kind: 'activator',
+      x: 550,
+      y: 625,
+      source: 'cdp-pierced-editor-activator',
+    })
+  })
+
   it('deep-hit-tests Shadow DOM before visual clicks and can snap an offset point to the intended editor', async () => {
     const source = await readFile(interactionPath, 'utf8')
     expect(source).toContain('const deepElementFromPoint = (x, y) =>')
@@ -630,6 +756,9 @@ describe('Patrol screenshot tab readiness', () => {
     expect(source).toContain("DOM.getDocument', { depth: -1, pierce: true }")
     expect(source).toContain("'cdp-pierced-shadow-editor'")
     expect(source).toContain('snapDistance: Math.hypot(clickX - originalX, clickY - originalY)')
+    expect(source).toContain('interactionCurrentReplayCaptureGeometry')
+    expect(source).toContain('right.score - left.score')
+    expect(source).not.toContain("captureWidth: Number.isFinite(Number(args.captureWidth)) ? Number(args.captureWidth) : current.width")
     expect(source).not.toContain("/(?:editor|input|textarea)/i.test(String(element?.tagName || ''))")
   })
 
