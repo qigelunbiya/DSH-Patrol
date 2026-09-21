@@ -19,6 +19,8 @@ const EXTENSION_CAPABILITIES = Object.freeze([
   'compactVisualCapture',
   'boundedVisualCaptureV2',
   'reusableVisualFramesV1',
+  'visualCoordinateGuideV1',
+  'visualPointerProbeV1',
 ])
 let socket = null
 let state = 'disconnected'
