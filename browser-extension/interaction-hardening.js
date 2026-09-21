@@ -1680,14 +1680,16 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
   const wantsPublishTarget = /发布|发表|发送|提交|\bpost\b|\bsend\b|\bsubmit\b/i.test(String(targetHint || ''))
   const exactPublishLabel = element => {
     if (!(element instanceof Element)) return false
-    const raw = compact([
+    const labels = [
       element.getAttribute?.('aria-label'),
       element.getAttribute?.('title'),
       element instanceof HTMLInputElement ? element.value : '',
       element.innerText,
       element.textContent,
-    ].filter(Boolean).join(' ')).replace(/\s+/g, '').toLowerCase()
-    return /^(发布|发表|发送|提交|post|send|submit)$/.test(raw)
+    ]
+      .filter(Boolean)
+      .map(value => compact(value).replace(/\s+/g, '').toLowerCase())
+    return labels.some(label => /^(发布|发表|发送|提交|post|send|submit)$/.test(label))
   }
   const resolveExactPublishTarget = (originalX, originalY) => {
     const candidates = []
