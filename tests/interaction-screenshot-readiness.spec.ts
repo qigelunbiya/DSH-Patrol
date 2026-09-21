@@ -445,9 +445,11 @@ describe('Patrol screenshot tab readiness', () => {
   it('checks exact visual item text before trusted input without relocating the point', async () => {
     const source = await readFile(interactionPath, 'utf8')
     const verifyIndex = source.indexOf('visualPointMatchesExpectedText(initialTarget, expectedVisualText)')
-    const dispatchIndex = source.indexOf('await interactionDispatchTrustedMouseClick(tabId, trustedX, trustedY)')
+    const liveProbeIndex = source.indexOf('const probeResults = await chrome.scripting.executeScript')
+    const dispatchIndex = source.indexOf('await interactionDispatchTrustedMouseClick(tabId, trustedX, trustedY)', liveProbeIndex)
     expect(verifyIndex).toBeGreaterThan(0)
-    expect(dispatchIndex).toBeGreaterThan(verifyIndex)
+    expect(liveProbeIndex).toBeGreaterThan(0)
+    expect(dispatchIndex).toBeGreaterThan(liveProbeIndex)
     expect(source).toContain('visual screenshot point is not inside the item labeled')
     expect(source).toContain('refusing trusted input without relocating the coordinate')
   })
