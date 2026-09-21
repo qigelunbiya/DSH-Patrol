@@ -79,7 +79,7 @@ describe('Patrol screenshot tab readiness', () => {
     expect(updates).toContainEqual({ id: 9, info: { active: true } })
   })
 
-  it('binds a visual click to the exact CURRENT screenshot viewport and consumes the frame', async () => {
+  it('binds visual clicks to the exact CURRENT screenshot viewport and allows frame reuse while geometry is unchanged', async () => {
     let clickedArgs: any[] | undefined
     const viewport = {
       urlIdentity: 'https://example.test/video/1',
@@ -163,14 +163,28 @@ describe('Patrol screenshot tab readiness', () => {
     expect(clickedArgs?.[4]).toBe('点赞')
     expect(clickedArgs?.[5]).toBe('点赞')
 
-    await expect(sandbox.handleCommand('visualClick', {
+    const reused = await sandbox.handleCommand('visualClick', {
       tabId: 7,
       frameId: shot.visualFrameId,
       visualAuthority: true,
       xRatio: 0.2,
       yRatio: 0.8,
       targetHint: '点赞按钮',
-    })).rejects.toThrow(/stale or unavailable/)
+    })
+    expect(reused).toMatchObject({
+      ok: true,
+      transport: 'bound-current-visual-frame+synthetic-main-world',
+      xRatio: 0.2,
+      yRatio: 0.8,
+    })
+  })
+
+  it('does not impose TTL, single-use deletion, or a fixed frame-count ceiling on visual frames', async () => {
+    const source = await readFile(interactionPath, 'utf8')
+    expect(source).not.toContain('INTERACTION_VISUAL_FRAME_TTL_MS')
+    expect(source).not.toContain('INTERACTION_VISUAL_FRAME_MAX')
+    expect(source).not.toContain('interactionVisualFrames.delete(frameId)')
+    expect(source).toContain('Visual frames intentionally have no time-to-live or use-count limit')
   })
 
   it('prefers a trusted native mouse event for screenshot-bound visual clicks when chrome.debugger is available', async () => {
