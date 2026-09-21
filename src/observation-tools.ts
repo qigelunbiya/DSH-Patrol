@@ -111,6 +111,10 @@ export function registerPatrolObservationTools(
           captureWidth: { type: 'number' },
           captureHeight: { type: 'number' },
           captureMode: { type: 'string' },
+          coordinateGuide: { type: 'boolean' },
+          coordinateGridUnits: { type: 'number' },
+          modelRasterWidth: { type: 'number' },
+          modelRasterHeight: { type: 'number' },
           scrollX: { type: 'number' },
           scrollY: { type: 'number' },
           url: { type: 'string' },
@@ -144,6 +148,9 @@ export function registerPatrolObservationTools(
           `Fresh screenshot saved: ${value.path}`,
           ...(value.visualFrameId ? [`Visual click frame READY: ${value.visualFrameId}; viewport=${value.viewportWidth ?? '?'}x${value.viewportHeight ?? '?'}; capture=${value.captureWidth ?? value.viewportWidth ?? '?'}x${value.captureHeight ?? value.viewportHeight ?? '?'} at (${value.captureClientLeft ?? 0}, ${value.captureClientTop ?? 0}); scroll=(${value.scrollX ?? '?'}, ${value.scrollY ?? '?'})`] : []),
           `Evidence: ${hasImage ? 'MODEL-VISIBLE image attached + compact OCR/DOM' : 'compact OCR/DOM only'}`,
+          ...(hasImage && value.coordinateGuide === true ? [
+            `VISUAL COORDINATE GUIDE: the attached raster is ${value.modelRasterWidth ?? value.image?.width ?? '?'}x${value.modelRasterHeight ?? value.image?.height ?? '?'} px and contains an XY/1000 overlay. Read the target from that overlay: xRatio=X/1000, yRatio=Y/1000. Never infer coordinates from OS screen size, CSS viewport size, or the chat UI preview width.`,
+          ] : []),
           ...(args.includeImage === true && !hasImage ? ['VISUAL CLICK DISABLED: includeImage=true did not produce a model-visible image; do not guess screenshot coordinates.'] : []),
         ]
 
@@ -186,6 +193,7 @@ export function registerPatrolObservationTools(
         ...(args.includeImage === true ? {
           maxWidth: VISUAL_SCREENSHOT_MAX_WIDTH,
           quality: VISUAL_SCREENSHOT_JPEG_QUALITY,
+          coordinateGuide: true,
         } : {}),
       }), exec)
       if (!shot.ok) {
@@ -257,6 +265,10 @@ export function registerPatrolObservationTools(
       const captureWidth = objectNumber(shot.value, 'captureWidth')
       const captureHeight = objectNumber(shot.value, 'captureHeight')
       const captureMode = objectString(shot.value, 'captureMode')
+      const coordinateGuide = objectBoolean(shot.value, 'coordinateGuide') === true
+      const coordinateGridUnits = objectNumber(shot.value, 'coordinateGridUnits')
+      const modelRasterWidth = objectNumber(shot.value, 'modelRasterWidth')
+      const modelRasterHeight = objectNumber(shot.value, 'modelRasterHeight')
       const scrollX = objectNumber(shot.value, 'scrollX')
       const scrollY = objectNumber(shot.value, 'scrollY')
 
@@ -281,6 +293,10 @@ export function registerPatrolObservationTools(
         ...(captureWidth === undefined ? {} : { captureWidth }),
         ...(captureHeight === undefined ? {} : { captureHeight }),
         ...(captureMode === undefined ? {} : { captureMode }),
+        coordinateGuide,
+        ...(coordinateGridUnits === undefined ? {} : { coordinateGridUnits }),
+        ...(modelRasterWidth === undefined ? {} : { modelRasterWidth }),
+        ...(modelRasterHeight === undefined ? {} : { modelRasterHeight }),
         ...(scrollX === undefined ? {} : { scrollX }),
         ...(scrollY === undefined ? {} : { scrollY }),
         ...(url ? { url } : {}),
