@@ -238,7 +238,7 @@ export function registerTools(ctx, bridge, config = {}) {
           captureWidth: args.captureWidth, captureHeight: args.captureHeight, captureMode: args.captureMode,
           expectedTag: args.expectedTag, expectedRole: args.expectedRole,
           expectedTitle: args.expectedTitle, expectedAriaLabel: args.expectedAriaLabel,
-          targetHint: args.targetHint, targetTextHint: args.targetTextHint, targetIdHint: args.targetIdHint, targetClassHint: args.targetClassHint,
+          targetHint: args.targetHint, expectedVisualText: args.expectedVisualText, targetTextHint: args.targetTextHint, targetIdHint: args.targetIdHint, targetClassHint: args.targetClassHint,
           learnedLocatorText: args.learnedLocatorText, learnedLocatorRole: args.learnedLocatorRole, learnedLocatorTag: args.learnedLocatorTag,
           learnedSelectorQuality: args.learnedSelectorQuality, learnedBindingSource: args.learnedBindingSource,
           teachingControlMode: args.teachingControlMode, visualAuthority: args.visualAuthority, tabId: args.tabId,
