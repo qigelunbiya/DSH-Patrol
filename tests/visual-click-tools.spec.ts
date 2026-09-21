@@ -14,7 +14,11 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
-async function setup(dispatch: (tool: string, args: JsonObject) => Promise<any>, clickOutcomes?: any) {
+async function setup(
+  dispatch: (tool: string, args: JsonObject) => Promise<any>,
+  clickOutcomes?: any,
+  browserControlMode: 'visual-grounding' | 'hybrid' = 'visual-grounding',
+) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-visual-click-'))
   roots.push(root)
   const store = new PatrolStore(root)
@@ -30,7 +34,7 @@ async function setup(dispatch: (tool: string, args: JsonObject) => Promise<any>,
       },
     },
   } as unknown as Context
-  registerPatrolVisualClickTool(ctx, store, { dispatch } as any, { maxSteps: 20, clickOutcomes })
+  registerPatrolVisualClickTool(ctx, store, { dispatch } as any, { maxSteps: 20, clickOutcomes, browserControlMode })
   const tool = definitions.find(item => item.name === 'patrol_visual_click_target')
   if (!tool) throw new Error('patrol_visual_click_target not registered')
   const exec = {
@@ -75,6 +79,7 @@ describe('browser visual fallback click teaching', () => {
           frameId: 'browser-visual-current',
           xRatio: 0.17,
           yRatio: 0.81,
+          visualAuthority: true,
         })
         return {
           ok: true,
@@ -149,6 +154,7 @@ describe('browser visual fallback click teaching', () => {
         learnedLocatorTag: 'div',
         learnedSelectorQuality: 'strong',
         learnedBindingSource: 'visual-hit-test-post-click-learning',
+        teachingControlMode: 'visual-grounding',
         urlIdentity: 'https://www.bilibili.com/video/BV-test',
         viewportWidth: 1280,
         viewportHeight: 720,
@@ -183,6 +189,47 @@ describe('browser visual fallback click teaching', () => {
       'browser_snapshot',
       'browser_visual_click',
     ])
+  })
+
+
+
+  it('keeps NORMAL/hybrid teaching DOM-assisted by passing visualAuthority=false', async () => {
+    let authority: unknown
+    const { tool, exec } = await setup(async (name, args) => {
+      if (name === 'browser_read_page') return { ok: true, text: 'before', value: { ok: true, url: 'https://www.bilibili.com/', text: 'before' } }
+      if (name === 'browser_snapshot') return { ok: true, text: 'snapshot', value: { ok: true, url: 'https://www.bilibili.com/', elements: [] } }
+      if (name === 'browser_visual_click') {
+        authority = args.visualAuthority
+        return {
+          ok: true,
+          text: 'clicked',
+          value: {
+            ok: true,
+            xRatio: 0.4, yRatio: 0.5,
+            urlIdentity: 'https://www.bilibili.com/',
+            viewportWidth: 1000, viewportHeight: 800,
+            captureClientLeft: 0, captureClientTop: 0, captureWidth: 1000, captureHeight: 800,
+            captureMode: 'cdp-css-visual-viewport',
+            scrollX: 0, scrollY: 0,
+            targetStateChanged: true,
+            stateEvidence: 'changed',
+            visualAuthority: false,
+          },
+        }
+      }
+      throw new Error(`unexpected tool ${name}`)
+    }, undefined, 'hybrid')
+
+    await tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '打开视频',
+      targetHint: '目标视频',
+      frameId: 'browser-visual-current',
+      xRatio: 0.4,
+      yRatio: 0.5,
+    }, exec)
+
+    expect(authority).toBe(false)
   })
 
   it('rejects unrelated dynamic-page false positives such as clicking the Bilibili sending bar for a like target', async () => {
