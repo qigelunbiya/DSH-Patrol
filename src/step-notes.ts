@@ -32,7 +32,14 @@ function actionHints(tool: string, args: JsonObject): string[] {
     const xRatio = numberArg(args, 'xRatio')
     const yRatio = numberArg(args, 'yRatio')
     const selector = stringArg(args, 'selectorHint')
+    const locator = stringArg(args, 'learnedLocatorText')
+    const role = stringArg(args, 'learnedLocatorRole')
+    const tag = stringArg(args, 'learnedLocatorTag')
+    const learned = locator === undefined
+      ? undefined
+      : `重放首选视觉命中后学习到的语义目标 text=${JSON.stringify(locator)}${role === undefined ? '' : `, role=${role}`}${tag === undefined ? '' : `, tag=${tag}`}。`
     return [
+      ...(learned === undefined ? [] : [learned]),
       `视觉后备点击归一化坐标 (${xRatio ?? '?'}, ${yRatio ?? '?'})。`,
       selector === undefined ? '重放时校验 URL/滚动/viewport 后使用记录坐标。' : `重放优先尝试视觉命中时发现的 selector ${selector}，失败后才使用记录坐标。`,
     ]
