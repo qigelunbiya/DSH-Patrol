@@ -1669,6 +1669,7 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
     cdpPiercedTarget: clicked.cdpPiercedTarget === true,
     cdpPiercedActivator: clicked.cdpPiercedActivator === true,
     cdpPiercedFollowupEditor: clicked.cdpPiercedFollowupEditor === true,
+    postVisualEditorFocus: clicked.postVisualEditorFocus === true,
     cdpPiercedAction: clicked.cdpPiercedAction === true,
     physicalClickUncertain: clicked.physicalClickUncertain === true,
     ...(Number.isFinite(Number(clicked.snapDistance)) ? { snapDistance: Number(clicked.snapDistance) } : {}),
