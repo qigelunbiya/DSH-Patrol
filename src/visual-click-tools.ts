@@ -54,6 +54,11 @@ export function registerPatrolVisualClickTool(
       targetHint: { type: 'string', required: true, description: 'Concrete CURRENT business intent, e.g. 评论输入框/发布按钮/点赞按钮/完整视频标题. It labels post-click verification and learned DOM/semantic binding; it does not authorize or relocate the live screenshot coordinate.' },
       expectedVisualText: { type: 'string', description: 'Exact visible label/title read from the attached CURRENT screenshot. Required for navigation/card/video visual clicks so Patrol can verify the chosen screenshot point belongs to that exact item before trusted input and verify the destination afterwards.' },
       visualAuthority: { type: 'boolean', description: 'Backward-compatible flag. Live patrol_visual_click_target teaching is coordinate-authoritative regardless of this value; replay may still use learned semantic/selector recovery.' },
+      pointerAction: {
+        type: 'string',
+        enum: ['left-click', 'right-click', 'hover', 'mark'],
+        description: 'Default left-click records a verified business action. right-click/hover/mark are visual-coordinate diagnostics only: they never record a Runbook step. mark draws a temporary red crosshair at the exact screenshot point; hover dispatches a browser mouseMoved event plus the marker; right-click dispatches a trusted right-button click at that exact point.',
+      },
       tabId: { type: 'integer' },
       expectedText: { type: 'string' },
       expectationMode: { type: 'string', enum: ['contains', 'not-contains'] },
@@ -78,7 +83,9 @@ export function registerPatrolVisualClickTool(
       }
       assertSafePersistentText(args.targetHint, 'targetHint')
       if (args.expectedVisualText !== undefined) assertSafePersistentText(args.expectedVisualText, 'expectedVisualText')
-      if (navigationLikeBusinessAction(args.stepName, args.targetHint)
+      const pointerAction = args.pointerAction ?? 'left-click'
+      const diagnosticPointerAction = pointerAction !== 'left-click'
+      if (!diagnosticPointerAction && navigationLikeBusinessAction(args.stepName, args.targetHint)
         && (typeof args.expectedVisualText !== 'string' || args.expectedVisualText.trim().length < 4)) {
         throw new Error('navigation/card visual clicks require expectedVisualText copied from the model-visible CURRENT screenshot; generic labels such as “视频卡片区域” are not sufficient')
       }
@@ -93,6 +100,43 @@ export function registerPatrolVisualClickTool(
       const evidence = options.visualEvidence?.consume(String(args.frameId), args.inspectionId)
       if (evidence?.ok === false) {
         throw new Error(`visual click refused: ${evidence.reason}. A visualFrameId is usable only after patrol_observe(includeImage=true) actually attached that screenshot to the model; after that it remains reusable while the browser still matches it.`)
+      }
+
+      if (diagnosticPointerAction) {
+        await store.load(args.inspectionId)
+        const probed = await runner.dispatch('browser_visual_click', compactObject({
+          frameId: args.frameId,
+          xRatio: args.xRatio,
+          yRatio: args.yRatio,
+          targetHint: args.targetHint,
+          expectedVisualText: args.expectedVisualText,
+          visualAuthority: true,
+          pointerAction,
+          tabId: args.tabId,
+        }), exec)
+        if (!probed.ok) {
+          return [
+            `Visual pointer diagnostic ${pointerAction} failed at the requested screenshot coordinate.`,
+            probed.error ?? probed.text ?? 'Unknown browser visual pointer error',
+          ].filter(Boolean).join('\n')
+        }
+        const hit = [
+          objectString(probed.value, 'targetTag') ? `tag=${objectString(probed.value, 'targetTag')}` : '',
+          objectString(probed.value, 'targetRole') ? `role=${objectString(probed.value, 'targetRole')}` : '',
+          objectString(probed.value, 'targetText') ? `text=${JSON.stringify(objectString(probed.value, 'targetText'))}` : '',
+          objectString(probed.value, 'targetTitle') ? `title=${JSON.stringify(objectString(probed.value, 'targetTitle'))}` : '',
+          objectString(probed.value, 'targetAriaLabel') ? `aria=${JSON.stringify(objectString(probed.value, 'targetAriaLabel'))}` : '',
+        ].filter(Boolean).join(', ')
+        return [
+          `Visual pointer diagnostic ${pointerAction} executed at exact frame coordinate xRatio=${args.xRatio.toFixed(4)}, yRatio=${args.yRatio.toFixed(4)} (X=${Math.round(args.xRatio * 1000)}, Y=${Math.round(args.yRatio * 1000)} on the XY/1000 guide).`,
+          pointerAction === 'mark'
+            ? 'A temporary red crosshair was drawn on the page for visual calibration; no click was issued.'
+            : pointerAction === 'hover'
+              ? 'A trusted browser mouseMoved event was issued and the red calibration marker was drawn. CDP hover does not guarantee that the operating-system hardware cursor itself visibly moves.'
+              : 'A trusted right-button browser click was issued at that coordinate and a red calibration marker was drawn. This is diagnostic only and was NOT written to the Runbook.',
+          hit ? `CURRENT hit under that exact point: ${hit}.` : 'No stable DOM identity was required for this diagnostic point.',
+          'Diagnostic pointer actions never consume visual retry budget and never become replay steps.',
+        ].join('\n')
       }
 
       const definition = await loadEditable(store, args.inspectionId, options.maxSteps)
@@ -114,6 +158,7 @@ export function registerPatrolVisualClickTool(
         targetHint: args.targetHint,
         expectedVisualText: args.expectedVisualText,
         visualAuthority,
+        pointerAction: 'left-click',
         tabId: args.tabId,
       }), exec)
       if (!clicked.ok) {
