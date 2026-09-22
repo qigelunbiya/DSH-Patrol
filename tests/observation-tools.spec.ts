@@ -89,6 +89,29 @@ describe('current-page observation evidence fallback', () => {
     expect(harness.observed).toHaveLength(1)
   })
 
+  it('requires and forwards a target hint for action-map observations', async () => {
+    const harness = setupObservationHarness({ readImage: 'success', captcha: false })
+    await expect(harness.tool.execute({
+      inspectionId: 'demo',
+      includeImage: true,
+      actionMap: true,
+    }, harness.exec)).rejects.toThrow(/requires targetHint/i)
+
+    const value = await harness.tool.execute({
+      inspectionId: 'demo',
+      includeImage: true,
+      actionMap: true,
+      targetHint: '10.192.3.174 行的 RDP',
+    }, harness.exec)
+
+    expect(harness.screenshotArgs.at(-1)).toMatchObject({
+      actionMap: true,
+      actionMapTargetHint: '10.192.3.174 行的 RDP',
+    })
+    expect(value.actionMapTargeted).toBe(true)
+    expect(value.actionMapTargetHint).toBe('10.192.3.174 行的 RDP')
+  })
+
   it('prunes historical Patrol payloads before every new visual attachment instead of imposing a screenshot-count cap', async () => {
     const harness = setupObservationHarness({ readImage: 'success', captcha: false, prune: true })
     for (let index = 0; index < 4; index += 1) {
@@ -250,6 +273,10 @@ function setupObservationHarness(options: {
             captureMode: 'cdp-css-visual-viewport',
             scrollX: 0,
             scrollY: 0,
+            actionMap: args.actionMap === true,
+            actionMapTargeted: args.actionMap === true && typeof args.actionMapTargetHint === 'string' && args.actionMapTargetHint.length > 0,
+            ...(typeof args.actionMapTargetHint === 'string' ? { actionMapTargetHint: args.actionMapTargetHint } : {}),
+            ...(args.actionMap === true ? { actionCandidateCount: 1 } : {}),
             ...(args.format === 'jpeg' && options.omitRasterBudget !== true ? { targetPixelWidth: 1024, compactVisual: true } : {}),
           },
         }
