@@ -33,6 +33,14 @@ describe('semantic row-context hardening', () => {
     expect(source).toContain('correlateLogicalRow')
   })
 
+  it('marks row-context selectors unsafe for direct replay and prefers trusted native input', () => {
+    const source = readFileSync(join(root, 'browser-extension', 'semantic-row-context-hardening.js'), 'utf8')
+    expect(source).toContain('replaySelectorSafe: false')
+    expect(source).toContain('semanticTrustedMouseClick')
+    expect(source).toContain("args: ['measure', spec]")
+    expect(source).toContain('atomic-row-context+trusted-native-mouse')
+  })
+
   it('prefers a real actionable target and still reports the row-context transport', () => {
     const source = readFileSync(join(root, 'browser-extension', 'semantic-row-context-hardening.js'), 'utf8')
     expect(source).toContain('nativeActionBonus')
