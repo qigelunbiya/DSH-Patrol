@@ -58,16 +58,51 @@ async function setup() {
 
   registerPatrolDesktopActionTools(ctx, store, runner, { maxSteps: 20 })
   const action = definitions.find(item => item.name === 'patrol_desktop_action')
+  const record = definitions.find(item => item.name === 'patrol_record_desktop_step')
   if (!action) throw new Error('patrol_desktop_action not registered')
+  if (!record) throw new Error('patrol_record_desktop_step not registered')
   const exec = {
     token: Symbol('desktop-action'),
     rootCallId: 'root',
     signal: new AbortController().signal,
   } as unknown as ToolRunContext
-  return { store, action, exec, dispatched }
+  return { store, action, record, exec, dispatched }
 }
 
 describe('recordable desktop actions', () => {
+  it('retrospectively records an already-successful raw desktop action without executing it twice', async () => {
+    const { store, record, exec, dispatched } = await setup()
+    const output = await record.execute({
+      inspectionId: 'wechat-semantic-wait',
+      stepName: '打开蓝信中的方泽铭会话',
+      action: 'click-ocr-text',
+      storedArguments: {
+        processName: 'LxMainNew',
+        titleContains: '蓝信',
+        text: '方泽铭',
+        match: 'exact',
+        frameId: 'ephemeral-must-not-persist',
+      },
+      executionInstruction: '激活蓝信窗口，在搜索结果中定位“方泽铭”联系人并点击，确认右侧聊天标题切换为方泽铭。',
+    }, exec)
+
+    expect(output).toContain('without re-executing it')
+    expect(dispatched).toEqual([])
+    const saved = await store.load('wechat-semantic-wait')
+    expect(saved.steps[0]).toMatchObject({
+      tool: 'desktop_click_ocr_text',
+      executionPlane: 'desktop',
+      executionInstruction: '激活蓝信窗口，在搜索结果中定位“方泽铭”联系人并点击，确认右侧聊天标题切换为方泽铭。',
+      arguments: {
+        processName: 'LxMainNew',
+        titleContains: '蓝信',
+        text: '方泽铭',
+        match: 'exact',
+      },
+    })
+    expect(saved.steps[0]?.kind === 'tool' ? saved.steps[0].arguments : {}).not.toHaveProperty('frameId')
+  })
+
   it('executes and persists semantic wait-for-target parameters without coordinates', async () => {
     const { store, action, exec, dispatched } = await setup()
 
