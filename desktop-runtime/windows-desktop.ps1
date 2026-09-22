@@ -23,23 +23,12 @@ namespace PatrolDesktop {
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
-    [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
-    [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
-    [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hWnd, int dwAttribute, out RECT rect, int cbAttribute);
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint nFlags);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
   }
 }
 "@
-}
-
-try {
-  if (-not [PatrolDesktop.Native]::SetProcessDpiAwarenessContext([IntPtr](-4))) {
-    [void][PatrolDesktop.Native]::SetProcessDPIAware()
-  }
-} catch {
-  try { [void][PatrolDesktop.Native]::SetProcessDPIAware() } catch {}
 }
 
 function Decode-Payload([string]$value) {
@@ -56,48 +45,21 @@ function Get-Prop($obj, [string]$name, $default = $null) {
   return $prop.Value
 }
 
-function Get-VisualWindowRect($process) {
-  if ($null -eq $process -or $process.MainWindowHandle -eq 0) { throw 'window has no main handle' }
-  $rect = New-Object PatrolDesktop.Native+RECT
-  $source = 'get-window-rect'
-  $valid = $false
-  try {
-    $size = [Runtime.InteropServices.Marshal]::SizeOf($rect)
-    $hr = [PatrolDesktop.Native]::DwmGetWindowAttribute([IntPtr]$process.MainWindowHandle, 9, [ref]$rect, $size)
-    if ($hr -eq 0 -and $rect.Right -gt $rect.Left -and $rect.Bottom -gt $rect.Top) {
-      $source = 'dwm-extended-frame'
-      $valid = $true
-    }
-  } catch {}
-  if (-not $valid) {
-    if (-not [PatrolDesktop.Native]::GetWindowRect([IntPtr]$process.MainWindowHandle, [ref]$rect)) {
-      throw 'GetWindowRect failed'
-    }
-  }
-  return [ordered]@{
-    x = [int]$rect.Left
-    y = [int]$rect.Top
-    width = [int]($rect.Right - $rect.Left)
-    height = [int]($rect.Bottom - $rect.Top)
-    source = $source
-  }
-}
-
 function Window-Record($process) {
   if ($null -eq $process -or $process.MainWindowHandle -eq 0) { return $null }
-  $visualRect = Get-VisualWindowRect $process
+  $rect = New-Object PatrolDesktop.Native+RECT
+  [void][PatrolDesktop.Native]::GetWindowRect([IntPtr]$process.MainWindowHandle, [ref]$rect)
   return [ordered]@{
     processId = [int]$process.Id
     processName = [string]$process.ProcessName
     title = [string]$process.MainWindowTitle
     hwnd = [int64]$process.MainWindowHandle
     rect = [ordered]@{
-      x = [int]$visualRect.x
-      y = [int]$visualRect.y
-      width = [int]$visualRect.width
-      height = [int]$visualRect.height
+      x = [int]$rect.Left
+      y = [int]$rect.Top
+      width = [int]($rect.Right - $rect.Left)
+      height = [int]($rect.Bottom - $rect.Top)
     }
-    rectSource = [string]$visualRect.source
   }
 }
 
@@ -404,8 +366,9 @@ function Capture-Screenshot($request) {
     $process = Resolve-Window $request $true
     Activate-Window $process
     $windowRecord = Window-Record $process
-    $rect = $windowRecord.rect
-    $x = [int]$rect.x; $y = [int]$rect.y; $width = [int]$rect.width; $height = [int]$rect.height
+    $rect = New-Object PatrolDesktop.Native+RECT
+    if (-not [PatrolDesktop.Native]::GetWindowRect([IntPtr]$process.MainWindowHandle, [ref]$rect)) { throw 'GetWindowRect failed' }
+    $x = $rect.Left; $y = $rect.Top; $width = $rect.Right - $rect.Left; $height = $rect.Bottom - $rect.Top
   }
   if ($width -le 0 -or $height -le 0) { throw "invalid screenshot bounds $width x $height" }
   $directory = [IO.Path]::GetDirectoryName($path)
@@ -429,15 +392,6 @@ function Capture-Screenshot($request) {
     }
     $bitmap.Dispose()
     if ($captureMethod -eq 'print-window') { throw 'PrintWindow failed for the requested desktop window' }
-  }
-
-  if ($scope -eq 'active-window') {
-    $virtual = [System.Windows.Forms.SystemInformation]::VirtualScreen
-    $right = $x + $width
-    $bottom = $y + $height
-    if ($x -lt $virtual.Left -or $y -lt $virtual.Top -or $right -gt $virtual.Right -or $bottom -gt $virtual.Bottom) {
-      throw "target window is not fully inside the virtual screen; refusing a partial geometry-mismatched screenshot"
-    }
   }
 
   $bitmap = New-Object System.Drawing.Bitmap($width, $height)
@@ -624,34 +578,14 @@ try {
       if (-not $allowWindowChrome -and $xRatio -ge 0.90 -and $yRatio -le 0.08) {
         throw 'click-visual-point rejected the top-right window-control zone; use desktop_close_window for closing windows'
       }
-
-      $frameHwnd = [int64](Get-Prop $request 'frameHwnd' 0)
-      $frameX = [int](Get-Prop $request 'frameX' 0)
-      $frameY = [int](Get-Prop $request 'frameY' 0)
-      $frameWidth = [int](Get-Prop $request 'frameWidth' 0)
-      $frameHeight = [int](Get-Prop $request 'frameHeight' 0)
-      if ($frameHwnd -eq 0 -or $frameWidth -le 0 -or $frameHeight -le 0) {
-        throw 'click-visual-point requires a bound visual frame from desktop_screenshot'
-      }
-
       $record = Window-Record $process
-      if ([int64]$record.hwnd -ne $frameHwnd) {
-        throw 'visual frame is stale: the target HWND changed; take a new desktop_screenshot'
-      }
       $rect = $record.rect
-      $tolerance = 2
-      if ([Math]::Abs([int]$rect.x - $frameX) -gt $tolerance -or
-          [Math]::Abs([int]$rect.y - $frameY) -gt $tolerance -or
-          [Math]::Abs([int]$rect.width - $frameWidth) -gt $tolerance -or
-          [Math]::Abs([int]$rect.height - $frameHeight) -gt $tolerance) {
-        throw 'visual frame is stale: window bounds changed after screenshot; take a new desktop_screenshot'
-      }
-
-      $x = [int][Math]::Round($frameX + (($frameWidth - 1) * $xRatio))
-      $y = [int][Math]::Round($frameY + (($frameHeight - 1) * $yRatio))
+      if ($rect.width -le 0 -or $rect.height -le 0) { throw 'click-visual-point target window has invalid bounds' }
+      $x = [int][Math]::Round($rect.x + (($rect.width - 1) * $xRatio))
+      $y = [int][Math]::Round($rect.y + (($rect.height - 1) * $yRatio))
       $buttonName = [string](Get-Prop $request 'button' 'left')
       Click-Point $x $y ($(if ($buttonName -ieq 'right') { 1 } else { 0 }))
-      [ordered]@{ ok=$true; method='bound-window-visual-point'; x=$x; y=$y; xRatio=$xRatio; yRatio=$yRatio; button=$buttonName; frameHwnd=$frameHwnd; frameRect=[ordered]@{x=$frameX;y=$frameY;width=$frameWidth;height=$frameHeight}; window=$record }
+      [ordered]@{ ok=$true; method='window-relative-visual-point'; x=$x; y=$y; xRatio=$xRatio; yRatio=$yRatio; button=$buttonName; window=$record }
     }
     'drag' {
       $fromX=[int](Get-Prop $request 'fromX' 0); $fromY=[int](Get-Prop $request 'fromY' 0)
