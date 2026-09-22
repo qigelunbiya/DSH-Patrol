@@ -129,6 +129,35 @@ describe('Patrol page understanding planner', () => {
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/不再使用视觉点击次数、失败次数或物理点击预算做 HARD STOP/)
   })
 
+  it('refuses coarse free-point vision for a row-identified RDP target but allows action-map candidates', () => {
+    const guard = createPatrolPlanningGuard(createPatrolClickOutcomeTracker())
+    const blocked = guard({
+      name: 'patrol_visual_click_target',
+      arguments: {
+        inspectionId: 'rdp-row',
+        stepName: '点击 10.192.3.174 这一行的 RDP',
+        targetHint: '10.192.3.174 行的 RDP',
+        frameId: 'browser-visual-current',
+        xRatio: 0.68,
+        yRatio: 0.26,
+      },
+    })
+    expect(blocked).toMatch(/structured-row precision guard/)
+    expect(blocked).toMatch(/patrol_click_target/)
+    expect(blocked).toMatch(/actionMap=true/)
+
+    expect(guard({
+      name: 'patrol_visual_click_target',
+      arguments: {
+        inspectionId: 'rdp-row',
+        stepName: '点击 10.192.3.174 这一行的 RDP',
+        targetHint: '10.192.3.174 行的 RDP',
+        frameId: 'browser-visual-current',
+        candidateId: 'A7',
+      },
+    })).toBeUndefined()
+  })
+
   it('binds a row identity to the action selector instead of clicking an ambiguous RDP label', () => {
     const page = [
       '[Structured table 1; rows=2]',
