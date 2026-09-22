@@ -198,19 +198,30 @@
     return `<ol style="margin:0;padding-left:24px;display:grid;gap:8px">${items.map(item => `<li>${esc(item)}</li>`).join('')}</ol>`
   }
 
+  function stepPlane(step) {
+    if (step?.executionPlane === 'desktop' || String(step?.tool || '').startsWith('desktop_')) return 'desktop'
+    if (step?.executionPlane === 'browser' || String(step?.tool || '').startsWith('browser_')) return 'browser'
+    return ''
+  }
+
   function diagram(definition) {
     const steps = Array.isArray(definition?.steps) ? definition.steps : []
     if (steps.length) {
-      return steps.map((step, index) => `<div class="step">
+      return steps.map((step, index) => {
+        const plane = stepPlane(step)
+        const planeLabel = plane === 'desktop' ? '应用' : plane === 'browser' ? '浏览器' : ''
+        return `<div class="step">
         <div class="num">${index + 1}</div>
         <details class="node">
-          <summary><div class="node-head"><div><div class="node-name">${esc(step.name || step.id)}</div><div class="tiny muted node-tool">${esc(step.kind === 'checkpoint' ? '人工确认' : step.tool || '自动步骤')}</div></div><span class="chip">${step.kind === 'checkpoint' ? '检查点' : '自动执行'}</span></div></summary>
+          <summary><div class="node-head"><div><div class="node-name">${esc(step.name || step.id)}</div><div class="tiny muted node-tool">${esc(step.kind === 'checkpoint' ? '人工确认' : step.tool || '自动步骤')}</div></div><div>${planeLabel ? `<span class="chip">${planeLabel}</span> ` : ''}<span class="chip">${step.kind === 'checkpoint' ? '检查点' : '自动执行'}</span></div></div></summary>
+          ${step.executionInstruction ? `<div class="node-note"><b>实际命令：</b>${esc(step.executionInstruction)}</div>` : ''}
           ${step.notes ? `<div class="muted node-note">${esc(step.notes)}</div>` : ''}
           ${step.expectation ? `<span class="chip">校验 ${esc(step.expectation.mode)}</span>` : ''}
           ${step.when ? '<span class="chip">条件分支</span>' : ''}
           ${step.artifact ? `<span class="chip">产物 ${esc(step.artifact)}</span>` : ''}
         </details>
-      </div>`).join('')
+      </div>`
+      }).join('')
     }
     const checklist = Array.isArray(definition?.metadata?.taskChecklist) ? definition.metadata.taskChecklist : []
     if (definition?.target?.type === 'desktop' && checklist.length) {
