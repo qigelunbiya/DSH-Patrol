@@ -1,6 +1,7 @@
 import { chmod, copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { rememberChallengeObservationFromText } from './challenge-memory.js'
+import { enrichStepPresentation } from './step-presentation.js'
 import { assertInspectionDefinition, assertInspectionId } from './validation.js'
 import type { InspectionDefinition, ResumeState, RunReport, SavedRunPaths } from './types.js'
 
@@ -94,6 +95,7 @@ export class PatrolStore {
   }
 
   async save(definition: InspectionDefinition): Promise<void> {
+    enrichStepPresentation(definition)
     assertInspectionDefinition(definition)
     await this.assertChecklistBeforeStepAppend(definition)
     await atomicWrite(this.inspectionPath(definition.id), `${JSON.stringify(definition, null, 2)}\n`)
@@ -110,6 +112,7 @@ export class PatrolStore {
    * byte-verified before workspace mirrors are refreshed.
    */
   async saveRunbookEdit(definition: InspectionDefinition): Promise<void> {
+    enrichStepPresentation(definition)
     assertInspectionDefinition(definition)
     await this.assertChecklistBeforeStepAppend(definition)
     const path = this.inspectionPath(definition.id)
@@ -149,6 +152,7 @@ export class PatrolStore {
   }
 
   async saveWorkspaceRunbook(definition: InspectionDefinition, workspaceRoot: string): Promise<{ json: string; markdown: string }> {
+    enrichStepPresentation(definition)
     assertInspectionDefinition(definition)
     const paths = this.workspaceRunbookPaths(definition.id, workspaceRoot)
     await atomicWrite(paths.json, `${JSON.stringify(definition, null, 2)}\n`)
@@ -427,7 +431,8 @@ function renderRunbookMarkdown(definition: InspectionDefinition): string {
     if (step.kind === 'checkpoint') {
       lines.push(`- Kind: checkpoint`, `- Reason: ${step.reason}`, `- Prompt: ${step.prompt}`)
     } else {
-      lines.push(`- Kind: tool`, `- Tool: \`${step.tool}\``, `- Arguments: \`${JSON.stringify(step.arguments)}\``)
+      lines.push(`- Kind: tool`, `- Plane: \`${step.executionPlane ?? (step.tool.startsWith('desktop_') ? 'desktop' : 'browser')}\``, `- Tool: \`${step.tool}\``, `- Arguments: \`${JSON.stringify(step.arguments)}\``)
+      if (step.executionInstruction !== undefined) lines.push(`- Execution instruction: ${step.executionInstruction}`)
       if (step.expectation !== undefined) lines.push(`- Expectation: ${step.expectation.mode} ${JSON.stringify(step.expectation.value)}`)
       if (step.locator !== undefined) lines.push(`- Semantic locator: \`${JSON.stringify(step.locator)}\``)
       if (step.artifact !== undefined) lines.push(`- Artifact: \`${step.artifact}\``)
