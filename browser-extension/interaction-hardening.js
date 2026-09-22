@@ -257,8 +257,9 @@ async function interactionScreenshot(args) {
   const ocrDataUrl = dataUrl
   let actionCandidates = []
   let actionMap = false
+  const actionMapTargetHint = typeof args.actionMapTargetHint === 'string' ? args.actionMapTargetHint.trim() : ''
   if (args.actionMap === true && format === 'jpeg') {
-    actionCandidates = await interactionCollectVisualActionCandidates(tabId, captureGeometry)
+    actionCandidates = await interactionCollectVisualActionCandidates(tabId, captureGeometry, actionMapTargetHint)
     if (actionCandidates.length > 0) {
       const mapped = await interactionOverlayActionMapInWorker(dataUrl, actionCandidates, captureGeometry, Math.max(80, quality))
       if (!mapped?.dataUrl) throw new Error('Patrol could not render the visual action map')
@@ -291,7 +292,9 @@ async function interactionScreenshot(args) {
     captureScale,
     coordinateGuide,
     actionMap,
-    ...(actionMap ? { actionCandidateCount: actionCandidates.length } : {}),
+    actionMapTargeted: args.actionMap === true && actionMapTargetHint.length > 0,
+    ...(actionMapTargetHint ? { actionMapTargetHint } : {}),
+    ...(args.actionMap === true ? { actionCandidateCount: actionCandidates.length } : {}),
     focusedVisual,
     ...(focusedVisual && focusRegion ? {
       focusCenterXRatio: focusRegion.centerXRatio,
@@ -491,7 +494,7 @@ async function interactionResizeCapturedDataUrlInWorker(source, targetWidth, jpe
   }
 }
 
-async function interactionCollectVisualActionCandidates(tabId, captureGeometry) {
+async function interactionCollectVisualActionCandidates(tabId, captureGeometry, targetHint = '') {
   if (!chrome.scripting?.executeScript || !captureGeometry) return []
   try {
     const results = await chrome.scripting.executeScript({
@@ -503,7 +506,7 @@ async function interactionCollectVisualActionCandidates(tabId, captureGeometry) 
         top: Number(captureGeometry.captureClientTop || 0),
         width: Number(captureGeometry.captureWidth || 0),
         height: Number(captureGeometry.captureHeight || 0),
-      }],
+      }, typeof targetHint === 'string' ? targetHint : ''],
     })
     const value = Array.isArray(results) ? results[0]?.result : undefined
     return Array.isArray(value) ? value.slice(0, 60) : []
@@ -512,8 +515,9 @@ async function interactionCollectVisualActionCandidates(tabId, captureGeometry) 
   }
 }
 
-function interactionMainWorldCollectVisualActionCandidates(capture) {
+function interactionMainWorldCollectVisualActionCandidates(capture, targetHint = '') {
   const compact = value => String(value || '').replace(/\s+/g, ' ').trim()
+  const normalize = value => compact(value).replace(/\s+/g, '').toLocaleLowerCase()
   const capLeft = Number(capture?.left || 0)
   const capTop = Number(capture?.top || 0)
   const capWidth = Number(capture?.width || 0)
@@ -540,6 +544,80 @@ function interactionMainWorldCollectVisualActionCandidates(capture) {
       elements.push(element)
       if (element.shadowRoot) roots.push(element.shadowRoot)
     }
+  }
+
+  const rowLikeSelector = [
+    'tr', '[role="row"]', '.ant-table-row', '.el-table__row', '.ivu-table-row', '.arco-table-tr', '.vxe-body--row',
+    '[class*="table-row"]', '[class*="list-row"]', '[data-row-key]', '[aria-rowindex]', '[data-index]',
+  ].join(',')
+  const rowVisible = element => {
+    if (!(element instanceof Element) || !element.isConnected) return false
+    const style = getComputedStyle(element)
+    if (!style || style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false
+    const rect = element.getBoundingClientRect()
+    return rect.width > 0 && rect.height > 0
+  }
+  const rowKey = row => {
+    if (!(row instanceof Element)) return ''
+    for (const attr of ['data-row-key', 'data-key', 'row-key', 'data-index', 'aria-rowindex']) {
+      const value = row.getAttribute?.(attr)
+      if (value !== null && value !== undefined && String(value).trim()) return `${attr}:${String(value).trim()}`
+    }
+    return ''
+  }
+  const rowOrdinal = row => {
+    if (!(row instanceof Element) || !(row.parentElement instanceof Element)) return -1
+    const peers = [...row.parentElement.children].filter(child => child.matches?.(rowLikeSelector))
+    return peers.indexOf(row)
+  }
+  const closestRow = element => {
+    let node = element
+    let guard = 0
+    while (node instanceof Element && guard < 24) {
+      if (node.matches?.(rowLikeSelector)) return node
+      const parent = node.parentElement
+      if (parent) node = parent
+      else {
+        const root = node.getRootNode?.()
+        node = root && root.host instanceof Element ? root.host : null
+      }
+      guard += 1
+    }
+    return null
+  }
+  const allRows = elements.filter(element => element.matches?.(rowLikeSelector) && rowVisible(element))
+  const logicalRowContext = element => {
+    const row = closestRow(element)
+    if (!(row instanceof Element)) return { text: '', key: '', ordinal: -1 }
+    const key = rowKey(row)
+    const ordinal = rowOrdinal(row)
+    const rect = row.getBoundingClientRect()
+    const contexts = [compact(row.innerText || row.textContent || '')]
+    for (const peer of allRows) {
+      if (peer === row) continue
+      const peerKey = rowKey(peer)
+      const peerOrdinal = rowOrdinal(peer)
+      const peerRect = peer.getBoundingClientRect()
+      const sameKey = Boolean(key && peerKey && key === peerKey)
+      const sameOrdinal = ordinal >= 0 && peerOrdinal >= 0 && ordinal === peerOrdinal && peer.parentElement !== row.parentElement
+      const alignedTop = peer.parentElement !== row.parentElement && Math.abs(Number(peerRect.top) - Number(rect.top)) <= 6
+      if (sameKey || sameOrdinal || alignedTop) contexts.push(compact(peer.innerText || peer.textContent || ''))
+    }
+    return {
+      text: compact([...new Set(contexts.filter(Boolean))].join(' | ')).slice(0, 900),
+      key,
+      ordinal,
+    }
+  }
+  const structuredIdentities = [...new Set((String(targetHint || '').match(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g) || []).map(compact).filter(Boolean))]
+  const structuredActions = [...new Set((String(targetHint || '').match(/\b(?:RDP|SSH|VNC|SFTP|FTP|HTTP|HTTPS)\b/gi) || []).map(value => String(value).toUpperCase()))]
+  const structuredTarget = structuredIdentities.length > 0 && structuredActions.length > 0
+  const candidateMatchesStructuredTarget = candidate => {
+    if (!structuredTarget) return true
+    const context = normalize(candidate.rowContext || '')
+    const actionText = normalize(candidate.actionText || '')
+    return structuredIdentities.every(token => context.includes(normalize(token)))
+      && structuredActions.some(token => actionText.includes(normalize(token)))
   }
 
   const roleOf = element => compact(element.getAttribute?.('role') || '').toLowerCase()
@@ -664,12 +742,21 @@ function interactionMainWorldCollectVisualActionCandidates(capture) {
     if (area < 8000) score += 40
     if (weakPointerOnly) score -= 220
 
+    const rowContext = logicalRowContext(element)
+    const candidateText = compact(element.innerText || element.textContent || '').slice(0, 120)
+    const candidateTitle = compact(element.getAttribute?.('title') || '')
+    const candidateAriaLabel = compact(element.getAttribute?.('aria-label') || '')
+    const actionText = compact([candidateAriaLabel, candidateTitle, candidateText, element instanceof HTMLInputElement ? element.value : ''].filter(Boolean).join(' ')).slice(0, 260)
     candidates.push({
       tag,
       role,
-      text: compact(element.innerText || element.textContent || '').slice(0, 120),
-      title: compact(element.getAttribute?.('title') || ''),
-      ariaLabel: compact(element.getAttribute?.('aria-label') || ''),
+      text: candidateText,
+      title: candidateTitle,
+      ariaLabel: candidateAriaLabel,
+      actionText,
+      rowContext: rowContext.text,
+      rowKey: rowContext.key,
+      rowOrdinal: rowContext.ordinal,
       href: tag === 'a' ? compact(element.getAttribute?.('href') || '') : '',
       id: compact(element.id || ''),
       className: compact([...(element.classList || [])].join(' ')).slice(0, 220),
@@ -707,8 +794,9 @@ function interactionMainWorldCollectVisualActionCandidates(capture) {
     if (kept.length >= 60) break
   }
 
-  kept.sort((a,b) => a.top - b.top || a.left - b.left)
-  return kept.map((candidate,index) => ({ ...candidate, candidateId: `A${index + 1}` }))
+  const narrowed = structuredTarget ? kept.filter(candidateMatchesStructuredTarget) : kept
+  narrowed.sort((a,b) => a.top - b.top || a.left - b.left)
+  return narrowed.map((candidate,index) => ({ ...candidate, candidateId: `A${index + 1}` }))
 }
 async function interactionOverlayActionMapInWorker(source, candidates, captureGeometry, jpegQuality) {
   if (typeof OffscreenCanvas !== 'function' || typeof createImageBitmap !== 'function') return undefined
@@ -1045,6 +1133,20 @@ function interactionRegisterVisualFrame(tabId, before, after, captureGeometry, a
   }
 }
 
+function interactionStructuredRowCandidateMismatch(candidate, targetHint) {
+  const source = String(targetHint || '')
+  const identities = [...new Set(source.match(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g) || [])]
+  const actions = [...new Set((source.match(/\b(?:RDP|SSH|VNC|SFTP|FTP|HTTP|HTTPS)\b/gi) || []).map(value => String(value).toUpperCase()))]
+  if (identities.length === 0 || actions.length === 0) return ''
+  const normalize = value => String(value || '').replace(/\s+/g, '').toLocaleLowerCase()
+  const context = normalize(candidate?.rowContext || '')
+  const actionText = normalize(candidate?.actionText || [candidate?.ariaLabel, candidate?.title, candidate?.text].filter(Boolean).join(' '))
+  const identityOk = identities.every(token => context.includes(normalize(token)))
+  const actionOk = actions.some(token => actionText.includes(normalize(token)))
+  if (identityOk && actionOk) return ''
+  return `candidate business context mismatch: expected row ${identities.join(',')} + action ${actions.join('/')}; candidate row=${JSON.stringify(String(candidate?.rowContext || '').slice(0, 260))}; candidate action=${JSON.stringify(String(candidate?.actionText || '').slice(0, 160))}`
+}
+
 async function interactionVisualClick(args) {
   const tabId = await resolveTabId(args.tabId)
   interactionPruneVisualFrames()
@@ -1063,7 +1165,11 @@ async function interactionVisualClick(args) {
       selectedCandidate = Array.isArray(frame.actionCandidates)
         ? frame.actionCandidates.find(candidate => String(candidate?.candidateId || '').toUpperCase() === requestedCandidateId)
         : undefined
-      if (!selectedCandidate) throw new Error(`visual action candidate ${requestedCandidateId} is unavailable on this frame; capture a fresh patrol_observe(includeImage=true, actionMap=true)`)
+      if (!selectedCandidate) throw new Error(`visual action candidate ${requestedCandidateId} is unavailable on this frame; capture a fresh patrol_observe(includeImage=true, actionMap=true, targetHint=...)`)
+      const structuredMismatch = interactionStructuredRowCandidateMismatch(selectedCandidate, targetHint)
+      if (structuredMismatch) {
+        throw new Error(`visual action candidate ${requestedCandidateId} was REFUSED before physical input because it does not belong to the requested structured-row target. ${structuredMismatch}. Capture a fresh targeted action map with patrol_observe(includeImage=true, actionMap=true, targetHint=${JSON.stringify(targetHint)}).`)
+      }
       const captureLeft = Number(frame.captureClientLeft || 0)
       const captureTop = Number(frame.captureClientTop || 0)
       const captureWidth = Number(frame.captureWidth || frame.width || 0)
