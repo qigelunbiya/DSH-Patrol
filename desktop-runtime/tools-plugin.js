@@ -137,7 +137,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_click_visual_point',
-      description: 'Click a point identified from the latest CURRENT desktop_screenshot visual frame. The click is bound to the exact same top-level HWND and physical screen rectangle used for that screenshot; if the window moved/resized/recreated, the click is rejected and a new screenshot is required. xRatio/yRatio are 0..1 inside that frame. The top-right window-control zone is rejected by default.',
+      description: 'Click a point identified from the latest CURRENT desktop_screenshot visual frame. Prefer ratios read from that screenshot\'s desktop XY/1000 guide: xRatio=X/1000 and yRatio=Y/1000 at the target control center, rather than eyeballing a decimal ratio. The click is bound to the exact same top-level HWND and physical screen rectangle used for that screenshot; if the window moved/resized/recreated, the click is rejected and a new screenshot is required. xRatio/yRatio are 0..1 inside that frame. The top-right window-control zone is rejected by default.',
       parameters: {
         xRatio: reqNum,
         yRatio: reqNum,
@@ -290,7 +290,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_screenshot',
-      description: 'Capture a geometry-faithful model-vision frame. For active-window, Patrol activates the selected top-level window, resolves its visible DWM frame bounds, then screen-copies exactly that whole physical rectangle. It deliberately does NOT use PrintWindow because custom/GPU apps may report success while rendering only part of the UI. The result includes frameId; desktop_click_visual_point is bound to this exact HWND+rectangle.',
+      description: 'Capture a geometry-faithful model-vision frame. For active-window, Patrol activates the selected top-level window, resolves its visible DWM frame bounds, then screen-copies exactly that whole physical rectangle. The model-visible PNG carries a desktop-only XY/1000 guide (X100..X900 and Y100..Y900) without changing raster dimensions. Read the target center from that guide and use xRatio=X/1000, yRatio=Y/1000. It deliberately does NOT use PrintWindow because custom/GPU apps may report success while rendering only part of the UI. The result includes frameId; desktop_click_visual_point is bound to this exact HWND+rectangle.',
       parameters: {
         scope: { type: 'string', enum: ['active-window', 'screen'] },
         captureMethod: { type: 'string', enum: ['auto', 'print-window', 'screen'], description: 'Compatibility input. active-window visual screenshots always force geometry-faithful screen copy.' },
