@@ -164,7 +164,7 @@ export class PatrolStore {
     const raw = await readFile(this.inspectionPath(id), 'utf8')
     const parsed: unknown = JSON.parse(raw)
     assertInspectionDefinition(parsed)
-    return parsed
+    return enrichStepPresentation(parsed)
   }
 
   async remove(id: string): Promise<void> {
