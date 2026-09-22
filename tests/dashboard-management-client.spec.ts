@@ -37,6 +37,17 @@ describe('dashboard flow-management client', () => {
     expect(dashboardSource).toContain('桌面巡检任务 · 待录制执行参数')
   })
 
+  it('labels browser/application steps and shows application execution instructions', () => {
+    expect(dashboardSource).toContain("return 'desktop'")
+    expect(dashboardSource).toContain("return 'browser'")
+    expect(dashboardSource).toContain("plane === 'desktop' ? '应用'")
+    expect(dashboardSource).toContain("plane === 'browser' ? '浏览器'")
+    expect(dashboardSource).toContain('实际命令：')
+    expect(dashboardSource).toContain('step.executionInstruction')
+    expect(source).toContain("step.executionPlane === 'desktop'")
+    expect(source).toContain('step.executionInstruction')
+  })
+
   it('shows exact per-step command arguments below the visual flow node', () => {
     expect(source).toContain('实际命令')
     expect(source).toContain('arguments: step.arguments || {}')
