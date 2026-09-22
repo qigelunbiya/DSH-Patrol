@@ -18,6 +18,8 @@ export class WindowsDesktopDriver {
     this.logger = options.logger
     this.commandTimeoutMs = options.commandTimeoutMs ?? 30000
     this.powerShell = options.powerShell || process.env.DSH_PATROL_POWERSHELL || 'powershell.exe'
+    this.visualFrames = new Map()
+    this.lastVisualFrameId = undefined
   }
 
   get supported() {
@@ -93,6 +95,97 @@ export class WindowsDesktopDriver {
   async screenshot(args = {}, exec) {
     const path = await this.nextScreenshotPath(exec, args.fileName)
     return await this.run('screenshot', { ...args, path }, exec)
+  }
+
+  async visualScreenshot(args = {}, exec) {
+    const scope = args.scope === 'screen' ? 'screen' : 'active-window'
+    const shot = await this.screenshot({
+      ...args,
+      scope,
+      captureMethod: 'screen',
+    }, exec)
+    if (scope !== 'active-window') return shot
+
+    const rect = screenshotBounds(shot)
+    const window = shot?.window
+    const hwnd = finiteNumber(window?.hwnd, 0)
+    const windowRect = {
+      x: finiteNumber(window?.rect?.x, NaN),
+      y: finiteNumber(window?.rect?.y, NaN),
+      width: finiteNumber(window?.rect?.width, NaN),
+      height: finiteNumber(window?.rect?.height, NaN),
+    }
+    if (!Number.isFinite(hwnd) || hwnd === 0 || rect.width <= 0 || rect.height <= 0) {
+      throw new Error('desktop_screenshot did not return a valid top-level window frame')
+    }
+    if (!sameRect(rect, windowRect, 2)) {
+      throw new Error(`desktop_screenshot frame mismatch: capture=${formatRect(rect)} window=${formatRect(windowRect)}`)
+    }
+
+    const frameId = `visual-${randomUUID()}`
+    const frame = {
+      frameId,
+      createdAt: Date.now(),
+      path: shot.path,
+      hwnd,
+      processName: String(window?.processName ?? ''),
+      title: String(window?.title ?? ''),
+      rect,
+    }
+    this.visualFrames.set(frameId, frame)
+    this.lastVisualFrameId = frameId
+    while (this.visualFrames.size > 12) {
+      const oldest = this.visualFrames.keys().next().value
+      if (!oldest) break
+      this.visualFrames.delete(oldest)
+    }
+
+    return {
+      ...shot,
+      frameId,
+      visualFrame: {
+        frameId,
+        hwnd,
+        processName: frame.processName,
+        title: frame.title,
+        rect,
+        coordinateSpace: 'physical-screen-top-level-window',
+      },
+    }
+  }
+
+  async clickVisualPoint(args = {}, exec) {
+    const requestedFrameId = String(args.frameId ?? '').trim()
+    const frameId = requestedFrameId || this.lastVisualFrameId
+    if (!frameId) throw new Error('desktop_click_visual_point requires a fresh desktop_screenshot first')
+    const frame = this.visualFrames.get(frameId)
+    if (!frame) {
+      throw new Error(`desktop visual frame ${JSON.stringify(frameId)} is unavailable or already consumed; take a new desktop_screenshot`)
+    }
+    if (Date.now() - frame.createdAt > 120000) {
+      this.visualFrames.delete(frameId)
+      if (this.lastVisualFrameId === frameId) this.lastVisualFrameId = undefined
+      throw new Error('desktop visual frame is stale; take a new desktop_screenshot')
+    }
+    assertVisualFrameTarget(frame, args)
+
+    const result = await this.run('click-visual-point', {
+      ...args,
+      hwnd: frame.hwnd,
+      frameHwnd: frame.hwnd,
+      frameX: frame.rect.x,
+      frameY: frame.rect.y,
+      frameWidth: frame.rect.width,
+      frameHeight: frame.rect.height,
+    }, exec)
+    this.visualFrames.delete(frameId)
+    if (this.lastVisualFrameId === frameId) this.lastVisualFrameId = undefined
+    return {
+      ...result,
+      frameId,
+      screenshotPath: frame.path,
+      frameBounds: frame.rect,
+    }
   }
 
   async ocr(args = {}, exec) {
@@ -589,6 +682,32 @@ function screenshotBounds(shot) {
     y: finiteNumber(shot?.y, 0),
     width: finiteNumber(shot?.width, 0),
     height: finiteNumber(shot?.height, 0),
+  }
+}
+
+function sameRect(left, right, tolerance = 0) {
+  return ['x', 'y', 'width', 'height'].every(key =>
+    Number.isFinite(left?.[key])
+    && Number.isFinite(right?.[key])
+    && Math.abs(Number(left[key]) - Number(right[key])) <= tolerance)
+}
+
+function formatRect(rect) {
+  return `(${rect?.x},${rect?.y}) ${rect?.width}x${rect?.height}`
+}
+
+function assertVisualFrameTarget(frame, args) {
+  const processName = String(args.processName ?? '').trim()
+  const title = String(args.title ?? '').trim()
+  const titleContains = String(args.titleContains ?? '').trim()
+  if (processName && frame.processName.toLocaleLowerCase() !== processName.toLocaleLowerCase()) {
+    throw new Error(`latest visual frame belongs to process ${JSON.stringify(frame.processName)}, not ${JSON.stringify(processName)}; take a new desktop_screenshot`)
+  }
+  if (title && frame.title.toLocaleLowerCase() !== title.toLocaleLowerCase()) {
+    throw new Error(`latest visual frame belongs to title ${JSON.stringify(frame.title)}, not ${JSON.stringify(title)}; take a new desktop_screenshot`)
+  }
+  if (titleContains && !frame.title.toLocaleLowerCase().includes(titleContains.toLocaleLowerCase())) {
+    throw new Error(`latest visual frame title ${JSON.stringify(frame.title)} does not contain ${JSON.stringify(titleContains)}; take a new desktop_screenshot`)
   }
 }
 

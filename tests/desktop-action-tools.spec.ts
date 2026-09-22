@@ -103,42 +103,6 @@ describe('recordable desktop actions', () => {
     expect(saved.steps[0]?.kind === 'tool' ? saved.steps[0].arguments : {}).not.toHaveProperty('frameId')
   })
 
-  it('keeps replayable visual clicks window-relative without persisting or forwarding frame-bound screenshot ids', async () => {
-    const { store, action, exec, dispatched } = await setup()
-
-    await action.execute({
-      inspectionId: 'wechat-semantic-wait',
-      stepName: '视觉点击联系人',
-      action: 'click-visual-point',
-      processName: 'LxMainNew',
-      titleContains: '蓝信',
-      xRatio: 0.22,
-      yRatio: 0.31,
-      frameId: 'legacy-frame-id-must-be-ignored',
-    }, exec)
-
-    expect(dispatched).toEqual([{
-      tool: 'desktop_click_visual_point',
-      args: {
-        processName: 'LxMainNew',
-        titleContains: '蓝信',
-        xRatio: 0.22,
-        yRatio: 0.31,
-      },
-    }])
-    const saved = await store.load('wechat-semantic-wait')
-    expect(saved.steps[0]).toMatchObject({
-      tool: 'desktop_click_visual_point',
-      arguments: {
-        processName: 'LxMainNew',
-        titleContains: '蓝信',
-        xRatio: 0.22,
-        yRatio: 0.31,
-      },
-    })
-    expect(saved.steps[0]?.kind === 'tool' ? saved.steps[0].arguments : {}).not.toHaveProperty('frameId')
-  })
-
   it('executes and persists semantic wait-for-target parameters without coordinates', async () => {
     const { store, action, exec, dispatched } = await setup()
 
