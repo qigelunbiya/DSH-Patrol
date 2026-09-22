@@ -66,6 +66,10 @@ export interface ToolStep {
   artifact?: StepArtifactKind | undefined
   sensitive?: boolean
   notes?: string
+  /** Execution plane shown in the flow graph. Older flows may omit it and derive it from tool prefix. */
+  executionPlane?: 'browser' | 'desktop'
+  /** Human-readable CURRENT execution recipe, especially for desktop/application steps. */
+  executionInstruction?: string
   /** Business-task instruction this reusable step is intended to satisfy. */
   taskHint?: string
   /** Teaching-only verification metadata. Finalized flows strip this field. */
