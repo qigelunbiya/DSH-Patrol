@@ -72,13 +72,44 @@ async function semanticRowContextClick(args) {
   if (best.length !== 1) return undefined
 
   const chosen = best[0]
-  const results = await chrome.scripting.executeScript({
-    target: { tabId, frameIds: [chosen.frame.frameId] },
-    world: 'MAIN',
-    func: semanticRowContextPageCommand,
-    args: ['click', spec],
-  })
-  const clicked = Array.isArray(results) ? results[0]?.result : undefined
+  let clicked
+  let transport = 'atomic-main-world-row-context-click'
+  if (chosen.frame.frameId === 0
+    && typeof semanticTrustedMouseAvailable === 'function'
+    && semanticTrustedMouseAvailable()
+    && typeof semanticTrustedMouseClick === 'function') {
+    try {
+      const measuredResults = await chrome.scripting.executeScript({
+        target: { tabId, frameIds: [0] },
+        world: 'MAIN',
+        func: semanticRowContextPageCommand,
+        args: ['measure', spec],
+      })
+      const measured = Array.isArray(measuredResults) ? measuredResults[0]?.result : undefined
+      const x = Number(measured?.clientX)
+      const y = Number(measured?.clientY)
+      if (measured?.ok === true && Number.isFinite(x) && Number.isFinite(y)) {
+        const native = await semanticTrustedMouseClick(tabId, x, y)
+        if (native?.partial) throw new Error(`trusted row-context click partially dispatched: ${native.error || 'unknown native input failure'}`)
+        if (native?.ok) {
+          clicked = measured
+          transport = 'atomic-row-context+trusted-native-mouse'
+        }
+      }
+    } catch (error) {
+      if (/partially dispatched/.test(String(error?.message || error))) throw error
+    }
+  }
+
+  if (!clicked) {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [chosen.frame.frameId] },
+      world: 'MAIN',
+      func: semanticRowContextPageCommand,
+      args: ['click', spec],
+    })
+    clicked = Array.isArray(results) ? results[0]?.result : undefined
+  }
   if (!clicked || clicked.ok !== true || typeof clicked.selector !== 'string' || !clicked.selector) return undefined
 
   return {
@@ -87,9 +118,10 @@ async function semanticRowContextClick(args) {
     text: String(clicked.text || ''),
     role: String(clicked.role || ''),
     tag: String(clicked.tag || ''),
+    replaySelectorSafe: false,
     frameId: chosen.frame.frameId,
     frameUrl: chosen.frame.url || '',
-    transport: 'atomic-main-world-row-context-click',
+    transport,
   }
 }
 
@@ -276,6 +308,21 @@ function semanticRowContextPageCommand(mode, spec) {
 
   const chosen = best[0]
   const element = chosen.element
+  if (mode === 'measure') {
+    element.scrollIntoView?.({ block: 'center', inline: 'center', behavior: 'instant' })
+    const measuredRect = element.getBoundingClientRect()
+    return {
+      ok: true,
+      selector: stableSelector(element),
+      text: chosen.text,
+      role: roleOf(element),
+      tag: element.tagName.toLowerCase(),
+      context: compact(chosen.contextText).slice(0, 320),
+      correlation: chosen.correlationReason,
+      clientX: measuredRect.left + Math.max(1, measuredRect.width / 2),
+      clientY: measuredRect.top + Math.max(1, measuredRect.height / 2),
+    }
+  }
   element.scrollIntoView?.({ block: 'center', inline: 'center', behavior: 'instant' })
   const rect = element.getBoundingClientRect()
   const x = rect.left + Math.max(1, rect.width / 2)
