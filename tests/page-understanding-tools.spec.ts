@@ -155,6 +155,18 @@ describe('Patrol page understanding planner', () => {
         frameId: 'browser-visual-current',
         candidateId: 'A7',
       },
+    })).toMatch(/用户未指定操作方法时.*patrol_click_target/)
+
+    expect(guard({
+      name: 'patrol_visual_click_target',
+      arguments: {
+        inspectionId: 'rdp-row',
+        stepName: '点击 10.192.3.174 这一行的 RDP',
+        targetHint: '10.192.3.174 行的 RDP',
+        frameId: 'browser-visual-current',
+        candidateId: 'A1',
+        visualAuthority: true,
+      },
     })).toBeUndefined()
   })
 
