@@ -103,6 +103,7 @@ export class WindowsDesktopDriver {
       ...args,
       scope,
       captureMethod: 'screen',
+      coordinateGuide: scope === 'active-window',
     }, exec)
     if (scope !== 'active-window') return shot
 
