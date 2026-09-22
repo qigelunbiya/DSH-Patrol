@@ -244,7 +244,7 @@ export function registerPatrolObservationTools(
           quality: VISUAL_SCREENSHOT_JPEG_QUALITY,
           coordinateGuide: args.actionMap !== true,
           actionMap: args.actionMap === true,
-          ...(args.actionMap === true ? { actionMapTargetHint: args.targetHint.trim() } : {}),
+          ...(args.actionMap === true ? { actionMapTargetHint: String(args.targetHint).trim() } : {}),
           ...(focusRequested ? {
             focusXRatio: Number(args.focusXRatio),
             focusYRatio: Number(args.focusYRatio),
