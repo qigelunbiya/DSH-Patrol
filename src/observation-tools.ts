@@ -88,7 +88,8 @@ export function registerPatrolObservationTools(
       inspectionId: { type: 'string', required: true },
       tabId: { type: 'integer' },
       includeImage: { type: 'boolean', description: 'Attach the CURRENT screenshot image to model context. Default false; use only when OCR/DOM evidence is insufficient.' },
-      actionMap: { type: 'boolean', description: 'Overlay stable A1/A2/... boxes around CURRENT interactive controls. Intended for precise visual selection of small targets; the model chooses a box id instead of guessing a pixel center.' },
+      actionMap: { type: 'boolean', description: 'Overlay stable A1/A2/... boxes around CURRENT interactive controls. When actionMap=true, targetHint is required so the map can be narrowed to the intended business target instead of labeling dozens of unrelated controls.' },
+      targetHint: { type: 'string', description: 'Required when actionMap=true. Concrete CURRENT business target, e.g. “10.192.3.174 行的 RDP” or “评论输入框”. Structured row targets are filtered by row identity + action before labels are rendered.' },
       focusXRatio: { type: 'number', description: 'Optional coarse X center (0..1) for a focused visual crop. Use after a full-frame visual estimate when the target is small or a calibration mark missed.' },
       focusYRatio: { type: 'number', description: 'Optional coarse Y center (0..1) for a focused visual crop. Requires includeImage=true and focusXRatio.' },
       focusWidthRatio: { type: 'number', description: 'Focused crop width as a fraction of the CURRENT visual viewport. Default 0.30; clamped to 0.12..0.72.' },
@@ -118,6 +119,8 @@ export function registerPatrolObservationTools(
           captureMode: { type: 'string' },
           coordinateGuide: { type: 'boolean' },
           actionMap: { type: 'boolean' },
+          actionMapTargeted: { type: 'boolean' },
+          actionMapTargetHint: { type: 'string' },
           actionCandidateCount: { type: 'integer' },
           coordinateGridUnits: { type: 'number' },
           modelRasterWidth: { type: 'number' },
@@ -166,7 +169,9 @@ export function registerPatrolObservationTools(
               : `VISUAL COORDINATE GUIDE: the attached raster is ${value.modelRasterWidth ?? value.image?.width ?? '?'}x${value.modelRasterHeight ?? value.image?.height ?? '?'} px and contains an XY/1000 overlay. Read the target from that overlay: xRatio=X/1000, yRatio=Y/1000. Never infer coordinates from OS screen size, CSS viewport size, or the chat UI preview width.`,
           ] : []),
           ...(hasImage && value.actionMap === true ? [
-            `VISUAL ACTION MAP READY: ${value.actionCandidateCount ?? 0} CURRENT interactive control(s) are outlined with A1/A2/... labels. For small buttons/icons, visually choose the label covering the intended control and call patrol_visual_click_target with candidateId=that label. Do NOT estimate xRatio/yRatio when a correct action-map candidate exists. The browser will click that candidate's captured control center; DOM text is not used to choose the candidate.`,
+            value.actionMapTargeted === true
+              ? `TARGETED VISUAL ACTION MAP READY for ${JSON.stringify(value.actionMapTargetHint || args.targetHint || '')}: ${value.actionCandidateCount ?? 0} matching CURRENT control(s) are outlined with A1/A2/... labels. For structured rows such as “IP + RDP”, unrelated rows were removed before labels were assigned. Choose only among these labels; do not guess a global A# from an unfiltered page.`
+              : `VISUAL ACTION MAP READY: ${value.actionCandidateCount ?? 0} CURRENT interactive control(s) are outlined with A1/A2/... labels. For small buttons/icons, visually choose the label covering the intended control and call patrol_visual_click_target with candidateId=that label. Do NOT estimate xRatio/yRatio when a correct action-map candidate exists.`,
           ] : []),
           ...(args.includeImage === true && !hasImage ? ['VISUAL CLICK DISABLED: includeImage=true did not produce a model-visible image; do not guess screenshot coordinates.'] : []),
         ]
@@ -194,6 +199,7 @@ export function registerPatrolObservationTools(
         tabId: args.tabId,
         includeImage: args.includeImage === true,
         actionMap: args.actionMap === true,
+        ...(args.targetHint === undefined ? {} : { targetHint: args.targetHint }),
         ...(args.focusXRatio === undefined ? {} : { focusXRatio: args.focusXRatio }),
         ...(args.focusYRatio === undefined ? {} : { focusYRatio: args.focusYRatio }),
       },
@@ -203,6 +209,11 @@ export function registerPatrolObservationTools(
         || args.focusWidthRatio !== undefined || args.focusHeightRatio !== undefined
       if (args.actionMap === true && args.includeImage !== true) {
         throw new Error('visual action-map observation requires includeImage=true')
+      }
+      if (args.actionMap === true) {
+        if (typeof args.targetHint !== 'string' || args.targetHint.trim().length < 2) {
+          throw new Error('visual action-map observation requires targetHint so Patrol can narrow labels to the intended CURRENT business target')
+        }
       }
       if (focusRequested) {
         if (args.includeImage !== true) throw new Error('focused visual observation requires includeImage=true')
@@ -233,6 +244,7 @@ export function registerPatrolObservationTools(
           quality: VISUAL_SCREENSHOT_JPEG_QUALITY,
           coordinateGuide: args.actionMap !== true,
           actionMap: args.actionMap === true,
+          ...(args.actionMap === true ? { actionMapTargetHint: args.targetHint.trim() } : {}),
           ...(focusRequested ? {
             focusXRatio: Number(args.focusXRatio),
             focusYRatio: Number(args.focusYRatio),
@@ -312,6 +324,8 @@ export function registerPatrolObservationTools(
       const captureMode = objectString(shot.value, 'captureMode')
       const coordinateGuide = objectBoolean(shot.value, 'coordinateGuide') === true
       const actionMap = objectBoolean(shot.value, 'actionMap') === true
+      const actionMapTargeted = objectBoolean(shot.value, 'actionMapTargeted') === true
+      const actionMapTargetHint = objectString(shot.value, 'actionMapTargetHint')
       const actionCandidateCount = objectNumber(shot.value, 'actionCandidateCount')
       const coordinateGridUnits = objectNumber(shot.value, 'coordinateGridUnits')
       const modelRasterWidth = objectNumber(shot.value, 'modelRasterWidth')
@@ -347,6 +361,8 @@ export function registerPatrolObservationTools(
         ...(captureMode === undefined ? {} : { captureMode }),
         coordinateGuide,
         actionMap,
+        actionMapTargeted,
+        ...(actionMapTargetHint === undefined ? {} : { actionMapTargetHint }),
         ...(actionCandidateCount === undefined ? {} : { actionCandidateCount }),
         ...(coordinateGridUnits === undefined ? {} : { coordinateGridUnits }),
         ...(modelRasterWidth === undefined ? {} : { modelRasterWidth }),
