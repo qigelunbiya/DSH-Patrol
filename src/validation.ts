@@ -170,6 +170,16 @@ function assertStep(value: unknown): asserts value is InspectionStep {
     assertSafePersistentText(step.notes, `step ${step.id} notes`)
   }
 
+  if (step.executionPlane !== undefined && step.executionPlane !== 'browser' && step.executionPlane !== 'desktop') {
+    throw new Error(`step ${step.id} executionPlane must be browser or desktop`)
+  }
+  if (step.executionInstruction !== undefined) {
+    if (typeof step.executionInstruction !== 'string' || step.executionInstruction.trim().length === 0) {
+      throw new Error(`step ${step.id} executionInstruction must be a non-empty string`)
+    }
+    assertSafePersistentText(step.executionInstruction, `step ${step.id} executionInstruction`)
+  }
+
   if (step.kind === 'checkpoint') {
     if (typeof step.prompt !== 'string' || step.prompt.trim().length === 0) throw new Error(`checkpoint ${step.id} prompt is required`)
     assertSafeCheckpointPrompt(step.prompt)
@@ -178,6 +188,10 @@ function assertStep(value: unknown): asserts value is InspectionStep {
   }
   if (step.kind !== 'tool') throw new Error(`step ${step.id} kind is invalid`)
   if (typeof step.tool !== 'string' || step.tool.length === 0) throw new Error(`tool step ${step.id} tool is required`)
+  const expectedPlane = step.tool.startsWith('browser_') ? 'browser' : step.tool.startsWith('desktop_') ? 'desktop' : undefined
+  if (expectedPlane !== undefined && step.executionPlane !== undefined && step.executionPlane !== expectedPlane) {
+    throw new Error(`step ${step.id} executionPlane=${step.executionPlane} conflicts with tool ${step.tool}`)
+  }
   if (!isReplayableBrowserTool(step.tool) && !isReplayableDesktopTool(step.tool)) {
     const family = step.tool.startsWith('browser_')
       ? 'browser'
