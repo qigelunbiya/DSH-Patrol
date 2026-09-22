@@ -387,6 +387,36 @@ function Send-Hotkey([string]$combo) {
   [System.Windows.Forms.SendKeys]::SendWait("$prefix$encoded")
 }
 
+function Draw-CoordinateGuide($graphics, [int]$width, [int]$height) {
+  if ($null -eq $graphics -or $width -le 0 -or $height -le 0) { return }
+  $pen = New-Object System.Drawing.Pen(([System.Drawing.Color]::FromArgb(72, 255, 64, 64)), 1)
+  $brush = New-Object System.Drawing.SolidBrush(([System.Drawing.Color]::FromArgb(210, 255, 48, 48)))
+  $back = New-Object System.Drawing.SolidBrush(([System.Drawing.Color]::FromArgb(150, 255, 255, 255)))
+  $font = New-Object System.Drawing.Font([System.Drawing.FontFamily]::GenericMonospace, 8, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
+  try {
+    for ($i = 1; $i -lt 10; $i++) {
+      $x = [int][Math]::Round((($width - 1) * $i) / 10.0)
+      $y = [int][Math]::Round((($height - 1) * $i) / 10.0)
+      $graphics.DrawLine($pen, $x, 0, $x, $height - 1)
+      $graphics.DrawLine($pen, 0, $y, $width - 1, $y)
+
+      $xLabel = "X$($i * 100)"
+      $yLabel = "Y$($i * 100)"
+      $xSize = $graphics.MeasureString($xLabel, $font)
+      $ySize = $graphics.MeasureString($yLabel, $font)
+      $graphics.FillRectangle($back, [Math]::Max(0, $x - 12), 2, [Math]::Ceiling($xSize.Width), [Math]::Ceiling($xSize.Height))
+      $graphics.DrawString($xLabel, $font, $brush, [Math]::Max(0, $x - 12), 2)
+      $graphics.FillRectangle($back, 2, [Math]::Max(0, $y - 7), [Math]::Ceiling($ySize.Width), [Math]::Ceiling($ySize.Height))
+      $graphics.DrawString($yLabel, $font, $brush, 2, [Math]::Max(0, $y - 7))
+    }
+  } finally {
+    $pen.Dispose()
+    $brush.Dispose()
+    $back.Dispose()
+    $font.Dispose()
+  }
+}
+
 function Capture-Screenshot($request) {
   $path = [string](Get-Prop $request 'path' '')
   if ([string]::IsNullOrWhiteSpace($path)) { throw 'desktop screenshot path is required' }
@@ -442,14 +472,16 @@ function Capture-Screenshot($request) {
 
   $bitmap = New-Object System.Drawing.Bitmap($width, $height)
   $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+  $coordinateGuide = [bool](Get-Prop $request 'coordinateGuide' $false)
   try {
     $graphics.CopyFromScreen($x, $y, 0, 0, (New-Object System.Drawing.Size($width, $height)))
+    if ($coordinateGuide) { Draw-CoordinateGuide $graphics $width $height }
     $bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
   } finally {
     $graphics.Dispose()
     $bitmap.Dispose()
   }
-  return [ordered]@{ ok=$true; path=$path; scope=$scope; captureMethod='screen'; window=$windowRecord; x=[int]$x; y=[int]$y; width=[int]$width; height=[int]$height }
+  return [ordered]@{ ok=$true; path=$path; scope=$scope; captureMethod='screen'; window=$windowRecord; x=[int]$x; y=[int]$y; width=[int]$width; height=[int]$height; coordinateGuide=$(if ($coordinateGuide) { 'XY/1000' } else { '' }) }
 }
 function Resolve-AppLaunchSpec($request) {
   $file = [string](Get-Prop $request 'file' '')
