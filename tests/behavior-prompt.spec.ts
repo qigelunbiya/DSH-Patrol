@@ -113,7 +113,9 @@ describe('current Patrol behavior prompt', () => {
   it('uses vision-first teaching with post-click DOM learning and Desktop-style exact visual ratios', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/视觉可直接执行、DOM\/语义负责学习和重放/)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/DOM 当成视觉点击的前置许可/)
-    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/语义\/DOM 定位失败一次时.*立即.*patrol_observe\(includeImage=true\).*patrol_visual_click_target/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/语义\/DOM 定位失败一次时.*可以切换 patrol_observe\(includeImage=true\).*patrol_visual_click_target/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/某一行身份 \+ 行内动作.*row-context resolver.*semantic replay/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/actionMap=true, targetHint=完整行身份\+动作.*candidateId=A#.*visualAuthority=true/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/targetHint.*事后验证\/学习标签.*不得在点击前要求 DOM 证明/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/learned semantic.*learned selector.*guarded visual coordinate/)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/Desktop Automation.*frame-bound/)
