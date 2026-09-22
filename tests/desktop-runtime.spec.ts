@@ -93,6 +93,7 @@ describe('Desktop Automation runtime foundation', () => {
     driver.screenshot = async (args: any) => {
       expect(args.captureMethod).toBe('screen')
       expect(args.scope).toBe('active-window')
+      expect(args.coordinateGuide).toBe(true)
       return {
         ok: true,
         path: 'blue-letter.png',
@@ -153,6 +154,19 @@ describe('Desktop Automation runtime foundation', () => {
       xRatio: 0.5,
       yRatio: 0.5,
     })).rejects.toThrow(/unavailable or already consumed/)
+  })
+
+  it('renders a desktop-only XY/1000 guide without changing the bound window coordinate frame', () => {
+    const backend = readFileSync(join(process.cwd(), 'desktop-runtime', 'windows-desktop.ps1'), 'utf8')
+    expect(backend).toContain('function Draw-CoordinateGuide')
+    expect(backend).toContain('X$($i * 100)')
+    expect(backend).toContain('Y$($i * 100)')
+    expect(backend).toContain("coordinateGuide=$(if ($coordinateGuide) { 'XY/1000' } else { '' })")
+
+    const tools = readFileSync(join(process.cwd(), 'desktop-runtime', 'tools-plugin.js'), 'utf8')
+    expect(tools).toContain('desktop-only XY/1000 guide')
+    expect(tools).toContain('xRatio=X/1000')
+    expect(tools).toContain('yRatio=Y/1000')
   })
 
   it('uses DPI-aware DWM visible bounds and refuses partial active-window screen copies', () => {
