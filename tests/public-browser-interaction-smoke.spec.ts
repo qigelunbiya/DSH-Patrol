@@ -28,6 +28,18 @@ async function localTestSite() {
       response.end('<!doctype html><button id="target" style="position:fixed;left:432px;top:311px;width:56px;height:28px" oncontextmenu="this.dataset.context=\'yes\';event.preventDefault()">发布</button>')
       return
     }
+    if (request.url === '/row-actions') {
+      response.end(`<!doctype html>
+        <table>
+          <thead><tr><th>地址</th><th>访问方式</th></tr></thead>
+          <tbody>
+            <tr><td>10.192.3.137</td><td><button id="rdp137" onclick="this.dataset.clicked='yes'">RDP</button></td></tr>
+            <tr><td>10.192.3.174</td><td><button id="rdp174" onclick="this.dataset.clicked='yes'">RDP</button></td></tr>
+            <tr><td>10.192.3.249</td><td><button id="rdp249" onclick="this.dataset.clicked='yes'">RDP</button></td></tr>
+          </tbody>
+        </table>`)
+      return
+    }
     if (request.url === '/visual-card') {
       response.end(`<!doctype html>
         <style>
@@ -107,7 +119,7 @@ describe('public real-browser Patrol interaction smoke', () => {
     const site = await localTestSite()
     const harness = await extensionHarness()
     try {
-      expect(harness.manifest.version).toBe('0.3.12')
+      expect(harness.manifest.version).toBe('0.3.13')
       await harness.page.goto(`${site.root}/add_remove_elements/`, { waitUntil: 'domcontentloaded', timeout: 20000 })
 
       const boundedShot = await harness.command('screenshot', { format: 'jpeg', maxWidth: 1024, quality: 68, coordinateGuide: true })
@@ -199,6 +211,45 @@ describe('public real-browser Patrol interaction smoke', () => {
         visualSnapped: false,
       })
       expect(await harness.page.$eval('#target', element => element.dataset.context)).toBe('yes')
+
+      await harness.page.goto(`${site.root}/row-actions`, { waitUntil: 'domcontentloaded', timeout: 20000 })
+      const genericRowMap = await harness.command('screenshot', {
+        format: 'jpeg',
+        maxWidth: 1024,
+        quality: 78,
+        actionMap: true,
+      })
+      expect(genericRowMap.actionCandidateCount).toBeGreaterThanOrEqual(3)
+      await expect(harness.command('visualClick', {
+        frameId: genericRowMap.visualFrameId,
+        candidateId: 'A1',
+        targetHint: '点击 10.192.3.174 行的 RDP',
+        visualAuthority: true,
+      })).rejects.toThrow(/REFUSED before physical input|business context mismatch/i)
+      expect(await harness.page.$eval('#rdp137', element => element.dataset.clicked || '')).toBe('')
+
+      const targetedRowMap = await harness.command('screenshot', {
+        format: 'jpeg',
+        maxWidth: 1024,
+        quality: 78,
+        actionMap: true,
+        actionMapTargetHint: '点击 10.192.3.174 行的 RDP',
+      })
+      expect(targetedRowMap).toMatchObject({
+        actionMap: true,
+        actionMapTargeted: true,
+        actionMapTargetHint: '点击 10.192.3.174 行的 RDP',
+        actionCandidateCount: 1,
+      })
+      const correctRowClick = await harness.command('visualClick', {
+        frameId: targetedRowMap.visualFrameId,
+        candidateId: 'A1',
+        targetHint: '点击 10.192.3.174 行的 RDP',
+        visualAuthority: true,
+      })
+      expect(correctRowClick).toMatchObject({ ok: true, candidateId: 'A1' })
+      expect(await harness.page.$eval('#rdp174', element => element.dataset.clicked)).toBe('yes')
+      expect(await harness.page.$eval('#rdp137', element => element.dataset.clicked || '')).toBe('')
 
       await harness.page.goto(`${site.root}/visual-card`, { waitUntil: 'domcontentloaded', timeout: 20000 })
       const cardShot = await harness.command('screenshot', {
