@@ -114,7 +114,15 @@
       if (step.kind === 'checkpoint') {
         details.textContent = `检查点：${step.reason || 'other'}${step.prompt ? ` · ${step.prompt}` : ''}`
       } else {
-        details.innerHTML = `<div class="step-execution-label">实际命令</div><pre>${escapeHtml(JSON.stringify({ tool: step.tool, arguments: step.arguments || {}, locator: step.locator || undefined, expectation: step.expectation || undefined, when: step.when || undefined }, null, 2))}</pre>`
+        const plane = step.executionPlane === 'desktop' || String(step.tool || '').startsWith('desktop_')
+          ? '应用'
+          : step.executionPlane === 'browser' || String(step.tool || '').startsWith('browser_')
+            ? '浏览器'
+            : '自动'
+        const instruction = step.executionInstruction
+          ? `<div class="step-execution-label">${escapeHtml(plane)} · 实际命令</div><div class="step-execution-instruction">${escapeHtml(step.executionInstruction)}</div>`
+          : `<div class="step-execution-label">${escapeHtml(plane)} · 实际命令</div>`
+        details.innerHTML = instruction + `<pre>${escapeHtml(JSON.stringify({ tool: step.tool, arguments: step.arguments || {}, locator: step.locator || undefined, expectation: step.expectation || undefined, when: step.when || undefined }, null, 2))}</pre>`
       }
       node.appendChild(details)
     })
