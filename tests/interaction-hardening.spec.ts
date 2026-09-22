@@ -30,6 +30,16 @@ describe('browser interaction hardening layer', () => {
     expect(source).toContain('captureVisibleTab(tab.windowId')
   })
 
+  it('filters structured-row action maps and refuses a wrong row candidate before input', () => {
+    expect(source).toContain('actionMapTargetHint')
+    expect(source).toContain('structuredIdentities')
+    expect(source).toContain('structuredActions')
+    expect(source).toContain('candidateMatchesStructuredTarget')
+    expect(source).toContain('rowContext')
+    expect(source).toContain('interactionStructuredRowCandidateMismatch')
+    expect(source).toContain('REFUSED before physical input')
+  })
+
   it('implements exact native select by value, label, or index with change events', () => {
     expect(source).toContain("if (cmd === 'select')")
     expect(source).toContain('HTMLSelectElement')
