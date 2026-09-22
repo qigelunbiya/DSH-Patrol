@@ -11,7 +11,9 @@ import { registerPatrolCreationTools } from './creation-tools.js'
 import { registerPatrolCredentialTools } from './credential-tools.js'
 import { registerPatrolContextPressureGuard } from './context-pressure-hardening.js'
 import { registerPatrolDesktopActionTools } from './desktop-action-tools.js'
+import { registerPatrolDesktopRecordTools } from './desktop-record-tools.js'
 import { PATROL_DESKTOP_PROMPT } from './desktop-prompt.js'
+import { PATROL_DESKTOP_VISUAL_ISOLATION_PROMPT } from './desktop-visual-isolation-prompt.js'
 import { registerPatrolEditTools } from './edit-tools.js'
 import { PATROL_EXCEL_PROMPT } from './excel-tools.js'
 import { PATROL_EXCEL_V5_PROMPT, registerPatrolExcelToolsV5 } from './excel-tools-v5.js'
@@ -59,7 +61,9 @@ export * from './creation-tools.js'
 export * from './credential-tools.js'
 export * from './desktop.js'
 export * from './desktop-action-tools.js'
+export * from './desktop-record-tools.js'
 export * from './desktop-prompt.js'
+export * from './desktop-visual-isolation-prompt.js'
 export * from './excel-tools.js'
 export * from './excel-tools-v2.js'
 export * from './excel-tools-v3.js'
@@ -191,6 +195,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   ctx.effect(
     () => registerPatrolDesktopActionTools(ctx, store, runner, { maxSteps: resolved.maxSteps }),
     'dsh-patrol: recordable Windows desktop automation actions',
+  )
+  ctx.effect(
+    () => registerPatrolDesktopRecordTools(ctx, store, { maxSteps: resolved.maxSteps }),
+    'dsh-patrol: retrospective desktop Runbook recording without duplicate execution',
   )
   ctx.effect(
     () => registerPatrolActionTools(ctx, store, runner, { maxSteps: resolved.maxSteps }),
@@ -328,6 +336,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       order: 1120,
       text: PATROL_PAGE_UNDERSTANDING_PROMPT,
     }), 'dsh-patrol: current-page understanding and bounded plan execution prompt')
+
+    ctx.effect(() => systemPrompt.section({
+      name: 'agent:dsh-patrol-desktop-visual-isolation',
+      order: 1130,
+      text: PATROL_DESKTOP_VISUAL_ISOLATION_PROMPT,
+    }), 'dsh-patrol: isolate known-good desktop visual coordinates from browser visual grounding')
 
     if (runtimePolicy.injectStrictWorkflowPrompt) {
       ctx.effect(() => systemPrompt.section({
