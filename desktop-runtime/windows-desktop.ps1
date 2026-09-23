@@ -1203,8 +1203,10 @@ try {
       $y = [int][Math]::Round($frameY + (($frameHeight - 1) * $yRatio))
       $preClickPointProbe = Probe-ScreenPoint $x $y
       $buttonName = [string](Get-Prop $request 'button' 'left')
+      $previewId = [string](Get-Prop $request 'previewId' '')
+      $previewBound = -not [string]::IsNullOrWhiteSpace($previewId)
       $exactPointAction = $null
-      if ($buttonName -ieq 'left') {
+      if ($previewBound -and $buttonName -ieq 'left') {
         $exactPointAction = Try-InvokeExactVisualPoint $x $y
       }
       if ($null -ne $exactPointAction -and $exactPointAction.invoked -eq $true) {
@@ -1218,7 +1220,7 @@ try {
         $input = Click-Point $x $y ($(if ($buttonName -ieq 'right') { 1 } else { 0 }))
         $input['physicalCursorVerified'] = $true
       }
-      [ordered]@{ ok=$true; method='bound-window-visual-point'; inputTransport=[string]$input.transport; foregroundVerified=$true; foregroundHwnd=[int64]$foregroundBeforeClick; physicalCursorVerified=[bool]$input.physicalCursorVerified; x=$x; y=$y; actualCursorX=$input.actualX; actualCursorY=$input.actualY; xRatio=$xRatio; yRatio=$yRatio; button=$buttonName; frameHwnd=$frameHwnd; frameRect=[ordered]@{x=$frameX;y=$frameY;width=$frameWidth;height=$frameHeight}; preClickPointProbe=$preClickPointProbe; exactPointAction=$exactPointAction; window=$record }
+      [ordered]@{ ok=$true; method='bound-window-visual-point'; inputTransport=[string]$input.transport; foregroundVerified=$true; foregroundHwnd=[int64]$foregroundBeforeClick; previewBound=$previewBound; physicalCursorVerified=[bool]$input.physicalCursorVerified; x=$x; y=$y; actualCursorX=$input.actualX; actualCursorY=$input.actualY; xRatio=$xRatio; yRatio=$yRatio; button=$buttonName; frameHwnd=$frameHwnd; frameRect=[ordered]@{x=$frameX;y=$frameY;width=$frameWidth;height=$frameHeight}; preClickPointProbe=$preClickPointProbe; exactPointAction=$exactPointAction; window=$record }
     }
     'drag' {
       $fromX=[int](Get-Prop $request 'fromX' 0); $fromY=[int](Get-Prop $request 'fromY' 0)
