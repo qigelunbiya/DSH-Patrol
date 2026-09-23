@@ -472,6 +472,41 @@ function Probe-ScreenPoint([int]$x, [int]$y) {
   }
 }
 
+function Try-InvokeExactVisualPoint([int]$x, [int]$y) {
+  try {
+    $point = New-Object System.Windows.Point([double]$x, [double]$y)
+    $element = [System.Windows.Automation.AutomationElement]::FromPoint($point)
+    if ($null -eq $element) {
+      return [ordered]@{ invoked=$false; method='none'; element=$null }
+    }
+
+    $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+    $current = $element
+    for ($depth = 0; $depth -lt 5 -and $null -ne $current; $depth++) {
+      $record = Element-Record $current
+      $pattern = $null
+      if ($current.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) {
+        ([System.Windows.Automation.InvokePattern]$pattern).Invoke()
+        return [ordered]@{ invoked=$true; method='uia-exact-point-invoke'; depth=$depth; element=$record }
+      }
+      $pattern = $null
+      if ($current.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$pattern)) {
+        ([System.Windows.Automation.SelectionItemPattern]$pattern).Select()
+        return [ordered]@{ invoked=$true; method='uia-exact-point-select'; depth=$depth; element=$record }
+      }
+      $pattern = $null
+      if ($current.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$pattern)) {
+        ([System.Windows.Automation.TogglePattern]$pattern).Toggle()
+        return [ordered]@{ invoked=$true; method='uia-exact-point-toggle'; depth=$depth; element=$record }
+      }
+      try { $current = $walker.GetParent($current) } catch { $current = $null }
+    }
+    return [ordered]@{ invoked=$false; method='no-actionable-pattern'; element=(Element-Record $element) }
+  } catch {
+    return [ordered]@{ invoked=$false; method='uia-unavailable'; element=$null; error=$_.Exception.Message }
+  }
+}
+
 function Find-TargetElement($request) {
   $resolved = Get-Root $request
   $name = [string](Get-Prop $request 'name' '')
@@ -1164,8 +1199,22 @@ try {
       $y = [int][Math]::Round($frameY + (($frameHeight - 1) * $yRatio))
       $preClickPointProbe = Probe-ScreenPoint $x $y
       $buttonName = [string](Get-Prop $request 'button' 'left')
-      $input = Click-Point $x $y ($(if ($buttonName -ieq 'right') { 1 } else { 0 }))
-      [ordered]@{ ok=$true; method='bound-window-visual-point'; inputTransport=[string]$input.transport; foregroundVerified=$true; foregroundHwnd=[int64]$foregroundBeforeClick; x=$x; y=$y; actualCursorX=[int]$input.actualX; actualCursorY=[int]$input.actualY; xRatio=$xRatio; yRatio=$yRatio; button=$buttonName; frameHwnd=$frameHwnd; frameRect=[ordered]@{x=$frameX;y=$frameY;width=$frameWidth;height=$frameHeight}; preClickPointProbe=$preClickPointProbe; window=$record }
+      $exactPointAction = $null
+      if ($buttonName -ieq 'left') {
+        $exactPointAction = Try-InvokeExactVisualPoint $x $y
+      }
+      if ($null -ne $exactPointAction -and $exactPointAction.invoked -eq $true) {
+        $input = [ordered]@{
+          transport = [string]$exactPointAction.method
+          actualX = $null
+          actualY = $null
+          physicalCursorVerified = $false
+        }
+      } else {
+        $input = Click-Point $x $y ($(if ($buttonName -ieq 'right') { 1 } else { 0 }))
+        $input.physicalCursorVerified = $true
+      }
+      [ordered]@{ ok=$true; method='bound-window-visual-point'; inputTransport=[string]$input.transport; foregroundVerified=$true; foregroundHwnd=[int64]$foregroundBeforeClick; physicalCursorVerified=[bool]$input.physicalCursorVerified; x=$x; y=$y; actualCursorX=$input.actualX; actualCursorY=$input.actualY; xRatio=$xRatio; yRatio=$yRatio; button=$buttonName; frameHwnd=$frameHwnd; frameRect=[ordered]@{x=$frameX;y=$frameY;width=$frameWidth;height=$frameHeight}; preClickPointProbe=$preClickPointProbe; exactPointAction=$exactPointAction; window=$record }
     }
     'drag' {
       $fromX=[int](Get-Prop $request 'fromX' 0); $fromY=[int](Get-Prop $request 'fromY' 0)
