@@ -92,12 +92,6 @@ export function registerPatrolVisualClickTool(
       if (args.expectedVisualText !== undefined) assertSafePersistentText(args.expectedVisualText, 'expectedVisualText')
       const pointerAction = args.pointerAction ?? 'left-click'
       const diagnosticPointerAction = pointerAction !== 'left-click'
-      if (!diagnosticPointerAction && !hasCandidate && microVisualTarget(args.stepName, args.targetHint)) {
-        throw new Error('This is a small close/remove/x visual target. Free XY guessing is disabled for this target. Use a targeted Action Map: call patrol_observe(includeImage=true, actionMap=true, targetHint=<完整业务目标>, focus...) and then retry patrol_visual_click_target with candidateId=A#.')
-      }
-      if (!diagnosticPointerAction && !hasCandidate && outcomes.unverifiedPhysicalClicks(args) > 0) {
-        throw new Error('A previous physical click for this business target was not verified. Do not guess another free XY point. Escalate to a fresh targeted Action Map with patrol_observe(includeImage=true, actionMap=true, targetHint=<完整业务目标>, focus...), then retry with candidateId=A#.')
-      }
       if (!diagnosticPointerAction && navigationLikeBusinessAction(args.stepName, args.targetHint)
         && (typeof args.expectedVisualText !== 'string' || args.expectedVisualText.trim().length < 4)) {
         throw new Error('navigation/card visual clicks require expectedVisualText copied from the model-visible CURRENT screenshot; generic labels such as “视频卡片区域” are not sufficient')
@@ -186,6 +180,9 @@ export function registerPatrolVisualClickTool(
           'Visual click failed before Patrol could confirm a physical click, so this attempt does NOT consume the visual physical-click budget. The same frameId may be retried if CURRENT URL/scroll/zoom/viewport are still unchanged.',
           clicked.error ?? clicked.text ?? 'Unknown browser visual click error',
           'Reuse this frameId freely while the CURRENT page geometry still matches it; capture a new patrol_observe(includeImage=true) only after navigation, scroll, zoom, viewport/layout changes, or when a new screenshot is actually useful.',
+          hasCandidate
+            ? 'If this Action Map candidate is wrong, keep the visual method but switch strategy: capture a fresh screenshot and try a precise free XY point instead of repeating the same candidate.'
+            : 'If this free XY point is wrong, keep the visual method but switch strategy: capture a fresh targeted Action Map and choose a candidateId instead of repeating nearby guessed coordinates.',
         ].filter(Boolean).join('\n')
       }
       outcomes.recordVisualPhysicalClick(args)
@@ -488,11 +485,6 @@ async function verifyAutomaticStateChange(runner: PatrolRunner, exec: ToolRunCon
   }
   return { ok: false, attempts: AUTO_VERIFY_DELAYS_MS.length }
 }
-function microVisualTarget(stepName: string | undefined, targetHint: string | undefined): boolean {
-  const text = [stepName, targetHint].filter(Boolean).join(' ')
-  return /(?:关闭|移除|清除|删除|取消|close|remove|dismiss|clear|delete|[×✕✖]|(?:^|[\s:：_\-])x(?:$|[\s:：_\-])|x\s*$)/i.test(text)
-}
-
 function navigationLikeBusinessAction(stepName: string | undefined, targetHint: string | undefined): boolean {
   const text = normalizePageText([stepName, targetHint].filter(Boolean).join(' '))
   if (!text || inPageControlHint(text)) return false
