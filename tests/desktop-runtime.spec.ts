@@ -74,9 +74,11 @@ describe('Desktop Automation runtime foundation', () => {
     expect(PATROL_DESKTOP_PROMPT).toMatch(/<=768x768/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/imageX\/imageWidth/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/desktop_focus_visual_region/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/desktop_visual_action_map/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/desktop_click_visual_candidate/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/focused-region lock/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/learned icon template/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/CUDA\/OOM/)
-    expect(PATROL_DESKTOP_PROMPT).toMatch(/focused region/)
-    expect(PATROL_DESKTOP_PROMPT).toMatch(/原始窗口物理坐标/)
 
     const tools = readFileSync(join(process.cwd(), 'desktop-runtime', 'tools-plugin.js'), 'utf8')
     expect(tools).toContain("name: 'desktop_preview_visual_point'")
