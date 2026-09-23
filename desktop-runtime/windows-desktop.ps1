@@ -7,14 +7,13 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 # Window discovery is intentionally a startup fast path. Do not enumerate
-# Process.MainWindowTitle here: a just-created WPF/Electron window can make the
-# .NET process property wait on its GUI thread and stall the entire Patrol loop.
-# Enumerate top-level HWNDs directly and bound every title read in user32.
+# Process.MainWindowTitle or send WM_GETTEXT into arbitrary GUI threads here.
+# Read top-level captions directly from user32 and stop the whole pass after a
+# strict deadline so one pathological desktop can never stall Patrol startup.
 if ($Action -eq 'list-windows') {
   Add-Type @"
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 namespace PatrolDesktopFast {
@@ -23,8 +22,11 @@ namespace PatrolDesktopFast {
     [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
-    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern IntPtr SendMessageTimeoutW(
-      IntPtr hWnd, uint msg, IntPtr wParam, StringBuilder lParam, uint flags, uint timeoutMs, out IntPtr result);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowTextLengthW(IntPtr hWnd);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int maxCount);
+    [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr OpenProcess(uint access, bool inheritHandle, uint processId);
+    [DllImport("kernel32.dll", SetLastError=true)] static extern bool CloseHandle(IntPtr handle);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool QueryFullProcessImageNameW(IntPtr process, uint flags, StringBuilder path, ref uint size);
 
     public sealed class Record {
       public int processId;
@@ -33,30 +35,43 @@ namespace PatrolDesktopFast {
       public long hwnd;
     }
 
-    static string ReadTitle(IntPtr hWnd, uint timeoutMs) {
-      const uint WM_GETTEXT = 0x000D;
-      const uint SMTO_ABORTIFHUNG = 0x0002;
-      var text = new StringBuilder(2048);
-      IntPtr result;
-      var sent = SendMessageTimeoutW(hWnd, WM_GETTEXT, (IntPtr)text.Capacity, text, SMTO_ABORTIFHUNG, Math.Max(1u, timeoutMs), out result);
-      return sent != IntPtr.Zero && result.ToInt64() > 0 ? text.ToString() : String.Empty;
+    static string ReadTitle(IntPtr hWnd) {
+      int length = GetWindowTextLengthW(hWnd);
+      if (length <= 0) return String.Empty;
+      int capacity = Math.Min(4096, length + 1);
+      var text = new StringBuilder(capacity);
+      int copied = GetWindowTextW(hWnd, text, capacity);
+      return copied > 0 ? text.ToString() : String.Empty;
     }
 
     static string ReadProcessName(uint pid) {
-      try { return Process.GetProcessById(unchecked((int)pid)).ProcessName ?? String.Empty; }
-      catch { return String.Empty; }
+      const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+      IntPtr process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+      if (process == IntPtr.Zero) return String.Empty;
+      try {
+        uint size = 32768;
+        var path = new StringBuilder((int)size);
+        if (!QueryFullProcessImageNameW(process, 0, path, ref size)) return String.Empty;
+        string value = path.ToString();
+        int slash = Math.Max(value.LastIndexOf('\\'), value.LastIndexOf('/'));
+        string file = slash >= 0 ? value.Substring(slash + 1) : value;
+        int dot = file.LastIndexOf('.');
+        return dot > 0 ? file.Substring(0, dot) : file;
+      } catch {
+        return String.Empty;
+      } finally {
+        CloseHandle(process);
+      }
     }
 
     public static Record[] List(int timeoutMs) {
       var records = new List<Record>();
       long deadlineTicks = DateTime.UtcNow.AddMilliseconds(Math.Max(200, timeoutMs)).Ticks;
       EnumWindows(delegate(IntPtr hWnd, IntPtr unused) {
-        long remaining = (deadlineTicks - DateTime.UtcNow.Ticks) / TimeSpan.TicksPerMillisecond;
-        if (remaining <= 0) return false;
+        if (DateTime.UtcNow.Ticks >= deadlineTicks) return false;
         try {
           if (!IsWindowVisible(hWnd)) return true;
-          uint titleBudget = (uint)Math.Max(1, Math.Min(20, remaining));
-          string title = ReadTitle(hWnd, titleBudget);
+          string title = ReadTitle(hWnd);
           if (String.IsNullOrWhiteSpace(title)) return DateTime.UtcNow.Ticks < deadlineTicks;
           uint pid;
           GetWindowThreadProcessId(hWnd, out pid);
