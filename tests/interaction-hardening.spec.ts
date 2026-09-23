@@ -58,6 +58,15 @@ describe('browser interaction hardening layer', () => {
     expect(source).toContain('candidates.length > 16')
   })
 
+  it('binds candidateId clicks to the selected candidate fingerprint before trusted input', () => {
+    expect(source).toContain("requestedCandidateId && typeof selectedCandidate?.tag === 'string'")
+    expect(source).toContain("requestedCandidateId && typeof selectedCandidate?.role === 'string'")
+    expect(source).toContain("requestedCandidateId && typeof selectedCandidate?.ariaLabel === 'string'")
+    expect(source).toContain("requestedCandidateId && typeof selectedCandidate?.title === 'string'")
+    expect(source).toContain('actionCandidateFingerprint')
+    expect(source).toContain('selectedCandidate?.localContext')
+  })
+
   it('preflights close/remove visual points before trusted input instead of blindly clicking a nearby search field', () => {
     expect(source).toContain('visual close/remove preflight rejected this point before physical input')
     expect(source).toContain('hasCloseEvidence')
