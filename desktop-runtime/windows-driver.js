@@ -62,15 +62,16 @@ export class WindowsDesktopDriver {
     let stdout
     let stderr
     try {
-      const result = await execFileAsync(this.powerShell, [
+      const powerShellArgs = [
         '-NoProfile',
         '-NonInteractive',
-        '-STA',
+        ...(action === 'list-windows' ? [] : ['-STA']),
         '-ExecutionPolicy', 'Bypass',
         '-File', SCRIPT_PATH,
         '-Action', action,
         '-Payload', payload,
-      ], {
+      ]
+      const result = await execFileAsync(this.powerShell, powerShellArgs, {
         windowsHide: true,
         timeout: this.commandTimeoutMs,
         maxBuffer: MAX_STDOUT,
