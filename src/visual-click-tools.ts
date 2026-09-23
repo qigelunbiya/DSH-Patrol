@@ -635,7 +635,7 @@ function visualTargetMismatch(targetHint: string | undefined, value: unknown): s
   const groups: Array<{ hint: RegExp; evidence: RegExp; label: string }> = [
     { hint: /点赞|大拇指|\blike\b|thumb/, evidence: /点赞|\blike\b|thumb|video-like|aria-pressed/, label: '点赞/like' },
     { hint: /评论|回复|\bcomment\b|\breply\b/, evidence: /评论|回复|comment|reply|editor|textarea|placeholder/, label: '评论/comment' },
-    { hint: /搜索|\bsearch\b/, evidence: /搜索|search/, label: '搜索/search' },
+    { hint: /搜索(?:框|栏|按钮|输入)|(?:输入|点击).*(?:搜索|search)|\bsearch\s*(?:box|bar|button|input)\b/i, evidence: /搜索|search|textbox|input/, label: '搜索/search' },
     { hint: /发布|发表|发送|提交|\bpost\b|\bsend\b|\bsubmit\b/, evidence: /发布|发表|发送|提交|post|send|submit/, label: '发布/发送/post' },
   ]
   const expected = groups.find(group => group.hint.test(hint))
