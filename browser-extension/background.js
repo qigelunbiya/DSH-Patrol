@@ -16,6 +16,7 @@ const EXTENSION_CAPABILITIES = Object.freeze([
   'trustedVisualClick',
   'trustedFocusedType',
   'clickOpenedTabAdoption',
+  'closeTabV1',
   'compactVisualCapture',
   'boundedVisualCaptureV2',
   'reusableVisualFramesV1',
@@ -108,6 +109,12 @@ async function handleCommand(cmd, args) {
       const tab = await chrome.tabs.update(args.tabId, { active: true })
       if (tab.windowId !== undefined) await chrome.windows.update(tab.windowId, { focused: true })
       return { tab: tabInfo(tab) }
+    }
+    case 'closeTab': {
+      if (!Number.isInteger(args.tabId)) throw new Error('closeTab requires tabId')
+      const existing = await chrome.tabs.get(args.tabId)
+      await chrome.tabs.remove(args.tabId)
+      return { tabId: args.tabId, url: typeof existing?.url === 'string' ? existing.url : '' }
     }
     case 'navigate':
       return await navigate(args)
