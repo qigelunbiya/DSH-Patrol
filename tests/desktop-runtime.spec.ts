@@ -85,7 +85,8 @@ describe('Desktop Automation runtime foundation', () => {
     expect(tools).toContain('xRatio: num')
     expect(tools).toContain('yRatio: num')
     expect(tools).toContain('previewId: str')
-    expect(tools).toContain('XY/1000 guide image')
+    expect(tools).toContain('magnified local crop')
+    expect(tools).toContain('EXACT full-frame physical point')
     expect(tools).toContain('Never feed screenshot-local pixels from read_image')
 
     const backend = readFileSync(join(process.cwd(), 'desktop-runtime', 'windows-desktop.ps1'), 'utf8')
