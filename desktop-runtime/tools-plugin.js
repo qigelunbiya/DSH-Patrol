@@ -165,7 +165,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_click_visual_point',
-      description: 'Click a point identified from the latest CURRENT desktop_screenshot visual frame. For precise targets, pass previewId returned by desktop_preview_visual_point: Patrol reuses the exact previewed ratios, re-activates and verifies the bound HWND, probes the UIA element under the final screen point, moves the physical cursor there, reads the OS cursor position back to verify the same physical coordinate, then emits SendInput. Without previewId, xRatio/yRatio are required. The click remains bound to the same HWND and physical screen rectangle; moved/resized/recreated windows are rejected.',
+      description: 'Click a point identified from the latest CURRENT desktop_screenshot visual frame. For precise targets, pass previewId returned by desktop_preview_visual_point: Patrol reuses the exact previewed ratios, re-activates and verifies the bound HWND, probes the exact UIA element under that screen point, and if that exact point/ancestor exposes Invoke/Selection/Toggle it executes that control directly. Otherwise it falls back to SetCursorPos + GetCursorPos verification + SendInput at the same visual point. It never text-searches or snaps to a different control. Without previewId, xRatio/yRatio are required. The click remains bound to the same HWND and physical screen rectangle; moved/resized/recreated windows are rejected.',
       parameters: {
         xRatio: num,
         yRatio: num,
