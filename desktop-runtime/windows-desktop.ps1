@@ -34,6 +34,422 @@ namespace PatrolDesktop {
 "@
 }
 
+
+if (-not ('PatrolDesktopVision.Engine' -as [type])) {
+  Add-Type -ReferencedAssemblies 'System.Drawing' -TypeDefinition @"
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
+
+namespace PatrolDesktopVision {
+  public sealed class CandidateDto {
+    public string CandidateId;
+    public int Left;
+    public int Top;
+    public int Width;
+    public int Height;
+    public double LeftRatio;
+    public double TopRatio;
+    public double WidthRatio;
+    public double HeightRatio;
+    public double CenterXRatio;
+    public double CenterYRatio;
+    public double Score;
+  }
+
+  public sealed class ActionMapResult {
+    public CandidateDto[] Candidates;
+    public int SourceWidth;
+    public int SourceHeight;
+    public int CropX;
+    public int CropY;
+    public int CropWidth;
+    public int CropHeight;
+    public int MapWidth;
+    public int MapHeight;
+    public string Path;
+  }
+
+  public sealed class MatchResult {
+    public bool Matched;
+    public double Score;
+    public int Left;
+    public int Top;
+    public int Width;
+    public int Height;
+    public double CenterXRatio;
+    public double CenterYRatio;
+    public double Scale;
+  }
+
+  public static class Engine {
+    static int Clamp(int value, int min, int max) {
+      return value < min ? min : (value > max ? max : value);
+    }
+
+    static Bitmap Load24(string path) {
+      using (Bitmap source = new Bitmap(path)) {
+        Bitmap copy = new Bitmap(source.Width, source.Height, PixelFormat.Format24bppRgb);
+        using (Graphics g = Graphics.FromImage(copy)) {
+          g.DrawImage(source, 0, 0, source.Width, source.Height);
+        }
+        return copy;
+      }
+    }
+
+    static byte[] Gray(Bitmap bitmap) {
+      Rectangle rect = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
+      BitmapData data = bitmap.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
+      try {
+        int stride = Math.Abs(data.Stride);
+        byte[] raw = new byte[stride * bitmap.Height];
+        Marshal.Copy(data.Scan0, raw, 0, raw.Length);
+        byte[] gray = new byte[bitmap.Width * bitmap.Height];
+        for (int y = 0; y < bitmap.Height; y++) {
+          int row = y * stride;
+          for (int x = 0; x < bitmap.Width; x++) {
+            int p = row + x * 3;
+            int b = raw[p];
+            int g = raw[p + 1];
+            int r = raw[p + 2];
+            gray[y * bitmap.Width + x] = (byte)((r * 77 + g * 150 + b * 29) >> 8);
+          }
+        }
+        return gray;
+      } finally {
+        bitmap.UnlockBits(data);
+      }
+    }
+
+    static Bitmap CropAndScale(Bitmap source, Rectangle crop, int maxSide, bool upscale) {
+      double scale = Math.Min(maxSide / (double)crop.Width, maxSide / (double)crop.Height);
+      if (!upscale && scale > 1.0) scale = 1.0;
+      if (upscale && scale > 3.0) scale = 3.0;
+      int width = Math.Max(1, (int)Math.Round(crop.Width * scale));
+      int height = Math.Max(1, (int)Math.Round(crop.Height * scale));
+      Bitmap output = new Bitmap(width, height, PixelFormat.Format24bppRgb);
+      using (Graphics g = Graphics.FromImage(output)) {
+        g.Clear(Color.White);
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        g.DrawImage(source, new Rectangle(0, 0, width, height), crop, GraphicsUnit.Pixel);
+      }
+      return output;
+    }
+
+    static double IoU(CandidateDto a, CandidateDto b) {
+      int left = Math.Max(a.Left, b.Left);
+      int top = Math.Max(a.Top, b.Top);
+      int right = Math.Min(a.Left + a.Width, b.Left + b.Width);
+      int bottom = Math.Min(a.Top + a.Height, b.Top + b.Height);
+      if (right <= left || bottom <= top) return 0.0;
+      double inter = (right - left) * (double)(bottom - top);
+      double union = a.Width * (double)a.Height + b.Width * (double)b.Height - inter;
+      return union <= 0 ? 0 : inter / union;
+    }
+
+    public static ActionMapResult BuildActionMap(
+      string sourcePath,
+      string outputPath,
+      double cropXRatio,
+      double cropYRatio,
+      double cropWidthRatio,
+      double cropHeightRatio,
+      int maxCandidates
+    ) {
+      using (Bitmap source = Load24(sourcePath)) {
+        int sx = Clamp((int)Math.Floor(source.Width * cropXRatio), 0, source.Width - 1);
+        int sy = Clamp((int)Math.Floor(source.Height * cropYRatio), 0, source.Height - 1);
+        int sr = Clamp((int)Math.Ceiling(source.Width * (cropXRatio + cropWidthRatio)), sx + 1, source.Width);
+        int sb = Clamp((int)Math.Ceiling(source.Height * (cropYRatio + cropHeightRatio)), sy + 1, source.Height);
+        Rectangle crop = new Rectangle(sx, sy, sr - sx, sb - sy);
+
+        using (Bitmap work = CropAndScale(source, crop, 768, false)) {
+          int w = work.Width;
+          int h = work.Height;
+          byte[] gray = Gray(work);
+          bool[] edge = new bool[w * h];
+          const int threshold = 30;
+          for (int y = 1; y < h - 1; y++) {
+            int row = y * w;
+            for (int x = 1; x < w - 1; x++) {
+              int i = row + x;
+              int g = gray[i];
+              int d1 = Math.Abs(g - gray[i - 1]);
+              int d2 = Math.Abs(g - gray[i + 1]);
+              int d3 = Math.Abs(g - gray[i - w]);
+              int d4 = Math.Abs(g - gray[i + w]);
+              edge[i] = Math.Max(Math.Max(d1, d2), Math.Max(d3, d4)) >= threshold;
+            }
+          }
+
+          for (int pass = 0; pass < 2; pass++) {
+            bool[] expanded = (bool[])edge.Clone();
+            for (int y = 1; y < h - 1; y++) {
+              int row = y * w;
+              for (int x = 1; x < w - 1; x++) {
+                int i = row + x;
+                if (!edge[i]) continue;
+                expanded[i - 1] = true;
+                expanded[i + 1] = true;
+                expanded[i - w] = true;
+                expanded[i + w] = true;
+                expanded[i - w - 1] = true;
+                expanded[i - w + 1] = true;
+                expanded[i + w - 1] = true;
+                expanded[i + w + 1] = true;
+              }
+            }
+            edge = expanded;
+          }
+
+          bool[] visited = new bool[w * h];
+          int[] queue = new int[w * h];
+          List<CandidateDto> raw = new List<CandidateDto>();
+          double scaleX = crop.Width / (double)w;
+          double scaleY = crop.Height / (double)h;
+
+          for (int y0 = 1; y0 < h - 1; y0++) {
+            for (int x0 = 1; x0 < w - 1; x0++) {
+              int seed = y0 * w + x0;
+              if (!edge[seed] || visited[seed]) continue;
+              int head = 0;
+              int tail = 0;
+              queue[tail++] = seed;
+              visited[seed] = true;
+              int minX = x0, maxX = x0, minY = y0, maxY = y0, count = 0;
+
+              while (head < tail) {
+                int i = queue[head++];
+                int y = i / w;
+                int x = i - y * w;
+                count++;
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+                int[] neighbors = { i - 1, i + 1, i - w, i + w };
+                for (int n = 0; n < 4; n++) {
+                  int ni = neighbors[n];
+                  if (ni < 0 || ni >= edge.Length || visited[ni] || !edge[ni]) continue;
+                  int ny = ni / w;
+                  int nx = ni - ny * w;
+                  if (nx <= 0 || nx >= w - 1 || ny <= 0 || ny >= h - 1) continue;
+                  visited[ni] = true;
+                  queue[tail++] = ni;
+                }
+              }
+
+              int bw = maxX - minX + 1;
+              int bh = maxY - minY + 1;
+              int area = bw * bh;
+              if (count < 12 || bw < 5 || bh < 5) continue;
+              if (bw > w * 0.48 || bh > h * 0.48 || area > w * h * 0.20) continue;
+              double aspect = bw / (double)bh;
+              if (aspect < 0.12 || aspect > 8.0) continue;
+
+              int pad = Math.Max(3, Math.Min(8, Math.Max(bw, bh) / 8));
+              minX = Math.Max(0, minX - pad);
+              minY = Math.Max(0, minY - pad);
+              maxX = Math.Min(w - 1, maxX + pad);
+              maxY = Math.Min(h - 1, maxY + pad);
+              bw = maxX - minX + 1;
+              bh = maxY - minY + 1;
+
+              int left = crop.X + (int)Math.Round(minX * scaleX);
+              int top = crop.Y + (int)Math.Round(minY * scaleY);
+              int width = Math.Max(1, (int)Math.Round(bw * scaleX));
+              int height = Math.Max(1, (int)Math.Round(bh * scaleY));
+              if (left + width > source.Width) width = source.Width - left;
+              if (top + height > source.Height) height = source.Height - top;
+
+              CandidateDto candidate = new CandidateDto();
+              candidate.Left = left;
+              candidate.Top = top;
+              candidate.Width = width;
+              candidate.Height = height;
+              candidate.LeftRatio = left / (double)source.Width;
+              candidate.TopRatio = top / (double)source.Height;
+              candidate.WidthRatio = width / (double)source.Width;
+              candidate.HeightRatio = height / (double)source.Height;
+              candidate.CenterXRatio = (left + width / 2.0) / source.Width;
+              candidate.CenterYRatio = (top + height / 2.0) / source.Height;
+              candidate.Score = count / Math.Sqrt(Math.Max(1.0, area));
+              raw.Add(candidate);
+            }
+          }
+
+          raw.Sort(delegate(CandidateDto a, CandidateDto b) {
+            int score = b.Score.CompareTo(a.Score);
+            if (score != 0) return score;
+            int top = a.Top.CompareTo(b.Top);
+            return top != 0 ? top : a.Left.CompareTo(b.Left);
+          });
+
+          List<CandidateDto> selected = new List<CandidateDto>();
+          for (int i = 0; i < raw.Count && selected.Count < Math.Max(1, maxCandidates); i++) {
+            CandidateDto item = raw[i];
+            bool overlap = false;
+            for (int j = 0; j < selected.Count; j++) {
+              if (IoU(item, selected[j]) > 0.42) { overlap = true; break; }
+            }
+            if (!overlap) selected.Add(item);
+          }
+          selected.Sort(delegate(CandidateDto a, CandidateDto b) {
+            int top = a.Top.CompareTo(b.Top);
+            return top != 0 ? top : a.Left.CompareTo(b.Left);
+          });
+          for (int i = 0; i < selected.Count; i++) selected[i].CandidateId = "D" + (i + 1).ToString();
+
+          int mapMax = 900;
+          double mapScale = Math.Min(mapMax / (double)crop.Width, mapMax / (double)crop.Height);
+          if (mapScale > 2.5) mapScale = 2.5;
+          int mapWidth = Math.Max(1, (int)Math.Round(crop.Width * mapScale));
+          int mapHeight = Math.Max(1, (int)Math.Round(crop.Height * mapScale));
+          using (Bitmap map = new Bitmap(mapWidth, mapHeight, PixelFormat.Format24bppRgb)) {
+            using (Graphics g = Graphics.FromImage(map)) {
+              g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+              g.DrawImage(source, new Rectangle(0, 0, mapWidth, mapHeight), crop, GraphicsUnit.Pixel);
+              using (Pen pen = new Pen(Color.FromArgb(240, 255, 45, 45), 2.0f))
+              using (Pen centerPen = new Pen(Color.FromArgb(240, 0, 255, 110), 2.0f))
+              using (SolidBrush labelBg = new SolidBrush(Color.FromArgb(220, 200, 0, 0)))
+              using (SolidBrush labelText = new SolidBrush(Color.White))
+              using (Font font = new Font("Arial", 12.0f, FontStyle.Bold, GraphicsUnit.Pixel)) {
+                for (int i = 0; i < selected.Count; i++) {
+                  CandidateDto item = selected[i];
+                  float x = (float)((item.Left - crop.X) * mapScale);
+                  float y = (float)((item.Top - crop.Y) * mapScale);
+                  float ww = Math.Max(2.0f, (float)(item.Width * mapScale));
+                  float hh = Math.Max(2.0f, (float)(item.Height * mapScale));
+                  g.DrawRectangle(pen, x, y, ww, hh);
+                  float cx = x + ww / 2.0f;
+                  float cy = y + hh / 2.0f;
+                  g.DrawLine(centerPen, cx - 5, cy, cx + 5, cy);
+                  g.DrawLine(centerPen, cx, cy - 5, cx, cy + 5);
+                  string label = item.CandidateId;
+                  SizeF size = g.MeasureString(label, font);
+                  g.FillRectangle(labelBg, x, Math.Max(0, y - size.Height - 2), size.Width + 5, size.Height + 2);
+                  g.DrawString(label, font, labelText, x + 2, Math.Max(0, y - size.Height - 1));
+                }
+              }
+            }
+            string dir = System.IO.Path.GetDirectoryName(outputPath);
+            if (!String.IsNullOrEmpty(dir)) System.IO.Directory.CreateDirectory(dir);
+            map.Save(outputPath, ImageFormat.Jpeg);
+          }
+
+          ActionMapResult result = new ActionMapResult();
+          result.Candidates = selected.ToArray();
+          result.SourceWidth = source.Width;
+          result.SourceHeight = source.Height;
+          result.CropX = crop.X;
+          result.CropY = crop.Y;
+          result.CropWidth = crop.Width;
+          result.CropHeight = crop.Height;
+          result.MapWidth = mapWidth;
+          result.MapHeight = mapHeight;
+          result.Path = outputPath;
+          return result;
+        }
+      }
+    }
+
+    static Bitmap ResizeTemplate(Bitmap source, double scale) {
+      int width = Math.Max(3, (int)Math.Round(source.Width * scale));
+      int height = Math.Max(3, (int)Math.Round(source.Height * scale));
+      Bitmap output = new Bitmap(width, height, PixelFormat.Format24bppRgb);
+      using (Graphics g = Graphics.FromImage(output)) {
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        g.DrawImage(source, 0, 0, width, height);
+      }
+      return output;
+    }
+
+    public static MatchResult MatchTemplate(
+      string sourcePath,
+      string templatePath,
+      double expectedXRatio,
+      double expectedYRatio,
+      double searchWidthRatio,
+      double searchHeightRatio
+    ) {
+      using (Bitmap source = Load24(sourcePath))
+      using (Bitmap templateBase = Load24(templatePath)) {
+        byte[] sourceGray = Gray(source);
+        int sw = source.Width;
+        int sh = source.Height;
+        int searchWidth = Math.Max(templateBase.Width + 2, (int)Math.Round(sw * searchWidthRatio));
+        int searchHeight = Math.Max(templateBase.Height + 2, (int)Math.Round(sh * searchHeightRatio));
+        int centerX = Clamp((int)Math.Round(sw * expectedXRatio), 0, sw - 1);
+        int centerY = Clamp((int)Math.Round(sh * expectedYRatio), 0, sh - 1);
+        int searchLeft = Clamp(centerX - searchWidth / 2, 0, Math.Max(0, sw - 1));
+        int searchTop = Clamp(centerY - searchHeight / 2, 0, Math.Max(0, sh - 1));
+        int searchRight = Clamp(searchLeft + searchWidth, 1, sw);
+        int searchBottom = Clamp(searchTop + searchHeight, 1, sh);
+
+        double bestScore = -1.0;
+        int bestX = 0, bestY = 0, bestW = 0, bestH = 0;
+        double bestScale = 1.0;
+        double[] scales = { 0.90, 1.0, 1.10 };
+
+        for (int si = 0; si < scales.Length; si++) {
+          using (Bitmap template = ResizeTemplate(templateBase, scales[si])) {
+            int tw = template.Width;
+            int th = template.Height;
+            if (tw >= searchRight - searchLeft || th >= searchBottom - searchTop) continue;
+            byte[] templateGray = Gray(template);
+            int sampleStep = Math.Max(1, Math.Min(tw, th) / 24);
+            int samples = 0;
+            for (int ty = 0; ty < th; ty += sampleStep) {
+              for (int tx = 0; tx < tw; tx += sampleStep) samples++;
+            }
+            if (samples <= 0) continue;
+
+            for (int y = searchTop; y <= searchBottom - th; y++) {
+              for (int x = searchLeft; x <= searchRight - tw; x++) {
+                long sad = 0;
+                for (int ty = 0; ty < th; ty += sampleStep) {
+                  int sourceRow = (y + ty) * sw + x;
+                  int templateRow = ty * tw;
+                  for (int tx = 0; tx < tw; tx += sampleStep) {
+                    sad += Math.Abs(sourceGray[sourceRow + tx] - templateGray[templateRow + tx]);
+                  }
+                }
+                double score = 1.0 - (sad / (samples * 255.0));
+                if (score > bestScore) {
+                  bestScore = score;
+                  bestX = x;
+                  bestY = y;
+                  bestW = tw;
+                  bestH = th;
+                  bestScale = scales[si];
+                }
+              }
+            }
+          }
+        }
+
+        MatchResult result = new MatchResult();
+        result.Matched = bestScore >= 0;
+        result.Score = bestScore;
+        result.Left = bestX;
+        result.Top = bestY;
+        result.Width = bestW;
+        result.Height = bestH;
+        result.CenterXRatio = bestW > 0 ? (bestX + bestW / 2.0) / sw : expectedXRatio;
+        result.CenterYRatio = bestH > 0 ? (bestY + bestH / 2.0) / sh : expectedYRatio;
+        result.Scale = bestScale;
+        return result;
+      }
+    }
+  }
+}
+"@
+}
+
 try {
   if (-not [PatrolDesktop.Native]::SetProcessDpiAwarenessContext([IntPtr](-4))) {
     [void][PatrolDesktop.Native]::SetProcessDPIAware()
@@ -953,6 +1369,64 @@ try {
         throw 'prepare-model-vision requires sourcePath and path'
       }
       Write-ModelVisionImage $sourcePath $path ([int](Get-Prop $request 'maxWidth' 896)) ([int](Get-Prop $request 'maxHeight' 896)) ([int](Get-Prop $request 'jpegQuality' 68)) ([double](Get-Prop $request 'cropXRatio' 0)) ([double](Get-Prop $request 'cropYRatio' 0)) ([double](Get-Prop $request 'cropWidthRatio' 1)) ([double](Get-Prop $request 'cropHeightRatio' 1)) ([bool](Get-Prop $request 'upscale' $false))
+    }
+    'build-visual-action-map' {
+      $sourcePath = [string](Get-Prop $request 'sourcePath' '')
+      $path = [string](Get-Prop $request 'path' '')
+      if ([string]::IsNullOrWhiteSpace($sourcePath) -or [string]::IsNullOrWhiteSpace($path)) {
+        throw 'build-visual-action-map requires sourcePath and path'
+      }
+      $result = [PatrolDesktopVision.Engine]::BuildActionMap(
+        $sourcePath,
+        $path,
+        [double](Get-Prop $request 'cropXRatio' 0),
+        [double](Get-Prop $request 'cropYRatio' 0),
+        [double](Get-Prop $request 'cropWidthRatio' 1),
+        [double](Get-Prop $request 'cropHeightRatio' 1),
+        [int](Get-Prop $request 'maxCandidates' 18)
+      )
+      [ordered]@{
+        ok=$true
+        path=[string]$result.Path
+        sourceWidth=[int]$result.SourceWidth
+        sourceHeight=[int]$result.SourceHeight
+        crop=[ordered]@{
+          x=[int]$result.CropX
+          y=[int]$result.CropY
+          width=[int]$result.CropWidth
+          height=[int]$result.CropHeight
+        }
+        mapWidth=[int]$result.MapWidth
+        mapHeight=[int]$result.MapHeight
+        candidates=@($result.Candidates)
+      }
+    }
+    'match-visual-template' {
+      $sourcePath = [string](Get-Prop $request 'sourcePath' '')
+      $templatePath = [string](Get-Prop $request 'templatePath' '')
+      if ([string]::IsNullOrWhiteSpace($sourcePath) -or [string]::IsNullOrWhiteSpace($templatePath)) {
+        throw 'match-visual-template requires sourcePath and templatePath'
+      }
+      $match = [PatrolDesktopVision.Engine]::MatchTemplate(
+        $sourcePath,
+        $templatePath,
+        [double](Get-Prop $request 'expectedXRatio' 0.5),
+        [double](Get-Prop $request 'expectedYRatio' 0.5),
+        [double](Get-Prop $request 'searchWidthRatio' 0.20),
+        [double](Get-Prop $request 'searchHeightRatio' 0.20)
+      )
+      [ordered]@{
+        ok=$true
+        matched=[bool]$match.Matched
+        score=[double]$match.Score
+        left=[int]$match.Left
+        top=[int]$match.Top
+        width=[int]$match.Width
+        height=[int]$match.Height
+        centerXRatio=[double]$match.CenterXRatio
+        centerYRatio=[double]$match.CenterYRatio
+        scale=[double]$match.Scale
+      }
     }
     'screenshot' {
       Capture-Screenshot $request
