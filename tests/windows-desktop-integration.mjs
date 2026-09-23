@@ -31,13 +31,9 @@ child.stderr.on('data', chunk => { stderr += String(chunk) })
 const driver = new WindowsDesktopDriver({ commandTimeoutMs: 20000, powerShell: powershell })
 
 try {
-  const window = await waitForWindow(driver, child.pid, 15000)
-  console.log(`fixture window: ${window.processName} / pid=${window.processId}`)
-
-  const snapshot = await driver.run('snapshot', {
-    processId: child.pid,
-    maxElements: 200,
-  })
+  const snapshot = await waitForSnapshot(driver, child.pid, 15000)
+  const window = snapshot.window
+  console.log(`fixture window: ${window?.processName ?? 'unknown'} / pid=${child.pid}`)
   const input = snapshot.elements.find(element =>
     element.automationId === 'SmokeInput'
     || element.name === 'Smoke Input'
@@ -56,7 +52,7 @@ try {
       : { controlType: input.controlType, className: input.className }
 
   const typed = await driver.run('type-target', {
-    title: TITLE,
+    processId: child.pid,
     ...selector,
     text: TEXT,
     clear: true,
@@ -67,7 +63,7 @@ try {
 
   const ready = await driver.waitForTarget({
     source: 'uia',
-    title: TITLE,
+    processId: child.pid,
     ...selector,
     value: TEXT,
     match: 'exact',
@@ -80,7 +76,7 @@ try {
   }
 
   const selected = await driver.run('hotkey', {
-    title: TITLE,
+    processId: child.pid,
     combo: 'Ctrl+A',
   })
   if (selected.window?.title !== TITLE) {
@@ -88,7 +84,7 @@ try {
   }
 
   const relativeTyped = await driver.run('type-text', {
-    title: TITLE,
+    processId: child.pid,
     text: HOTKEY_TEXT,
     clear: false,
   })
@@ -97,7 +93,7 @@ try {
   }
   await driver.waitForTarget({
     source: 'uia',
-    title: TITLE,
+    processId: child.pid,
     ...selector,
     value: HOTKEY_TEXT,
     match: 'exact',
@@ -107,14 +103,14 @@ try {
   })
 
   await driver.run('set-clipboard-text', { text: PASTE_SUFFIX })
-  const pasted = await driver.run('paste-target', { title: TITLE, ...selector })
+  const pasted = await driver.run('paste-target', { processId: child.pid, ...selector })
   if (pasted.window?.title !== TITLE || !pasted.focusMethod) {
     throw new Error(`atomic target paste did not focus fixture input: ${JSON.stringify(pasted)}`)
   }
   const pastedText = `${HOTKEY_TEXT}${PASTE_SUFFIX}`
   await driver.waitForTarget({
     source: 'uia',
-    title: TITLE,
+    processId: child.pid,
     ...selector,
     value: pastedText,
     match: 'exact',
@@ -123,13 +119,13 @@ try {
     pollMs: 200,
   })
 
-  const pressed = await driver.run('press-target', { title: TITLE, ...selector, key: 'Enter' })
+  const pressed = await driver.run('press-target', { processId: child.pid, ...selector, key: 'Enter' })
   if (pressed.window?.title !== TITLE || !pressed.focusMethod) {
     throw new Error(`atomic target key press did not focus fixture input: ${JSON.stringify(pressed)}`)
   }
   await driver.waitForTarget({
     source: 'uia',
-    title: TITLE,
+    processId: child.pid,
     name: `applied:${pastedText}`,
     match: 'exact',
     requireUnique: true,
@@ -138,21 +134,21 @@ try {
   })
 
   await driver.run('type-target', {
-    title: TITLE,
+    processId: child.pid,
     ...selector,
     text: TEXT,
     clear: true,
   })
 
   const clicked = await driver.run('click-target', {
-    title: TITLE,
+    processId: child.pid,
     name: 'Apply Smoke',
   })
   if (!clicked.ok) throw new Error(`click-target failed: ${JSON.stringify(clicked)}`)
 
   const applied = await driver.waitForTarget({
     source: 'uia',
-    title: TITLE,
+    processId: child.pid,
     name: `applied:${TEXT}`,
     match: 'exact',
     requireUnique: true,
@@ -163,14 +159,14 @@ try {
     throw new Error(`post-click UIA state wait failed: ${JSON.stringify(applied)}`)
   }
 
-  const shot = await driver.screenshot({ title: TITLE, fileName: 'windows-uia-integration' })
+  const shot = await driver.screenshot({ processId: child.pid, fileName: 'windows-uia-integration' })
   await access(shot.path)
   if (!(shot.width > 0 && shot.height > 0)) {
     throw new Error(`desktop screenshot returned invalid bounds: ${JSON.stringify(shot)}`)
   }
 
   const ocr = await driver.ocr({
-    title: TITLE,
+    processId: child.pid,
     languages: ['en-US'],
     fileName: 'windows-ocr-integration',
   })
@@ -219,15 +215,18 @@ try {
   if (stderr.trim()) console.error(stderr.trim())
 }
 
-async function waitForWindow(driver, processId, timeoutMs) {
+async function waitForSnapshot(driver, processId, timeoutMs) {
   const started = Date.now()
-  let last = []
+  let lastError = ''
   while (Date.now() - started < timeoutMs) {
-    const result = await driver.run('list-windows', {})
-    last = Array.isArray(result.windows) ? result.windows : []
-    const match = last.find(window => window.processId === processId && Number(window.hwnd) !== 0)
-    if (match) return match
+    try {
+      const snapshot = await driver.run('snapshot', { processId, maxElements: 200 })
+      if (snapshot?.ok && snapshot?.window?.hwnd) return snapshot
+      lastError = `snapshot did not expose hwnd: ${JSON.stringify(snapshot?.window ?? {})}`
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
+    }
     await new Promise(resolve => setTimeout(resolve, 250))
   }
-  throw new Error(`fixture window did not appear for pid=${processId}; windows=${JSON.stringify(last.slice(0, 12))}`)
+  throw new Error(`fixture window did not become snapshot-ready for pid=${processId}; lastError=${lastError}`)
 }
