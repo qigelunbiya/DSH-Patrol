@@ -80,8 +80,9 @@ describe('Desktop Automation runtime foundation', () => {
     const tools = readFileSync(join(process.cwd(), 'desktop-runtime', 'tools-plugin.js'), 'utf8')
     expect(tools).toContain("name: 'desktop_preview_visual_point'")
     expect(tools).toContain("name: 'desktop_click_visual_point'")
-    expect(tools).toContain('xRatio: reqNum')
-    expect(tools).toContain('yRatio: reqNum')
+    expect(tools).toContain('xRatio: num')
+    expect(tools).toContain('yRatio: num')
+    expect(tools).toContain('previewId: str')
     expect(tools).toContain('XY/1000 guide image')
     expect(tools).toContain('Never feed screenshot-local pixels from read_image')
 
@@ -96,6 +97,10 @@ describe('Desktop Automation runtime foundation', () => {
     expect(backend).toContain("'annotate-visual-guide' {")
     expect(backend).toContain('coordinateGridUnits=1000')
     expect(backend).toContain('markXRatio')
+    expect(backend).toContain('SetCursorPos')
+    expect(backend).toContain('GetCursorPos')
+    expect(backend).toContain('SendInput')
+    expect(backend).toContain("transport = 'send-input-verified-cursor'")
   })
 
   it('binds model-vision clicks to the exact full-window screenshot frame and consumes that frame', async () => {
@@ -182,7 +187,9 @@ describe('Desktop Automation runtime foundation', () => {
     const calls: any[] = []
     driver.run = async (action: string, args: any) => {
       calls.push({ action, args })
-      return { ok: true, path: 'preview.png', coordinateGridUnits: 1000 }
+      if (action === 'annotate-visual-guide') return { ok: true, path: 'preview.png', coordinateGridUnits: 1000 }
+      if (action === 'click-visual-point') return { ok: true, method: 'bound-window-visual-point', inputTransport: 'send-input-verified-cursor', x: 842, y: 490 }
+      throw new Error(`unexpected action ${action}`)
     }
 
     const preview = await driver.previewVisualPoint({
@@ -193,6 +200,7 @@ describe('Desktop Automation runtime foundation', () => {
     })
 
     expect(preview).toMatchObject({
+      previewId: expect.stringMatching(/^desktop-preview-/),
       frameId: frame.frameId,
       xRatio: 0.742,
       yRatio: 0.615,
@@ -210,7 +218,35 @@ describe('Desktop Automation runtime foundation', () => {
       },
     }])
     expect(driver.visualFrames.has(frame.frameId)).toBe(true)
+    expect(driver.visualPreviews.has(preview.previewId)).toBe(true)
     expect(driver.lastVisualFrameId).toBe(frame.frameId)
+
+    const clicked = await driver.clickVisualPoint({
+      processName: 'LxMainNew',
+      previewId: preview.previewId,
+    })
+    expect(clicked).toMatchObject({
+      previewId: preview.previewId,
+      previewBound: true,
+      frameId: frame.frameId,
+      xRatio: 0.742,
+      yRatio: 0.615,
+      inputTransport: 'send-input-verified-cursor',
+    })
+    expect(calls[1]).toMatchObject({
+      action: 'click-visual-point',
+      args: {
+        xRatio: 0.742,
+        yRatio: 0.615,
+        frameHwnd: 4242,
+        frameX: 100,
+        frameY: 60,
+        frameWidth: 1000,
+        frameHeight: 700,
+      },
+    })
+    expect(driver.visualFrames.has(frame.frameId)).toBe(false)
+    expect(driver.visualPreviews.has(preview.previewId)).toBe(false)
   })
 
   it('uses DPI-aware DWM visible bounds and refuses partial active-window screen copies', () => {
