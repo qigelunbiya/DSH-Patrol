@@ -61,6 +61,10 @@ export function registerPatrolDesktopActionTools(
       y: { type: 'integer' },
       xRatio: { type: 'number' },
       yRatio: { type: 'number' },
+      imageX: { type: 'number', description: 'Target X in the exact full-window image seen by vision. Used with imageY/imageWidth/imageHeight when the model image was resized.' },
+      imageY: { type: 'number' },
+      imageWidth: { type: 'number' },
+      imageHeight: { type: 'number' },
       frameId: { type: 'string', description: 'Ephemeral frameId from the immediately preceding desktop_screenshot. It is never persisted into the Runbook.' },
       allowWindowChrome: { type: 'boolean' },
       button: { type: 'string', enum: ['left', 'right'] },
@@ -213,7 +217,9 @@ function desktopArguments(action: DesktopAction, args: Record<string, unknown>, 
       add('fileName', args.fileName); break
     case 'click-visual-point':
       add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
-      add('xRatio', args.xRatio); add('yRatio', args.yRatio); add('button', args.button); add('allowWindowChrome', args.allowWindowChrome)
+      add('xRatio', args.xRatio); add('yRatio', args.yRatio)
+      add('imageX', args.imageX); add('imageY', args.imageY); add('imageWidth', args.imageWidth); add('imageHeight', args.imageHeight)
+      add('button', args.button); add('allowWindowChrome', args.allowWindowChrome)
       if (!persisted) add('frameId', args.frameId)
       break
     case 'click-coordinates':
@@ -291,10 +297,20 @@ function validateRequiredDesktopArguments(action: DesktopAction, args: JsonObjec
     case 'open-path':
     case 'delete-path': requireText('path'); break
     case 'click-visual-point': {
-      const xRatio = args.xRatio
-      const yRatio = args.yRatio
-      if (typeof xRatio !== 'number' || !Number.isFinite(xRatio) || xRatio < 0 || xRatio > 1) throw new Error('click-visual-point requires xRatio between 0 and 1')
-      if (typeof yRatio !== 'number' || !Number.isFinite(yRatio) || yRatio < 0 || yRatio > 1) throw new Error('click-visual-point requires yRatio between 0 and 1')
+      const hasRatio = typeof args.xRatio === 'number' && Number.isFinite(args.xRatio)
+        && typeof args.yRatio === 'number' && Number.isFinite(args.yRatio)
+      const hasImagePoint = ['imageX','imageY','imageWidth','imageHeight']
+        .every(key => typeof args[key] === 'number' && Number.isFinite(args[key] as number))
+      if (!hasRatio && !hasImagePoint) throw new Error('click-visual-point requires xRatio/yRatio or imageX/imageY/imageWidth/imageHeight')
+      if (hasRatio) {
+        if ((args.xRatio as number) < 0 || (args.xRatio as number) > 1) throw new Error('click-visual-point requires xRatio between 0 and 1')
+        if ((args.yRatio as number) < 0 || (args.yRatio as number) > 1) throw new Error('click-visual-point requires yRatio between 0 and 1')
+      }
+      if (hasImagePoint) {
+        if ((args.imageWidth as number) <= 1 || (args.imageHeight as number) <= 1) throw new Error('click-visual-point image dimensions must be greater than 1')
+        if ((args.imageX as number) < 0 || (args.imageX as number) > (args.imageWidth as number)) throw new Error('click-visual-point imageX must be inside imageWidth')
+        if ((args.imageY as number) < 0 || (args.imageY as number) > (args.imageHeight as number)) throw new Error('click-visual-point imageY must be inside imageHeight')
+      }
       break
     }
     case 'click-target':
