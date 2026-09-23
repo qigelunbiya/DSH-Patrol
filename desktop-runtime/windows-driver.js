@@ -12,6 +12,9 @@ const BUNDLED_GUIDES = fileURLToPath(new URL('../desktop-knowledge/', import.met
 const MAX_STDOUT = 4 * 1024 * 1024
 const MAX_GUIDE_CHARS = 30000
 const MAX_OCR_CHARS = 12000
+const DESKTOP_MODEL_IMAGE_MAX_WIDTH = 896
+const DESKTOP_MODEL_IMAGE_MAX_HEIGHT = 896
+const DESKTOP_MODEL_IMAGE_JPEG_QUALITY = 68
 
 export class WindowsDesktopDriver {
   constructor(options = {}) {
@@ -19,6 +22,7 @@ export class WindowsDesktopDriver {
     this.commandTimeoutMs = options.commandTimeoutMs ?? 30000
     this.powerShell = options.powerShell || process.env.DSH_PATROL_POWERSHELL || 'powershell.exe'
     this.visualFrames = new Map()
+    this.visualRegions = new Map()
     this.lastVisualFrameId = undefined
   }
 
@@ -123,16 +127,41 @@ export class WindowsDesktopDriver {
 
   async visualScreenshot(args = {}, exec) {
     const scope = args.scope === 'screen' ? 'screen' : 'active-window'
-    const shot = await this.screenshot({
+    const rawShot = await this.screenshot({
       ...args,
       scope,
       captureMethod: 'screen',
-      visualGuide: args.visualGuide === true,
+      visualGuide: false,
     }, exec)
+    const rawPath = String(rawShot?.rawPath ?? rawShot?.path ?? '')
+    if (!rawPath) throw new Error('desktop_screenshot did not return a raw capture path')
+
+    const modelPath = siblingJpegPath(rawPath, '-model')
+    const modelImage = await this.run('prepare-model-vision', {
+      sourcePath: rawPath,
+      path: modelPath,
+      maxWidth: DESKTOP_MODEL_IMAGE_MAX_WIDTH,
+      maxHeight: DESKTOP_MODEL_IMAGE_MAX_HEIGHT,
+      jpegQuality: DESKTOP_MODEL_IMAGE_JPEG_QUALITY,
+      upscale: false,
+    }, exec)
+    const shot = {
+      ...rawShot,
+      rawPath,
+      path: String(modelImage?.path || modelPath),
+      rawWidth: finiteNumber(rawShot.width, 0),
+      rawHeight: finiteNumber(rawShot.height, 0),
+      width: finiteNumber(modelImage?.width, rawShot.width),
+      height: finiteNumber(modelImage?.height, rawShot.height),
+      modelVisionBounded: true,
+      modelVisionMaxWidth: DESKTOP_MODEL_IMAGE_MAX_WIDTH,
+      modelVisionMaxHeight: DESKTOP_MODEL_IMAGE_MAX_HEIGHT,
+      modelVisionJpegQuality: DESKTOP_MODEL_IMAGE_JPEG_QUALITY,
+    }
     if (scope !== 'active-window') return shot
 
-    const rect = screenshotBounds(shot)
-    const window = shot?.window
+    const rect = screenshotBounds(rawShot)
+    const window = rawShot?.window
     const hwnd = finiteNumber(window?.hwnd, 0)
     const windowRect = {
       x: finiteNumber(window?.rect?.x, NaN),
@@ -152,13 +181,15 @@ export class WindowsDesktopDriver {
       frameId,
       createdAt: Date.now(),
       path: shot.path,
-      rawPath: shot.rawPath ?? shot.path,
+      rawPath,
       hwnd,
       processName: String(window?.processName ?? ''),
       title: String(window?.title ?? ''),
       rect,
       imageWidth: finiteNumber(shot.width, rect.width),
       imageHeight: finiteNumber(shot.height, rect.height),
+      rawImageWidth: finiteNumber(rawShot.width, rect.width),
+      rawImageHeight: finiteNumber(rawShot.height, rect.height),
     }
     this.visualFrames.set(frameId, frame)
     this.lastVisualFrameId = frameId
@@ -179,8 +210,80 @@ export class WindowsDesktopDriver {
         rect,
         imageWidth: frame.imageWidth,
         imageHeight: frame.imageHeight,
+        rawImageWidth: frame.rawImageWidth,
+        rawImageHeight: frame.rawImageHeight,
         coordinateSpace: 'physical-screen-top-level-window',
       },
+    }
+  }
+
+  async focusVisualRegion(args = {}, exec) {
+    const requestedFrameId = String(args.frameId ?? '').trim()
+    const frameId = requestedFrameId || this.lastVisualFrameId
+    if (!frameId) throw new Error('desktop_focus_visual_region requires a fresh desktop_screenshot first')
+    const frame = this.visualFrames.get(frameId)
+    if (!frame) throw new Error(`desktop visual frame ${JSON.stringify(frameId)} is unavailable; take a new desktop_screenshot`)
+    if (Date.now() - frame.createdAt > 120000) {
+      this.visualFrames.delete(frameId)
+      if (this.lastVisualFrameId === frameId) this.lastVisualFrameId = undefined
+      throw new Error('desktop visual frame is stale; take a new desktop_screenshot')
+    }
+    assertVisualFrameTarget(frame, args)
+
+    const centerX = ratioValue(args.centerXRatio, NaN, 'centerXRatio')
+    const centerY = ratioValue(args.centerYRatio, NaN, 'centerYRatio')
+    const requestedWidth = Number.isFinite(Number(args.widthRatio)) ? Number(args.widthRatio) : 0.24
+    const requestedHeight = Number.isFinite(Number(args.heightRatio)) ? Number(args.heightRatio) : 0.24
+    const widthRatio = Math.max(0.06, Math.min(0.70, requestedWidth))
+    const heightRatio = Math.max(0.06, Math.min(0.70, requestedHeight))
+    const xRatio = Math.max(0, Math.min(1 - widthRatio, centerX - widthRatio / 2))
+    const yRatio = Math.max(0, Math.min(1 - heightRatio, centerY - heightRatio / 2))
+
+    const regionPath = siblingJpegPath(frame.rawPath || frame.path, `-focus-${randomUUID().slice(0, 8)}`)
+    const prepared = await this.run('prepare-model-vision', {
+      sourcePath: frame.rawPath || frame.path,
+      path: regionPath,
+      maxWidth: 896,
+      maxHeight: 896,
+      jpegQuality: 72,
+      cropXRatio: xRatio,
+      cropYRatio: yRatio,
+      cropWidthRatio: widthRatio,
+      cropHeightRatio: heightRatio,
+      upscale: true,
+    }, exec)
+    const crop = prepared?.crop ?? { xRatio, yRatio, widthRatio, heightRatio }
+    const regionId = `desktop-region-${randomUUID()}`
+    const region = {
+      regionId,
+      frameId,
+      createdAt: Date.now(),
+      path: String(prepared?.path || regionPath),
+      width: finiteNumber(prepared?.width, 0),
+      height: finiteNumber(prepared?.height, 0),
+      crop: {
+        xRatio: ratioValue(crop.xRatio, xRatio, 'crop.xRatio'),
+        yRatio: ratioValue(crop.yRatio, yRatio, 'crop.yRatio'),
+        widthRatio: ratioValue(crop.widthRatio, widthRatio, 'crop.widthRatio'),
+        heightRatio: ratioValue(crop.heightRatio, heightRatio, 'crop.heightRatio'),
+      },
+    }
+    this.visualRegions.set(regionId, region)
+    while (this.visualRegions.size > 24) {
+      const oldest = this.visualRegions.keys().next().value
+      if (!oldest) break
+      this.visualRegions.delete(oldest)
+    }
+    return {
+      ok: true,
+      frameId,
+      regionId,
+      path: region.path,
+      width: region.width,
+      height: region.height,
+      crop: region.crop,
+      coordinateMapping: 'focused-region-image-pixel-to-full-window-ratio',
+      clickContract: 'Read this focused image. For the target center inside it, call desktop_click_visual_point with the SAME frameId + regionId + imageX/imageY/imageWidth/imageHeight from this focused image. Patrol maps it back to the original full-window frame automatically.',
     }
   }
 
@@ -211,14 +314,34 @@ export class WindowsDesktopDriver {
       && imageX >= 0 && imageX <= imageWidth
       && imageY >= 0 && imageY <= imageHeight
     if (!hasDirectRatio && !hasImagePoint) {
-      throw new Error('desktop_click_visual_point requires either xRatio/yRatio or imageX/imageY/imageWidth/imageHeight from the full CURRENT desktop screenshot')
+      throw new Error('desktop_click_visual_point requires either xRatio/yRatio or imageX/imageY/imageWidth/imageHeight')
     }
+
+    const regionId = String(args.regionId ?? '').trim()
+    let region
+    if (regionId) {
+      region = this.visualRegions.get(regionId)
+      if (!region) throw new Error(`desktop visual region ${JSON.stringify(regionId)} is unavailable; focus the CURRENT frame again`)
+      if (region.frameId !== frameId) throw new Error('desktop visual region belongs to a different screenshot frame')
+      if (Date.now() - region.createdAt > 120000) {
+        this.visualRegions.delete(regionId)
+        throw new Error('desktop visual region is stale; focus the CURRENT frame again')
+      }
+      if (!hasImagePoint) throw new Error('desktop click with regionId requires imageX/imageY/imageWidth/imageHeight from that focused region image')
+    }
+
+    const localXRatio = hasImagePoint ? ratioValue(imageX / imageWidth, NaN, 'imageX/imageWidth') : undefined
+    const localYRatio = hasImagePoint ? ratioValue(imageY / imageHeight, NaN, 'imageY/imageHeight') : undefined
     const xRatio = hasDirectRatio
       ? ratioValue(directRatioX, NaN, 'xRatio')
-      : ratioValue(imageX / imageWidth, NaN, 'imageX/imageWidth')
+      : region
+        ? ratioValue(region.crop.xRatio + localXRatio * region.crop.widthRatio, NaN, 'focused image X mapping')
+        : localXRatio
     const yRatio = hasDirectRatio
       ? ratioValue(directRatioY, NaN, 'yRatio')
-      : ratioValue(imageY / imageHeight, NaN, 'imageY/imageHeight')
+      : region
+        ? ratioValue(region.crop.yRatio + localYRatio * region.crop.heightRatio, NaN, 'focused image Y mapping')
+        : localYRatio
 
     const result = await this.run('click-visual-point', {
       ...args,
@@ -232,6 +355,9 @@ export class WindowsDesktopDriver {
       frameHeight: frame.rect.height,
     }, exec)
     this.visualFrames.delete(frameId)
+    for (const [id, item] of this.visualRegions) {
+      if (item.frameId === frameId) this.visualRegions.delete(id)
+    }
     if (this.lastVisualFrameId === frameId) this.lastVisualFrameId = undefined
     return {
       ...result,
@@ -243,7 +369,10 @@ export class WindowsDesktopDriver {
       yRatio,
       coordinateMapping: hasDirectRatio
         ? 'full-window-normalized-ratio'
-        : 'model-image-pixel-to-full-window-ratio',
+        : region
+          ? 'focused-region-image-pixel-to-full-window-ratio'
+          : 'model-image-pixel-to-full-window-ratio',
+      ...(region ? { regionId, regionCrop: region.crop } : {}),
       ...(hasImagePoint ? {
         modelImagePoint: { x: imageX, y: imageY, width: imageWidth, height: imageHeight },
       } : {}),
@@ -779,6 +908,12 @@ async function waitWithSignal(milliseconds, signal) {
 
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error)
+}
+
+function siblingJpegPath(path, suffix) {
+  const file = basename(String(path || 'screenshot.png'))
+  const stem = file.replace(/\.(?:png|jpe?g)$/i, '')
+  return join(dirname(String(path || '.')), `${stem}${suffix}.jpg`)
 }
 
 function siblingPngPath(path, suffix) {
