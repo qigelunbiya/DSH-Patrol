@@ -3,7 +3,6 @@ import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { applyDesktopTargetDefaults, DESKTOP_ACTIONS, desktopArtifactForTool, desktopToolForAction, type DesktopAction } from './desktop.js'
 import { assertSafeForStorage, assertSafePersistentText } from './security.js'
 import { PatrolRunner } from './runner.js'
-import { describeDesktopExecution } from './step-presentation.js'
 import { assertPersistedTaskChecklist, PatrolStore } from './store.js'
 import type { InspectionDefinition, InspectionStep, JsonObject, RunArtifact, ToolStep } from './types.js'
 
@@ -92,7 +91,6 @@ export function registerPatrolDesktopActionTools(
       },
       recursive: { type: 'boolean' },
       notes: { type: 'string' },
-      executionInstruction: { type: 'string', description: 'Optional human-readable recipe shown as the application step actual command. If omitted Patrol derives one from the stable desktop action.' },
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
@@ -111,60 +109,11 @@ export function registerPatrolDesktopActionTools(
         executionArgs,
         storedArgs,
         args.notes,
-        args.executionInstruction,
       )
     },
   })
 
-  const recordDesktopStep = defineTool({
-    name: 'patrol_record_desktop_step',
-    description: 'Record a desktop/application business step that has ALREADY succeeded through a raw desktop_* CURRENT exploration call. This tool does not execute the action again, so it is safe for avoiding duplicate sends/clicks. Supply the corresponding desktop action, replay-stable storedArguments, and a concise natural-language executionInstruction summarizing the proven successful method.',
-    parameters: {
-      inspectionId: { type: 'string', required: true },
-      stepName: { type: 'string', required: true },
-      action: { type: 'string', required: true, enum: [...DESKTOP_ACTIONS] },
-      storedArguments: { type: 'object', required: true, additionalProperties: true },
-      executionInstruction: { type: 'string', required: true },
-      notes: { type: 'string' },
-    },
-    output: TEXT_OUTPUT,
-    async execute(args) {
-      const action = args.action as DesktopAction
-      const tool = desktopToolForAction(action)
-      assertSafePersistentText(args.stepName, 'stepName')
-      assertSafePersistentText(args.executionInstruction, 'desktop execution instruction')
-      if (args.notes !== undefined) assertSafePersistentText(args.notes, 'step notes')
-      const definition = await loadEditable(store, args.inspectionId, options.maxSteps)
-      const supplied = isPlainRecord(args.storedArguments) ? args.storedArguments as JsonObject : {}
-      const stable = stripEphemeralDesktopArguments(supplied)
-      const effectiveStoredArgs = applyDesktopTargetDefaults(definition, tool, stable)
-      validateRequiredDesktopArguments(action, effectiveStoredArgs)
-      assertSafeForStorage(effectiveStoredArgs)
-      const artifact = desktopArtifactForTool(tool)
-      const step: ToolStep = {
-        id: nextStepId(definition.steps),
-        kind: 'tool',
-        name: args.stepName,
-        tool,
-        arguments: effectiveStoredArgs,
-        executionPlane: 'desktop',
-        executionInstruction: args.executionInstruction.trim(),
-        ...(artifact === undefined ? {} : { artifact }),
-        ...(args.notes === undefined ? {} : { notes: args.notes }),
-        recordedAt: new Date().toISOString(),
-      }
-      definition.steps.push(step)
-      definition.metadata.updatedAt = new Date().toISOString()
-      delete definition.metadata.flowHealth
-      await store.save(definition)
-      await (store as TeachingResultRecorder).recordTeachingStepResult?.(args.inspectionId, step.id, {
-        output: '该桌面业务动作已在 CURRENT 探索中成功执行；此处只补录已验证成功的方法，没有再次触发桌面副作用。',
-      })
-      return `Recorded ${step.id} (${tool}) without re-executing it.\nApplication instruction: ${step.executionInstruction}`
-    },
-  })
-
-  const disposers = [ctx.tools.register(desktopAction), ctx.tools.register(recordDesktopStep)]
+  const disposers = [ctx.tools.register(desktopAction)]
   return () => { for (const dispose of disposers) dispose() }
 }
 
@@ -179,7 +128,6 @@ async function executeAndRecordDesktopAction(
   executionArgs: JsonObject,
   storedArgs: JsonObject,
   notes: string | undefined,
-  executionInstruction: string | undefined,
 ): Promise<string> {
   assertSafePersistentText(stepName, 'stepName')
   if (notes !== undefined) assertSafePersistentText(notes, 'step notes')
@@ -200,8 +148,6 @@ async function executeAndRecordDesktopAction(
     name: stepName,
     tool,
     arguments: effectiveStoredArgs,
-    executionPlane: 'desktop',
-    executionInstruction: executionInstruction?.trim() || describeDesktopExecution(tool, effectiveStoredArgs, stepName),
     ...(artifact === undefined ? {} : { artifact }),
     ...(notes === undefined ? {} : { notes }),
     recordedAt: new Date().toISOString(),
@@ -324,23 +270,6 @@ function desktopArguments(action: DesktopAction, args: Record<string, unknown>, 
 
   validateRequiredDesktopArguments(action, out)
   return out
-}
-
-function stripEphemeralDesktopArguments(args: JsonObject): JsonObject {
-  const out: JsonObject = { ...args }
-  delete out.frameId
-  delete out.hwnd
-  delete out.processId
-  delete out.frameHwnd
-  delete out.frameX
-  delete out.frameY
-  delete out.frameWidth
-  delete out.frameHeight
-  return out
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
 function validateRequiredDesktopArguments(action: DesktopAction, args: JsonObject): void {
