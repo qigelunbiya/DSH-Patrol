@@ -118,6 +118,8 @@ describe('Desktop Automation runtime foundation', () => {
     expect(backend).toContain("rectSource = 'enum-windows-get-window-rect'")
     expect(backend).toContain('Get-VisibleWindowCandidates')
     expect(backend).toContain('VisibleTopLevelWindowRecords')
+    expect(backend).toContain('desktop processId=$processId has no visible top-level window yet')
+    expect(backend).toContain('$resolvedHwnd = [PatrolDesktop.Native]::FindVisibleTopLevelWindowForProcess([int]$processId)')
     expect(backend).not.toContain('tasklist.exe /FO CSV /NH')
     expect(backend).not.toContain('using System.Threading.Tasks')
     expect(backend).toContain('function Ensure-VerifiedMouseInput')
@@ -130,6 +132,12 @@ describe('Desktop Automation runtime foundation', () => {
     expect(backend).toContain('function Probe-ScreenPoint')
     expect(backend).toContain("'probe-screen-point' {")
     expect(backend).toContain('preClickPointProbe')
+    expect(backend).toContain('function Try-InvokeExactVisualPoint')
+    expect(backend).toContain("method='uia-exact-point-invoke'")
+    expect(backend).toContain("method='uia-exact-point-select'")
+    expect(backend).toContain("method='uia-exact-point-toggle'")
+    expect(backend).toContain('physicalCursorVerified')
+    expect(backend).toContain('FindVisibleTopLevelWindowForProcess')
   })
 
   it('binds model-vision clicks to the exact full-window screenshot frame and consumes that frame', async () => {
