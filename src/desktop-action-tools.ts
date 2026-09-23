@@ -236,7 +236,7 @@ async function executeAndRecordDesktopAction(
     output,
     ...(teachingArtifacts.length === 0 ? {} : { artifacts: teachingArtifacts }),
   })
-  return `Executed ${tool} and recorded ${step.id} (${replayTool}).\n${output}`
+  return `Executed and recorded ${step.id} (${replayTool}).\n${output}`
 }
 
 function desktopArguments(action: DesktopAction, args: Record<string, unknown>, persisted: boolean): JsonObject {
