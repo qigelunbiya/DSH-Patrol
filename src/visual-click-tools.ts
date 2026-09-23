@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { createPatrolClickOutcomeTracker, type PatrolClickOutcomeTracker } from './click-retry-state.js'
+import { captureBrowserTabBaseline, formatFreshBrowserTabs, reconcileFreshBrowserTabs } from './browser-tab-reconciliation.js'
 import { verifyPostClickExpectation } from './post-click-verification.js'
 import { assertSafePersistentText } from './security.js'
 import { stepExecutionNotes } from './step-notes.js'
@@ -91,6 +92,12 @@ export function registerPatrolVisualClickTool(
       if (args.expectedVisualText !== undefined) assertSafePersistentText(args.expectedVisualText, 'expectedVisualText')
       const pointerAction = args.pointerAction ?? 'left-click'
       const diagnosticPointerAction = pointerAction !== 'left-click'
+      if (!diagnosticPointerAction && !hasCandidate && microVisualTarget(args.stepName, args.targetHint)) {
+        throw new Error('This is a small close/remove/x visual target. Free XY guessing is disabled for this target: call patrol_observe(includeImage=true, actionMap=true, targetHint=<完整业务目标>, focus...) and then retry patrol_visual_click_target with candidateId=A#.')
+      }
+      if (!diagnosticPointerAction && !hasCandidate && outcomes.unverifiedPhysicalClicks(args) > 0) {
+        throw new Error('A previous physical click for this business target was not verified. Do not guess another free XY point. Escalate to a fresh targeted Action Map with patrol_observe(includeImage=true, actionMap=true, targetHint=<完整业务目标>, focus...), then retry with candidateId=A#.')
+      }
       if (!diagnosticPointerAction && navigationLikeBusinessAction(args.stepName, args.targetHint)
         && (typeof args.expectedVisualText !== 'string' || args.expectedVisualText.trim().length < 4)) {
         throw new Error('navigation/card visual clicks require expectedVisualText copied from the model-visible CURRENT screenshot; generic labels such as “视频卡片区域” are not sufficient')
@@ -152,6 +159,9 @@ export function registerPatrolVisualClickTool(
       const expectation = optionalExpectation(args.expectedText, args.expectationMode, args.caseSensitive)
       const isVisualNavigation = navigationLikeBusinessAction(args.stepName, args.targetHint)
         && typeof args.expectedVisualText === 'string' && args.expectedVisualText.trim().length >= 4
+      const tabBaseline = isVisualNavigation
+        ? await captureBrowserTabBaseline(runner, exec)
+        : undefined
       const beforeState = expectation.expectation === undefined || isVisualNavigation
         ? await capturePageState(runner, exec, args.tabId)
         : undefined
@@ -189,6 +199,31 @@ export function registerPatrolVisualClickTool(
         ].filter(Boolean).join('\n')
       }
 
+      let navigationTabId = args.tabId
+      let tabReconciliationEvidence = ''
+      if (isVisualNavigation) {
+        const reconciled = await reconcileFreshBrowserTabs(
+          runner,
+          exec,
+          tabBaseline,
+          args.expectedVisualText,
+        )
+        if (reconciled?.ambiguous) {
+          outcomes.recordUnverifiedPhysicalClick(args)
+          return [
+            'Visual navigation opened multiple fresh tabs, but Patrol could not uniquely identify the screenshot-selected destination. No tabs were closed.',
+            `Fresh tabs: ${formatFreshBrowserTabs(reconciled.freshTabs)}`,
+            'Inspect the fresh tab titles and retry from the correct CURRENT tab; do not continue clicking on the old source tab.',
+          ].join('\n')
+        }
+        if (reconciled?.selected) {
+          navigationTabId = reconciled.selected.id
+          tabReconciliationEvidence = reconciled.closedTabIds.length > 0
+            ? `Selected fresh tab ${reconciled.selected.id} for ${JSON.stringify(args.expectedVisualText)} and closed wrong fresh sibling tab(s): ${reconciled.closedTabIds.join(', ')}.`
+            : `Selected fresh tab ${reconciled.selected.id} for ${JSON.stringify(args.expectedVisualText)}.`
+        }
+      }
+
       const mismatch = visualTargetMismatch(args.targetHint, clicked.value)
       if (objectBoolean(clicked.value, 'unexpectedNavigation') === true) {
         outcomes.recordUnverifiedPhysicalClick(args)
@@ -208,7 +243,7 @@ export function registerPatrolVisualClickTool(
           runner,
           exec,
           beforeState,
-          args.tabId,
+          navigationTabId,
           args.targetHint,
           args.expectedVisualText,
         )
@@ -222,7 +257,10 @@ export function registerPatrolVisualClickTool(
           ].filter(Boolean).join('\n')
         }
         verificationMethod = 'state-change'
-        verificationEvidence = verified.evidence ?? `navigation reached the screenshot-selected item ${JSON.stringify(args.expectedVisualText)}`
+        verificationEvidence = [
+          verified.evidence ?? `navigation reached the screenshot-selected item ${JSON.stringify(args.expectedVisualText)}`,
+          tabReconciliationEvidence,
+        ].filter(Boolean).join(' ')
       } else if (expectation.expectation !== undefined) {
         const verified = await verifyPostClickExpectation(
           (toolName, toolArgs, toolExec) => runner.dispatch(toolName, toolArgs, toolExec),
@@ -450,6 +488,11 @@ async function verifyAutomaticStateChange(runner: PatrolRunner, exec: ToolRunCon
   }
   return { ok: false, attempts: AUTO_VERIFY_DELAYS_MS.length }
 }
+function microVisualTarget(stepName: string | undefined, targetHint: string | undefined): boolean {
+  const text = [stepName, targetHint].filter(Boolean).join(' ')
+  return /(?:关闭|移除|清除|删除|取消|close|remove|dismiss|clear|delete|[×✕✖]|(?:^|[\s:：_\-])x(?:$|[\s:：_\-])|x\s*$)/i.test(text)
+}
+
 function navigationLikeBusinessAction(stepName: string | undefined, targetHint: string | undefined): boolean {
   const text = normalizePageText([stepName, targetHint].filter(Boolean).join(' '))
   if (!text || inPageControlHint(text)) return false
