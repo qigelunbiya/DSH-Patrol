@@ -257,6 +257,8 @@ async function interactionScreenshot(args) {
   const ocrDataUrl = dataUrl
   let actionCandidates = []
   let actionMap = false
+  let actionMapZoomDataUrl
+  let actionMapZoomCount = 0
   const actionMapTargetHint = typeof args.actionMapTargetHint === 'string' ? args.actionMapTargetHint.trim() : ''
   if (args.actionMap === true && format === 'jpeg') {
     actionCandidates = await interactionCollectVisualActionCandidates(tabId, captureGeometry, actionMapTargetHint)
@@ -266,6 +268,18 @@ async function interactionScreenshot(args) {
       dataUrl = mapped.dataUrl
       modelRasterWidth = Number(mapped.width)
       modelRasterHeight = Number(mapped.height)
+      if (actionCandidates.length <= 16) {
+        const zoom = await interactionRenderActionCandidateZoomSheetInWorker(
+          ocrDataUrl,
+          actionCandidates,
+          captureGeometry,
+          Math.max(84, quality),
+        )
+        if (zoom?.dataUrl) {
+          actionMapZoomDataUrl = zoom.dataUrl
+          actionMapZoomCount = Number(zoom.count || 0)
+        }
+      }
       actionMap = true
     }
   }
@@ -287,6 +301,7 @@ async function interactionScreenshot(args) {
     ok: true,
     dataUrl,
     ...(coordinateGuide ? { ocrDataUrl } : {}),
+    ...(actionMapZoomDataUrl ? { actionMapZoomDataUrl } : {}),
     bytes: Math.floor(dataUrl.length * 0.75),
     compactVisual,
     captureScale,
@@ -295,6 +310,7 @@ async function interactionScreenshot(args) {
     actionMapTargeted: args.actionMap === true && actionMapTargetHint.length > 0,
     ...(actionMapTargetHint ? { actionMapTargetHint } : {}),
     ...(args.actionMap === true ? { actionCandidateCount: actionCandidates.length } : {}),
+    ...(actionMapZoomDataUrl ? { actionMapZoom: true, actionMapZoomCount } : {}),
     focusedVisual,
     ...(focusedVisual && focusRegion ? {
       focusCenterXRatio: focusRegion.centerXRatio,
@@ -957,6 +973,133 @@ async function interactionOverlayActionMapInWorker(source, candidates, captureGe
       quality: Math.max(0.68, Math.min(0.95, Number(jpegQuality) / 100)),
     })
     return { dataUrl: await blobToDataUrl(blob), width, height }
+  } finally {
+    if (typeof bitmap.close === 'function') bitmap.close()
+  }
+}
+
+async function interactionRenderActionCandidateZoomSheetInWorker(source, candidates, captureGeometry, jpegQuality) {
+  if (typeof OffscreenCanvas !== 'function' || typeof createImageBitmap !== 'function') return undefined
+  if (typeof dataUrlToBlob !== 'function' || typeof blobToDataUrl !== 'function') return undefined
+  if (!Array.isArray(candidates) || candidates.length < 1 || candidates.length > 16) return undefined
+  const bitmap = await createImageBitmap(dataUrlToBlob(source))
+  try {
+    const sourceWidth = Number(bitmap.width || 0)
+    const sourceHeight = Number(bitmap.height || 0)
+    const capLeft = Number(captureGeometry?.captureClientLeft || 0)
+    const capTop = Number(captureGeometry?.captureClientTop || 0)
+    const capWidth = Number(captureGeometry?.captureWidth || 0)
+    const capHeight = Number(captureGeometry?.captureHeight || 0)
+    if (![sourceWidth, sourceHeight, capWidth, capHeight].every(Number.isFinite)
+      || sourceWidth <= 0 || sourceHeight <= 0 || capWidth <= 0 || capHeight <= 0) return undefined
+
+    const count = candidates.length
+    const columns = count <= 4 ? count : count <= 8 ? 4 : 4
+    const rows = Math.ceil(count / columns)
+    const sheetWidth = 1024
+    const headerHeight = 54
+    const gap = 8
+    const cardWidth = Math.floor((sheetWidth - gap * (columns + 1)) / columns)
+    const cardHeight = 170
+    const sheetHeight = headerHeight + gap + rows * (cardHeight + gap)
+    const canvas = new OffscreenCanvas(sheetWidth, sheetHeight)
+    const context = canvas.getContext('2d', { alpha: false })
+    if (!context) return undefined
+
+    context.fillStyle = '#101216'
+    context.fillRect(0, 0, sheetWidth, sheetHeight)
+    context.fillStyle = '#ffffff'
+    context.font = '700 20px sans-serif'
+    context.textBaseline = 'top'
+    context.fillText('PATROL TARGET ZOOM — choose A# only; these crop coordinates are NOT click XY', 14, 12)
+    context.font = '500 13px sans-serif'
+    context.fillStyle = '#b9c2cf'
+    context.fillText('Each card magnifies real CURRENT-page pixels around one browser candidate. Green crosshair = exact safe point.', 14, 36)
+
+    const sx = sourceWidth / capWidth
+    const sy = sourceHeight / capHeight
+
+    for (let index = 0; index < count; index += 1) {
+      const candidate = candidates[index]
+      const col = index % columns
+      const row = Math.floor(index / columns)
+      const cardX = gap + col * (cardWidth + gap)
+      const cardY = headerHeight + gap + row * (cardHeight + gap)
+
+      context.fillStyle = '#20242b'
+      context.fillRect(cardX, cardY, cardWidth, cardHeight)
+      context.strokeStyle = '#596273'
+      context.lineWidth = 1
+      context.strokeRect(cardX + 0.5, cardY + 0.5, cardWidth - 1, cardHeight - 1)
+
+      const candidateX = (Number(candidate.left) - capLeft) * sx
+      const candidateY = (Number(candidate.top) - capTop) * sy
+      const candidateW = Math.max(2, Number(candidate.width) * sx)
+      const candidateH = Math.max(2, Number(candidate.height) * sy)
+      const safeX = (Number(candidate.safeX) - capLeft) * sx
+      const safeY = (Number(candidate.safeY) - capTop) * sy
+
+      const cropW = Math.min(sourceWidth, Math.max(120, candidateW * 4.0))
+      const cropH = Math.min(sourceHeight, Math.max(88, candidateH * 4.0))
+      const cropX = Math.max(0, Math.min(sourceWidth - cropW, candidateX + candidateW / 2 - cropW / 2))
+      const cropY = Math.max(0, Math.min(sourceHeight - cropH, candidateY + candidateH / 2 - cropH / 2))
+
+      const captionHeight = 34
+      const imageX = cardX + 4
+      const imageY = cardY + 4
+      const imageW = cardWidth - 8
+      const imageH = cardHeight - captionHeight - 8
+      const scale = Math.min(imageW / cropW, imageH / cropH)
+      const drawW = cropW * scale
+      const drawH = cropH * scale
+      const drawX = imageX + (imageW - drawW) / 2
+      const drawY = imageY + (imageH - drawH) / 2
+
+      context.fillStyle = '#ffffff'
+      context.fillRect(imageX, imageY, imageW, imageH)
+      context.drawImage(bitmap, cropX, cropY, cropW, cropH, drawX, drawY, drawW, drawH)
+
+      const safeDrawX = drawX + (safeX - cropX) * scale
+      const safeDrawY = drawY + (safeY - cropY) * scale
+      if (Number.isFinite(safeDrawX) && Number.isFinite(safeDrawY)) {
+        const radius = 7
+        context.strokeStyle = '#00ff6a'
+        context.lineWidth = 3
+        context.beginPath(); context.arc(safeDrawX, safeDrawY, radius, 0, Math.PI * 2); context.stroke()
+        context.beginPath(); context.moveTo(safeDrawX - 12, safeDrawY); context.lineTo(safeDrawX + 12, safeDrawY); context.stroke()
+        context.beginPath(); context.moveTo(safeDrawX, safeDrawY - 12); context.lineTo(safeDrawX, safeDrawY + 12); context.stroke()
+      }
+
+      const label = String(candidate.candidateId || `A${index + 1}`)
+      context.fillStyle = '#ffe600'
+      context.fillRect(cardX + 5, cardY + cardHeight - captionHeight, 42, 27)
+      context.fillStyle = '#111111'
+      context.font = '800 18px sans-serif'
+      context.fillText(label, cardX + 10, cardY + cardHeight - captionHeight + 3)
+
+      const evidence = String(
+        candidate.actionText
+        || candidate.ariaLabel
+        || candidate.title
+        || candidate.text
+        || candidate.activationKind
+        || '',
+      ).replace(/\s+/g, ' ').trim().slice(0, 44)
+      context.fillStyle = '#ffffff'
+      context.font = '600 12px sans-serif'
+      context.fillText(evidence || String(candidate.activationKind || 'interactive'), cardX + 52, cardY + cardHeight - captionHeight + 7)
+    }
+
+    const blob = await canvas.convertToBlob({
+      type: 'image/jpeg',
+      quality: Math.max(0.74, Math.min(0.96, Number(jpegQuality) / 100)),
+    })
+    return {
+      dataUrl: await blobToDataUrl(blob),
+      width: sheetWidth,
+      height: sheetHeight,
+      count,
+    }
   } finally {
     if (typeof bitmap.close === 'function') bitmap.close()
   }
