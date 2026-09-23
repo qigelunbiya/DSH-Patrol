@@ -12,9 +12,9 @@ const BUNDLED_GUIDES = fileURLToPath(new URL('../desktop-knowledge/', import.met
 const MAX_STDOUT = 4 * 1024 * 1024
 const MAX_GUIDE_CHARS = 30000
 const MAX_OCR_CHARS = 12000
-const DESKTOP_MODEL_IMAGE_MAX_WIDTH = 896
-const DESKTOP_MODEL_IMAGE_MAX_HEIGHT = 896
-const DESKTOP_MODEL_IMAGE_JPEG_QUALITY = 68
+const DESKTOP_MODEL_IMAGE_MAX_WIDTH = 768
+const DESKTOP_MODEL_IMAGE_MAX_HEIGHT = 768
+const DESKTOP_MODEL_IMAGE_JPEG_QUALITY = 65
 
 export class WindowsDesktopDriver {
   constructor(options = {}) {
@@ -243,9 +243,9 @@ export class WindowsDesktopDriver {
     const prepared = await this.run('prepare-model-vision', {
       sourcePath: frame.rawPath || frame.path,
       path: regionPath,
-      maxWidth: 896,
-      maxHeight: 896,
-      jpegQuality: 72,
+      maxWidth: 768,
+      maxHeight: 768,
+      jpegQuality: 70,
       cropXRatio: xRatio,
       cropYRatio: yRatio,
       cropWidthRatio: widthRatio,
