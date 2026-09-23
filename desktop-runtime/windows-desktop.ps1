@@ -51,6 +51,23 @@ namespace PatrolDesktop {
       GetWindowThreadProcessId(hWnd, out processId);
       return processId;
     }
+    [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr OpenProcess(uint access, bool inheritHandle, uint processId);
+    [DllImport("kernel32.dll", SetLastError=true)] static extern bool CloseHandle(IntPtr handle);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool QueryFullProcessImageNameW(IntPtr process, uint flags, StringBuilder path, ref uint size);
+    public static string GetProcessName(uint processId) {
+      const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+      IntPtr process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, processId);
+      if (process == IntPtr.Zero) return String.Empty;
+      try {
+        uint size = 32768;
+        var path = new StringBuilder((int)size);
+        if (!QueryFullProcessImageNameW(process, 0, path, ref size)) return String.Empty;
+        try { return System.IO.Path.GetFileNameWithoutExtension(path.ToString()); }
+        catch { return String.Empty; }
+      } finally {
+        CloseHandle(process);
+      }
+    }
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
     [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hWnd, int dwAttribute, out RECT rect, int cbAttribute);
@@ -142,8 +159,7 @@ function Get-Windows {
       if ([string]::IsNullOrWhiteSpace($title)) { continue }
       $processId = [int][PatrolDesktop.Native]::GetWindowProcessId([IntPtr]$hwnd)
       if ($processId -le 0) { continue }
-      $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
-      if ($null -eq $process) { continue }
+      $processName = [PatrolDesktop.Native]::GetProcessName([uint32]$processId)
       $rect = New-Object PatrolDesktop.Native+RECT
       if (-not [PatrolDesktop.Native]::GetWindowRect([IntPtr]$hwnd, [ref]$rect)) { continue }
       $width = [int]($rect.Right - $rect.Left)
@@ -151,7 +167,7 @@ function Get-Windows {
       if ($width -le 0 -or $height -le 0) { continue }
       $items += [ordered]@{
         processId = $processId
-        processName = [string]$process.ProcessName
+        processName = [string]$processName
         title = [string]$title
         hwnd = [int64]$hwnd
         rect = [ordered]@{
