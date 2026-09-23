@@ -124,8 +124,8 @@ function tabTargetScore(tab: PatrolBrowserTab, targetText: string | undefined): 
 
   // Prefer a title that preserves distinguishing digits/suffixes from the user's
   // exact click target. This separates e.g. “龙之信条2” from “龙之信条”.
-  const targetDigits = target.match(/\d+/g) ?? []
-  const titleDigits = title.match(/\d+/g) ?? []
+  const targetDigits: string[] = target.match(/\d+/g) ?? []
+  const titleDigits: string[] = title.match(/\d+/g) ?? []
   if (targetDigits.length > 0) {
     score += targetDigits.every(digit => titleDigits.includes(digit)) ? 180 : -420
   }
