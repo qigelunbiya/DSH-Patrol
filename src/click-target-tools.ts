@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { verifyPostClickExpectation } from './post-click-verification.js'
+import { captureBrowserTabBaseline, formatFreshBrowserTabs, reconcileFreshBrowserTabs } from './browser-tab-reconciliation.js'
 import { isSelectorBoundToCurrentSnapshot } from './browser.js'
 import { assertSafePersistentText } from './security.js'
 import { stepExecutionNotes } from './step-notes.js'
@@ -111,6 +112,7 @@ export function registerPatrolClickTargetTool(
       const beforeState = expectation.expectation === undefined && locator !== undefined
         ? await capturePageState(runner, exec, args.tabId)
         : undefined
+      const tabBaseline = await captureBrowserTabBaseline(runner, exec)
 
       let resolvedSelector = selector
       let clickedText = ''
@@ -278,6 +280,33 @@ export function registerPatrolClickTargetTool(
         openedTabId = objectNumber(clicked.value, 'openedTabId')
         openedTabUrl = objectString(clicked.value, 'openedTabUrl')
         resolutionSummary = `selector=${JSON.stringify(selector)}, transport=selector-compatible`
+      }
+
+      if (physicalClickExecuted) {
+        const reconciled = await reconcileFreshBrowserTabs(
+          runner,
+          exec,
+          tabBaseline,
+          locator?.text ?? args.stepName,
+        )
+        if (reconciled?.ambiguous) {
+          options.clickOutcomes?.recordUnverifiedPhysicalClick(args)
+          return [
+            'Click opened multiple fresh tabs, but Patrol could not uniquely identify the intended business destination. No fresh tab was closed.',
+            `Fresh tabs: ${formatFreshBrowserTabs(reconciled.freshTabs)}`,
+            'Inspect the fresh tab titles and continue from the correct CURRENT tab instead of retrying on the old source tab.',
+          ].join('\n')
+        }
+        if (reconciled?.selected) {
+          openedTabId = reconciled.selected.id
+          openedTabUrl = reconciled.selected.url
+          if (reconciled.closedTabIds.length > 0) {
+            resolutionSummary = [
+              resolutionSummary,
+              `tab=${openedTabId}; closed-wrong-fresh-tabs=${reconciled.closedTabIds.join(',')}`,
+            ].filter(Boolean).join(', ')
+          }
+        }
       }
 
       let verificationAttempts: number | undefined
