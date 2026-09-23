@@ -71,18 +71,18 @@ describe('Desktop Automation runtime foundation', () => {
     expect(PATROL_DESKTOP_PROMPT).toMatch(/desktop_screenshot.*read_image/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/Windows OCR 只负责文字提取\/几何精修/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/desktop_click_visual_point/)
-    expect(PATROL_DESKTOP_PROMPT).toMatch(/Desktop XY\/1000/)
-    expect(PATROL_DESKTOP_PROMPT).toMatch(/desktop_preview_visual_point/)
-    expect(PATROL_DESKTOP_PROMPT).toMatch(/绿色十字/)
-    expect(PATROL_DESKTOP_PROMPT).toMatch(/检查更新.*关于我们/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/完整应用窗口/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/imageX\/imageWidth/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/preview.*可选诊断/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/绝对禁止把 read_image 看到的裁剪截图像素直接传给 desktop_click_coordinates/)
 
     const tools = readFileSync(join(process.cwd(), 'desktop-runtime', 'tools-plugin.js'), 'utf8')
     expect(tools).toContain("name: 'desktop_preview_visual_point'")
     expect(tools).toContain("name: 'desktop_click_visual_point'")
-    expect(tools).toContain('xRatio: reqNum')
-    expect(tools).toContain('yRatio: reqNum')
-    expect(tools).toContain('XY/1000 guide image')
+    expect(tools).toContain('xRatio: num')
+    expect(tools).toContain('yRatio: num')
+    expect(tools).toContain('imageX: num')
+    expect(tools).toContain('imageWidth: num')
     expect(tools).toContain('Never feed screenshot-local pixels from read_image')
 
     const backend = readFileSync(join(process.cwd(), 'desktop-runtime', 'windows-desktop.ps1'), 'utf8')
@@ -165,6 +165,57 @@ describe('Desktop Automation runtime foundation', () => {
     })).rejects.toThrow(/unavailable or already consumed/)
   })
 
+  it('maps coordinates from a resized model image back to the original full desktop frame', async () => {
+    const driver = new WindowsDesktopDriver()
+    const frame = {
+      frameId: 'visual-model-image-test',
+      createdAt: Date.now(),
+      path: 'full-window.png',
+      rawPath: 'full-window.png',
+      hwnd: 4242,
+      processName: 'LxMainNew',
+      title: 'BlueLetter',
+      rect: { x: 100, y: 60, width: 1600, height: 900 },
+      imageWidth: 1600,
+      imageHeight: 900,
+    }
+    driver.visualFrames.set(frame.frameId, frame)
+    driver.lastVisualFrameId = frame.frameId
+    const calls: any[] = []
+    driver.run = async (action: string, args: any) => {
+      calls.push({ action, args })
+      return { ok: true, method: 'bound-window-visual-point', x: 1300, y: 510 }
+    }
+
+    const clicked = await driver.clickVisualPoint({
+      processName: 'LxMainNew',
+      frameId: frame.frameId,
+      imageX: 600,
+      imageY: 225,
+      imageWidth: 800,
+      imageHeight: 450,
+    })
+
+    expect(clicked).toMatchObject({
+      xRatio: 0.75,
+      yRatio: 0.5,
+      coordinateMapping: 'model-image-pixel-to-full-window-ratio',
+      modelImagePoint: { x: 600, y: 225, width: 800, height: 450 },
+    })
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toMatchObject({
+      action: 'click-visual-point',
+      args: {
+        xRatio: 0.75,
+        yRatio: 0.5,
+        frameX: 100,
+        frameY: 60,
+        frameWidth: 1600,
+        frameHeight: 900,
+      },
+    })
+  })
+
   it('previews a desktop visual point on the same frame without consuming or clicking it', async () => {
     const driver = new WindowsDesktopDriver()
     const frame = {
@@ -220,7 +271,7 @@ describe('Desktop Automation runtime foundation', () => {
     expect(source).toContain('dwm-extended-frame')
     expect(source).toContain('target window is not fully inside the virtual screen')
     const tools = readFileSync(join(process.cwd(), 'desktop-runtime', 'tools-plugin.js'), 'utf8')
-    expect(tools).toContain('deliberately does NOT use PrintWindow')
+    expect(tools).toContain('COMPLETE active application window')
     expect(tools).toContain('driver.visualScreenshot')
     expect(tools).toContain('driver.clickVisualPoint')
     expect(tools).toContain('frameId: str')
