@@ -19,8 +19,12 @@ namespace PatrolDesktop {
   public static class Native {
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT { public int X; public int Y; }
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll", SetLastError=true)] public static extern bool SetCursorPos(int X, int Y);
+    [DllImport("user32.dll", SetLastError=true)] public static extern bool GetCursorPos(out POINT point);
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
@@ -289,80 +293,38 @@ function Find-TargetElement($request) {
   return $matches[0]
 }
 
-function Ensure-MouseNative {
-  if ('PatrolDesktop.MouseNative' -as [type]) { return }
-  Add-Type @"
-using System;
-using System.ComponentModel;
-using System.Runtime.InteropServices;
-namespace PatrolDesktop {
-  public static class MouseNative {
-    [StructLayout(LayoutKind.Sequential)]
-    public struct POINT { public int X; public int Y; }
-    [StructLayout(LayoutKind.Sequential)]
-    public struct MOUSEINPUT {
-      public int dx;
-      public int dy;
-      public uint mouseData;
-      public uint dwFlags;
-      public uint time;
-      public IntPtr dwExtraInfo;
-    }
-    [StructLayout(LayoutKind.Explicit)]
-    public struct INPUTUNION {
-      [FieldOffset(0)] public MOUSEINPUT mi;
-    }
-    [StructLayout(LayoutKind.Sequential)]
-    public struct INPUT {
-      public uint type;
-      public INPUTUNION U;
-    }
-
-    [DllImport("user32.dll", SetLastError=true)] static extern bool SetCursorPos(int X, int Y);
-    [DllImport("user32.dll", SetLastError=true)] static extern bool GetCursorPos(out POINT point);
-    [DllImport("user32.dll", SetLastError=true)] static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
-
-    public static POINT MoveAndVerify(int x, int y) {
-      if (!SetCursorPos(x, y)) throw new Win32Exception(Marshal.GetLastWin32Error(), "SetCursorPos failed");
-      System.Threading.Thread.Sleep(45);
-      POINT point;
-      if (!GetCursorPos(out point)) throw new Win32Exception(Marshal.GetLastWin32Error(), "GetCursorPos failed");
-      if (Math.Abs(point.X - x) > 1 || Math.Abs(point.Y - y) > 1) {
-        throw new InvalidOperationException(String.Format("visual cursor calibration mismatch: requested=({0},{1}) actual=({2},{3})", x, y, point.X, point.Y));
-      }
-      return point;
-    }
-
-    public static POINT ClickVerified(int x, int y, bool right) {
-      MoveAndVerify(x, y);
-      uint down = right ? 0x0008u : 0x0002u;
-      uint up = right ? 0x0010u : 0x0004u;
-      INPUT[] inputs = new INPUT[2];
-      inputs[0].type = 0;
-      inputs[0].U.mi.dwFlags = down;
-      inputs[1].type = 0;
-      inputs[1].U.mi.dwFlags = up;
-      uint sent = SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT)));
-      if (sent != 2) throw new Win32Exception(Marshal.GetLastWin32Error(), String.Format("SendInput dispatched {0}/2 mouse events", sent));
-      System.Threading.Thread.Sleep(35);
-      POINT after;
-      if (!GetCursorPos(out after)) throw new Win32Exception(Marshal.GetLastWin32Error(), "GetCursorPos failed after click");
-      return after;
-    }
-  }
-}
-"@
-}
-
 function Click-Point([int]$x, [int]$y, [int]$button = 0) {
-  Ensure-MouseNative
-  $after = [PatrolDesktop.MouseNative]::ClickVerified($x, $y, ($button -eq 1))
+  if (-not [PatrolDesktop.Native]::SetCursorPos($x, $y)) {
+    throw "SetCursorPos failed for visual click at ($x,$y)"
+  }
+  Start-Sleep -Milliseconds 45
+  $point = New-Object PatrolDesktop.Native+POINT
+  if (-not [PatrolDesktop.Native]::GetCursorPos([ref]$point)) {
+    throw "GetCursorPos failed after moving to visual click point ($x,$y)"
+  }
+  if ([Math]::Abs([int]$point.X - $x) -gt 1 -or [Math]::Abs([int]$point.Y - $y) -gt 1) {
+    throw "visual cursor calibration mismatch: requested=($x,$y) actual=($($point.X),$($point.Y))"
+  }
+
+  if ($button -eq 1) {
+    [PatrolDesktop.Native]::mouse_event(0x0008, 0, 0, 0, [UIntPtr]::Zero)
+    [PatrolDesktop.Native]::mouse_event(0x0010, 0, 0, 0, [UIntPtr]::Zero)
+  } else {
+    [PatrolDesktop.Native]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+    [PatrolDesktop.Native]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+  }
+  Start-Sleep -Milliseconds 35
+
+  $after = New-Object PatrolDesktop.Native+POINT
+  if (-not [PatrolDesktop.Native]::GetCursorPos([ref]$after)) {
+    throw "GetCursorPos failed after visual click at ($x,$y)"
+  }
   return [ordered]@{
     requestedX = $x
     requestedY = $y
     actualX = [int]$after.X
     actualY = [int]$after.Y
-    transport = 'send-input-verified-cursor'
+    transport = 'win32-mouse-event-verified-cursor'
   }
 }
 function Invoke-Target($target) {
