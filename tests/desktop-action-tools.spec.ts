@@ -126,7 +126,7 @@ describe('recordable desktop actions', () => {
 
   it('records focused visual teaching as stable full-window ratios instead of ephemeral region/image coordinates', async () => {
     const { store, action, exec, dispatched } = await setup(async (tool, args) => {
-      expect(tool).toBe('desktop_click_visual_point')
+      expect(tool).toBe('desktop_click_focused_visual_point')
       expect(args).toMatchObject({
         processName: 'WeChat',
         frameId: 'visual-current',
@@ -143,7 +143,7 @@ describe('recordable desktop actions', () => {
           ok: true,
           xRatio: 0.045,
           yRatio: 0.94,
-          coordinateMapping: 'focused-region-image-pixel-to-full-window-ratio',
+          coordinateMapping: 'focused-region-forced-click',
         },
       }
     })
@@ -151,7 +151,7 @@ describe('recordable desktop actions', () => {
     const output = await action.execute({
       inspectionId: 'wechat-semantic-wait',
       stepName: '点击左下角设置齿轮',
-      action: 'click-visual-point',
+      action: 'click-focused-visual-point',
       processName: 'WeChat',
       frameId: 'visual-current',
       regionId: 'desktop-region-current',
@@ -179,6 +179,62 @@ describe('recordable desktop actions', () => {
     expect(args).not.toHaveProperty('imageY')
     expect(args).not.toHaveProperty('imageWidth')
     expect(args).not.toHaveProperty('imageHeight')
+  })
+
+  it('turns a successful Desktop Action Map candidate teaching click into learned-template replay', async () => {
+    const { store, action, exec, dispatched } = await setup(async (tool, args) => {
+      expect(tool).toBe('desktop_click_visual_candidate')
+      expect(args).toMatchObject({
+        processName: 'WeChat',
+        frameId: 'visual-current',
+        actionMapId: 'desktop-map-current',
+        candidateId: 'D4',
+      })
+      expect(String(args.templatePath)).toMatch(/desktop-templates[\\/]step-001\.jpg$/)
+      return {
+        ok: true,
+        text: 'candidate clicked',
+        value: {
+          ok: true,
+          xRatio: 0.031,
+          yRatio: 0.932,
+          templatePath: args.templatePath,
+          templateSearchWidthRatio: 0.16,
+          templateSearchHeightRatio: 0.18,
+          templateMinScore: 0.76,
+        },
+      }
+    })
+
+    const output = await action.execute({
+      inspectionId: 'wechat-semantic-wait',
+      stepName: '点击左下角设置齿轮',
+      action: 'click-visual-candidate',
+      processName: 'WeChat',
+      frameId: 'visual-current',
+      actionMapId: 'desktop-map-current',
+      candidateId: 'D4',
+    }, exec)
+
+    expect(output).toContain('Executed and recorded step-001 (desktop_click_visual_template)')
+    expect(dispatched).toHaveLength(1)
+    const saved = await store.load('wechat-semantic-wait')
+    expect(saved.steps[0]).toMatchObject({
+      tool: 'desktop_click_visual_template',
+      arguments: {
+        processName: 'WeChat',
+        expectedXRatio: 0.031,
+        expectedYRatio: 0.932,
+        searchWidthRatio: 0.16,
+        searchHeightRatio: 0.18,
+        minScore: 0.76,
+      },
+    })
+    const args = saved.steps[0]?.kind === 'tool' ? saved.steps[0].arguments : {}
+    expect(String(args.templatePath)).toMatch(/desktop-templates[\\/]step-001\.jpg$/)
+    expect(args).not.toHaveProperty('frameId')
+    expect(args).not.toHaveProperty('actionMapId')
+    expect(args).not.toHaveProperty('candidateId')
   })
 
   it('records a generic friendly-name application launch without guessing an executable path', async () => {
