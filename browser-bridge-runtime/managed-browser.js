@@ -94,8 +94,8 @@ export function createManagedBrowserController(options = {}) {
           extensionLoadMode = 'runtime'
         }
         await waitForBridge(bridge, connectTimeoutMs, extensionId)
-        if (hasStaleRequiredCapability()) {
-          logger.warn?.('[dsh-patrol/managed-browser] live extension is missing required Patrol capabilities (semanticClick/closeTabV1); restarting with source-loaded extension')
+        if (hasStaleSemanticCapability()) {
+          logger.warn?.('[dsh-patrol/managed-browser] live extension is missing semanticClick; restarting with source-loaded extension')
           await safeClose(browser, logger)
           browser = undefined
           return await startOrRepair(true)
@@ -147,15 +147,15 @@ export function createManagedBrowserController(options = {}) {
       browser = active
       writeCurrentState(active)
       await waitForBridge(bridge, connectTimeoutMs, extensionId)
-      if (hasStaleRequiredCapability()) {
+      if (hasStaleSemanticCapability()) {
         if (!forceLegacy) {
-          logger.warn?.('[dsh-patrol/managed-browser] live extension is missing required Patrol capabilities (semanticClick/closeTabV1); restarting with source-loaded extension')
+          logger.warn?.('[dsh-patrol/managed-browser] live extension is missing semanticClick; restarting with source-loaded extension')
           await safeClose(active, logger)
           active = undefined
           browser = undefined
           return await startOrRepair(true)
         }
-        throw new Error('current Patrol browser extension is missing required Patrol capabilities after source-loaded repair')
+        throw new Error('current Patrol browser extension is missing semanticClick after source-loaded repair')
       }
       if (disposed) throw new Error('managed Patrol browser was disposed while provisioning')
       lastError = undefined
@@ -197,11 +197,10 @@ export function createManagedBrowserController(options = {}) {
     })
   }
 
-  function hasStaleRequiredCapability() {
+  function hasStaleSemanticCapability() {
     const extension = bridge.status?.()?.extension
     const capabilities = extension?.capabilities
-    if (!Array.isArray(capabilities)) return false
-    return !capabilities.includes('semanticClick') || !capabilities.includes('closeTabV1')
+    return Array.isArray(capabilities) && !capabilities.includes('semanticClick')
   }
 
   function attachBrowser(active) {
