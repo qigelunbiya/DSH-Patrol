@@ -14,7 +14,9 @@ Add-Type -AssemblyName System.Windows.Forms
 if (-not ('PatrolDesktop.Native' -as [type])) {
   Add-Type @"
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Text;
 namespace PatrolDesktop {
   public static class Native {
     [StructLayout(LayoutKind.Sequential)]
@@ -23,6 +25,32 @@ namespace PatrolDesktop {
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowTextLengthW(IntPtr hWnd);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int maxCount);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+    public static IntPtr[] GetVisibleTopLevelWindows() {
+      var windows = new List<IntPtr>();
+      EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
+        if (IsWindowVisible(hWnd) && GetWindowTextLengthW(hWnd) > 0) windows.Add(hWnd);
+        return true;
+      }, IntPtr.Zero);
+      return windows.ToArray();
+    }
+    public static string GetWindowTitle(IntPtr hWnd) {
+      int length = GetWindowTextLengthW(hWnd);
+      if (length <= 0) return String.Empty;
+      var builder = new StringBuilder(length + 1);
+      GetWindowTextW(hWnd, builder, builder.Capacity);
+      return builder.ToString();
+    }
+    public static uint GetWindowProcessId(IntPtr hWnd) {
+      uint processId;
+      GetWindowThreadProcessId(hWnd, out processId);
+      return processId;
+    }
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
     [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hWnd, int dwAttribute, out RECT rect, int cbAttribute);
@@ -102,10 +130,42 @@ function Window-Record($process) {
 }
 
 function Get-Windows {
+  # Window discovery must never depend on Process.MainWindowTitle or precise DWM
+  # geometry for every process. Apps can temporarily block those managed
+  # properties while creating a WPF/Electron/Qt window. Enumerate visible HWNDs
+  # directly through user32; use exact DWM geometry only after a target has been
+  # selected for screenshot/click.
   $items = @()
-  foreach ($process in (Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and -not [string]::IsNullOrWhiteSpace($_.MainWindowTitle) })) {
-    $record = Window-Record $process
-    if ($null -ne $record) { $items += $record }
+  foreach ($hwnd in [PatrolDesktop.Native]::GetVisibleTopLevelWindows()) {
+    try {
+      $title = [PatrolDesktop.Native]::GetWindowTitle([IntPtr]$hwnd)
+      if ([string]::IsNullOrWhiteSpace($title)) { continue }
+      $processId = [int][PatrolDesktop.Native]::GetWindowProcessId([IntPtr]$hwnd)
+      if ($processId -le 0) { continue }
+      $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+      if ($null -eq $process) { continue }
+      $rect = New-Object PatrolDesktop.Native+RECT
+      if (-not [PatrolDesktop.Native]::GetWindowRect([IntPtr]$hwnd, [ref]$rect)) { continue }
+      $width = [int]($rect.Right - $rect.Left)
+      $height = [int]($rect.Bottom - $rect.Top)
+      if ($width -le 0 -or $height -le 0) { continue }
+      $items += [ordered]@{
+        processId = $processId
+        processName = [string]$process.ProcessName
+        title = [string]$title
+        hwnd = [int64]$hwnd
+        rect = [ordered]@{
+          x = [int]$rect.Left
+          y = [int]$rect.Top
+          width = $width
+          height = $height
+        }
+        rectSource = 'enum-windows-get-window-rect'
+      }
+    } catch {
+      # A top-level window may disappear while we enumerate it. Skip that one
+      # instead of failing or hanging the complete discovery call.
+    }
   }
   return $items
 }
