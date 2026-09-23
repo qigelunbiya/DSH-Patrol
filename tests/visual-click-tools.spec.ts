@@ -608,6 +608,49 @@ describe('browser visual fallback click teaching', () => {
     expect(calls).toEqual([])
   })
 
+  it('requires Action Map candidateId for tiny close/x controls instead of guessing free XY', async () => {
+    const calls: string[] = []
+    const { tool, exec } = await setup(async (name) => {
+      calls.push(name)
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    await expect(tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '点击我的任务的 x',
+      targetHint: '我的任务筛选标签右侧的 x 关闭按钮',
+      frameId: 'browser-visual-current',
+      xRatio: 0.52,
+      yRatio: 0.13,
+    }, exec)).rejects.toThrow(/small close\/remove\/x visual target.*Action Map.*candidateId=A#/i)
+
+    expect(calls).toEqual([])
+  })
+
+  it('escalates a second unverified free-coordinate attempt to Action Map', async () => {
+    const outcomes = createPatrolClickOutcomeTracker()
+    const input = {
+      inspectionId: 'visual-click',
+      stepName: '点击工具栏图标',
+      targetHint: '目标工具栏图标',
+    }
+    outcomes.recordUnverifiedPhysicalClick(input)
+    const calls: string[] = []
+    const { tool, exec } = await setup(async (name) => {
+      calls.push(name)
+      throw new Error(`unexpected tool ${name}`)
+    }, outcomes)
+
+    await expect(tool.execute({
+      ...input,
+      frameId: 'browser-visual-current',
+      xRatio: 0.41,
+      yRatio: 0.22,
+    }, exec)).rejects.toThrow(/previous physical click.*not verified.*Action Map.*candidateId=A#/i)
+
+    expect(calls).toEqual([])
+  })
+
   it('refuses CAPTCHA/image-code targets before any browser visual dispatch', async () => {
     const calls: string[] = []
     const { tool, exec } = await setup(async (name) => {
