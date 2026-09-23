@@ -6,99 +6,34 @@ param(
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-# Window discovery is intentionally a startup fast path. Do not enumerate
-# Process.MainWindowTitle or send WM_GETTEXT into arbitrary GUI threads here.
-# Read top-level captions directly from user32 and stop the whole pass after a
-# strict deadline so one pathological desktop can never stall Patrol startup.
+# Window discovery is intentionally a startup fast path. Keep candidate
+# discovery completely separate from precise HWND/DWM geometry: tasklist.exe is
+# a stable OS-owned process/window-title inventory and cannot block on a target
+# GUI thread's .NET/UIA properties. Precise screenshot/click actions below still
+# resolve the selected title/process back to a real HWND and DWM frame.
 if ($Action -eq 'list-windows') {
-  Add-Type @"
-using System;
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
-using System.Text;
-namespace PatrolDesktopFast {
-  public static class Windows {
-    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-    [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
-    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
-    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
-    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowTextLengthW(IntPtr hWnd);
-    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int maxCount);
-    [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr OpenProcess(uint access, bool inheritHandle, uint processId);
-    [DllImport("kernel32.dll", SetLastError=true)] static extern bool CloseHandle(IntPtr handle);
-    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool QueryFullProcessImageNameW(IntPtr process, uint flags, StringBuilder path, ref uint size);
-
-    public sealed class Record {
-      public int processId;
-      public string processName;
-      public string title;
-      public long hwnd;
-    }
-
-    static string ReadTitle(IntPtr hWnd) {
-      int length = GetWindowTextLengthW(hWnd);
-      if (length <= 0) return String.Empty;
-      int capacity = Math.Min(4096, length + 1);
-      var text = new StringBuilder(capacity);
-      int copied = GetWindowTextW(hWnd, text, capacity);
-      return copied > 0 ? text.ToString() : String.Empty;
-    }
-
-    static string ReadProcessName(uint pid) {
-      const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
-      IntPtr process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
-      if (process == IntPtr.Zero) return String.Empty;
-      try {
-        uint size = 32768;
-        var path = new StringBuilder((int)size);
-        if (!QueryFullProcessImageNameW(process, 0, path, ref size)) return String.Empty;
-        string value = path.ToString();
-        int slash = Math.Max(value.LastIndexOf('\\'), value.LastIndexOf('/'));
-        string file = slash >= 0 ? value.Substring(slash + 1) : value;
-        int dot = file.LastIndexOf('.');
-        return dot > 0 ? file.Substring(0, dot) : file;
-      } catch {
-        return String.Empty;
-      } finally {
-        CloseHandle(process);
+  $headers = @('ImageName','PID','SessionName','SessionNumber','MemUsage','Status','UserName','CPUTime','WindowTitle')
+  $items = @()
+  try {
+    $rows = @(& tasklist.exe /V /FO CSV /NH 2>$null | ConvertFrom-Csv -Header $headers)
+    foreach ($row in $rows) {
+      $title = [string]$row.WindowTitle
+      $imageName = [string]$row.ImageName
+      $pidValue = 0
+      if ([string]::IsNullOrWhiteSpace($title) -or $title -eq 'N/A') { continue }
+      if (-not [int]::TryParse([string]$row.PID, [ref]$pidValue)) { continue }
+      $processName = [IO.Path]::GetFileNameWithoutExtension($imageName)
+      $items += [ordered]@{
+        processId = [int]$pidValue
+        processName = [string]$processName
+        title = $title
+        rectSource = 'tasklist-window-discovery'
       }
     }
-
-    public static Record[] List(int timeoutMs) {
-      var records = new List<Record>();
-      long deadlineTicks = DateTime.UtcNow.AddMilliseconds(Math.Max(200, timeoutMs)).Ticks;
-      EnumWindows(delegate(IntPtr hWnd, IntPtr unused) {
-        if (DateTime.UtcNow.Ticks >= deadlineTicks) return false;
-        try {
-          if (!IsWindowVisible(hWnd)) return true;
-          string title = ReadTitle(hWnd);
-          if (String.IsNullOrWhiteSpace(title)) return DateTime.UtcNow.Ticks < deadlineTicks;
-          uint pid;
-          GetWindowThreadProcessId(hWnd, out pid);
-          if (pid == 0) return DateTime.UtcNow.Ticks < deadlineTicks;
-          records.Add(new Record {
-            processId = unchecked((int)pid),
-            processName = ReadProcessName(pid),
-            title = title,
-            hwnd = hWnd.ToInt64()
-          });
-        } catch { }
-        return DateTime.UtcNow.Ticks < deadlineTicks;
-      }, IntPtr.Zero);
-      return records.ToArray();
-    }
+  } catch {
+    # Discovery must fail soft. Precise tools can still target a known title or
+    # processName even if tasklist is temporarily unavailable.
   }
-}
-"@
-  $items = @([PatrolDesktopFast.Windows]::List(1200) | ForEach-Object {
-    [ordered]@{
-      processId = [int]$_.processId
-      processName = [string]$_.processName
-      title = [string]$_.title
-      hwnd = [int64]$_.hwnd
-      rectSource = 'enum-windows-fast-discovery'
-    }
-  })
   [ordered]@{ ok=$true; windows=$items } | ConvertTo-Json -Depth 8 -Compress
   exit 0
 }
