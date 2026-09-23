@@ -136,6 +136,8 @@ describe('Desktop Automation runtime foundation', () => {
     expect(backend).toContain("method='uia-exact-point-invoke'")
     expect(backend).toContain("method='uia-exact-point-select'")
     expect(backend).toContain("method='uia-exact-point-toggle'")
+    expect(backend).toContain('$previewBound -and $buttonName -ieq \'left\'')
+    expect(backend).toContain('previewBound=$previewBound')
     expect(backend).toContain('physicalCursorVerified')
     expect(backend).toContain('FindVisibleTopLevelWindowForProcess')
   })
