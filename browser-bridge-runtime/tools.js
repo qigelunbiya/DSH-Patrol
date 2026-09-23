@@ -135,6 +135,20 @@ export function registerTools(ctx, bridge, config = {}) {
       execute: async (args, exec) => ({ ok: true, tab: (await run(bridge, exec, 'activateTab', { tabId: args.tabId }, timeoutMs)).tab ?? { id: args.tabId } }),
     }),
     defineTool({
+      name: 'browser_close_tab',
+      description: 'Close one browser tab by id. Patrol uses this internally only for fresh tabs proven unrelated to the current business target.',
+      parameters: { tabId: { ...reqInt, description: 'Tab id from browser_list_tabs.' } },
+      output: {
+        schema: { type: 'object', additionalProperties: false, properties: { ok: reqBool, tabId: reqInt, url: str } },
+        render: (_args, value) => [{ type: 'text', text: `Closed tab [${value.tabId}]${value.url ? ` ${value.url}` : ''}` }],
+      },
+      presentCall: args => generic('Close browser tab', args),
+      execute: async (args, exec) => {
+        const value = await run(bridge, exec, 'closeTab', { tabId: args.tabId }, timeoutMs)
+        return { ok: true, tabId: value.tabId ?? args.tabId, url: value.url ?? '' }
+      },
+    }),
+    defineTool({
       name: 'browser_navigate',
       description: 'Navigate, reload, go back, or go forward in the Patrol browser.',
       parameters: {
