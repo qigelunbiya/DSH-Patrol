@@ -33,6 +33,7 @@ export interface PatrolVisualClickOptions {
   maxSteps: number
   clickOutcomes?: PatrolClickOutcomeTracker
   visualEvidence?: PatrolVisualEvidenceRegistry
+  requirePreview?: boolean
 }
 
 export function registerPatrolVisualClickTool(
@@ -121,8 +122,8 @@ export function registerPatrolVisualClickTool(
       if (args.expectedVisualText !== undefined) assertSafePersistentText(args.expectedVisualText, 'expectedVisualText')
       const pointerAction = args.pointerAction ?? 'left-click'
       const diagnosticPointerAction = pointerAction !== 'left-click'
-      if (!diagnosticPointerAction && !boundPreview) {
-        throw new Error('Browser visual left-clicks are preview-bound for accuracy. First call patrol_visual_click_target with pointerAction=mark using the chosen Action Map candidateId or free xRatio/yRatio. Then call patrol_observe(includeImage=true) and visually confirm the red crosshair is inside the intended CURRENT control. Only then call patrol_visual_click_target again with the returned previewId and the same targetHint. A naked visual left-click is never dispatched.')
+      if (options.requirePreview === true && !diagnosticPointerAction && !boundPreview) {
+        throw new Error('Browser visual left-clicks are preview-bound for accuracy in TEST MODE. First call patrol_visual_click_target with pointerAction=mark using the chosen Action Map candidateId or free xRatio/yRatio. Then call patrol_observe(includeImage=true) and visually confirm the red crosshair is inside the intended CURRENT control. Only then call patrol_visual_click_target again with the returned previewId and the same targetHint. A naked visual left-click is never dispatched in TEST MODE.')
       }
       if (!diagnosticPointerAction && navigationLikeBusinessAction(args.stepName, args.targetHint)
         && (typeof args.expectedVisualText !== 'string' || args.expectedVisualText.trim().length < 4)) {
