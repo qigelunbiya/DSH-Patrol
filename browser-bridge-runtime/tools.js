@@ -240,7 +240,7 @@ export function registerTools(ctx, bridge, config = {}) {
             visualSnapped: bool, snapDistance: optNum, selectorReplaySafe: bool, selectorQuality: str, bindingActionable: bool, bindingSource: str, visualAuthority: bool,
             cdpPiercedTarget: bool, cdpPiercedActivator: bool, cdpPiercedFollowupEditor: bool, postVisualEditorFocus: bool, cdpPiercedAction: bool, unexpectedNavigation: bool, physicalClickUncertain: bool,
             pointerAction: str, candidateId: str,
-            actionCandidateKind: str, actionCandidateHref: str, actionCandidateSafePoint: str,
+            actionCandidateKind: str, actionCandidateHref: str, actionCandidateSafePoint: str, actionCandidateFingerprint: str,
             openedTabId: int, openedTabUrl: str,
           },
         },
@@ -285,6 +285,7 @@ export function registerTools(ctx, bridge, config = {}) {
           actionCandidateKind: value.actionCandidateKind,
           actionCandidateHref: value.actionCandidateHref,
           actionCandidateSafePoint: value.actionCandidateSafePoint,
+          actionCandidateFingerprint: value.actionCandidateFingerprint,
           openedTabId: value.openedTabId,
           openedTabUrl: value.openedTabUrl,
         })
