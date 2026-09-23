@@ -616,7 +616,7 @@ describe('browser visual fallback click teaching', () => {
     expect(visualToolSource).toContain('If this Action Map candidate is wrong')
     expect(visualToolSource).toContain('try a precise free XY point')
     expect(visualToolSource).toContain('If this free XY point is wrong')
-    expect(visualToolSource).toContain('try a fresh targeted Action Map')
+    expect(visualToolSource).toContain('capture a fresh targeted Action Map')
   })
 
   it('refuses CAPTCHA/image-code targets before any browser visual dispatch', async () => {
