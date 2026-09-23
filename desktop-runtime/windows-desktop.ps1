@@ -370,7 +370,7 @@ function Invoke-Target($target) {
   $rect = $target.Record.rect
   $x = [int]($rect.x + [Math]::Max(1, [Math]::Floor($rect.width / 2)))
   $y = [int]($rect.y + [Math]::Max(1, [Math]::Floor($rect.height / 2)))
-  Click-Point $x $y 0
+  [void](Click-Point $x $y 0)
   return 'bounding-rect-click'
 }
 
@@ -383,7 +383,7 @@ function Focus-Target($target) {
     $rect = $target.Record.rect
     $x = [int]($rect.x + [Math]::Max(1, [Math]::Floor($rect.width / 2)))
     $y = [int]($rect.y + [Math]::Max(1, [Math]::Floor($rect.height / 2)))
-    Click-Point $x $y 0
+    [void](Click-Point $x $y 0)
     Start-Sleep -Milliseconds 80
     return 'bounding-rect-click'
   }
@@ -746,7 +746,7 @@ try {
     'click-coordinates' {
       $x = [int](Get-Prop $request 'x' 0); $y = [int](Get-Prop $request 'y' 0)
       $buttonName = [string](Get-Prop $request 'button' 'left')
-      Click-Point $x $y ($(if ($buttonName -ieq 'right') { 1 } else { 0 }))
+      [void](Click-Point $x $y ($(if ($buttonName -ieq 'right') { 1 } else { 0 })))
       [ordered]@{ ok=$true; x=$x; y=$y; button=$buttonName }
     }
     'click-visual-point' {
