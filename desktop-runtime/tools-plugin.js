@@ -37,7 +37,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_list_windows',
-      description: 'List lightweight Windows process candidates for desktop automation without querying GUI-owned window text. processName/processId are reliable discovery fields; title may be blank. Use a precise desktop action/snapshot with processName/processId/titleContains to resolve the real HWND and DWM geometry.',
+      description: 'List visible top-level Windows desktop applications/windows. Use this before activating an unfamiliar application.',
       parameters: {},
       output: jsonOutput('Visible desktop windows'),
       execute: async (_args, exec) => await driver.run('list-windows', {}, exec),
@@ -137,7 +137,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_preview_visual_point',
-      description: 'Preview a proposed xRatio/yRatio on the latest CURRENT desktop_screenshot without clicking. Returns previewId plus a magnified local crop centered around the proposed point, with a bright green crosshair at the EXACT full-frame physical point. It also returns pointProbe: the Windows UI Automation element currently under that exact screen coordinate when available. For small icons, dense menus, adjacent rows, send/close buttons, or any target where a one-row offset would be harmful, read_image(previewPath) and verify the crosshair is inside the intended control; when pointProbe.status=recognized, reject/refine a clear name/controlType/rect conflict before clicking. Then call desktop_click_visual_point(previewId=...). Do not restate or recompute ratios: previewId binds the real click to the exact previewed point.',
+      description: 'Preview a proposed xRatio/yRatio on the latest CURRENT desktop_screenshot without clicking. Returns a same-size XY/1000 guide image with a bright green crosshair at the exact physical point that desktop_click_visual_point would use. For small icons, dense menus, adjacent rows, send buttons, close buttons, or any target where a one-row offset would be harmful, read_image(previewPath) and confirm the crosshair is on the intended control before issuing the real click with the SAME frameId/xRatio/yRatio.',
       parameters: {
         xRatio: reqNum,
         yRatio: reqNum,
@@ -150,26 +150,11 @@ export function apply(ctx, config = {}) {
       execute: async (args, exec) => await driver.previewVisualPoint(compact(args), exec),
     }),
     defineTool({
-      name: 'desktop_refine_visual_point',
-      description: 'Refine a desktop visual point hierarchically using the magnified preview image instead of manually converting crop pixels. After read_image(previewPath), provide previewXRatio/previewYRatio as the target center inside that preview image (0..1 of the whole preview). Patrol maps that point through the preview content/crop metadata back into the SAME original desktop frame and returns a NEW previewId + magnified previewPath. Repeat until the green crosshair is truly inside the intended control, then click with the newest previewId.',
-      parameters: {
-        previewId: reqStr,
-        previewXRatio: reqNum,
-        previewYRatio: reqNum,
-        processName: str,
-        title: str,
-        titleContains: str,
-      },
-      output: jsonOutput('Desktop visual point refined'),
-      execute: async (args, exec) => await driver.refineVisualPoint(compact(args), exec),
-    }),
-    defineTool({
       name: 'desktop_click_visual_point',
-      description: 'Click a point identified from the latest CURRENT desktop_screenshot visual frame. For precise targets, pass previewId returned by desktop_preview_visual_point: Patrol reuses the exact previewed ratios, re-activates and verifies the bound HWND, probes the exact UIA element under that screen point, and if that exact point/ancestor exposes Invoke/Selection/Toggle it executes that control directly. Otherwise it falls back to SetCursorPos + GetCursorPos verification + SendInput at the same visual point. It never text-searches or snaps to a different control. Without previewId, xRatio/yRatio are required. The click remains bound to the same HWND and physical screen rectangle; moved/resized/recreated windows are rejected.',
+      description: 'Click a point identified from the latest CURRENT desktop_screenshot visual frame. The click is bound to the exact same top-level HWND and physical screen rectangle used for that screenshot; if the window moved/resized/recreated, the click is rejected and a new screenshot is required. xRatio/yRatio are 0..1 inside that frame. The top-right window-control zone is rejected by default.',
       parameters: {
-        xRatio: num,
-        yRatio: num,
-        previewId: str,
+        xRatio: reqNum,
+        yRatio: reqNum,
         frameId: str,
         button: { type: 'string', enum: ['left', 'right'] },
         processName: str,
