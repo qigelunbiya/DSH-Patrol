@@ -55,7 +55,7 @@ export function registerPatrolVisualClickTool(
   let visualPreviewSequence = 0
   const tool = defineTool({
     name: 'patrol_visual_click_target',
-    description: 'Screenshot-bound browser teaching click. After patrol_observe(includeImage=true), live teaching always clicks the exact CURRENT screenshot point without DOM/Accessibility relocation. A visualFrameId may be reused repeatedly while the browser remains on the same URL/scroll/zoom/viewport. After the physical click, Patrol verifies the business result and learns reusable DOM/semantic identity for replay. Never use for image-code/CAPTCHA.',
+    description: 'Preview-bound screenshot browser teaching click. Choose a point from patrol_observe(includeImage=true) using either free XY or Action Map candidateId, but NEVER dispatch the first visual estimate directly: call pointerAction=mark, re-observe the CURRENT page to verify the red crosshair, then perform the real left click only with previewId. previewId reuses the exact verified frame coordinate without DOM/Accessibility relocation. After the physical click, Patrol verifies the business result and learns reusable DOM/semantic identity for replay. Never use for image-code/CAPTCHA.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
@@ -121,11 +121,8 @@ export function registerPatrolVisualClickTool(
       if (args.expectedVisualText !== undefined) assertSafePersistentText(args.expectedVisualText, 'expectedVisualText')
       const pointerAction = args.pointerAction ?? 'left-click'
       const diagnosticPointerAction = pointerAction !== 'left-click'
-      if (!diagnosticPointerAction && !boundPreview && preciseBrowserVisualTarget(args.stepName, args.targetHint)) {
-        throw new Error('This small/close/remove visual target requires visual calibration before any real click. First call patrol_visual_click_target with pointerAction=mark using either candidateId or xRatio/yRatio, then patrol_observe(includeImage=true) to confirm the red crosshair, and finally click with the returned previewId.')
-      }
-      if (!diagnosticPointerAction && !boundPreview && outcomes.unverifiedPhysicalClicks(args) > 0) {
-        throw new Error('This business target already had an unverified physical visual click. A second naked XY/Action-Map click is blocked: mark the next candidate/point first, visually confirm the red crosshair, then reuse previewId for the real click.')
+      if (!diagnosticPointerAction && !boundPreview) {
+        throw new Error('Browser visual left-clicks are preview-bound for accuracy. First call patrol_visual_click_target with pointerAction=mark using the chosen Action Map candidateId or free xRatio/yRatio. Then call patrol_observe(includeImage=true) and visually confirm the red crosshair is inside the intended CURRENT control. Only then call patrol_visual_click_target again with the returned previewId and the same targetHint. A naked visual left-click is never dispatched.')
       }
       if (!diagnosticPointerAction && navigationLikeBusinessAction(args.stepName, args.targetHint)
         && (typeof args.expectedVisualText !== 'string' || args.expectedVisualText.trim().length < 4)) {
