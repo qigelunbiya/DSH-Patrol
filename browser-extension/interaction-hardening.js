@@ -921,19 +921,36 @@ async function interactionOverlayActionMapInWorker(source, candidates, captureGe
   const bitmap = await createImageBitmap(dataUrlToBlob(source))
   try {
     const width = Number(bitmap.width || 0)
-    const height = Number(bitmap.height || 0)
+    const pageHeight = Number(bitmap.height || 0)
     const capLeft = Number(captureGeometry?.captureClientLeft || 0)
     const capTop = Number(captureGeometry?.captureClientTop || 0)
     const capWidth = Number(captureGeometry?.captureWidth || 0)
     const capHeight = Number(captureGeometry?.captureHeight || 0)
-    if (![width,height,capWidth,capHeight].every(Number.isFinite) || width <= 0 || height <= 0 || capWidth <= 0 || capHeight <= 0) return undefined
+    if (![width,pageHeight,capWidth,capHeight].every(Number.isFinite) || width <= 0 || pageHeight <= 0 || capWidth <= 0 || capHeight <= 0) return undefined
+
+    // When targetHint has narrowed the Action Map to a small set, append a
+    // separate enlarged candidate contact sheet. CandidateId clicks are bound
+    // to stored geometry, so this visual-only strip can improve model choice
+    // without changing the actual page coordinate system.
+    const detailCandidates = Array.isArray(candidates) && candidates.length > 0 && candidates.length <= 8
+      ? candidates.slice(0, 8)
+      : []
+    const detailColumns = detailCandidates.length > 0 ? Math.min(4, detailCandidates.length) : 0
+    const detailRows = detailColumns > 0 ? Math.ceil(detailCandidates.length / detailColumns) : 0
+    const headerHeight = detailRows > 0 ? Math.max(34, Math.round(width / 26)) : 0
+    const detailCardHeight = detailRows > 0 ? Math.max(150, Math.min(230, Math.round(width / 5.4))) : 0
+    const detailHeight = headerHeight + detailRows * detailCardHeight
+    const height = pageHeight + detailHeight
+
     const canvas = new OffscreenCanvas(width, height)
     const context = canvas.getContext('2d', { alpha: false })
     if (!context) return undefined
-    context.drawImage(bitmap, 0, 0, width, height)
+    context.fillStyle = 'rgb(20,20,20)'
+    context.fillRect(0, 0, width, height)
+    context.drawImage(bitmap, 0, 0, width, pageHeight)
 
     const sx = width / capWidth
-    const sy = height / capHeight
+    const sy = pageHeight / capHeight
     const fontPx = Math.max(13, Math.min(22, Math.round(width / 52)))
     context.font = `700 ${fontPx}px sans-serif`
     context.textBaseline = 'top'
@@ -962,143 +979,86 @@ async function interactionOverlayActionMapInWorker(source, candidates, captureGe
       const boxW = Math.ceil(metrics.width) + 8
       const boxH = fontPx + 7
       const labelX = Math.max(0, Math.min(width - boxW, x))
-      const labelY = Math.max(0, Math.min(height - boxH, y - boxH))
+      const labelY = Math.max(0, Math.min(pageHeight - boxH, y - boxH))
       context.fillStyle = 'rgba(255,230,0,0.96)'
       context.fillRect(labelX, labelY, boxW, boxH)
       context.fillStyle = 'rgba(0,0,0,0.98)'
       context.fillText(label, labelX + 4, labelY + 3)
     }
-    const blob = await canvas.convertToBlob({
-      type: 'image/jpeg',
-      quality: Math.max(0.68, Math.min(0.95, Number(jpegQuality) / 100)),
-    })
-    return { dataUrl: await blobToDataUrl(blob), width, height }
-  } finally {
-    if (typeof bitmap.close === 'function') bitmap.close()
-  }
-}
 
-async function interactionRenderActionCandidateZoomSheetInWorker(source, candidates, captureGeometry, jpegQuality) {
-  if (typeof OffscreenCanvas !== 'function' || typeof createImageBitmap !== 'function') return undefined
-  if (typeof dataUrlToBlob !== 'function' || typeof blobToDataUrl !== 'function') return undefined
-  if (!Array.isArray(candidates) || candidates.length < 1 || candidates.length > 16) return undefined
-  const bitmap = await createImageBitmap(dataUrlToBlob(source))
-  try {
-    const sourceWidth = Number(bitmap.width || 0)
-    const sourceHeight = Number(bitmap.height || 0)
-    const capLeft = Number(captureGeometry?.captureClientLeft || 0)
-    const capTop = Number(captureGeometry?.captureClientTop || 0)
-    const capWidth = Number(captureGeometry?.captureWidth || 0)
-    const capHeight = Number(captureGeometry?.captureHeight || 0)
-    if (![sourceWidth, sourceHeight, capWidth, capHeight].every(Number.isFinite)
-      || sourceWidth <= 0 || sourceHeight <= 0 || capWidth <= 0 || capHeight <= 0) return undefined
+    if (detailCandidates.length > 0) {
+      const detailTop = pageHeight
+      context.fillStyle = 'rgba(8,8,12,1)'
+      context.fillRect(0, detailTop, width, detailHeight)
+      context.fillStyle = 'rgba(255,230,0,0.98)'
+      context.font = `700 ${Math.max(14, Math.min(22, Math.round(width / 48)))}px sans-serif`
+      context.fillText('ACTION MAP DETAIL ZOOM — choose the A# whose green point is truly inside the intended control', 10, detailTop + 7)
 
-    const count = candidates.length
-    const columns = count <= 4 ? count : count <= 8 ? 4 : 4
-    const rows = Math.ceil(count / columns)
-    const sheetWidth = 1024
-    const headerHeight = 54
-    const gap = 8
-    const cardWidth = Math.floor((sheetWidth - gap * (columns + 1)) / columns)
-    const cardHeight = 170
-    const sheetHeight = headerHeight + gap + rows * (cardHeight + gap)
-    const canvas = new OffscreenCanvas(sheetWidth, sheetHeight)
-    const context = canvas.getContext('2d', { alpha: false })
-    if (!context) return undefined
+      const cardWidth = width / detailColumns
+      for (let index = 0; index < detailCandidates.length; index += 1) {
+        const candidate = detailCandidates[index]
+        const col = index % detailColumns
+        const row = Math.floor(index / detailColumns)
+        const cardX = col * cardWidth
+        const cardY = detailTop + headerHeight + row * detailCardHeight
+        const pad = Math.max(7, Math.round(width / 180))
 
-    context.fillStyle = '#101216'
-    context.fillRect(0, 0, sheetWidth, sheetHeight)
-    context.fillStyle = '#ffffff'
-    context.font = '700 20px sans-serif'
-    context.textBaseline = 'top'
-    context.fillText('PATROL TARGET ZOOM — choose A# only; these crop coordinates are NOT click XY', 14, 12)
-    context.font = '500 13px sans-serif'
-    context.fillStyle = '#b9c2cf'
-    context.fillText('Each card magnifies real CURRENT-page pixels around one browser candidate. Green crosshair = exact safe point.', 14, 36)
+        context.strokeStyle = 'rgba(120,120,135,0.9)'
+        context.lineWidth = 1
+        context.strokeRect(cardX + 1, cardY + 1, cardWidth - 2, detailCardHeight - 2)
 
-    const sx = sourceWidth / capWidth
-    const sy = sourceHeight / capHeight
+        const safePageX = (Number(candidate.safeX) - capLeft) * sx
+        const safePageY = (Number(candidate.safeY) - capTop) * sy
+        const candidateW = Math.max(1, Number(candidate.width) * sx)
+        const candidateH = Math.max(1, Number(candidate.height) * sy)
+        const cropW = Math.min(width, Math.max(110, candidateW * 4.5))
+        const cropH = Math.min(pageHeight, Math.max(84, candidateH * 5.5))
+        const cropX = Math.max(0, Math.min(width - cropW, safePageX - cropW / 2))
+        const cropY = Math.max(0, Math.min(pageHeight - cropH, safePageY - cropH / 2))
 
-    for (let index = 0; index < count; index += 1) {
-      const candidate = candidates[index]
-      const col = index % columns
-      const row = Math.floor(index / columns)
-      const cardX = gap + col * (cardWidth + gap)
-      const cardY = headerHeight + gap + row * (cardHeight + gap)
+        const labelHeight = Math.max(27, Math.round(detailCardHeight * 0.18))
+        const availW = Math.max(10, cardWidth - pad * 2)
+        const availH = Math.max(10, detailCardHeight - labelHeight - pad * 2)
+        const scale = Math.min(availW / cropW, availH / cropH)
+        const drawW = cropW * scale
+        const drawH = cropH * scale
+        const drawX = cardX + (cardWidth - drawW) / 2
+        const drawY = cardY + labelHeight + (availH - drawH) / 2 + pad / 2
+        context.drawImage(bitmap, cropX, cropY, cropW, cropH, drawX, drawY, drawW, drawH)
 
-      context.fillStyle = '#20242b'
-      context.fillRect(cardX, cardY, cardWidth, cardHeight)
-      context.strokeStyle = '#596273'
-      context.lineWidth = 1
-      context.strokeRect(cardX + 0.5, cardY + 0.5, cardWidth - 1, cardHeight - 1)
+        const localSafeX = drawX + (safePageX - cropX) * scale
+        const localSafeY = drawY + (safePageY - cropY) * scale
+        const radius = Math.max(5, Math.round(width / 240))
+        context.strokeStyle = 'rgba(0,255,105,1)'
+        context.lineWidth = Math.max(2, Math.round(width / 700))
+        context.beginPath(); context.arc(localSafeX, localSafeY, radius, 0, Math.PI * 2); context.stroke()
+        context.beginPath(); context.moveTo(localSafeX - radius * 1.5, localSafeY); context.lineTo(localSafeX + radius * 1.5, localSafeY); context.stroke()
+        context.beginPath(); context.moveTo(localSafeX, localSafeY - radius * 1.5); context.lineTo(localSafeX, localSafeY + radius * 1.5); context.stroke()
 
-      const candidateX = (Number(candidate.left) - capLeft) * sx
-      const candidateY = (Number(candidate.top) - capTop) * sy
-      const candidateW = Math.max(2, Number(candidate.width) * sx)
-      const candidateH = Math.max(2, Number(candidate.height) * sy)
-      const safeX = (Number(candidate.safeX) - capLeft) * sx
-      const safeY = (Number(candidate.safeY) - capTop) * sy
-
-      const cropW = Math.min(sourceWidth, Math.max(120, candidateW * 4.0))
-      const cropH = Math.min(sourceHeight, Math.max(88, candidateH * 4.0))
-      const cropX = Math.max(0, Math.min(sourceWidth - cropW, candidateX + candidateW / 2 - cropW / 2))
-      const cropY = Math.max(0, Math.min(sourceHeight - cropH, candidateY + candidateH / 2 - cropH / 2))
-
-      const captionHeight = 34
-      const imageX = cardX + 4
-      const imageY = cardY + 4
-      const imageW = cardWidth - 8
-      const imageH = cardHeight - captionHeight - 8
-      const scale = Math.min(imageW / cropW, imageH / cropH)
-      const drawW = cropW * scale
-      const drawH = cropH * scale
-      const drawX = imageX + (imageW - drawW) / 2
-      const drawY = imageY + (imageH - drawH) / 2
-
-      context.fillStyle = '#ffffff'
-      context.fillRect(imageX, imageY, imageW, imageH)
-      context.drawImage(bitmap, cropX, cropY, cropW, cropH, drawX, drawY, drawW, drawH)
-
-      const safeDrawX = drawX + (safeX - cropX) * scale
-      const safeDrawY = drawY + (safeY - cropY) * scale
-      if (Number.isFinite(safeDrawX) && Number.isFinite(safeDrawY)) {
-        const radius = 7
-        context.strokeStyle = '#00ff6a'
-        context.lineWidth = 3
-        context.beginPath(); context.arc(safeDrawX, safeDrawY, radius, 0, Math.PI * 2); context.stroke()
-        context.beginPath(); context.moveTo(safeDrawX - 12, safeDrawY); context.lineTo(safeDrawX + 12, safeDrawY); context.stroke()
-        context.beginPath(); context.moveTo(safeDrawX, safeDrawY - 12); context.lineTo(safeDrawX, safeDrawY + 12); context.stroke()
+        const label = String(candidate.candidateId || `A${index + 1}`)
+        const evidence = String(candidate.actionText || candidate.text || candidate.ariaLabel || candidate.title || '').replace(/\s+/g, ' ').trim()
+        context.fillStyle = 'rgba(255,230,0,0.98)'
+        context.font = `700 ${Math.max(14, Math.min(22, Math.round(width / 50)))}px sans-serif`
+        context.fillText(label, cardX + pad, cardY + 5)
+        if (evidence) {
+          context.fillStyle = 'rgba(255,255,255,0.95)'
+          context.font = `600 ${Math.max(10, Math.min(15, Math.round(width / 70)))}px sans-serif`
+          const clipped = evidence.length > 42 ? evidence.slice(0, 41) + '…' : evidence
+          context.fillText(clipped, cardX + pad + Math.max(36, width / 28), cardY + 7)
+        }
       }
-
-      const label = String(candidate.candidateId || `A${index + 1}`)
-      context.fillStyle = '#ffe600'
-      context.fillRect(cardX + 5, cardY + cardHeight - captionHeight, 42, 27)
-      context.fillStyle = '#111111'
-      context.font = '800 18px sans-serif'
-      context.fillText(label, cardX + 10, cardY + cardHeight - captionHeight + 3)
-
-      const evidence = String(
-        candidate.actionText
-        || candidate.ariaLabel
-        || candidate.title
-        || candidate.text
-        || candidate.activationKind
-        || '',
-      ).replace(/\s+/g, ' ').trim().slice(0, 44)
-      context.fillStyle = '#ffffff'
-      context.font = '600 12px sans-serif'
-      context.fillText(evidence || String(candidate.activationKind || 'interactive'), cardX + 52, cardY + cardHeight - captionHeight + 7)
     }
 
     const blob = await canvas.convertToBlob({
       type: 'image/jpeg',
-      quality: Math.max(0.74, Math.min(0.96, Number(jpegQuality) / 100)),
+      quality: Math.max(0.68, Math.min(0.95, Number(jpegQuality) / 100)),
     })
     return {
       dataUrl: await blobToDataUrl(blob),
-      width: sheetWidth,
-      height: sheetHeight,
-      count,
+      width,
+      height,
+      detailZoom: detailCandidates.length > 0,
+      detailZoomCount: detailCandidates.length,
     }
   } finally {
     if (typeof bitmap.close === 'function') bitmap.close()
