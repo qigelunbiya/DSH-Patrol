@@ -387,6 +387,89 @@ function Send-Hotkey([string]$combo) {
   [System.Windows.Forms.SendKeys]::SendWait("$prefix$encoded")
 }
 
+function Write-VisualGuideImage([string]$sourcePath, [string]$outputPath, $markXRatio = $null, $markYRatio = $null) {
+  if (-not [IO.File]::Exists($sourcePath)) { throw "visual guide source image not found: $sourcePath" }
+  $directory = [IO.Path]::GetDirectoryName($outputPath)
+  if (-not [string]::IsNullOrWhiteSpace($directory)) { [IO.Directory]::CreateDirectory($directory) | Out-Null }
+
+  $source = [System.Drawing.Image]::FromFile($sourcePath)
+  $bitmap = $null
+  $graphics = $null
+  $minorPen = $null
+  $majorPen = $null
+  $markerPen = $null
+  $markerBrush = $null
+  $font = $null
+  $labelBrush = $null
+  $labelBackground = $null
+  try {
+    $width = [int]$source.Width
+    $height = [int]$source.Height
+    if ($width -le 0 -or $height -le 0) { throw 'visual guide source image has invalid dimensions' }
+    $bitmap = [System.Drawing.Bitmap]::new($width, $height)
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    $graphics.DrawImage($source, 0, 0, $width, $height)
+
+    $minorPen = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(36, 255, 255, 255), [single]1)
+    $majorPen = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(82, 255, 64, 64), [single]1)
+    for ($step = 50; $step -lt 1000; $step += 50) {
+      $x = [single]($width * $step / 1000.0)
+      $y = [single]($height * $step / 1000.0)
+      $pen = $(if (($step % 100) -eq 0) { $majorPen } else { $minorPen })
+      $graphics.DrawLine($pen, $x, [single]0, $x, [single]$height)
+      $graphics.DrawLine($pen, [single]0, $y, [single]$width, $y)
+    }
+
+    $fontSize = [single][Math]::Max(9, [Math]::Min(14, [Math]::Round($width / 90.0)))
+    $font = [System.Drawing.Font]::new('Arial', $fontSize, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
+    $labelBrush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(245, 255, 255, 255))
+    $labelBackground = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(175, 0, 0, 0))
+
+    $labels = @()
+    $labels += [pscustomobject]@{ text='XY/1000'; x=[single]3; y=[single]3 }
+    for ($step = 100; $step -lt 1000; $step += 100) {
+      $labels += [pscustomobject]@{ text=("X" + $step); x=[single]($width * $step / 1000.0 + 2); y=[single]2 }
+      $labels += [pscustomobject]@{ text=("Y" + $step); x=[single]2; y=[single]($height * $step / 1000.0 + 2) }
+    }
+    foreach ($item in $labels) {
+      $size = $graphics.MeasureString([string]$item.text, $font)
+      $boxX = [single][Math]::Max(0, [double]$item.x - 2)
+      $boxY = [single][Math]::Max(0, [double]$item.y - 1)
+      $graphics.FillRectangle($labelBackground, $boxX, $boxY, [single]($size.Width + 6), [single]($size.Height + 3))
+      $graphics.DrawString([string]$item.text, $font, $labelBrush, [single]$item.x, [single]$item.y)
+    }
+
+    if ($null -ne $markXRatio -and $null -ne $markYRatio) {
+      $rx = [double]$markXRatio
+      $ry = [double]$markYRatio
+      if ($rx -lt 0 -or $rx -gt 1 -or $ry -lt 0 -or $ry -gt 1) { throw 'visual preview requires mark ratios between 0 and 1' }
+      $mx = [single](($width - 1) * $rx)
+      $my = [single](($height - 1) * $ry)
+      $radius = [single][Math]::Max(7, [Math]::Round($width / 150.0))
+      $markerPen = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(255, 0, 255, 80), [single]3)
+      $markerBrush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(180, 0, 255, 80))
+      $graphics.DrawEllipse($markerPen, $mx - $radius, $my - $radius, $radius * 2, $radius * 2)
+      $graphics.DrawLine($markerPen, $mx - $radius * 1.6, $my, $mx + $radius * 1.6, $my)
+      $graphics.DrawLine($markerPen, $mx, $my - $radius * 1.6, $mx, $my + $radius * 1.6)
+      $graphics.FillEllipse($markerBrush, $mx - 2, $my - 2, [single]4, [single]4)
+    }
+
+    $bitmap.Save($outputPath, [System.Drawing.Imaging.ImageFormat]::Png)
+  } finally {
+    if ($markerBrush) { $markerBrush.Dispose() }
+    if ($markerPen) { $markerPen.Dispose() }
+    if ($labelBackground) { $labelBackground.Dispose() }
+    if ($labelBrush) { $labelBrush.Dispose() }
+    if ($font) { $font.Dispose() }
+    if ($majorPen) { $majorPen.Dispose() }
+    if ($minorPen) { $minorPen.Dispose() }
+    if ($graphics) { $graphics.Dispose() }
+    if ($bitmap) { $bitmap.Dispose() }
+    if ($source) { $source.Dispose() }
+  }
+  return [ordered]@{ ok=$true; path=$outputPath; width=[int]$width; height=[int]$height; coordinateGridUnits=1000 }
+}
+
 function Capture-Screenshot($request) {
   $path = [string](Get-Prop $request 'path' '')
   if ([string]::IsNullOrWhiteSpace($path)) { throw 'desktop screenshot path is required' }
@@ -748,6 +831,16 @@ try {
       if($milliseconds -lt 0 -or $milliseconds -gt 600000){throw 'wait milliseconds must be between 0 and 600000'}
       Start-Sleep -Milliseconds $milliseconds
       [ordered]@{ok=$true;milliseconds=$milliseconds}
+    }
+    'annotate-visual-guide' {
+      $sourcePath = [string](Get-Prop $request 'sourcePath' '')
+      $path = [string](Get-Prop $request 'path' '')
+      if ([string]::IsNullOrWhiteSpace($sourcePath) -or [string]::IsNullOrWhiteSpace($path)) {
+        throw 'annotate-visual-guide requires sourcePath and path'
+      }
+      $markXRatio = Get-Prop $request 'markXRatio' $null
+      $markYRatio = Get-Prop $request 'markYRatio' $null
+      Write-VisualGuideImage $sourcePath $path $markXRatio $markYRatio
     }
     'screenshot' {
       Capture-Screenshot $request
