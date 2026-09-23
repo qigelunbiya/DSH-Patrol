@@ -6,28 +6,111 @@ param(
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-# Window discovery is intentionally a startup fast path. Do not inspect GUI
-# state here. tasklist without /V returns process identity only and never asks
-# applications for window titles. Precise snapshot/click actions resolve the
-# chosen process back to its real HWND/DWM frame on demand.
+# Window discovery is an independent Win32 fast path. Do not enumerate
+# Process.MainWindowTitle/MainWindowHandle here: those .NET properties can
+# block or remain stale while WPF/Electron/Chromium windows are initializing.
+# EnumWindows gives Patrol the actual visible top-level HWND/PID/physical rect.
 if ($Action -eq 'list-windows') {
-  $headers = @('ImageName','PID','SessionName','SessionNumber','MemUsage')
-  $items = @()
-  try {
-    $rows = @(& tasklist.exe /FO CSV /NH 2>$null | ConvertFrom-Csv -Header $headers)
-    foreach ($row in $rows) {
-      $pidValue = 0
-      if (-not [int]::TryParse([string]$row.PID, [ref]$pidValue)) { continue }
-      $items += [ordered]@{
-        processId = [int]$pidValue
-        processName = [string][IO.Path]::GetFileNameWithoutExtension([string]$row.ImageName)
-        title = ''
-        rectSource = 'process-candidate-discovery'
-      }
+  if (-not ('PatrolDesktopDiscovery.Native' -as [type])) {
+    Add-Type @"
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+namespace PatrolDesktopDiscovery {
+  public sealed class WindowDto {
+    public int ProcessId;
+    public string ProcessName;
+    public string Title;
+    public long Hwnd;
+    public int X;
+    public int Y;
+    public int Width;
+    public int Height;
+  }
+
+  public static class Native {
+    [StructLayout(LayoutKind.Sequential)]
+    struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+    delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int maxCount);
+    [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr OpenProcess(uint access, bool inheritHandle, uint processId);
+    [DllImport("kernel32.dll", SetLastError=true)] static extern bool CloseHandle(IntPtr handle);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool QueryFullProcessImageNameW(IntPtr process, uint flags, StringBuilder path, ref uint size);
+
+    static string ProcessName(uint processId) {
+      const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+      IntPtr process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, processId);
+      if (process == IntPtr.Zero) return String.Empty;
+      try {
+        uint size = 32768;
+        var path = new StringBuilder((int)size);
+        if (!QueryFullProcessImageNameW(process, 0, path, ref size)) return String.Empty;
+        try { return System.IO.Path.GetFileNameWithoutExtension(path.ToString()); }
+        catch { return String.Empty; }
+      } finally { CloseHandle(process); }
     }
-  } catch {
-    # Candidate discovery is best effort. Known process/title selectors can
-    # still be used directly by precise desktop actions.
+
+    static string Title(IntPtr hWnd) {
+      var text = new StringBuilder(2048);
+      int count = GetWindowTextW(hWnd, text, text.Capacity);
+      return count > 0 ? text.ToString() : String.Empty;
+    }
+
+    public static WindowDto[] VisibleTopLevelWindows() {
+      var rows = new List<WindowDto>();
+      EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
+        try {
+          if (!IsWindowVisible(hWnd)) return true;
+          RECT rect;
+          if (!GetWindowRect(hWnd, out rect)) return true;
+          int width = rect.Right - rect.Left;
+          int height = rect.Bottom - rect.Top;
+          if (width <= 1 || height <= 1) return true;
+          uint processId;
+          GetWindowThreadProcessId(hWnd, out processId);
+          if (processId == 0) return true;
+          string title = Title(hWnd);
+          if (String.IsNullOrWhiteSpace(title)) return true;
+          rows.Add(new WindowDto {
+            ProcessId = unchecked((int)processId),
+            ProcessName = ProcessName(processId),
+            Title = title,
+            Hwnd = hWnd.ToInt64(),
+            X = rect.Left,
+            Y = rect.Top,
+            Width = width,
+            Height = height
+          });
+        } catch { }
+        return true;
+      }, IntPtr.Zero);
+      return rows.ToArray();
+    }
+  }
+}
+"@
+  }
+
+  $items = @()
+  foreach ($row in [PatrolDesktopDiscovery.Native]::VisibleTopLevelWindows()) {
+    $items += [ordered]@{
+      processId = [int]$row.ProcessId
+      processName = [string]$row.ProcessName
+      title = [string]$row.Title
+      hwnd = [int64]$row.Hwnd
+      rect = [ordered]@{
+        x = [int]$row.X
+        y = [int]$row.Y
+        width = [int]$row.Width
+        height = [int]$row.Height
+      }
+      rectSource = 'enum-windows-get-window-rect'
+    }
   }
   [ordered]@{ ok=$true; windows=$items } | ConvertTo-Json -Depth 8 -Compress
   exit 0
@@ -42,6 +125,7 @@ if (-not ('PatrolDesktop.Native' -as [type])) {
   Add-Type @"
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 namespace PatrolDesktop {
   public static class Native {
     [StructLayout(LayoutKind.Sequential)]
@@ -56,6 +140,31 @@ namespace PatrolDesktop {
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint nFlags);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int maxCount);
+    public static IntPtr FindVisibleTopLevelWindowForProcess(int processId) {
+      IntPtr found = IntPtr.Zero;
+      EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
+        if (!IsWindowVisible(hWnd)) return true;
+        uint pid;
+        GetWindowThreadProcessId(hWnd, out pid);
+        if (pid != unchecked((uint)processId)) return true;
+        RECT rect;
+        if (!GetWindowRect(hWnd, out rect)) return true;
+        if (rect.Right <= rect.Left || rect.Bottom <= rect.Top) return true;
+        found = hWnd;
+        return false;
+      }, IntPtr.Zero);
+      return found;
+    }
+    public static string WindowTitle(IntPtr hWnd) {
+      var text = new StringBuilder(2048);
+      int count = GetWindowTextW(hWnd, text, text.Capacity);
+      return count > 0 ? text.ToString() : String.Empty;
+    }
   }
 }
 "@
@@ -145,14 +254,33 @@ function Resolve-Window($request, [bool]$allowForeground = $true) {
   $titleContains = [string](Get-Prop $request 'titleContains' '')
 
   if ($null -ne $hwnd -and [int64]$hwnd -ne 0) {
-    $p = Get-Process | Where-Object { $_.MainWindowHandle -eq [int64]$hwnd } | Select-Object -First 1
-    if ($null -eq $p) { throw "desktop window hwnd=$hwnd not found" }
-    return $p
+    $pidForHwnd = 0
+    foreach ($candidate in (Get-Process -ErrorAction SilentlyContinue)) {
+      if ([int64]$candidate.MainWindowHandle -eq [int64]$hwnd) { $pidForHwnd = [int]$candidate.Id; break }
+    }
+    if ($pidForHwnd -eq 0) { throw "desktop window hwnd=$hwnd not found" }
+    $p = Get-Process -Id $pidForHwnd -ErrorAction SilentlyContinue
+    if ($null -eq $p) { throw "desktop window hwnd=$hwnd process not found" }
+    return [pscustomobject]@{
+      Id = [int]$p.Id
+      ProcessName = [string]$p.ProcessName
+      MainWindowHandle = [int64]$hwnd
+      MainWindowTitle = [string][PatrolDesktop.Native]::WindowTitle([IntPtr][int64]$hwnd)
+    }
   }
   if ($null -ne $processId) {
     $p = Get-Process -Id ([int]$processId) -ErrorAction SilentlyContinue
-    if ($null -eq $p -or $p.MainWindowHandle -eq 0) { throw "desktop processId=$processId has no main window" }
-    return $p
+    if ($null -eq $p) { throw "desktop processId=$processId not found" }
+    $resolvedHwnd = [PatrolDesktop.Native]::FindVisibleTopLevelWindowForProcess([int]$processId)
+    if ($resolvedHwnd -eq [IntPtr]::Zero) {
+      throw "desktop processId=$processId has no visible top-level window yet"
+    }
+    return [pscustomobject]@{
+      Id = [int]$p.Id
+      ProcessName = [string]$p.ProcessName
+      MainWindowHandle = [int64]$resolvedHwnd
+      MainWindowTitle = [string][PatrolDesktop.Native]::WindowTitle($resolvedHwnd)
+    }
   }
 
   $windows = @(Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and -not [string]::IsNullOrWhiteSpace($_.MainWindowTitle) })
