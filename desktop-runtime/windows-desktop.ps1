@@ -6,6 +6,33 @@ param(
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
+# Window discovery is intentionally a startup fast path. A model frequently
+# calls desktop_list_windows before it knows which application to inspect; that
+# operation must not pay the startup cost of UIAutomation, System.Drawing or
+# dynamic Native C# compilation. Once a target is chosen, screenshot/click/UIA
+# actions below load the full precision runtime.
+if ($Action -eq 'list-windows') {
+  $items = @()
+  foreach ($process in (Get-Process -ErrorAction SilentlyContinue)) {
+    try {
+      $hwnd = [int64]$process.MainWindowHandle
+      $title = [string]$process.MainWindowTitle
+      if ($hwnd -eq 0 -or [string]::IsNullOrWhiteSpace($title)) { continue }
+      $items += [ordered]@{
+        processId = [int]$process.Id
+        processName = [string]$process.ProcessName
+        title = $title
+        hwnd = $hwnd
+        rectSource = 'fast-discovery-no-geometry'
+      }
+    } catch {
+      # Processes may exit or deny property access while enumerating. Skip them.
+    }
+  }
+  [ordered]@{ ok=$true; windows=$items } | ConvertTo-Json -Depth 8 -Compress
+  exit 0
+}
+
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName System.Drawing
