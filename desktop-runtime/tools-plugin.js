@@ -137,7 +137,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_preview_visual_point',
-      description: 'Preview a proposed xRatio/yRatio on the latest CURRENT desktop_screenshot without clicking. Returns a same-size XY/1000 guide image with a bright green crosshair at the exact physical point that desktop_click_visual_point would use. For small icons, dense menus, adjacent rows, send buttons, close buttons, or any target where a one-row offset would be harmful, read_image(previewPath) and confirm the crosshair is on the intended control before issuing the real click with the SAME frameId/xRatio/yRatio.',
+      description: 'Optional diagnostic only: render a proposed full-window xRatio/yRatio without clicking. Normal patrols should NOT preview every click. For small unlabeled icons use desktop_focus_visual_region instead; for ordinary targets click directly.',
       parameters: {
         xRatio: num,
         yRatio: num,
@@ -155,7 +155,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_focus_visual_region',
-      description: 'Magnify a SMALL icon/control region from the SAME raw desktop_screenshot without taking another screenshot. Give a coarse centerXRatio/centerYRatio from the full-window image; Patrol crops the original full-resolution frame around that area, enlarges it into a bounded <=896px JPEG for read_image, and returns regionId. After reading the focused image, click with the SAME frameId + regionId + imageX/imageY/imageWidth/imageHeight from the focused image. The driver maps those local pixels back to the original full-window physical coordinates exactly. Use this for unlabeled icons such as a gear, three-dot menu, avatar badge, tiny close/send icons; do not use it for text that OCR can locate precisely.',
+      description: 'Magnify a SMALL icon/control region from the SAME raw desktop_screenshot without taking another screenshot. Give a coarse centerXRatio/centerYRatio from the full-window image; Patrol crops the original full-resolution frame around that area, enlarges it into a bounded <=768px JPEG for read_image, and returns regionId. After reading the focused image, click with the SAME frameId + regionId + imageX/imageY/imageWidth/imageHeight from the focused image. The driver maps those local pixels back to the original full-window physical coordinates exactly. Use this for unlabeled icons such as a gear, three-dot menu, avatar badge, tiny close/send icons; do not use it for text that OCR can locate precisely.',
       parameters: {
         frameId: str,
         centerXRatio: reqNum,
@@ -329,7 +329,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_screenshot',
-      description: 'Capture the COMPLETE active application window as the authoritative geometry frame, but return a separate bounded model-facing JPEG (<=896x896, quality 68) at path to reduce local-Qwen CUDA/OOM pressure. rawPath preserves the original full-resolution PNG used for physical coordinate mapping. The bounded image is an aspect-preserving whole-window resize, so xRatio/yRatio and imageX/imageWidth remain valid for the original frame. For tiny unlabeled icons use desktop_focus_visual_region to crop from rawPath without taking another screenshot.',
+      description: 'Capture the COMPLETE active application window as the authoritative geometry frame, but return a separate bounded model-facing JPEG (<=768x768, quality 65) at path to reduce local-Qwen CUDA/OOM pressure. rawPath preserves the original full-resolution PNG used for physical coordinate mapping. The bounded image is an aspect-preserving whole-window resize, so xRatio/yRatio and imageX/imageWidth remain valid for the original frame. For tiny unlabeled icons use desktop_focus_visual_region to crop from rawPath without taking another screenshot.',
       parameters: {
         scope: { type: 'string', enum: ['active-window', 'screen'] },
         captureMethod: { type: 'string', enum: ['auto', 'print-window', 'screen'], description: 'Compatibility input. active-window visual screenshots always force geometry-faithful screen copy.' },
