@@ -81,6 +81,10 @@ describe('Desktop Automation runtime foundation', () => {
     const tools = readFileSync(join(process.cwd(), 'desktop-runtime', 'tools-plugin.js'), 'utf8')
     expect(tools).toContain("name: 'desktop_preview_visual_point'")
     expect(tools).toContain("name: 'desktop_focus_visual_region'")
+    expect(tools).toContain("name: 'desktop_visual_action_map'")
+    expect(tools).toContain("name: 'desktop_click_visual_candidate'")
+    expect(tools).toContain("name: 'desktop_click_focused_visual_point'")
+    expect(tools).toContain("name: 'desktop_click_visual_template'")
     expect(tools).toContain("name: 'desktop_click_visual_point'")
     expect(tools).toContain('xRatio: num')
     expect(tools).toContain('yRatio: num')
@@ -101,6 +105,9 @@ describe('Desktop Automation runtime foundation', () => {
     expect(backend).toContain('markXRatio')
     expect(backend).toContain('function Write-ModelVisionImage')
     expect(backend).toContain("'prepare-model-vision' {")
+    expect(backend).toContain("'build-visual-action-map' {")
+    expect(backend).toContain("'match-visual-template' {")
+    expect(backend).toContain('PatrolDesktopVision.Engine')
     expect(backend).toContain("MimeType -eq 'image/jpeg'")
   })
 
@@ -308,7 +315,14 @@ describe('Desktop Automation runtime foundation', () => {
       coordinateMapping: 'focused-region-image-pixel-to-full-window-ratio',
     })
 
-    const clicked = await driver.clickVisualPoint({
+    await expect(driver.clickVisualPoint({
+      processName: 'LxMainNew',
+      frameId: frame.frameId,
+      xRatio: 0.045,
+      yRatio: 0.94,
+    })).rejects.toThrow(/focused-region locked.*desktop_click_focused_visual_point/i)
+
+    const clicked = await driver.clickFocusedVisualPoint({
       processName: 'LxMainNew',
       frameId: frame.frameId,
       regionId: region.regionId,
@@ -320,7 +334,7 @@ describe('Desktop Automation runtime foundation', () => {
     expect(clicked).toMatchObject({
       xRatio: 0.045,
       yRatio: 0.94,
-      coordinateMapping: 'focused-region-image-pixel-to-full-window-ratio',
+      coordinateMapping: 'focused-region-forced-click',
       regionId: region.regionId,
     })
     expect(calls.at(-1)).toMatchObject({
@@ -333,6 +347,133 @@ describe('Desktop Automation runtime foundation', () => {
         frameWidth: 1600,
         frameHeight: 1000,
       },
+    })
+  })
+
+  it('uses Desktop Action Map candidate bbox centers and learns a template without model x/y', async () => {
+    const driver = new WindowsDesktopDriver()
+    const frame = {
+      frameId: 'visual-map-test',
+      createdAt: Date.now(),
+      path: 'bounded.jpg',
+      rawPath: 'raw.png',
+      hwnd: 4242,
+      processName: 'LxMainNew',
+      title: 'BlueLetter',
+      rect: { x: 100, y: 60, width: 1600, height: 1000 },
+    }
+    driver.visualFrames.set(frame.frameId, frame)
+    driver.lastVisualFrameId = frame.frameId
+    const calls: any[] = []
+    driver.run = async (action: string, args: any) => {
+      calls.push({ action, args })
+      if (action === 'build-visual-action-map') {
+        return {
+          ok: true,
+          path: 'gear-map.jpg',
+          candidates: [
+            { CandidateId: 'D1', LeftRatio: 0.010, TopRatio: 0.84, WidthRatio: 0.030, HeightRatio: 0.040, CenterXRatio: 0.025, CenterYRatio: 0.86, Score: 3.2 },
+            { CandidateId: 'D2', LeftRatio: 0.012, TopRatio: 0.91, WidthRatio: 0.032, HeightRatio: 0.044, CenterXRatio: 0.028, CenterYRatio: 0.932, Score: 4.1 },
+          ],
+        }
+      }
+      if (action === 'prepare-model-vision') return { ok: true, path: args.path, width: 50, height: 44 }
+      if (action === 'click-visual-point') return { ok: true, method: 'bound-window-visual-point', x: 145, y: 991 }
+      throw new Error(`unexpected action ${action}`)
+    }
+
+    const map = await driver.visualActionMap({
+      frameId: frame.frameId,
+      processName: 'LxMainNew',
+      centerXRatio: 0.04,
+      centerYRatio: 0.90,
+      widthRatio: 0.16,
+      heightRatio: 0.24,
+    })
+    expect(map).toMatchObject({
+      frameId: frame.frameId,
+      path: 'gear-map.jpg',
+      candidateCount: 2,
+      candidates: [
+        { candidateId: 'D1', centerXRatio: 0.025, centerYRatio: 0.86 },
+        { candidateId: 'D2', centerXRatio: 0.028, centerYRatio: 0.932 },
+      ],
+    })
+    await expect(driver.clickVisualPoint({
+      frameId: frame.frameId,
+      processName: 'LxMainNew',
+      xRatio: 0.028,
+      yRatio: 0.932,
+    })).rejects.toThrow(/active Action Map.*desktop_click_visual_candidate/i)
+
+    const clicked = await driver.clickVisualCandidate({
+      frameId: frame.frameId,
+      actionMapId: map.actionMapId,
+      candidateId: 'D2',
+      templatePath: 'templates/gear.jpg',
+      processName: 'LxMainNew',
+    })
+    expect(clicked).toMatchObject({
+      candidateId: 'D2',
+      xRatio: 0.028,
+      yRatio: 0.932,
+      coordinateMapping: 'desktop-action-map-bbox-center',
+      templatePath: 'templates/gear.jpg',
+    })
+    expect(calls.at(-1)).toMatchObject({
+      action: 'click-visual-point',
+      args: { xRatio: 0.028, yRatio: 0.932, frameX: 100, frameY: 60, frameWidth: 1600, frameHeight: 1000 },
+    })
+  })
+
+  it('replays a learned desktop icon by template matching near the expected location', async () => {
+    const driver = new WindowsDesktopDriver()
+    driver.screenshot = async () => ({
+      ok: true,
+      path: 'current.png',
+      x: 100,
+      y: 60,
+      width: 1600,
+      height: 1000,
+      window: {
+        hwnd: 4242,
+        processName: 'LxMainNew',
+        title: 'BlueLetter',
+        rect: { x: 100, y: 60, width: 1600, height: 1000 },
+      },
+    })
+    const calls: any[] = []
+    driver.run = async (action: string, args: any) => {
+      calls.push({ action, args })
+      if (action === 'match-visual-template') {
+        return { ok: true, matched: true, score: 0.91, centerXRatio: 0.029, centerYRatio: 0.931, scale: 1 }
+      }
+      if (action === 'click-visual-point') return { ok: true, x: 146, y: 990 }
+      throw new Error(`unexpected action ${action}`)
+    }
+
+    const result = await driver.clickVisualTemplate({
+      processName: 'LxMainNew',
+      templatePath: 'templates/gear.jpg',
+      expectedXRatio: 0.028,
+      expectedYRatio: 0.932,
+      searchWidthRatio: 0.16,
+      searchHeightRatio: 0.18,
+      minScore: 0.76,
+    })
+    expect(result).toMatchObject({
+      method: 'learned-icon-template',
+      templateScore: 0.91,
+      xRatio: 0.029,
+      yRatio: 0.931,
+    })
+    expect(calls[0]).toMatchObject({
+      action: 'match-visual-template',
+      args: { templatePath: 'templates/gear.jpg', expectedXRatio: 0.028, expectedYRatio: 0.932 },
+    })
+    expect(calls[1]).toMatchObject({
+      action: 'click-visual-point',
+      args: { xRatio: 0.029, yRatio: 0.931, frameWidth: 1600, frameHeight: 1000 },
     })
   })
 
@@ -674,6 +815,10 @@ describe('Desktop Automation runtime foundation', () => {
       'desktop_click_ocr_text',
       'desktop_preview_visual_point',
       'desktop_focus_visual_region',
+      'desktop_visual_action_map',
+      'desktop_click_visual_candidate',
+      'desktop_click_focused_visual_point',
+      'desktop_click_visual_template',
       'desktop_click_visual_point',
       'desktop_click_coordinates',
       'desktop_wait_for_target',
