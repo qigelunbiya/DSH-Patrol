@@ -127,7 +127,7 @@ export class WindowsDesktopDriver {
       ...args,
       scope,
       captureMethod: 'screen',
-      visualGuide: args.visualGuide !== false,
+      visualGuide: args.visualGuide === true,
     }, exec)
     if (scope !== 'active-window') return shot
 
@@ -157,6 +157,8 @@ export class WindowsDesktopDriver {
       processName: String(window?.processName ?? ''),
       title: String(window?.title ?? ''),
       rect,
+      imageWidth: finiteNumber(shot.width, rect.width),
+      imageHeight: finiteNumber(shot.height, rect.height),
     }
     this.visualFrames.set(frameId, frame)
     this.lastVisualFrameId = frameId
@@ -175,6 +177,8 @@ export class WindowsDesktopDriver {
         processName: frame.processName,
         title: frame.title,
         rect,
+        imageWidth: frame.imageWidth,
+        imageHeight: frame.imageHeight,
         coordinateSpace: 'physical-screen-top-level-window',
       },
     }
@@ -195,8 +199,31 @@ export class WindowsDesktopDriver {
     }
     assertVisualFrameTarget(frame, args)
 
+    const directRatioX = Number(args.xRatio)
+    const directRatioY = Number(args.yRatio)
+    const hasDirectRatio = Number.isFinite(directRatioX) && Number.isFinite(directRatioY)
+    const imageX = Number(args.imageX)
+    const imageY = Number(args.imageY)
+    const imageWidth = Number(args.imageWidth)
+    const imageHeight = Number(args.imageHeight)
+    const hasImagePoint = [imageX, imageY, imageWidth, imageHeight].every(Number.isFinite)
+      && imageWidth > 1 && imageHeight > 1
+      && imageX >= 0 && imageX <= imageWidth
+      && imageY >= 0 && imageY <= imageHeight
+    if (!hasDirectRatio && !hasImagePoint) {
+      throw new Error('desktop_click_visual_point requires either xRatio/yRatio or imageX/imageY/imageWidth/imageHeight from the full CURRENT desktop screenshot')
+    }
+    const xRatio = hasDirectRatio
+      ? ratioValue(directRatioX, NaN, 'xRatio')
+      : ratioValue(imageX / imageWidth, NaN, 'imageX/imageWidth')
+    const yRatio = hasDirectRatio
+      ? ratioValue(directRatioY, NaN, 'yRatio')
+      : ratioValue(imageY / imageHeight, NaN, 'imageY/imageHeight')
+
     const result = await this.run('click-visual-point', {
       ...args,
+      xRatio,
+      yRatio,
       hwnd: frame.hwnd,
       frameHwnd: frame.hwnd,
       frameX: frame.rect.x,
@@ -212,6 +239,14 @@ export class WindowsDesktopDriver {
       screenshotPath: frame.path,
       rawScreenshotPath: frame.rawPath,
       frameBounds: frame.rect,
+      xRatio,
+      yRatio,
+      coordinateMapping: hasDirectRatio
+        ? 'full-window-normalized-ratio'
+        : 'model-image-pixel-to-full-window-ratio',
+      ...(hasImagePoint ? {
+        modelImagePoint: { x: imageX, y: imageY, width: imageWidth, height: imageHeight },
+      } : {}),
     }
   }
 
