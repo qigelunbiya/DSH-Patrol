@@ -52,7 +52,7 @@ async function setup() {
   const runner = {
     async dispatch(tool: string, args: Record<string, unknown>) {
       dispatched.push({ tool, args })
-      return { ok: true, text: 'target ready', value: { ok: true, method: 'uia', matchCount: 1 } }
+      return { ok: true, text: 'target ready', value: { ok: true, method: 'uia', matchCount: 1, xRatio: 0.742, yRatio: 0.615 } }
     },
   } as any
 
@@ -345,6 +345,40 @@ describe('recordable desktop actions', () => {
         key: 'Enter',
       }],
     ])
+  })
+
+  it('executes a preview-bound desktop visual click and persists only resolved replay geometry', async () => {
+    const { store, action, exec, dispatched } = await setup()
+
+    const output = await action.execute({
+      inspectionId: 'wechat-semantic-wait',
+      stepName: '点击视觉确认后的齿轮',
+      action: 'click-visual-point',
+      processName: 'WeChat',
+      previewId: 'desktop-preview-test',
+    }, exec)
+
+    expect(output).toContain('Executed and recorded step-001 (desktop_click_visual_point)')
+    expect(dispatched).toEqual([{
+      tool: 'desktop_click_visual_point',
+      args: {
+        processName: 'WeChat',
+        previewId: 'desktop-preview-test',
+      },
+    }])
+
+    const saved = await store.load('wechat-semantic-wait')
+    expect(saved.steps[0]).toMatchObject({
+      tool: 'desktop_click_visual_point',
+      arguments: {
+        processName: 'WeChat',
+        xRatio: 0.742,
+        yRatio: 0.615,
+      },
+    })
+    const stored = saved.steps[0]?.kind === 'tool' ? saved.steps[0].arguments : {}
+    expect(stored).not.toHaveProperty('previewId')
+    expect(stored).not.toHaveProperty('frameId')
   })
 
   it('rejects invalid wait bounds before dispatching or recording', async () => {
