@@ -734,6 +734,16 @@ try {
         throw 'click-visual-point requires a bound visual frame from desktop_screenshot'
       }
 
+      # The screenshot was captured with this window foreground, but model
+      # vision/preview/tool traffic may have changed foreground ownership before
+      # the physical click. Re-activate and verify the exact bound HWND first;
+      # then re-check the original screenshot geometry before sending input.
+      Activate-Window $process
+      $foregroundBeforeClick = [PatrolDesktop.Native]::GetForegroundWindow()
+      if ([int64]$foregroundBeforeClick -ne $frameHwnd) {
+        throw "visual click foreground mismatch: expected hwnd=$frameHwnd actual=$([int64]$foregroundBeforeClick)"
+      }
+
       $record = Window-Record $process
       if ([int64]$record.hwnd -ne $frameHwnd) {
         throw 'visual frame is stale: the target HWND changed; take a new desktop_screenshot'
@@ -751,7 +761,7 @@ try {
       $y = [int][Math]::Round($frameY + (($frameHeight - 1) * $yRatio))
       $buttonName = [string](Get-Prop $request 'button' 'left')
       $input = Click-Point $x $y ($(if ($buttonName -ieq 'right') { 1 } else { 0 }))
-      [ordered]@{ ok=$true; method='bound-window-visual-point'; inputTransport=[string]$input.transport; x=$x; y=$y; actualCursorX=[int]$input.actualX; actualCursorY=[int]$input.actualY; xRatio=$xRatio; yRatio=$yRatio; button=$buttonName; frameHwnd=$frameHwnd; frameRect=[ordered]@{x=$frameX;y=$frameY;width=$frameWidth;height=$frameHeight}; window=$record }
+      [ordered]@{ ok=$true; method='bound-window-visual-point'; inputTransport=[string]$input.transport; foregroundVerified=$true; foregroundHwnd=[int64]$foregroundBeforeClick; x=$x; y=$y; actualCursorX=[int]$input.actualX; actualCursorY=[int]$input.actualY; xRatio=$xRatio; yRatio=$yRatio; button=$buttonName; frameHwnd=$frameHwnd; frameRect=[ordered]@{x=$frameX;y=$frameY;width=$frameWidth;height=$frameHeight}; window=$record }
     }
     'drag' {
       $fromX=[int](Get-Prop $request 'fromX' 0); $fromY=[int](Get-Prop $request 'fromY' 0)
