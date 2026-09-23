@@ -447,6 +447,9 @@ export function registerTools(ctx, bridge, config = {}) {
             actionMapTargeted: bool,
             actionMapTargetHint: str,
             actionCandidateCount: optInt,
+            actionMapZoom: bool,
+            actionMapZoomCount: optInt,
+            actionMapZoomPath: str,
             coordinateGridUnits: optNum,
             modelRasterWidth: optNum,
             modelRasterHeight: optNum,
@@ -476,6 +479,9 @@ export function registerTools(ctx, bridge, config = {}) {
         }, timeoutMs), 'screenshot')
         const workspaceRoot = exec?.agent?.session?.header?.cwd
         const path = bridge.saveScreenshot(value.dataUrl, workspaceRoot)
+        const actionMapZoomPath = value.actionMapZoomDataUrl
+          ? bridge.saveScreenshot(value.actionMapZoomDataUrl, workspaceRoot)
+          : undefined
         const ocr = await inspectScreenshotOcr(bridge, exec, args.tabId, value.ocrDataUrl ?? value.dataUrl, timeoutMs)
         return clean({
           ok: true,
@@ -507,6 +513,9 @@ export function registerTools(ctx, bridge, config = {}) {
           actionMapTargeted: value.actionMapTargeted,
           actionMapTargetHint: value.actionMapTargetHint,
           actionCandidateCount: value.actionCandidateCount,
+          actionMapZoom: value.actionMapZoom,
+          actionMapZoomCount: value.actionMapZoomCount,
+          actionMapZoomPath,
           coordinateGridUnits: value.coordinateGridUnits,
           modelRasterWidth: value.modelRasterWidth,
           modelRasterHeight: value.modelRasterHeight,
