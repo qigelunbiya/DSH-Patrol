@@ -122,6 +122,10 @@ export function registerPatrolObservationTools(
           actionMapTargeted: { type: 'boolean' },
           actionMapTargetHint: { type: 'string' },
           actionCandidateCount: { type: 'integer' },
+          actionMapZoom: { type: 'boolean' },
+          actionMapZoomCount: { type: 'integer' },
+          actionMapZoomPath: { type: 'string' },
+          actionMapZoomImage: IMAGE_SCHEMA,
           coordinateGridUnits: { type: 'number' },
           modelRasterWidth: { type: 'number' },
           modelRasterHeight: { type: 'number' },
@@ -158,6 +162,7 @@ export function registerPatrolObservationTools(
         }
 
         const hasImage = value.evidenceMode === 'image' && value.image !== undefined
+        const hasActionMapZoom = value.actionMapZoom === true && value.actionMapZoomImage !== undefined
         const lines = [
           `CURRENT page: ${value.title || '(untitled)'}${value.url ? ` - ${value.url}` : ''}`,
           `Fresh screenshot saved: ${value.path}`,
@@ -172,6 +177,9 @@ export function registerPatrolObservationTools(
             value.actionMapTargeted === true
               ? `TARGETED VISUAL ACTION MAP READY for ${JSON.stringify(value.actionMapTargetHint || args.targetHint || '')}: ${value.actionCandidateCount ?? 0} matching CURRENT control(s) are outlined with A1/A2/... labels. For structured rows such as “IP + RDP”, unrelated rows were removed before labels were assigned. Choose only among these labels; do not guess a global A# from an unfiltered page.`
               : `VISUAL ACTION MAP READY: ${value.actionCandidateCount ?? 0} CURRENT interactive control(s) are outlined with A1/A2/... labels. For small buttons/icons, visually choose the label covering the intended control and call patrol_visual_click_target with candidateId=that label. Do NOT estimate xRatio/yRatio when a correct action-map candidate exists.`,
+            ...(hasActionMapZoom ? [
+              `ACTION MAP TARGET ZOOM attached as a SECOND image: ${value.actionMapZoomCount ?? value.actionCandidateCount ?? 0} candidate crop(s) are magnified in A# cards. Use the zoom image to decide WHICH A# is the intended control; the green crosshair in each card is the exact browser safe point. NEVER derive xRatio/yRatio from the zoom sheet because its pixels are not page coordinates.`,
+            ] : []),
           ] : []),
           ...(args.includeImage === true && !hasImage ? ['VISUAL CLICK DISABLED: includeImage=true did not produce a model-visible image; do not guess screenshot coordinates.'] : []),
         ]
@@ -187,6 +195,7 @@ export function registerPatrolObservationTools(
 
         const blocks: any[] = [{ type: 'text', text: lines.join('\n') }]
         if (value.image !== undefined) blocks.push({ type: 'image', attachment: value.image })
+        if (value.actionMapZoomImage !== undefined) blocks.push({ type: 'image', attachment: value.actionMapZoomImage })
         return blocks
       },
     },
@@ -306,6 +315,12 @@ export function registerPatrolObservationTools(
               error: 'Previous model-visible Patrol image could not be offloaded safely, so CURRENT screenshot was kept on disk but not attached. Continuing with compact OCR/DOM evidence to avoid image accumulation/OOM.',
             }
           : await readBoundedScreenshotAsImage(ctx, exec, path)
+      const actionMapZoomPath = objectString(shot.value, 'actionMapZoomPath')
+      const zoomImageAttempt: ImageAttachmentAttempt = args.includeImage === true
+        && actionMapZoomPath !== undefined
+        && imageAttempt.image !== undefined
+        ? await readBoundedScreenshotAsImage(ctx, exec, actionMapZoomPath)
+        : { status: 'not-requested' }
       const rawOcrText = objectRawString(shot.value, 'ocrText') ?? ''
       const ocrText = captchaInputPresent ? '' : shortEvidence(rawOcrText, OCR_EVIDENCE_MAX_CHARS)
 
@@ -327,6 +342,8 @@ export function registerPatrolObservationTools(
       const actionMapTargeted = objectBoolean(shot.value, 'actionMapTargeted') === true
       const actionMapTargetHint = objectString(shot.value, 'actionMapTargetHint')
       const actionCandidateCount = objectNumber(shot.value, 'actionCandidateCount')
+      const actionMapZoom = objectBoolean(shot.value, 'actionMapZoom') === true
+      const actionMapZoomCount = objectNumber(shot.value, 'actionMapZoomCount')
       const coordinateGridUnits = objectNumber(shot.value, 'coordinateGridUnits')
       const modelRasterWidth = objectNumber(shot.value, 'modelRasterWidth')
       const modelRasterHeight = objectNumber(shot.value, 'modelRasterHeight')
@@ -364,6 +381,10 @@ export function registerPatrolObservationTools(
         actionMapTargeted,
         ...(actionMapTargetHint === undefined ? {} : { actionMapTargetHint }),
         ...(actionCandidateCount === undefined ? {} : { actionCandidateCount }),
+        actionMapZoom,
+        ...(actionMapZoomCount === undefined ? {} : { actionMapZoomCount }),
+        ...(actionMapZoomPath === undefined ? {} : { actionMapZoomPath }),
+        ...(zoomImageAttempt.image === undefined ? {} : { actionMapZoomImage: zoomImageAttempt.image }),
         ...(coordinateGridUnits === undefined ? {} : { coordinateGridUnits }),
         ...(modelRasterWidth === undefined ? {} : { modelRasterWidth }),
         ...(modelRasterHeight === undefined ? {} : { modelRasterHeight }),
