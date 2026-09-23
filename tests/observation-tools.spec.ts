@@ -112,6 +112,23 @@ describe('current-page observation evidence fallback', () => {
     expect(value.actionMapTargetHint).toBe('10.192.3.174 行的 RDP')
   })
 
+  it('attaches a second magnified candidate sheet for small targeted Action Maps', async () => {
+    const harness = setupObservationHarness({ readImage: 'success', captcha: false, actionMapZoom: true })
+    const value = await harness.tool.execute({
+      inspectionId: 'demo',
+      includeImage: true,
+      actionMap: true,
+      targetHint: '我的任务右侧的 x',
+    }, harness.exec)
+
+    expect(value.actionMap).toBe(true)
+    expect(value.actionMapZoom).toBe(true)
+    expect(value.actionMapZoomCount).toBe(1)
+    expect(value.actionMapZoomPath).toBe('C:\\workspace\\action-map-zoom.jpg')
+    expect(value.actionMapZoomImage).toMatchObject({ attachmentId: 'img-1' })
+    expect(harness.readImageCalls).toBe(2)
+  })
+
   it('prunes historical Patrol payloads before every new visual attachment instead of imposing a screenshot-count cap', async () => {
     const harness = setupObservationHarness({ readImage: 'success', captcha: false, prune: true })
     for (let index = 0; index < 4; index += 1) {
@@ -191,6 +208,7 @@ function setupObservationHarness(options: {
   prune?: boolean
   omitRasterBudget?: boolean
   imageWidth?: number
+  actionMapZoom?: boolean
 }) {
   const definitions: any[] = []
   const observed: Array<{ inspectionId: string; rootCallId: unknown }> = []
@@ -277,6 +295,11 @@ function setupObservationHarness(options: {
             actionMapTargeted: args.actionMap === true && typeof args.actionMapTargetHint === 'string' && args.actionMapTargetHint.length > 0,
             ...(typeof args.actionMapTargetHint === 'string' ? { actionMapTargetHint: args.actionMapTargetHint } : {}),
             ...(args.actionMap === true ? { actionCandidateCount: 1 } : {}),
+            ...(args.actionMap === true && options.actionMapZoom === true ? {
+              actionMapZoom: true,
+              actionMapZoomCount: 1,
+              actionMapZoomPath: 'C:\\workspace\\action-map-zoom.jpg',
+            } : {}),
             ...(args.format === 'jpeg' && options.omitRasterBudget !== true ? { targetPixelWidth: 1024, compactVisual: true } : {}),
           },
         }
