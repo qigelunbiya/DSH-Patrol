@@ -150,6 +150,20 @@ export function apply(ctx, config = {}) {
       execute: async (args, exec) => await driver.previewVisualPoint(compact(args), exec),
     }),
     defineTool({
+      name: 'desktop_refine_visual_point',
+      description: 'Refine a desktop visual point hierarchically using the magnified preview image instead of manually converting crop pixels. After read_image(previewPath), provide previewXRatio/previewYRatio as the target center inside that preview image (0..1 of the whole preview). Patrol maps that point through the preview content/crop metadata back into the SAME original desktop frame and returns a NEW previewId + magnified previewPath. Repeat until the green crosshair is truly inside the intended control, then click with the newest previewId.',
+      parameters: {
+        previewId: reqStr,
+        previewXRatio: reqNum,
+        previewYRatio: reqNum,
+        processName: str,
+        title: str,
+        titleContains: str,
+      },
+      output: jsonOutput('Desktop visual point refined'),
+      execute: async (args, exec) => await driver.refineVisualPoint(compact(args), exec),
+    }),
+    defineTool({
       name: 'desktop_click_visual_point',
       description: 'Click a point identified from the latest CURRENT desktop_screenshot visual frame. For precise targets, pass previewId returned by desktop_preview_visual_point: Patrol reuses the exact previewed ratios, moves the physical cursor to the requested screen point, reads the OS cursor position back to verify the same physical coordinate, then emits the native mouse button transition. Without previewId, xRatio/yRatio are required. The click remains bound to the same HWND and physical screen rectangle; moved/resized/recreated windows are rejected.',
       parameters: {
