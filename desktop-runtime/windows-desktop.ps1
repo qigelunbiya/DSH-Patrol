@@ -6,27 +6,28 @@ param(
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-# Window discovery is intentionally a startup fast path. Discovery must never
-# read GUI-owned title text or load UIA/Win32 helper assemblies: a hung or
-# half-created application window must not stall Patrol before it can inspect a
-# target. Return stable process/handle identity only; precise actions below
-# resolve the chosen process/HWND and obtain exact title/DWM geometry on demand.
+# Window discovery is intentionally a startup fast path. Do not inspect GUI
+# state here. tasklist without /V returns process identity only and never asks
+# applications for window titles. Precise snapshot/click actions resolve the
+# chosen process back to its real HWND/DWM frame on demand.
 if ($Action -eq 'list-windows') {
+  $headers = @('ImageName','PID','SessionName','SessionNumber','MemUsage')
   $items = @()
-  foreach ($process in (Get-Process -ErrorAction SilentlyContinue)) {
-    try {
-      $hwnd = [int64]$process.MainWindowHandle
-      if ($hwnd -eq 0) { continue }
+  try {
+    $rows = @(& tasklist.exe /FO CSV /NH 2>$null | ConvertFrom-Csv -Header $headers)
+    foreach ($row in $rows) {
+      $pidValue = 0
+      if (-not [int]::TryParse([string]$row.PID, [ref]$pidValue)) { continue }
       $items += [ordered]@{
-        processId = [int]$process.Id
-        processName = [string]$process.ProcessName
+        processId = [int]$pidValue
+        processName = [string][IO.Path]::GetFileNameWithoutExtension([string]$row.ImageName)
         title = ''
-        hwnd = $hwnd
-        rectSource = 'process-hwnd-discovery'
+        rectSource = 'process-candidate-discovery'
       }
-    } catch {
-      # A process can exit between enumeration and property access.
     }
+  } catch {
+    # Candidate discovery is best effort. Known process/title selectors can
+    # still be used directly by precise desktop actions.
   }
   [ordered]@{ ok=$true; windows=$items } | ConvertTo-Json -Depth 8 -Compress
   exit 0
