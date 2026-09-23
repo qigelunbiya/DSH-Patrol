@@ -30,14 +30,29 @@ describe('browser interaction hardening layer', () => {
     expect(source).toContain('captureVisibleTab(tab.windowId')
   })
 
-  it('filters structured-row action maps and refuses a wrong row candidate before input', () => {
+  it('filters structured rows and gives close/remove Action Maps precise micro-control hit points', () => {
     expect(source).toContain('actionMapTargetHint')
     expect(source).toContain('structuredIdentities')
     expect(source).toContain('structuredActions')
     expect(source).toContain('candidateMatchesStructuredTarget')
     expect(source).toContain('rowContext')
+    expect(source).toContain('localCandidateContext')
+    expect(source).toContain('isMicroCloseAction')
+    expect(source).toContain("microActionKind: microCloseAction ? 'close' : ''")
+    expect(source).toContain("activationKind: microCloseAction")
+    expect(source).toContain('closeBusinessCore')
+    expect(source).toContain('preciseClose')
+    expect(source).toContain('candidate.safeX')
+    expect(source).toContain("rgba(0,255,110,0.96)")
     expect(source).toContain('interactionStructuredRowCandidateMismatch')
     expect(source).toContain('REFUSED before physical input')
+  })
+
+  it('preflights close/remove visual points before trusted input instead of blindly clicking a nearby search field', () => {
+    expect(source).toContain('visual close/remove preflight rejected this point before physical input')
+    expect(source).toContain('hasCloseEvidence')
+    expect(source).toContain('hasBusinessContext')
+    expect(source).toContain('Try the same fresh screenshot with the other visual strategy')
   })
 
   it('implements exact native select by value, label, or index with change events', () => {
