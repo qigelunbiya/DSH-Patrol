@@ -1469,7 +1469,13 @@ async function interactionVisualClick(args) {
         ? selectedCandidate.ariaLabel.trim()
         : ''
     const visualAuthority = args.visualAuthority === true
-    const expectedVisualText = typeof args.expectedVisualText === 'string' ? args.expectedVisualText.trim() : ''
+    const explicitExpectedVisualText = typeof args.expectedVisualText === 'string' ? args.expectedVisualText.trim() : ''
+    const candidateExpectedVisualText = requestedCandidateId
+      ? [selectedCandidate?.text, selectedCandidate?.ariaLabel, selectedCandidate?.title]
+          .map(value => typeof value === 'string' ? value.trim() : '')
+          .find(value => value.length >= 2) || ''
+      : ''
+    const expectedVisualText = explicitExpectedVisualText || candidateExpectedVisualText
     const pointerAction = ['left-click', 'right-click', 'hover', 'mark'].includes(String(args.pointerAction || ''))
       ? String(args.pointerAction)
       : 'left-click'
@@ -1525,6 +1531,7 @@ async function interactionVisualClick(args) {
       clicked.actionCandidateKind = selectedCandidate?.activationKind || ''
       clicked.actionCandidateHref = selectedCandidate?.href || ''
       clicked.actionCandidateSafePoint = selectedCandidate?.safePointKind || ''
+      clicked.actionCandidateExpectedText = candidateExpectedVisualText
       clicked.actionCandidateFingerprint = [
         selectedCandidate?.tag ? `tag=${selectedCandidate.tag}` : '',
         selectedCandidate?.role ? `role=${selectedCandidate.role}` : '',
@@ -3295,19 +3302,27 @@ async function interactionWaitForCapturableTab(tabId) {
     await new Promise(resolve => setTimeout(resolve, INTERACTION_SCREENSHOT_READY_POLL_MS))
     tab = await chrome.tabs.get(tabId)
   }
-  if (!interactionTabIsCapturable(tab)) {
+  // A committed HTTP(S) document can usually be captured while Chrome still
+  // reports status=loading (redirect chains, anti-bot interstitials, slow
+  // subresources). Do not turn that transient loading bit into a hard Patrol
+  // error. Geometry freshness is still checked before/after capture, so an
+  // actually moving document simply will not yield a reusable visualFrameId.
+  if (!interactionTabHasCapturableUrl(tab)) {
     const url = typeof tab?.url === 'string' ? tab.url : ''
     const status = typeof tab?.status === 'string' ? tab.status : 'unknown'
-    throw new Error(`target tab is not ready for screenshot: url=${JSON.stringify(url)} status=${status}`)
+    throw new Error(`target tab has no capturable HTTP(S) document: url=${JSON.stringify(url)} status=${status}`)
   }
   return tab
 }
 
-function interactionTabIsCapturable(tab) {
+function interactionTabHasCapturableUrl(tab) {
   if (!tab || typeof tab !== 'object') return false
   const url = typeof tab.url === 'string' ? tab.url.trim() : ''
-  if (!/^https?:\/\//i.test(url)) return false
-  return tab.status !== 'loading'
+  return /^https?:\/\//i.test(url)
+}
+
+function interactionTabIsCapturable(tab) {
+  return interactionTabHasCapturableUrl(tab) && tab.status !== 'loading'
 }
 
 async function interactionTypeFocused(args) {
