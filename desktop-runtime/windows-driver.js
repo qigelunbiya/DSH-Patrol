@@ -264,6 +264,7 @@ export class WindowsDesktopDriver {
       path: previewPath,
       markXRatio: xRatio,
       markYRatio: yRatio,
+      zoomPreview: true,
     }, exec)
     const previewId = `desktop-preview-${randomUUID()}`
     this.visualPreviews.set(previewId, {
@@ -291,7 +292,7 @@ export class WindowsDesktopDriver {
       frameBounds: frame.rect,
       coordinateGridUnits: 1000,
       physicalClickDispatched: false,
-      clickContract: 'Pass previewId to desktop_click_visual_point; the real click will reuse these exact previewed ratios and ignore coordinate drift.',
+      clickContract: 'Read the magnified previewPath and confirm the green crosshair is on the intended control. Then pass previewId to desktop_click_visual_point; the real click will reuse these exact previewed ratios and ignore coordinate drift.',
     }
   }
 
