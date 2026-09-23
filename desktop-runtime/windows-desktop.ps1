@@ -154,16 +154,25 @@ namespace PatrolDesktop {
     [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int maxCount);
     public static IntPtr FindVisibleTopLevelWindowForProcess(int processId) {
       IntPtr found = IntPtr.Zero;
+      long bestArea = -1;
       EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
-        if (!IsWindowVisible(hWnd)) return true;
-        uint pid;
-        GetWindowThreadProcessId(hWnd, out pid);
-        if (pid != unchecked((uint)processId)) return true;
-        RECT rect;
-        if (!GetWindowRect(hWnd, out rect)) return true;
-        if (rect.Right <= rect.Left || rect.Bottom <= rect.Top) return true;
-        found = hWnd;
-        return false;
+        try {
+          if (!IsWindowVisible(hWnd)) return true;
+          uint pid;
+          GetWindowThreadProcessId(hWnd, out pid);
+          if (pid != unchecked((uint)processId)) return true;
+          RECT rect;
+          if (!GetWindowRect(hWnd, out rect)) return true;
+          int width = rect.Right - rect.Left;
+          int height = rect.Bottom - rect.Top;
+          if (width <= 1 || height <= 1) return true;
+          long area = (long)width * (long)height;
+          if (area > bestArea) {
+            bestArea = area;
+            found = hWnd;
+          }
+        } catch { }
+        return true;
       }, IntPtr.Zero);
       return found;
     }
