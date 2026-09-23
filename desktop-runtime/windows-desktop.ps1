@@ -19,8 +19,31 @@ namespace PatrolDesktop {
   public static class Native {
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT { public int X; public int Y; }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MOUSEINPUT {
+      public int dx;
+      public int dy;
+      public uint mouseData;
+      public uint dwFlags;
+      public uint time;
+      public IntPtr dwExtraInfo;
+    }
+    [StructLayout(LayoutKind.Explicit)]
+    public struct INPUTUNION {
+      [FieldOffset(0)] public MOUSEINPUT mi;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct INPUT {
+      public uint type;
+      public INPUTUNION U;
+    }
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll", SetLastError=true)] public static extern bool SetCursorPos(int X, int Y);
+    [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
+    [DllImport("user32.dll", SetLastError=true)] public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
@@ -290,14 +313,45 @@ function Find-TargetElement($request) {
 }
 
 function Click-Point([int]$x, [int]$y, [int]$button = 0) {
-  [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($x, $y)
-  Start-Sleep -Milliseconds 40
-  if ($button -eq 1) {
-    [PatrolDesktop.Native]::mouse_event(0x0008, 0, 0, 0, [UIntPtr]::Zero)
-    [PatrolDesktop.Native]::mouse_event(0x0010, 0, 0, 0, [UIntPtr]::Zero)
-  } else {
-    [PatrolDesktop.Native]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-    [PatrolDesktop.Native]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+  # Visual clicks must use one coordinate system end-to-end. SetCursorPos and
+  # GetCursorPos operate in the DPI-aware physical screen space used by the
+  # DWM screenshot frame. Verify the cursor actually reached the requested
+  # point before injecting the button transition; never report a guessed click.
+  if (-not [PatrolDesktop.Native]::SetCursorPos($x, $y)) {
+    throw "SetCursorPos failed for visual click at ($x,$y)"
+  }
+  Start-Sleep -Milliseconds 45
+  $point = New-Object PatrolDesktop.Native+POINT
+  if (-not [PatrolDesktop.Native]::GetCursorPos([ref]$point)) {
+    throw "GetCursorPos failed after moving to visual click point ($x,$y)"
+  }
+  if ([Math]::Abs([int]$point.X - $x) -gt 1 -or [Math]::Abs([int]$point.Y - $y) -gt 1) {
+    throw "visual cursor calibration mismatch: requested=($x,$y) actual=($($point.X),$($point.Y))"
+  }
+
+  $downFlag = [uint32]$(if ($button -eq 1) { 0x0008 } else { 0x0002 })
+  $upFlag = [uint32]$(if ($button -eq 1) { 0x0010 } else { 0x0004 })
+  $inputs = New-Object 'PatrolDesktop.Native+INPUT[]' 2
+  $inputs[0].type = 0
+  $inputs[0].U.mi.dwFlags = $downFlag
+  $inputs[1].type = 0
+  $inputs[1].U.mi.dwFlags = $upFlag
+  $sent = [PatrolDesktop.Native]::SendInput([uint32]2, $inputs, [Runtime.InteropServices.Marshal]::SizeOf([type]'PatrolDesktop.Native+INPUT'))
+  if ($sent -ne 2) {
+    throw "SendInput dispatched $sent/2 mouse events for visual click at ($x,$y)"
+  }
+  Start-Sleep -Milliseconds 35
+
+  $after = New-Object PatrolDesktop.Native+POINT
+  if (-not [PatrolDesktop.Native]::GetCursorPos([ref]$after)) {
+    throw "GetCursorPos failed after visual click at ($x,$y)"
+  }
+  return [ordered]@{
+    requestedX = $x
+    requestedY = $y
+    actualX = [int]$after.X
+    actualY = [int]$after.Y
+    transport = 'send-input-verified-cursor'
   }
 }
 
@@ -733,8 +787,8 @@ try {
       $x = [int][Math]::Round($frameX + (($frameWidth - 1) * $xRatio))
       $y = [int][Math]::Round($frameY + (($frameHeight - 1) * $yRatio))
       $buttonName = [string](Get-Prop $request 'button' 'left')
-      Click-Point $x $y ($(if ($buttonName -ieq 'right') { 1 } else { 0 }))
-      [ordered]@{ ok=$true; method='bound-window-visual-point'; x=$x; y=$y; xRatio=$xRatio; yRatio=$yRatio; button=$buttonName; frameHwnd=$frameHwnd; frameRect=[ordered]@{x=$frameX;y=$frameY;width=$frameWidth;height=$frameHeight}; window=$record }
+      $input = Click-Point $x $y ($(if ($buttonName -ieq 'right') { 1 } else { 0 }))
+      [ordered]@{ ok=$true; method='bound-window-visual-point'; inputTransport=[string]$input.transport; x=$x; y=$y; actualCursorX=[int]$input.actualX; actualCursorY=[int]$input.actualY; xRatio=$xRatio; yRatio=$yRatio; button=$buttonName; frameHwnd=$frameHwnd; frameRect=[ordered]@{x=$frameX;y=$frameY;width=$frameWidth;height=$frameHeight}; window=$record }
     }
     'drag' {
       $fromX=[int](Get-Prop $request 'fromX' 0); $fromY=[int](Get-Prop $request 'fromY' 0)
