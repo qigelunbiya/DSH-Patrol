@@ -105,7 +105,7 @@ describe('Desktop Automation runtime foundation', () => {
     expect(backend).toContain('markXRatio')
     expect(backend).toContain("if ($Action -eq 'list-windows')")
     expect(backend.indexOf("if ($Action -eq 'list-windows')")).toBeLessThan(backend.indexOf('Add-Type -AssemblyName UIAutomationClient'))
-    expect(backend).toContain("rectSource = 'fast-discovery-no-geometry'")
+    expect(backend).toContain("rectSource = 'enum-windows-fast-discovery'")
     expect(backend).toContain('GetVisibleTopLevelWindowRecords')
     expect(backend).toContain('EnumWindows')
     expect(backend).toContain('QueryFullProcessImageNameW')
@@ -117,7 +117,10 @@ describe('Desktop Automation runtime foundation', () => {
     expect(backend).toContain("rectSource = 'bounded-enum-windows'")
     expect(backend).toContain('[System.Windows.Forms.Cursor]::Position')
     expect(backend).toContain('visual cursor calibration mismatch')
-    expect(backend).toContain("transport = 'verified-cursor-mouse-event'")
+    expect(backend).toContain('SendInput')
+    expect(backend).toContain('SetCursorPos')
+    expect(backend).toContain('GetCursorPos')
+    expect(backend).toContain("transport = 'send-input-verified-cursor'")
   })
 
   it('binds model-vision clicks to the exact full-window screenshot frame and consumes that frame', async () => {
