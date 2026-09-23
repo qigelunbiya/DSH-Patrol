@@ -112,7 +112,9 @@ export function registerPatrolClickTargetTool(
       const beforeState = expectation.expectation === undefined && locator !== undefined
         ? await capturePageState(runner, exec, args.tabId)
         : undefined
-      const tabBaseline = await captureBrowserTabBaseline(runner, exec)
+      const tabBaseline = navigationLikeSemanticAction(args.stepName, locator?.text, locator?.tag)
+        ? await captureBrowserTabBaseline(runner, exec)
+        : undefined
 
       let resolvedSelector = selector
       let clickedText = ''
@@ -488,6 +490,12 @@ async function verifyAutomaticStateChange(
     if (evidence !== undefined) return { ok: true, attempts: index + 1, evidence }
   }
   return { ok: false, attempts: AUTO_VERIFY_DELAYS_MS.length }
+}
+
+function navigationLikeSemanticAction(stepName: string | undefined, locatorText: string | undefined, locatorTag: string | undefined): boolean {
+  if (String(locatorTag ?? '').toLocaleLowerCase() === 'a') return true
+  const text = [stepName, locatorText].filter(Boolean).join(' ')
+  return /(?:打开|进入|访问|跳转|查看.*详情|详情页|百科|搜索结果|链接|视频|文章|帖子|卡片|open|enter|visit|navigate|detail|link|video|article)/i.test(text)
 }
 
 function inPageControlHint(targetHint: string | undefined): boolean {
