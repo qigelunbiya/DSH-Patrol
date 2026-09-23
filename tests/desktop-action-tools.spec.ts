@@ -13,7 +13,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
-async function setup() {
+async function setup(dispatchOverride?: (tool: string, args: Record<string, unknown>) => Promise<any> | any) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-desktop-actions-'))
   roots.push(root)
   const store = new PatrolStore(root)
@@ -52,6 +52,7 @@ async function setup() {
   const runner = {
     async dispatch(tool: string, args: Record<string, unknown>) {
       dispatched.push({ tool, args })
+      if (dispatchOverride) return await dispatchOverride(tool, args)
       return { ok: true, text: 'target ready', value: { ok: true, method: 'uia', matchCount: 1 } }
     },
   } as any
@@ -121,6 +122,63 @@ describe('recordable desktop actions', () => {
     expect(args).not.toHaveProperty('y')
     expect(args).not.toHaveProperty('hwnd')
     expect(args).not.toHaveProperty('processId')
+  })
+
+  it('records focused visual teaching as stable full-window ratios instead of ephemeral region/image coordinates', async () => {
+    const { store, action, exec, dispatched } = await setup(async (tool, args) => {
+      expect(tool).toBe('desktop_click_visual_point')
+      expect(args).toMatchObject({
+        processName: 'WeChat',
+        frameId: 'visual-current',
+        regionId: 'desktop-region-current',
+        imageX: 384,
+        imageY: 576,
+        imageWidth: 768,
+        imageHeight: 768,
+      })
+      return {
+        ok: true,
+        text: 'focused icon clicked',
+        value: {
+          ok: true,
+          xRatio: 0.045,
+          yRatio: 0.94,
+          coordinateMapping: 'focused-region-image-pixel-to-full-window-ratio',
+        },
+      }
+    })
+
+    const output = await action.execute({
+      inspectionId: 'wechat-semantic-wait',
+      stepName: '点击左下角设置齿轮',
+      action: 'click-visual-point',
+      processName: 'WeChat',
+      frameId: 'visual-current',
+      regionId: 'desktop-region-current',
+      imageX: 384,
+      imageY: 576,
+      imageWidth: 768,
+      imageHeight: 768,
+    }, exec)
+
+    expect(output).toContain('Executed and recorded step-001 (desktop_click_visual_point)')
+    expect(dispatched).toHaveLength(1)
+    const saved = await store.load('wechat-semantic-wait')
+    expect(saved.steps[0]).toMatchObject({
+      tool: 'desktop_click_visual_point',
+      arguments: {
+        processName: 'WeChat',
+        xRatio: 0.045,
+        yRatio: 0.94,
+      },
+    })
+    const args = saved.steps[0]?.kind === 'tool' ? saved.steps[0].arguments : {}
+    expect(args).not.toHaveProperty('frameId')
+    expect(args).not.toHaveProperty('regionId')
+    expect(args).not.toHaveProperty('imageX')
+    expect(args).not.toHaveProperty('imageY')
+    expect(args).not.toHaveProperty('imageWidth')
+    expect(args).not.toHaveProperty('imageHeight')
   })
 
   it('records a generic friendly-name application launch without guessing an executable path', async () => {
