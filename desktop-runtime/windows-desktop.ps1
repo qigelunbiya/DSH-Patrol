@@ -830,6 +830,12 @@ function Write-VisualPointZoomImage([string]$sourcePath, [string]$outputPath, [d
         widthRatio=[double]($cropWidth / [double]$sourceWidth)
         heightRatio=[double]($cropHeight / [double]$sourceHeight)
       }
+      previewContent=[ordered]@{
+        xRatio=[double]($drawX / [double]$outputWidth)
+        yRatio=[double]($drawY / [double]$outputHeight)
+        widthRatio=[double]($drawWidth / [double]$outputWidth)
+        heightRatio=[double]($drawHeight / [double]$outputHeight)
+      }
     }
   } finally {
     if ($backgroundBrush) { $backgroundBrush.Dispose() }
