@@ -31,11 +31,11 @@ child.stderr.on('data', chunk => { stderr += String(chunk) })
 const driver = new WindowsDesktopDriver({ commandTimeoutMs: 20000, powerShell: powershell })
 
 try {
-  const window = await waitForWindow(driver, TITLE, 15000)
-  console.log(`fixture window: ${window.processName} / ${window.title}`)
+  const window = await waitForWindow(driver, child.pid, 15000)
+  console.log(`fixture window: ${window.processName} / pid=${window.processId}`)
 
   const snapshot = await driver.run('snapshot', {
-    title: TITLE,
+    processId: child.pid,
     maxElements: 200,
   })
   const input = snapshot.elements.find(element =>
@@ -219,15 +219,15 @@ try {
   if (stderr.trim()) console.error(stderr.trim())
 }
 
-async function waitForWindow(driver, title, timeoutMs) {
+async function waitForWindow(driver, processId, timeoutMs) {
   const started = Date.now()
   let last = []
   while (Date.now() - started < timeoutMs) {
     const result = await driver.run('list-windows', {})
     last = Array.isArray(result.windows) ? result.windows : []
-    const match = last.find(window => window.title === title)
+    const match = last.find(window => window.processId === processId && Number(window.hwnd) !== 0)
     if (match) return match
     await new Promise(resolve => setTimeout(resolve, 250))
   }
-  throw new Error(`fixture window did not appear; windows=${JSON.stringify(last.slice(0, 12))}`)
+  throw new Error(`fixture window did not appear for pid=${processId}; windows=${JSON.stringify(last.slice(0, 12))}`)
 }
