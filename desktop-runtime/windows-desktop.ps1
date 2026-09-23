@@ -1212,7 +1212,7 @@ try {
         }
       } else {
         $input = Click-Point $x $y ($(if ($buttonName -ieq 'right') { 1 } else { 0 }))
-        $input.physicalCursorVerified = $true
+        $input['physicalCursorVerified'] = $true
       }
       [ordered]@{ ok=$true; method='bound-window-visual-point'; inputTransport=[string]$input.transport; foregroundVerified=$true; foregroundHwnd=[int64]$foregroundBeforeClick; physicalCursorVerified=[bool]$input.physicalCursorVerified; x=$x; y=$y; actualCursorX=$input.actualX; actualCursorY=$input.actualY; xRatio=$xRatio; yRatio=$yRatio; button=$buttonName; frameHwnd=$frameHwnd; frameRect=[ordered]@{x=$frameX;y=$frameY;width=$frameWidth;height=$frameHeight}; preClickPointProbe=$preClickPointProbe; exactPointAction=$exactPointAction; window=$record }
     }
