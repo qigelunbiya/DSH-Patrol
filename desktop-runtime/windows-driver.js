@@ -275,6 +275,8 @@ export class WindowsDesktopDriver {
       xRatio,
       yRatio,
       previewPath: String(preview?.path || previewPath),
+      crop: preview?.crop,
+      previewContent: preview?.previewContent,
     })
     while (this.visualPreviews.size > 24) {
       const oldest = this.visualPreviews.keys().next().value
@@ -294,6 +296,60 @@ export class WindowsDesktopDriver {
       coordinateGridUnits: 1000,
       physicalClickDispatched: false,
       clickContract: 'Read the magnified previewPath and confirm the green crosshair is on the intended control. Then pass previewId to desktop_click_visual_point; the real click will reuse these exact previewed ratios and ignore coordinate drift.',
+    }
+  }
+
+  async refineVisualPoint(args = {}, exec) {
+    const previewId = String(args.previewId ?? '').trim()
+    if (!previewId) throw new Error('desktop_refine_visual_point requires previewId from desktop_preview_visual_point')
+    const preview = this.visualPreviews.get(previewId)
+    if (!preview) throw new Error(`desktop visual preview ${JSON.stringify(previewId)} is unavailable; create a new desktop_preview_visual_point`)
+    if (Date.now() - preview.createdAt > 120000) {
+      this.visualPreviews.delete(previewId)
+      throw new Error('desktop visual preview is stale; preview the CURRENT screenshot again')
+    }
+    const crop = preview.crop
+    const content = preview.previewContent
+    if (!crop || !content) {
+      throw new Error('desktop visual preview does not contain zoom mapping metadata; create a new preview with the current runtime')
+    }
+
+    const previewXRatio = ratioValue(args.previewXRatio, NaN, 'previewXRatio')
+    const previewYRatio = ratioValue(args.previewYRatio, NaN, 'previewYRatio')
+    const contentX = ratioValue(content.xRatio, NaN, 'previewContent.xRatio')
+    const contentY = ratioValue(content.yRatio, NaN, 'previewContent.yRatio')
+    const contentW = ratioValue(content.widthRatio, NaN, 'previewContent.widthRatio')
+    const contentH = ratioValue(content.heightRatio, NaN, 'previewContent.heightRatio')
+    if (contentW <= 0 || contentH <= 0) throw new Error('desktop preview content mapping is invalid')
+
+    const localX = (previewXRatio - contentX) / contentW
+    const localY = (previewYRatio - contentY) / contentH
+    if (localX < 0 || localX > 1 || localY < 0 || localY > 1) {
+      throw new Error('refined point is outside the actual zoomed desktop pixels; choose a point inside the preview image content, not the header or margins')
+    }
+
+    const cropX = ratioValue(crop.xRatio, NaN, 'crop.xRatio')
+    const cropY = ratioValue(crop.yRatio, NaN, 'crop.yRatio')
+    const cropW = ratioValue(crop.widthRatio, NaN, 'crop.widthRatio')
+    const cropH = ratioValue(crop.heightRatio, NaN, 'crop.heightRatio')
+    const xRatio = cropX + localX * cropW
+    const yRatio = cropY + localY * cropH
+    const refined = await this.previewVisualPoint({
+      frameId: preview.frameId,
+      xRatio,
+      yRatio,
+      ...(args.processName === undefined ? {} : { processName: args.processName }),
+      ...(args.title === undefined ? {} : { title: args.title }),
+      ...(args.titleContains === undefined ? {} : { titleContains: args.titleContains }),
+    }, exec)
+    return {
+      ...refined,
+      refinedFromPreviewId: previewId,
+      previewXRatio,
+      previewYRatio,
+      sourceLocalXRatio: localX,
+      sourceLocalYRatio: localY,
+      clickContract: 'Read the new magnified previewPath. If the green crosshair is now inside the intended control, pass the NEW previewId to desktop_click_visual_point. You may refine again if needed; never manually convert crop pixels back to desktop coordinates.',
     }
   }
 
