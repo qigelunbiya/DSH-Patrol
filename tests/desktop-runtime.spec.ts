@@ -71,13 +71,15 @@ describe('Desktop Automation runtime foundation', () => {
     expect(PATROL_DESKTOP_PROMPT).toMatch(/desktop_screenshot.*read_image/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/Windows OCR 只负责文字提取\/几何精修/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/desktop_click_visual_point/)
-    expect(PATROL_DESKTOP_PROMPT).toMatch(/完整应用窗口/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/<=768x768/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/imageX\/imageWidth/)
-    expect(PATROL_DESKTOP_PROMPT).toMatch(/preview.*可选诊断/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/desktop_focus_visual_region/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/CUDA\/OOM/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/禁止把聊天 UI、屏幕分辨率、缩略图尺寸或任何裁剪图坐标混入应用点击/)
 
     const tools = readFileSync(join(process.cwd(), 'desktop-runtime', 'tools-plugin.js'), 'utf8')
     expect(tools).toContain("name: 'desktop_preview_visual_point'")
+    expect(tools).toContain("name: 'desktop_focus_visual_region'")
     expect(tools).toContain("name: 'desktop_click_visual_point'")
     expect(tools).toContain('xRatio: num')
     expect(tools).toContain('yRatio: num')
@@ -96,6 +98,9 @@ describe('Desktop Automation runtime foundation', () => {
     expect(backend).toContain("'annotate-visual-guide' {")
     expect(backend).toContain('coordinateGridUnits=1000')
     expect(backend).toContain('markXRatio')
+    expect(backend).toContain('function Write-ModelVisionImage')
+    expect(backend).toContain("'prepare-model-vision' {")
+    expect(backend).toContain("MimeType -eq 'image/jpeg'")
   })
 
   it('binds model-vision clicks to the exact full-window screenshot frame and consumes that frame', async () => {
@@ -120,12 +125,44 @@ describe('Desktop Automation runtime foundation', () => {
         },
       }
     }
+    const prepareCalls: any[] = []
+    driver.run = async (action: string, args: any) => {
+      prepareCalls.push({ action, args })
+      if (action !== 'prepare-model-vision') throw new Error(`unexpected action ${action}`)
+      return {
+        ok: true,
+        path: 'blue-letter-model.jpg',
+        width: 768,
+        height: 538,
+        sourceWidth: 1000,
+        sourceHeight: 700,
+        crop: { xRatio: 0, yRatio: 0, widthRatio: 1, heightRatio: 1 },
+      }
+    }
 
     const shot = await driver.visualScreenshot({ processName: 'LxMainNew', captureMethod: 'print-window' })
+    expect(shot).toMatchObject({
+      path: 'blue-letter-model.jpg',
+      rawPath: 'blue-letter.png',
+      width: 768,
+      height: 538,
+      rawWidth: 1000,
+      rawHeight: 700,
+      modelVisionBounded: true,
+    })
+    expect(prepareCalls).toHaveLength(1)
+    expect(prepareCalls[0]).toMatchObject({
+      action: 'prepare-model-vision',
+      args: { sourcePath: 'blue-letter.png', maxWidth: 768, maxHeight: 768, jpegQuality: 65, upscale: false },
+    })
     expect(shot.frameId).toMatch(/^visual-/)
     expect(shot.visualFrame).toMatchObject({
       hwnd: 4242,
       rect: { x: 100, y: 60, width: 1000, height: 700 },
+      imageWidth: 768,
+      imageHeight: 538,
+      rawImageWidth: 1000,
+      rawImageHeight: 700,
       coordinateSpace: 'physical-screen-top-level-window',
     })
 
@@ -142,7 +179,8 @@ describe('Desktop Automation runtime foundation', () => {
     })
     expect(clicked).toMatchObject({
       frameId: shot.frameId,
-      screenshotPath: 'blue-letter.png',
+      screenshotPath: 'blue-letter-model.jpg',
+      rawScreenshotPath: 'blue-letter.png',
       frameBounds: { x: 100, y: 60, width: 1000, height: 700 },
     })
     expect(calls).toHaveLength(1)
@@ -212,6 +250,87 @@ describe('Desktop Automation runtime foundation', () => {
         frameY: 60,
         frameWidth: 1600,
         frameHeight: 900,
+      },
+    })
+  })
+
+  it('maps a focused icon crop back to the original full-window frame exactly', async () => {
+    const driver = new WindowsDesktopDriver()
+    const frame = {
+      frameId: 'visual-focus-test',
+      createdAt: Date.now(),
+      path: 'bounded.jpg',
+      rawPath: 'raw.png',
+      hwnd: 4242,
+      processName: 'LxMainNew',
+      title: 'BlueLetter',
+      rect: { x: 100, y: 60, width: 1600, height: 1000 },
+      imageWidth: 768,
+      imageHeight: 480,
+      rawImageWidth: 1600,
+      rawImageHeight: 1000,
+    }
+    driver.visualFrames.set(frame.frameId, frame)
+    driver.lastVisualFrameId = frame.frameId
+    const calls: any[] = []
+    driver.run = async (action: string, args: any) => {
+      calls.push({ action, args })
+      if (action === 'prepare-model-vision') {
+        return {
+          ok: true,
+          path: 'gear-focus.jpg',
+          width: 700,
+          height: 700,
+          crop: { xRatio: 0, yRatio: 0.76, widthRatio: 0.18, heightRatio: 0.24 },
+        }
+      }
+      if (action === 'click-visual-point') {
+        return { ok: true, method: 'bound-window-visual-point', x: 144, y: 970 }
+      }
+      throw new Error(`unexpected action ${action}`)
+    }
+
+    const region = await driver.focusVisualRegion({
+      processName: 'LxMainNew',
+      frameId: frame.frameId,
+      centerXRatio: 0.04,
+      centerYRatio: 0.90,
+      widthRatio: 0.18,
+      heightRatio: 0.24,
+    })
+    expect(region).toMatchObject({
+      frameId: frame.frameId,
+      path: 'gear-focus.jpg',
+      width: 700,
+      height: 700,
+      crop: { xRatio: 0, yRatio: 0.76, widthRatio: 0.18, heightRatio: 0.24 },
+      coordinateMapping: 'focused-region-image-pixel-to-full-window-ratio',
+    })
+
+    const clicked = await driver.clickVisualPoint({
+      processName: 'LxMainNew',
+      frameId: frame.frameId,
+      regionId: region.regionId,
+      imageX: 175,
+      imageY: 525,
+      imageWidth: 700,
+      imageHeight: 700,
+    })
+    expect(clicked).toMatchObject({
+      xRatio: 0.045,
+      yRatio: 0.94,
+      coordinateMapping: 'focused-region-image-pixel-to-full-window-ratio',
+      regionId: region.regionId,
+    })
+    expect(calls.at(-1)).toMatchObject({
+      action: 'click-visual-point',
+      args: {
+        xRatio: 0.045,
+        yRatio: 0.94,
+        frameX: 100,
+        frameY: 60,
+        frameWidth: 1600,
+        frameHeight: 1000,
       },
     })
   })
@@ -553,6 +672,7 @@ describe('Desktop Automation runtime foundation', () => {
       'desktop_click_target',
       'desktop_click_ocr_text',
       'desktop_preview_visual_point',
+      'desktop_focus_visual_region',
       'desktop_click_visual_point',
       'desktop_click_coordinates',
       'desktop_wait_for_target',
