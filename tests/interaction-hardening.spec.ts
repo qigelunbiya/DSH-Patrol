@@ -64,7 +64,7 @@ describe('browser interaction hardening layer', () => {
     expect(source).toContain("requestedCandidateId && typeof selectedCandidate?.ariaLabel === 'string'")
     expect(source).toContain("requestedCandidateId && typeof selectedCandidate?.title === 'string'")
     expect(source).toContain('actionCandidateFingerprint')
-    expect(source).toContain('selectedCandidate?.localContext')
+    expect(source).toContain('candidate.localContext')
   })
 
   it('preflights close/remove visual points before trusted input instead of blindly clicking a nearby search field', () => {
