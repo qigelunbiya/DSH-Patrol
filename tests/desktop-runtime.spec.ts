@@ -105,6 +105,8 @@ describe('Desktop Automation runtime foundation', () => {
     expect(backend).toContain('markXRatio')
     expect(backend).toContain('GetVisibleTopLevelWindows')
     expect(backend).toContain('EnumWindows')
+    expect(backend).toContain('QueryFullProcessImageNameW')
+    expect(backend).toContain('GetProcessName')
     expect(backend).toContain("rectSource = 'enum-windows-get-window-rect'")
     expect(backend).toContain('[System.Windows.Forms.Cursor]::Position')
     expect(backend).toContain('visual cursor calibration mismatch')
