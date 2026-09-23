@@ -137,7 +137,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_preview_visual_point',
-      description: 'Preview a proposed xRatio/yRatio on the latest CURRENT desktop_screenshot without clicking. Returns previewId plus a magnified local crop centered around the proposed point, with a bright green crosshair at the EXACT full-frame physical point. For small icons, dense menus, adjacent rows, send/close buttons, or any target where a one-row offset would be harmful, read_image(previewPath) and verify the crosshair is inside the intended control, not merely near it. Then call desktop_click_visual_point(previewId=...). Do not restate or recompute ratios: previewId binds the real click to the exact previewed point.',
+      description: 'Preview a proposed xRatio/yRatio on the latest CURRENT desktop_screenshot without clicking. Returns previewId plus a magnified local crop centered around the proposed point, with a bright green crosshair at the EXACT full-frame physical point. It also returns pointProbe: the Windows UI Automation element currently under that exact screen coordinate when available. For small icons, dense menus, adjacent rows, send/close buttons, or any target where a one-row offset would be harmful, read_image(previewPath) and verify the crosshair is inside the intended control; when pointProbe.status=recognized, reject/refine a clear name/controlType/rect conflict before clicking. Then call desktop_click_visual_point(previewId=...). Do not restate or recompute ratios: previewId binds the real click to the exact previewed point.',
       parameters: {
         xRatio: reqNum,
         yRatio: reqNum,
@@ -165,7 +165,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_click_visual_point',
-      description: 'Click a point identified from the latest CURRENT desktop_screenshot visual frame. For precise targets, pass previewId returned by desktop_preview_visual_point: Patrol reuses the exact previewed ratios, moves the physical cursor to the requested screen point, reads the OS cursor position back to verify the same physical coordinate, then emits the native mouse button transition. Without previewId, xRatio/yRatio are required. The click remains bound to the same HWND and physical screen rectangle; moved/resized/recreated windows are rejected.',
+      description: 'Click a point identified from the latest CURRENT desktop_screenshot visual frame. For precise targets, pass previewId returned by desktop_preview_visual_point: Patrol reuses the exact previewed ratios, re-activates and verifies the bound HWND, probes the UIA element under the final screen point, moves the physical cursor there, reads the OS cursor position back to verify the same physical coordinate, then emits SendInput. Without previewId, xRatio/yRatio are required. The click remains bound to the same HWND and physical screen rectangle; moved/resized/recreated windows are rejected.',
       parameters: {
         xRatio: num,
         yRatio: num,
