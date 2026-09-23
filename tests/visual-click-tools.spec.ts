@@ -731,7 +731,7 @@ describe('browser visual fallback click teaching', () => {
     expect(visualToolSource).not.toContain('Free XY guessing is disabled for this target')
     expect(visualToolSource).not.toContain('Do not guess another free XY point')
     expect(visualToolSource).toContain('If this Action Map candidate is wrong')
-    expect(visualToolSource).toContain('try a precise free XY point')
+    expect(visualToolSource).toContain('switch to a precise free XY point')
     expect(visualToolSource).toContain('If this free XY point is wrong')
     expect(visualToolSource).toContain('capture a fresh targeted Action Map')
   })
