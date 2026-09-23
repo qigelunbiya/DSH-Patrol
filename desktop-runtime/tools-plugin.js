@@ -37,7 +37,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_list_windows',
-      description: 'List visible top-level Windows desktop applications/windows. Use this before activating an unfamiliar application.',
+      description: 'List lightweight Windows process candidates for desktop automation without querying GUI-owned window text. processName/processId are reliable discovery fields; title may be blank. Use a precise desktop action/snapshot with processName/processId/titleContains to resolve the real HWND and DWM geometry.',
       parameters: {},
       output: jsonOutput('Visible desktop windows'),
       execute: async (_args, exec) => await driver.run('list-windows', {}, exec),
