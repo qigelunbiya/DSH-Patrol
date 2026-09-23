@@ -23,10 +23,14 @@ export async function captureBrowserTabBaseline(
   runner: PatrolRunner,
   exec: ToolRunContext,
 ): Promise<BrowserTabBaseline | undefined> {
-  const listed = await runner.dispatch('browser_list_tabs', {}, exec)
-  if (!listed.ok) return undefined
-  const tabs = browserTabs(listed.value)
-  return { ids: new Set(tabs.map(tab => tab.id)) }
+  try {
+    const listed = await runner.dispatch('browser_list_tabs', {}, exec)
+    if (!listed.ok) return undefined
+    const tabs = browserTabs(listed.value)
+    return { ids: new Set(tabs.map(tab => tab.id)) }
+  } catch {
+    return undefined
+  }
 }
 
 export async function reconcileFreshBrowserTabs(
@@ -40,7 +44,12 @@ export async function reconcileFreshBrowserTabs(
   let freshTabs: PatrolBrowserTab[] = []
   for (const delayMs of [0, 120, 320, 700]) {
     if (delayMs > 0) await sleep(delayMs)
-    const listed = await runner.dispatch('browser_list_tabs', {}, exec)
+    let listed
+    try {
+      listed = await runner.dispatch('browser_list_tabs', {}, exec)
+    } catch {
+      return undefined
+    }
     if (!listed.ok) return undefined
     freshTabs = browserTabs(listed.value).filter(tab => !baseline.ids.has(tab.id))
     if (freshTabs.length > 0 && freshTabs.every(tab => Boolean(tab.title || tab.url))) break
@@ -52,7 +61,11 @@ export async function reconcileFreshBrowserTabs(
 
   if (freshTabs.length === 1) {
     const selected = freshTabs[0]!
-    await runner.dispatch('browser_activate_tab', { tabId: selected.id }, exec)
+    try {
+      await runner.dispatch('browser_activate_tab', { tabId: selected.id }, exec)
+    } catch {
+      return undefined
+    }
     return { selected, freshTabs, closedTabIds: [], ambiguous: false }
   }
 
@@ -66,13 +79,22 @@ export async function reconcileFreshBrowserTabs(
     return { freshTabs, closedTabIds: [], ambiguous: true }
   }
 
-  await runner.dispatch('browser_activate_tab', { tabId: best.tab.id }, exec)
+  try {
+    await runner.dispatch('browser_activate_tab', { tabId: best.tab.id }, exec)
+  } catch {
+    return undefined
+  }
 
   const closedTabIds: number[] = []
   for (const sibling of freshTabs) {
     if (sibling.id === best.tab.id) continue
-    const closed = await runner.dispatch('browser_close_tab', { tabId: sibling.id }, exec)
-    if (closed.ok) closedTabIds.push(sibling.id)
+    try {
+      const closed = await runner.dispatch('browser_close_tab', { tabId: sibling.id }, exec)
+      if (closed.ok) closedTabIds.push(sibling.id)
+    } catch {
+      // Cleanup is best-effort. Keep the selected target active even when an
+      // older extension/runtime cannot close the wrong fresh sibling.
+    }
   }
 
   return {
