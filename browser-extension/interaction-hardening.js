@@ -2974,7 +2974,10 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
   if (!(initialTarget instanceof Element) || !visible(initialTarget) || disabled(initialTarget)) throw new Error('visual click target is not actionable')
   const wantsCloseTarget = /(?:关闭|移除|删除|清除|取消|close|remove|delete|clear|dismiss|[×✕✖]|(?:^|[\s:_-])x(?:$|[\s:_-]))/i.test(String(targetHint || ''))
   if (visualAuthority && wantsCloseTarget) {
-    const closeEvidence = normalizeHint(targetEvidence(initialTarget))
+    const closeEvidence = normalizeHint([
+      targetEvidence(hit),
+      targetEvidence(initialTarget),
+    ].filter(Boolean).join(' | '))
     const closeBusinessCore = normalizeHint(String(targetHint || ''))
       .replace(/点击|帮我|请|关闭|移除|删除|清除|取消|筛选|搜索|标签|配置项|右侧|左侧|旁边|里面|其中|图标|按钮|控件|的|close|remove|delete|clear|dismiss|times|cross|cancel|x/g, '')
     const hasCloseEvidence = /close|remove|delete|clear|dismiss|times|cross|cancel|facetremove|faclose|fatimes|关闭|移除|删除|清除|取消|×|✕|✖/.test(closeEvidence)
