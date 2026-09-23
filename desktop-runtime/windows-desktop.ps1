@@ -41,10 +41,7 @@ Add-Type -AssemblyName System.Windows.Forms
 if (-not ('PatrolDesktop.Native' -as [type])) {
   Add-Type @"
 using System;
-using System.Collections.Generic;
 using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading.Tasks;
 namespace PatrolDesktop {
   public static class Native {
     [StructLayout(LayoutKind.Sequential)]
@@ -53,100 +50,6 @@ namespace PatrolDesktop {
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
-    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
-    [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern IntPtr SendMessageTimeoutW(IntPtr hWnd, uint msg, IntPtr wParam, StringBuilder lParam, uint flags, uint timeoutMs, out IntPtr result);
-    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-    [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
-    public sealed class WindowRecordDto {
-      public int ProcessId;
-      public string ProcessName;
-      public string Title;
-      public long Hwnd;
-      public int X;
-      public int Y;
-      public int Width;
-      public int Height;
-    }
-    public static WindowRecordDto[] GetVisibleTopLevelWindowRecords(int timeoutMs) {
-      var gate = new object();
-      var records = new List<WindowRecordDto>();
-      Action enumerate = delegate() {
-        EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
-          try {
-            if (!IsWindowVisible(hWnd)) return true;
-            string title = GetWindowTitle(hWnd);
-            if (String.IsNullOrWhiteSpace(title)) return true;
-            uint processId = GetWindowProcessId(hWnd);
-            if (processId == 0) return true;
-            RECT rect;
-            if (!GetWindowRect(hWnd, out rect)) return true;
-            int width = rect.Right - rect.Left;
-            int height = rect.Bottom - rect.Top;
-            if (width <= 0 || height <= 0) return true;
-            var record = new WindowRecordDto {
-              ProcessId = unchecked((int)processId),
-              ProcessName = GetProcessName(processId),
-              Title = title,
-              Hwnd = hWnd.ToInt64(),
-              X = rect.Left,
-              Y = rect.Top,
-              Width = width,
-              Height = height
-            };
-            lock (gate) records.Add(record);
-          } catch {
-            // Windows disappear during enumeration; one bad HWND must never
-            // abort discovery of the remaining visible top-level windows.
-          }
-          return true;
-        }, IntPtr.Zero);
-      };
-      var task = Task.Factory.StartNew(enumerate);
-      try { task.Wait(Math.Max(100, timeoutMs)); } catch { }
-      lock (gate) return records.ToArray();
-    }
-    public static string GetWindowTitle(IntPtr hWnd) {
-      // WM_GETTEXT is individually bounded as well as covered by the outer
-      // enumeration deadline. A newly-created/hung GUI thread can therefore
-      // neither stall this HWND nor the complete Patrol discovery call.
-      const uint WM_GETTEXT = 0x000D;
-      const uint SMTO_ABORTIFHUNG = 0x0002;
-      var builder = new StringBuilder(2048);
-      IntPtr result;
-      IntPtr sent = SendMessageTimeoutW(
-        hWnd,
-        WM_GETTEXT,
-        (IntPtr)builder.Capacity,
-        builder,
-        SMTO_ABORTIFHUNG,
-        80,
-        out result
-      );
-      return sent != IntPtr.Zero && result.ToInt64() > 0 ? builder.ToString() : String.Empty;
-    }
-    public static uint GetWindowProcessId(IntPtr hWnd) {
-      uint processId;
-      GetWindowThreadProcessId(hWnd, out processId);
-      return processId;
-    }
-    [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr OpenProcess(uint access, bool inheritHandle, uint processId);
-    [DllImport("kernel32.dll", SetLastError=true)] static extern bool CloseHandle(IntPtr handle);
-    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool QueryFullProcessImageNameW(IntPtr process, uint flags, StringBuilder path, ref uint size);
-    public static string GetProcessName(uint processId) {
-      const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
-      IntPtr process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, processId);
-      if (process == IntPtr.Zero) return String.Empty;
-      try {
-        uint size = 32768;
-        var path = new StringBuilder((int)size);
-        if (!QueryFullProcessImageNameW(process, 0, path, ref size)) return String.Empty;
-        try { return System.IO.Path.GetFileNameWithoutExtension(path.ToString()); }
-        catch { return String.Empty; }
-      } finally {
-        CloseHandle(process);
-      }
-    }
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
     [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hWnd, int dwAttribute, out RECT rect, int cbAttribute);
@@ -226,25 +129,10 @@ function Window-Record($process) {
 }
 
 function Get-Windows {
-  # Discovery is a bounded snapshot, not a precision geometry operation. The
-  # native enumerator has a 1.2s hard deadline and returns whatever visible
-  # top-level windows were safely collected by then. This prevents a hung/new
-  # WPF/Electron/Qt HWND from blocking the whole Patrol process.
   $items = @()
-  foreach ($record in [PatrolDesktop.Native]::GetVisibleTopLevelWindowRecords(1200)) {
-    $items += [ordered]@{
-      processId = [int]$record.ProcessId
-      processName = [string]$record.ProcessName
-      title = [string]$record.Title
-      hwnd = [int64]$record.Hwnd
-      rect = [ordered]@{
-        x = [int]$record.X
-        y = [int]$record.Y
-        width = [int]$record.Width
-        height = [int]$record.Height
-      }
-      rectSource = 'bounded-enum-windows'
-    }
+  foreach ($process in (Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and -not [string]::IsNullOrWhiteSpace($_.MainWindowTitle) })) {
+    $record = Window-Record $process
+    if ($null -ne $record) { $items += $record }
   }
   return $items
 }
