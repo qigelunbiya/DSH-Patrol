@@ -130,6 +130,13 @@ namespace PatrolDesktop {
   public static class Native {
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+    public sealed class WindowRecordDto {
+      public int ProcessId;
+      public long Hwnd;
+      public string Title;
+      public int Width;
+      public int Height;
+    }
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
@@ -164,6 +171,38 @@ namespace PatrolDesktop {
       var text = new StringBuilder(2048);
       int count = GetWindowTextW(hWnd, text, text.Capacity);
       return count > 0 ? text.ToString() : String.Empty;
+    }
+    public static int WindowProcessId(IntPtr hWnd) {
+      uint pid;
+      GetWindowThreadProcessId(hWnd, out pid);
+      return unchecked((int)pid);
+    }
+    public static WindowRecordDto[] VisibleTopLevelWindowRecords() {
+      var rows = new System.Collections.Generic.List<WindowRecordDto>();
+      EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
+        try {
+          if (!IsWindowVisible(hWnd)) return true;
+          RECT rect;
+          if (!GetWindowRect(hWnd, out rect)) return true;
+          int width = rect.Right - rect.Left;
+          int height = rect.Bottom - rect.Top;
+          if (width <= 1 || height <= 1) return true;
+          uint pid;
+          GetWindowThreadProcessId(hWnd, out pid);
+          if (pid == 0) return true;
+          string title = WindowTitle(hWnd);
+          if (String.IsNullOrWhiteSpace(title)) return true;
+          rows.Add(new WindowRecordDto {
+            ProcessId = unchecked((int)pid),
+            Hwnd = hWnd.ToInt64(),
+            Title = title,
+            Width = width,
+            Height = height
+          });
+        } catch { }
+        return true;
+      }, IntPtr.Zero);
+      return rows.ToArray();
     }
   }
 }
@@ -246,6 +285,27 @@ function Get-Windows {
   return $items
 }
 
+function New-WindowProcessView([int]$processId, [int64]$hwnd, [string]$title, [int]$width = 0, [int]$height = 0) {
+  $p = Get-Process -Id $processId -ErrorAction SilentlyContinue
+  if ($null -eq $p) { return $null }
+  return [pscustomobject]@{
+    Id = [int]$p.Id
+    ProcessName = [string]$p.ProcessName
+    MainWindowHandle = [int64]$hwnd
+    MainWindowTitle = [string]$title
+    WindowArea = [int64]([Math]::Max(0, $width) * [Math]::Max(0, $height))
+  }
+}
+
+function Get-VisibleWindowCandidates {
+  $items = @()
+  foreach ($row in [PatrolDesktop.Native]::VisibleTopLevelWindowRecords()) {
+    $view = New-WindowProcessView ([int]$row.ProcessId) ([int64]$row.Hwnd) ([string]$row.Title) ([int]$row.Width) ([int]$row.Height)
+    if ($null -ne $view) { $items += $view }
+  }
+  return $items
+}
+
 function Resolve-Window($request, [bool]$allowForeground = $true) {
   $processId = Get-Prop $request 'processId'
   $hwnd = Get-Prop $request 'hwnd'
@@ -254,36 +314,19 @@ function Resolve-Window($request, [bool]$allowForeground = $true) {
   $titleContains = [string](Get-Prop $request 'titleContains' '')
 
   if ($null -ne $hwnd -and [int64]$hwnd -ne 0) {
-    $pidForHwnd = 0
-    foreach ($candidate in (Get-Process -ErrorAction SilentlyContinue)) {
-      if ([int64]$candidate.MainWindowHandle -eq [int64]$hwnd) { $pidForHwnd = [int]$candidate.Id; break }
-    }
+    $pidForHwnd = [PatrolDesktop.Native]::WindowProcessId([IntPtr][int64]$hwnd)
     if ($pidForHwnd -eq 0) { throw "desktop window hwnd=$hwnd not found" }
-    $p = Get-Process -Id $pidForHwnd -ErrorAction SilentlyContinue
-    if ($null -eq $p) { throw "desktop window hwnd=$hwnd process not found" }
-    return [pscustomobject]@{
-      Id = [int]$p.Id
-      ProcessName = [string]$p.ProcessName
-      MainWindowHandle = [int64]$hwnd
-      MainWindowTitle = [string][PatrolDesktop.Native]::WindowTitle([IntPtr][int64]$hwnd)
-    }
+    $view = New-WindowProcessView $pidForHwnd ([int64]$hwnd) ([PatrolDesktop.Native]::WindowTitle([IntPtr][int64]$hwnd))
+    if ($null -eq $view) { throw "desktop window hwnd=$hwnd process not found" }
+    return $view
   }
   if ($null -ne $processId) {
-    $p = Get-Process -Id ([int]$processId) -ErrorAction SilentlyContinue
-    if ($null -eq $p) { throw "desktop processId=$processId not found" }
-    $resolvedHwnd = [PatrolDesktop.Native]::FindVisibleTopLevelWindowForProcess([int]$processId)
-    if ($resolvedHwnd -eq [IntPtr]::Zero) {
-      throw "desktop processId=$processId has no visible top-level window yet"
-    }
-    return [pscustomobject]@{
-      Id = [int]$p.Id
-      ProcessName = [string]$p.ProcessName
-      MainWindowHandle = [int64]$resolvedHwnd
-      MainWindowTitle = [string][PatrolDesktop.Native]::WindowTitle($resolvedHwnd)
-    }
+    $matches = @(Get-VisibleWindowCandidates | Where-Object { $_.Id -eq [int]$processId } | Sort-Object WindowArea -Descending)
+    if ($matches.Count -eq 0) { throw "desktop processId=$processId has no visible top-level window yet" }
+    return $matches[0]
   }
 
-  $windows = @(Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and -not [string]::IsNullOrWhiteSpace($_.MainWindowTitle) })
+  $windows = @(Get-VisibleWindowCandidates)
   if (-not [string]::IsNullOrWhiteSpace($processName)) {
     $windows = @($windows | Where-Object { $_.ProcessName -ieq $processName })
   }
@@ -302,8 +345,11 @@ function Resolve-Window($request, [bool]$allowForeground = $true) {
   if ($allowForeground -and [string]::IsNullOrWhiteSpace($processName) -and [string]::IsNullOrWhiteSpace($title) -and [string]::IsNullOrWhiteSpace($titleContains)) {
     $foreground = [PatrolDesktop.Native]::GetForegroundWindow()
     if ($foreground -eq [IntPtr]::Zero) { throw 'no foreground desktop window is available' }
-    $p = Get-Process | Where-Object { $_.MainWindowHandle -eq [int64]$foreground } | Select-Object -First 1
-    if ($null -ne $p) { return $p }
+    $foregroundPid = [PatrolDesktop.Native]::WindowProcessId($foreground)
+    if ($foregroundPid -ne 0) {
+      $view = New-WindowProcessView $foregroundPid ([int64]$foreground) ([PatrolDesktop.Native]::WindowTitle($foreground))
+      if ($null -ne $view) { return $view }
+    }
   }
 
   throw 'desktop window not found; call desktop_list_windows and use processName/titleContains'
@@ -321,7 +367,8 @@ function Activate-Window($process) {
     if ($foreground -eq $target) { return }
   }
   $foreground = [PatrolDesktop.Native]::GetForegroundWindow()
-  $actual = Get-Process | Where-Object { $_.MainWindowHandle -eq [int64]$foreground } | Select-Object -First 1
+  $actualPid = [PatrolDesktop.Native]::WindowProcessId($foreground)
+  $actual = if ($actualPid -ne 0) { New-WindowProcessView $actualPid ([int64]$foreground) ([PatrolDesktop.Native]::WindowTitle($foreground)) } else { $null }
   $actualLabel = if ($null -eq $actual) { [string][int64]$foreground } else { "$($actual.ProcessName):$($actual.MainWindowTitle)" }
   throw "failed to verify foreground desktop window $($process.ProcessName):$($process.MainWindowTitle); actual=$actualLabel"
 }
