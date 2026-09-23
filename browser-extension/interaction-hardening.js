@@ -1078,13 +1078,15 @@ async function interactionRenderActionCandidateZoomSheetInWorker(source, candida
       context.fillText(label, cardX + 10, cardY + cardHeight - captionHeight + 3)
 
       const evidence = String(
-        candidate.actionText
+        candidate.localContext
+        || candidate.rowContext
+        || candidate.actionText
         || candidate.ariaLabel
         || candidate.title
         || candidate.text
         || candidate.activationKind
         || '',
-      ).replace(/\s+/g, ' ').trim().slice(0, 44)
+      ).replace(/\s+/g, ' ').trim().slice(0, 62)
       context.fillStyle = '#ffffff'
       context.font = '600 12px sans-serif'
       context.fillText(evidence || String(candidate.activationKind || 'interactive'), cardX + 52, cardY + cardHeight - captionHeight + 7)
@@ -1446,10 +1448,26 @@ async function interactionVisualClick(args) {
     if (!interactionSameViewport(frame, current, 2)) {
       throw new Error('browser visual frame is stale: URL/scroll/zoom/viewport changed after screenshot; capture a fresh visual observation')
     }
-    const expectedTag = typeof args.expectedTag === 'string' ? args.expectedTag.trim().toLowerCase() : ''
-    const expectedRole = typeof args.expectedRole === 'string' ? args.expectedRole.trim().toLowerCase() : ''
-    const expectedTitle = typeof args.expectedTitle === 'string' ? args.expectedTitle.trim() : ''
-    const expectedAriaLabel = typeof args.expectedAriaLabel === 'string' ? args.expectedAriaLabel.trim() : ''
+    const expectedTag = typeof args.expectedTag === 'string' && args.expectedTag.trim()
+      ? args.expectedTag.trim().toLowerCase()
+      : requestedCandidateId && typeof selectedCandidate?.tag === 'string'
+        ? selectedCandidate.tag.trim().toLowerCase()
+        : ''
+    const expectedRole = typeof args.expectedRole === 'string' && args.expectedRole.trim()
+      ? args.expectedRole.trim().toLowerCase()
+      : requestedCandidateId && typeof selectedCandidate?.role === 'string'
+        ? selectedCandidate.role.trim().toLowerCase()
+        : ''
+    const expectedTitle = typeof args.expectedTitle === 'string' && args.expectedTitle.trim()
+      ? args.expectedTitle.trim()
+      : requestedCandidateId && typeof selectedCandidate?.title === 'string'
+        ? selectedCandidate.title.trim()
+        : ''
+    const expectedAriaLabel = typeof args.expectedAriaLabel === 'string' && args.expectedAriaLabel.trim()
+      ? args.expectedAriaLabel.trim()
+      : requestedCandidateId && typeof selectedCandidate?.ariaLabel === 'string'
+        ? selectedCandidate.ariaLabel.trim()
+        : ''
     const visualAuthority = args.visualAuthority === true
     const expectedVisualText = typeof args.expectedVisualText === 'string' ? args.expectedVisualText.trim() : ''
     const pointerAction = ['left-click', 'right-click', 'hover', 'mark'].includes(String(args.pointerAction || ''))
@@ -1507,6 +1525,12 @@ async function interactionVisualClick(args) {
       clicked.actionCandidateKind = selectedCandidate?.activationKind || ''
       clicked.actionCandidateHref = selectedCandidate?.href || ''
       clicked.actionCandidateSafePoint = selectedCandidate?.safePointKind || ''
+      clicked.actionCandidateFingerprint = [
+        selectedCandidate?.tag ? `tag=${selectedCandidate.tag}` : '',
+        selectedCandidate?.role ? `role=${selectedCandidate.role}` : '',
+        selectedCandidate?.ariaLabel ? `aria=${selectedCandidate.ariaLabel}` : '',
+        selectedCandidate?.title ? `title=${selectedCandidate.title}` : '',
+      ].filter(Boolean).join('; ')
     }
     return interactionVisualClickResult(clicked, frame, xRatio, yRatio, requestedCandidateId ? 'bound-action-map-candidate' : 'bound-current-visual-frame')
   }
@@ -2771,6 +2795,7 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
     ...(typeof clicked.actionCandidateKind === 'string' && clicked.actionCandidateKind ? { actionCandidateKind: clicked.actionCandidateKind } : {}),
     ...(typeof clicked.actionCandidateHref === 'string' && clicked.actionCandidateHref ? { actionCandidateHref: clicked.actionCandidateHref } : {}),
     ...(typeof clicked.actionCandidateSafePoint === 'string' && clicked.actionCandidateSafePoint ? { actionCandidateSafePoint: clicked.actionCandidateSafePoint } : {}),
+    ...(typeof clicked.actionCandidateFingerprint === 'string' && clicked.actionCandidateFingerprint ? { actionCandidateFingerprint: clicked.actionCandidateFingerprint } : {}),
     ...(Number.isInteger(clicked.openedTabId) ? { openedTabId: clicked.openedTabId } : {}),
     ...(typeof clicked.openedTabUrl === 'string' && clicked.openedTabUrl ? { openedTabUrl: clicked.openedTabUrl } : {}),
     ...(Number.isFinite(Number(clicked.snapDistance)) ? { snapDistance: Number(clicked.snapDistance) } : {}),
