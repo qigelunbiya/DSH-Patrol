@@ -6,29 +6,80 @@ param(
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-# Window discovery is intentionally a startup fast path. A model frequently
-# calls desktop_list_windows before it knows which application to inspect; that
-# operation must not pay the startup cost of UIAutomation, System.Drawing or
-# dynamic Native C# compilation. Once a target is chosen, screenshot/click/UIA
-# actions below load the full precision runtime.
+# Window discovery is intentionally a startup fast path. Do not enumerate
+# Process.MainWindowTitle here: a just-created WPF/Electron window can make the
+# .NET process property wait on its GUI thread and stall the entire Patrol loop.
+# Enumerate top-level HWNDs directly and bound every title read in user32.
 if ($Action -eq 'list-windows') {
-  $items = @()
-  foreach ($process in (Get-Process -ErrorAction SilentlyContinue)) {
-    try {
-      $hwnd = [int64]$process.MainWindowHandle
-      $title = [string]$process.MainWindowTitle
-      if ($hwnd -eq 0 -or [string]::IsNullOrWhiteSpace($title)) { continue }
-      $items += [ordered]@{
-        processId = [int]$process.Id
-        processName = [string]$process.ProcessName
-        title = $title
-        hwnd = $hwnd
-        rectSource = 'fast-discovery-no-geometry'
-      }
-    } catch {
-      # Processes may exit or deny property access while enumerating. Skip them.
+  Add-Type @"
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
+namespace PatrolDesktopFast {
+  public static class Windows {
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern IntPtr SendMessageTimeoutW(
+      IntPtr hWnd, uint msg, IntPtr wParam, StringBuilder lParam, uint flags, uint timeoutMs, out IntPtr result);
+
+    public sealed class Record {
+      public int processId;
+      public string processName;
+      public string title;
+      public long hwnd;
+    }
+
+    static string ReadTitle(IntPtr hWnd) {
+      const uint WM_GETTEXT = 0x000D;
+      const uint SMTO_ABORTIFHUNG = 0x0002;
+      var text = new StringBuilder(2048);
+      IntPtr result;
+      var sent = SendMessageTimeoutW(hWnd, WM_GETTEXT, (IntPtr)text.Capacity, text, SMTO_ABORTIFHUNG, 60, out result);
+      return sent != IntPtr.Zero && result.ToInt64() > 0 ? text.ToString() : String.Empty;
+    }
+
+    static string ReadProcessName(uint pid) {
+      try { return Process.GetProcessById(unchecked((int)pid)).ProcessName ?? String.Empty; }
+      catch { return String.Empty; }
+    }
+
+    public static Record[] List() {
+      var records = new List<Record>();
+      EnumWindows(delegate(IntPtr hWnd, IntPtr unused) {
+        try {
+          if (!IsWindowVisible(hWnd)) return true;
+          string title = ReadTitle(hWnd);
+          if (String.IsNullOrWhiteSpace(title)) return true;
+          uint pid;
+          GetWindowThreadProcessId(hWnd, out pid);
+          if (pid == 0) return true;
+          records.Add(new Record {
+            processId = unchecked((int)pid),
+            processName = ReadProcessName(pid),
+            title = title,
+            hwnd = hWnd.ToInt64()
+          });
+        } catch { }
+        return true;
+      }, IntPtr.Zero);
+      return records.ToArray();
     }
   }
+}
+"@
+  $items = @([PatrolDesktopFast.Windows]::List() | ForEach-Object {
+    [ordered]@{
+      processId = [int]$_.processId
+      processName = [string]$_.processName
+      title = [string]$_.title
+      hwnd = [int64]$_.hwnd
+      rectSource = 'enum-windows-fast-discovery'
+    }
+  })
   [ordered]@{ ok=$true; windows=$items } | ConvertTo-Json -Depth 8 -Compress
   exit 0
 }
