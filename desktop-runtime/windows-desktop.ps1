@@ -886,6 +886,19 @@ function Write-VisualGuideImage([string]$sourcePath, [string]$outputPath, $markX
   return [ordered]@{ ok=$true; path=$outputPath; width=[int]$width; height=[int]$height; coordinateGridUnits=1000 }
 }
 
+function Assert-GeneratedImageFile([string]$path, [string]$label = 'generated') {
+  if ([string]::IsNullOrWhiteSpace($path) -or -not [IO.File]::Exists($path)) {
+    throw "$label image was not created: $path"
+  }
+  $stream = $null
+  try {
+    $stream = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+    if ($stream.Length -le 0) { throw "$label image is empty: $path" }
+  } finally {
+    if ($stream) { $stream.Dispose() }
+  }
+}
+
 function Write-ModelVisionImage(
   [string]$sourcePath,
   [string]$outputPath,
@@ -952,6 +965,7 @@ function Write-ModelVisionImage(
       $bitmap.Save($outputPath, $codec, $encoderParams)
     }
 
+    Assert-GeneratedImageFile $outputPath 'model vision'
     return [ordered]@{
       ok=$true
       path=$outputPath
@@ -1013,6 +1027,7 @@ function Capture-Screenshot($request) {
     }
     if ($printed) {
       try { $bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png) } finally { $bitmap.Dispose() }
+      Assert-GeneratedImageFile $path 'desktop screenshot'
       return [ordered]@{ ok=$true; path=$path; scope=$scope; captureMethod='print-window'; window=$windowRecord; x=[int]$x; y=[int]$y; width=[int]$width; height=[int]$height }
     }
     $bitmap.Dispose()
@@ -1037,6 +1052,7 @@ function Capture-Screenshot($request) {
     $graphics.Dispose()
     $bitmap.Dispose()
   }
+  Assert-GeneratedImageFile $path 'desktop screenshot'
   return [ordered]@{ ok=$true; path=$path; scope=$scope; captureMethod='screen'; window=$windowRecord; x=[int]$x; y=[int]$y; width=[int]$width; height=[int]$height }
 }
 function Resolve-AppLaunchSpec($request) {
@@ -1385,6 +1401,7 @@ try {
         [double](Get-Prop $request 'cropHeightRatio' 1),
         [int](Get-Prop $request 'maxCandidates' 18)
       )
+      Assert-GeneratedImageFile ([string]$result.Path) 'desktop action map'
       [ordered]@{
         ok=$true
         path=[string]$result.Path

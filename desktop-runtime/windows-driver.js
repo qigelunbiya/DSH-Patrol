@@ -15,6 +15,7 @@ const MAX_OCR_CHARS = 12000
 const DESKTOP_MODEL_IMAGE_MAX_WIDTH = 768
 const DESKTOP_MODEL_IMAGE_MAX_HEIGHT = 768
 const DESKTOP_MODEL_IMAGE_JPEG_QUALITY = 65
+const READ_IMAGE_EXACT_PATH_CONTRACT = 'Call read_image with readImagePath EXACTLY as returned by this tool. Never reconstruct, guess, or synthesize a desktop capture filename from timestamps, UUID-like suffixes, or prior screenshots.'
 
 export class WindowsDesktopDriver {
   constructor(options = {}) {
@@ -150,6 +151,8 @@ export class WindowsDesktopDriver {
       ...rawShot,
       rawPath,
       path: String(modelImage?.path || modelPath),
+      readImagePath: String(modelImage?.path || modelPath),
+      readImageContract: READ_IMAGE_EXACT_PATH_CONTRACT,
       rawWidth: finiteNumber(rawShot.width, 0),
       rawHeight: finiteNumber(rawShot.height, 0),
       width: finiteNumber(modelImage?.width, rawShot.width),
@@ -282,6 +285,8 @@ export class WindowsDesktopDriver {
       frameId,
       regionId,
       path: region.path,
+      readImagePath: region.path,
+      readImageContract: READ_IMAGE_EXACT_PATH_CONTRACT,
       width: region.width,
       height: region.height,
       crop: region.crop,
@@ -357,6 +362,8 @@ export class WindowsDesktopDriver {
       frameId,
       actionMapId: mapId,
       path: map.path,
+      readImagePath: map.path,
+      readImageContract: READ_IMAGE_EXACT_PATH_CONTRACT,
       crop,
       candidateCount: candidates.length,
       candidates,

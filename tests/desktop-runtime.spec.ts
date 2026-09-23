@@ -78,6 +78,10 @@ describe('Desktop Automation runtime foundation', () => {
     expect(PATROL_DESKTOP_PROMPT).toMatch(/desktop_click_visual_candidate/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/focused-region lock/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/learned icon template/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/readImagePath/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/严禁.*猜测.*desktop-\*/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/“系统设置”“修改密码”“检查更新”/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/不得把它当 OCR 文本/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/CUDA\/OOM/)
 
     const tools = readFileSync(join(process.cwd(), 'desktop-runtime', 'tools-plugin.js'), 'utf8')
@@ -93,6 +97,12 @@ describe('Desktop Automation runtime foundation', () => {
     expect(tools).toContain('imageX: num')
     expect(tools).toContain('imageWidth: num')
     expect(tools).toContain('Never feed screenshot-local pixels from read_image')
+    expect(tools).toContain('readImagePath verbatim')
+
+    const driver = readFileSync(join(process.cwd(), 'desktop-runtime', 'windows-driver.js'), 'utf8')
+    expect(driver).toContain('READ_IMAGE_EXACT_PATH_CONTRACT')
+    expect(driver).toContain('readImagePath')
+    expect(driver).toContain('Never reconstruct, guess, or synthesize a desktop capture filename')
 
     const backend = readFileSync(join(process.cwd(), 'desktop-runtime', 'windows-desktop.ps1'), 'utf8')
     expect(backend).toContain("'click-visual-point' {")
@@ -111,6 +121,10 @@ describe('Desktop Automation runtime foundation', () => {
     expect(backend).toContain("'match-visual-template' {")
     expect(backend).toContain('PatrolDesktopVision.Engine')
     expect(backend).toContain("MimeType -eq 'image/jpeg'")
+    expect(backend).toContain('function Assert-GeneratedImageFile')
+    expect(backend).toContain("Assert-GeneratedImageFile $outputPath 'model vision'")
+    expect(backend).toContain("Assert-GeneratedImageFile ([string]$result.Path) 'desktop action map'")
+    expect(backend).toContain("Assert-GeneratedImageFile $path 'desktop screenshot'")
   })
 
   it('binds model-vision clicks to the exact full-window screenshot frame and consumes that frame', async () => {

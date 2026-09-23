@@ -155,7 +155,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_focus_visual_region',
-      description: 'Magnify a SMALL icon/control region from the SAME raw desktop_screenshot without taking another screenshot. Give a coarse centerXRatio/centerYRatio from the full-window image; Patrol crops the original full-resolution frame around that area, enlarges it into a bounded <=768px JPEG for read_image, and returns regionId. After reading the focused image, click with the SAME frameId + regionId + imageX/imageY/imageWidth/imageHeight from the focused image. The driver maps those local pixels back to the original full-window physical coordinates exactly. Use this for unlabeled icons such as a gear, three-dot menu, avatar badge, tiny close/send icons; do not use it for text that OCR can locate precisely.',
+      description: 'Magnify a SMALL icon/control region from the SAME raw desktop_screenshot without taking another screenshot. Give a coarse centerXRatio/centerYRatio from the full-window image; Patrol crops the original full-resolution frame around that area, enlarges it into a bounded <=768px JPEG for read_image, and returns regionId. After reading the focused image, click with the SAME frameId + regionId + imageX/imageY/imageWidth/imageHeight from the focused image. The driver maps those local pixels back to the original full-window physical coordinates exactly. Use this for unlabeled icons such as a gear, three-dot menu, avatar badge, tiny close/send icons; do not use it for text that OCR can locate precisely. After this tool returns, call read_image with readImagePath verbatim; never guess or rebuild the focus-image filename.',
       parameters: {
         frameId: str,
         centerXRatio: reqNum,
@@ -171,7 +171,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_visual_action_map',
-      description: 'PRIMARY unlabeled-icon grounding tool. From the SAME raw desktop_screenshot, analyze a coarse local region and generate a Desktop Action Map with program-computed visual candidates D1/D2/... Each D# has a real bbox and exact center derived from image geometry. Read the returned map image, choose the D# that visually represents the requested icon/control, then call desktop_click_visual_candidate. Do not estimate a final x/y after an Action Map exists.',
+      description: 'PRIMARY unlabeled-icon grounding tool. From the SAME raw desktop_screenshot, analyze a coarse local region and generate a Desktop Action Map with program-computed visual candidates D1/D2/... Each D# has a real bbox and exact center derived from image geometry. Read the returned map image, choose the D# that visually represents the requested icon/control, then call desktop_click_visual_candidate. Do not estimate a final x/y after an Action Map exists. After this tool returns, call read_image with readImagePath verbatim; never guess or rebuild the Action Map filename.',
       parameters: {
         frameId: str,
         regionId: str,
@@ -398,7 +398,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_screenshot',
-      description: 'Capture the COMPLETE active application window as the authoritative geometry frame, but return a separate bounded model-facing JPEG (<=768x768, quality 65) at path to reduce local-Qwen CUDA/OOM pressure. rawPath preserves the original full-resolution PNG used for physical coordinate mapping. The bounded image is an aspect-preserving whole-window resize, so xRatio/yRatio and imageX/imageWidth remain valid for the original frame. For tiny unlabeled icons use desktop_focus_visual_region to crop from rawPath without taking another screenshot.',
+      description: 'Capture the COMPLETE active application window as the authoritative geometry frame, but return a separate bounded model-facing JPEG (<=768x768, quality 65) at path to reduce local-Qwen CUDA/OOM pressure. rawPath preserves the original full-resolution PNG used for physical coordinate mapping. The bounded image is an aspect-preserving whole-window resize, so xRatio/yRatio and imageX/imageWidth remain valid for the original frame. For tiny unlabeled icons use desktop_focus_visual_region to crop from rawPath without taking another screenshot. After this tool returns, call read_image with readImagePath verbatim; never guess or rebuild the model-image filename from a timestamp or UUID-looking suffix.',
       parameters: {
         scope: { type: 'string', enum: ['active-window', 'screen'] },
         captureMethod: { type: 'string', enum: ['auto', 'print-window', 'screen'], description: 'Compatibility input. active-window visual screenshots always force geometry-faithful screen copy.' },
