@@ -75,7 +75,9 @@ describe('Desktop Automation runtime foundation', () => {
     expect(PATROL_DESKTOP_PROMPT).toMatch(/desktop_preview_visual_point/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/绿色十字/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/检查更新.*关于我们/)
-    expect(PATROL_DESKTOP_PROMPT).toMatch(/绝对禁止把 read_image 看到的裁剪截图像素直接传给 desktop_click_coordinates/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/绝对禁止把 read_image 看到的.*裁剪图像素直接传给 desktop_click_coordinates/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/重新激活并验证.*同一个 HWND/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/局部真实像素裁剪/)
 
     const tools = readFileSync(join(process.cwd(), 'desktop-runtime', 'tools-plugin.js'), 'utf8')
     expect(tools).toContain("name: 'desktop_preview_visual_point'")
@@ -94,7 +96,10 @@ describe('Desktop Automation runtime foundation', () => {
     expect(backend).toContain('window bounds changed after screenshot')
     expect(backend).toContain('Resolve-Window $request $true')
     expect(backend).toContain('function Write-VisualGuideImage')
+    expect(backend).toContain('function Write-VisualPointZoomImage')
     expect(backend).toContain("'annotate-visual-guide' {")
+    expect(backend).toContain('visual click foreground mismatch')
+    expect(backend).toContain('Activate-Window $process')
     expect(backend).toContain('coordinateGridUnits=1000')
     expect(backend).toContain('markXRatio')
     expect(backend).toContain('[System.Windows.Forms.Cursor]::Position')
@@ -214,6 +219,7 @@ describe('Desktop Automation runtime foundation', () => {
         path: expect.stringContaining('-preview-'),
         markXRatio: 0.742,
         markYRatio: 0.615,
+        zoomPreview: true,
       },
     }])
     expect(driver.visualFrames.has(frame.frameId)).toBe(true)
