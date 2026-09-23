@@ -65,6 +65,7 @@ export function registerPatrolDesktopActionTools(
       imageY: { type: 'number' },
       imageWidth: { type: 'number' },
       imageHeight: { type: 'number' },
+      regionId: { type: 'string', description: 'Ephemeral regionId from desktop_focus_visual_region. It is used only for CURRENT teaching and is never persisted; successful clicks are normalized to full-window xRatio/yRatio for replay.' },
       frameId: { type: 'string', description: 'Ephemeral frameId from the immediately preceding desktop_screenshot. It is never persisted into the Runbook.' },
       allowWindowChrome: { type: 'boolean' },
       button: { type: 'string', enum: ['left', 'right'] },
@@ -145,13 +146,29 @@ async function executeAndRecordDesktopAction(
     return `Desktop teaching action failed and was NOT recorded. ${dispatched.error ?? dispatched.text ?? 'Unknown desktop error'}`
   }
 
+  let replayArgs = effectiveStoredArgs
+  if (tool === 'desktop_click_visual_point') {
+    const mappedX = objectNumber(dispatched.value, 'xRatio')
+    const mappedY = objectNumber(dispatched.value, 'yRatio')
+    if (mappedX !== undefined && mappedY !== undefined) {
+      replayArgs = { ...effectiveStoredArgs, xRatio: mappedX, yRatio: mappedY }
+      delete replayArgs.imageX
+      delete replayArgs.imageY
+      delete replayArgs.imageWidth
+      delete replayArgs.imageHeight
+      delete replayArgs.regionId
+      delete replayArgs.frameId
+    }
+  }
+  assertSafeForStorage(replayArgs)
+
   const artifact = desktopArtifactForTool(tool)
   const step: ToolStep = {
     id: nextStepId(definition.steps),
     kind: 'tool',
     name: stepName,
     tool,
-    arguments: effectiveStoredArgs,
+    arguments: replayArgs,
     ...(artifact === undefined ? {} : { artifact }),
     ...(notes === undefined ? {} : { notes }),
     recordedAt: new Date().toISOString(),
@@ -220,7 +237,7 @@ function desktopArguments(action: DesktopAction, args: Record<string, unknown>, 
       add('xRatio', args.xRatio); add('yRatio', args.yRatio)
       add('imageX', args.imageX); add('imageY', args.imageY); add('imageWidth', args.imageWidth); add('imageHeight', args.imageHeight)
       add('button', args.button); add('allowWindowChrome', args.allowWindowChrome)
-      if (!persisted) add('frameId', args.frameId)
+      if (!persisted) { add('frameId', args.frameId); add('regionId', args.regionId) }
       break
     case 'click-coordinates':
       add('x', args.x); add('y', args.y); add('button', args.button); break
@@ -388,4 +405,10 @@ function objectString(value: unknown, key: string): string | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
   const child = (value as Record<string, unknown>)[key]
   return typeof child === 'string' && child.length > 0 ? child : undefined
+}
+
+function objectNumber(value: unknown, key: string): number | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const child = (value as Record<string, unknown>)[key]
+  return typeof child === 'number' && Number.isFinite(child) ? child : undefined
 }
