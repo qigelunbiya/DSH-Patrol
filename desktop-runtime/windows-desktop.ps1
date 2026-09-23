@@ -49,18 +49,18 @@ namespace PatrolDesktopFast {
 
     public static Record[] List(int timeoutMs) {
       var records = new List<Record>();
-      long deadline = Environment.TickCount64 + Math.Max(200, timeoutMs);
+      long deadlineTicks = DateTime.UtcNow.AddMilliseconds(Math.Max(200, timeoutMs)).Ticks;
       EnumWindows(delegate(IntPtr hWnd, IntPtr unused) {
-        long remaining = deadline - Environment.TickCount64;
+        long remaining = (deadlineTicks - DateTime.UtcNow.Ticks) / TimeSpan.TicksPerMillisecond;
         if (remaining <= 0) return false;
         try {
           if (!IsWindowVisible(hWnd)) return true;
           uint titleBudget = (uint)Math.Max(1, Math.Min(20, remaining));
           string title = ReadTitle(hWnd, titleBudget);
-          if (String.IsNullOrWhiteSpace(title)) return Environment.TickCount64 < deadline;
+          if (String.IsNullOrWhiteSpace(title)) return DateTime.UtcNow.Ticks < deadlineTicks;
           uint pid;
           GetWindowThreadProcessId(hWnd, out pid);
-          if (pid == 0) return Environment.TickCount64 < deadline;
+          if (pid == 0) return DateTime.UtcNow.Ticks < deadlineTicks;
           records.Add(new Record {
             processId = unchecked((int)pid),
             processName = ReadProcessName(pid),
@@ -68,7 +68,7 @@ namespace PatrolDesktopFast {
             hwnd = hWnd.ToInt64()
           });
         } catch { }
-        return Environment.TickCount64 < deadline;
+        return DateTime.UtcNow.Ticks < deadlineTicks;
       }, IntPtr.Zero);
       return records.ToArray();
     }
