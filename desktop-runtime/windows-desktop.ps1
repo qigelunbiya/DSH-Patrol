@@ -321,9 +321,13 @@ function Resolve-Window($request, [bool]$allowForeground = $true) {
     return $view
   }
   if ($null -ne $processId) {
-    $matches = @(Get-VisibleWindowCandidates | Where-Object { $_.Id -eq [int]$processId } | Sort-Object WindowArea -Descending)
-    if ($matches.Count -eq 0) { throw "desktop processId=$processId has no visible top-level window yet" }
-    return $matches[0]
+    $resolvedHwnd = [PatrolDesktop.Native]::FindVisibleTopLevelWindowForProcess([int]$processId)
+    if ($resolvedHwnd -eq [IntPtr]::Zero) {
+      throw "desktop processId=$processId has no visible top-level window yet"
+    }
+    $view = New-WindowProcessView ([int]$processId) ([int64]$resolvedHwnd) ([PatrolDesktop.Native]::WindowTitle($resolvedHwnd))
+    if ($null -eq $view) { throw "desktop processId=$processId not found" }
+    return $view
   }
 
   $windows = @(Get-VisibleWindowCandidates)
