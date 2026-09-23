@@ -33,12 +33,12 @@ namespace PatrolDesktopFast {
       public long hwnd;
     }
 
-    static string ReadTitle(IntPtr hWnd) {
+    static string ReadTitle(IntPtr hWnd, uint timeoutMs) {
       const uint WM_GETTEXT = 0x000D;
       const uint SMTO_ABORTIFHUNG = 0x0002;
       var text = new StringBuilder(2048);
       IntPtr result;
-      var sent = SendMessageTimeoutW(hWnd, WM_GETTEXT, (IntPtr)text.Capacity, text, SMTO_ABORTIFHUNG, 60, out result);
+      var sent = SendMessageTimeoutW(hWnd, WM_GETTEXT, (IntPtr)text.Capacity, text, SMTO_ABORTIFHUNG, Math.Max(1u, timeoutMs), out result);
       return sent != IntPtr.Zero && result.ToInt64() > 0 ? text.ToString() : String.Empty;
     }
 
@@ -47,16 +47,20 @@ namespace PatrolDesktopFast {
       catch { return String.Empty; }
     }
 
-    public static Record[] List() {
+    public static Record[] List(int timeoutMs) {
       var records = new List<Record>();
+      long deadline = Environment.TickCount64 + Math.Max(200, timeoutMs);
       EnumWindows(delegate(IntPtr hWnd, IntPtr unused) {
+        long remaining = deadline - Environment.TickCount64;
+        if (remaining <= 0) return false;
         try {
           if (!IsWindowVisible(hWnd)) return true;
-          string title = ReadTitle(hWnd);
-          if (String.IsNullOrWhiteSpace(title)) return true;
+          uint titleBudget = (uint)Math.Max(1, Math.Min(20, remaining));
+          string title = ReadTitle(hWnd, titleBudget);
+          if (String.IsNullOrWhiteSpace(title)) return Environment.TickCount64 < deadline;
           uint pid;
           GetWindowThreadProcessId(hWnd, out pid);
-          if (pid == 0) return true;
+          if (pid == 0) return Environment.TickCount64 < deadline;
           records.Add(new Record {
             processId = unchecked((int)pid),
             processName = ReadProcessName(pid),
@@ -64,14 +68,14 @@ namespace PatrolDesktopFast {
             hwnd = hWnd.ToInt64()
           });
         } catch { }
-        return true;
+        return Environment.TickCount64 < deadline;
       }, IntPtr.Zero);
       return records.ToArray();
     }
   }
 }
 "@
-  $items = @([PatrolDesktopFast.Windows]::List() | ForEach-Object {
+  $items = @([PatrolDesktopFast.Windows]::List(1200) | ForEach-Object {
     [ordered]@{
       processId = [int]$_.processId
       processName = [string]$_.processName
