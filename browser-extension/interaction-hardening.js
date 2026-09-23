@@ -609,6 +609,30 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
       ordinal,
     }
   }
+  const localCandidateContext = element => {
+    const contexts = []
+    let node = element
+    for (let depth = 0; node instanceof Element && depth < 5; depth += 1) {
+      const text = compact([
+        node.getAttribute?.('aria-label'),
+        node.getAttribute?.('title'),
+        node.innerText,
+        node.textContent,
+      ].filter(Boolean).join(' '))
+      if (text && text.length <= 360) contexts.push(text)
+      const parent = node.parentElement
+      if (parent) node = parent
+      else {
+        const root = node.getRootNode?.()
+        node = root && root.host instanceof Element ? root.host : null
+      }
+    }
+    return compact([...new Set(contexts.filter(Boolean))].join(' | ')).slice(0, 900)
+  }
+  const closeIntent = /(?:关闭|移除|删除|清除|取消|close|remove|delete|clear|dismiss|[×✕✖]|(?:^|[\s:_-])x(?:$|[\s:_-]))/i.test(String(targetHint || ''))
+  const closeBusinessCore = normalize(String(targetHint || '')
+    .replace(/(?:点击|帮我|请|关闭|移除|删除|清除|取消|筛选|搜索|标签|配置项|右侧|左侧|旁边|里面|其中|图标|按钮|控件|的|close|remove|delete|clear|dismiss|[x×✕✖])/gi, ' '))
+
   const structuredIdentities = [...new Set((String(targetHint || '').match(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g) || []).map(compact).filter(Boolean))]
   const structuredActions = [...new Set((String(targetHint || '').match(/\b(?:RDP|SSH|VNC|SFTP|FTP|HTTP|HTTPS)\b/gi) || []).map(value => String(value).toUpperCase()))]
   const structuredTarget = structuredIdentities.length > 0 && structuredActions.length > 0
@@ -648,6 +672,30 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
     let descendants = []
     try { descendants = [...element.querySelectorAll('a[href],button,input:not([type="hidden"]),textarea,select,summary,[role="button"],[role="link"],[role="textbox"],[role="checkbox"],[role="radio"],[role="switch"],[contenteditable="true"],[contenteditable="plaintext-only"],[onclick]')] } catch {}
     return descendants.some(child => child instanceof Element && child !== element)
+  }
+  const isMicroCloseAction = (element, rect, style) => {
+    if (!(element instanceof Element)) return false
+    if (!rect || rect.width < 6 || rect.height < 6 || rect.width > 72 || rect.height > 72) return false
+    const evidence = compact([
+      element.id,
+      element.getAttribute?.('class'),
+      element.getAttribute?.('title'),
+      element.getAttribute?.('aria-label'),
+      element.getAttribute?.('data-action'),
+      element.getAttribute?.('data-icon'),
+      element.innerText,
+      element.textContent,
+    ].filter(Boolean).join(' ')).toLowerCase()
+    const closeToken = /(?:^|[-_\s])(?:close|remove|delete|clear|dismiss|times|cross|cancel)(?:$|[-_\s])|o_facet_remove|fa-times|fa-close|icon-close|关闭|移除|删除|清除|[×✕✖]/i.test(evidence)
+      || /^[x×✕✖]$/i.test(compact(element.textContent || ''))
+    if (!closeToken) return false
+    const parent = element.parentElement
+    const pointerish = style?.cursor === 'pointer'
+      || typeof element.onclick === 'function'
+      || element.hasAttribute?.('onclick')
+      || parent?.matches?.('button,[role="button"],[onclick]')
+      || (parent instanceof Element && getComputedStyle(parent).cursor === 'pointer')
+    return pointerish
   }
   const within = (element, hit) => element === hit || (hit instanceof Node && element.contains(hit))
   const safePointFor = (element, rect) => {
@@ -702,6 +750,7 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
 
     const editable = isEditable(element)
     const strongAction = isStrongAction(element)
+    const microCloseAction = isMicroCloseAction(element, rawRect, style)
     const pointerAction = style.cursor === 'pointer'
     const labeledPointer = pointerAction && Boolean(
       compact(element.getAttribute?.('title') || '')
@@ -714,12 +763,12 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
       : Number(tabIndexAttr)
     const weakPointerOnly = !strongAction && !editable
       && (labeledPointer || (Number.isFinite(tabIndex) && tabIndex >= 0 && pointerAction))
-    if (!(strongAction || editable || weakPointerOnly)) continue
+    if (!(strongAction || editable || weakPointerOnly || microCloseAction)) continue
 
     // A broad pointer-styled card wrapper must never compete with the real
     // anchor/button nested inside it. This was the main source of Bilibili
     // "correct box, no navigation" failures.
-    if (weakPointerOnly && hasStrongActionDescendant(element)) continue
+    if (weakPointerOnly && !microCloseAction && hasStrongActionDescendant(element)) continue
 
     const area = width * height
     if (!editable && area > captureArea * 0.38) continue
@@ -741,8 +790,10 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
     if (area < 24000) score += 60
     if (area < 8000) score += 40
     if (weakPointerOnly) score -= 220
+    if (microCloseAction) score += 980
 
     const rowContext = logicalRowContext(element)
+    const localContext = localCandidateContext(element)
     const candidateText = compact(element.innerText || element.textContent || '').slice(0, 120)
     const candidateTitle = compact(element.getAttribute?.('title') || '')
     const candidateAriaLabel = compact(element.getAttribute?.('aria-label') || '')
@@ -754,6 +805,7 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
       title: candidateTitle,
       ariaLabel: candidateAriaLabel,
       actionText,
+      localContext,
       rowContext: rowContext.text,
       rowKey: rowContext.key,
       rowOrdinal: rowContext.ordinal,
@@ -766,15 +818,18 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
       safeX: safePoint.x,
       safeY: safePoint.y,
       safePointKind: safePoint.hitTag ? `verified-hit:${safePoint.hitTag}` : 'verified-hit',
-      activationKind: tag === 'a' && element.hasAttribute('href')
-        ? 'anchor'
-        : tag === 'button' || role === 'button'
-          ? 'button'
-          : editable
-            ? 'editable'
-            : weakPointerOnly
-              ? 'pointer-wrapper'
-              : 'interactive',
+      activationKind: microCloseAction
+        ? 'micro-close'
+        : tag === 'a' && element.hasAttribute('href')
+          ? 'anchor'
+          : tag === 'button' || role === 'button'
+            ? 'button'
+            : editable
+              ? 'editable'
+              : weakPointerOnly
+                ? 'pointer-wrapper'
+                : 'interactive',
+      microActionKind: microCloseAction ? 'close' : '',
       score,
     })
   }
@@ -794,7 +849,20 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
     if (kept.length >= 60) break
   }
 
-  const narrowed = structuredTarget ? kept.filter(candidateMatchesStructuredTarget) : kept
+  let narrowed = structuredTarget ? kept.filter(candidateMatchesStructuredTarget) : kept
+  if (!structuredTarget && closeIntent) {
+    const preciseClose = narrowed.filter(candidate => candidate.microActionKind === 'close')
+    if (preciseClose.length > 0) {
+      const contextualClose = closeBusinessCore.length >= 2
+        ? preciseClose.filter(candidate => normalize([
+            candidate.localContext,
+            candidate.rowContext,
+            candidate.actionText,
+          ].filter(Boolean).join(' ')).includes(closeBusinessCore))
+        : []
+      narrowed = contextualClose.length > 0 ? contextualClose : preciseClose
+    }
+  }
   narrowed.sort((a,b) => a.top - b.top || a.left - b.left)
   return narrowed.map((candidate,index) => ({ ...candidate, candidateId: `A${index + 1}` }))
 }
@@ -829,6 +897,17 @@ async function interactionOverlayActionMapInWorker(source, candidates, captureGe
       context.strokeStyle = 'rgba(255,45,45,0.96)'
       context.lineWidth = Math.max(2, Math.round(width / 500))
       context.strokeRect(x, y, w, h)
+      const safeX = (Number(candidate.safeX) - capLeft) * sx
+      const safeY = (Number(candidate.safeY) - capTop) * sy
+      if (Number.isFinite(safeX) && Number.isFinite(safeY)) {
+        const radius = Math.max(3, Math.round(width / 320))
+        context.fillStyle = 'rgba(0,255,110,0.96)'
+        context.beginPath(); context.arc(safeX, safeY, radius, 0, Math.PI * 2); context.fill()
+        context.strokeStyle = 'rgba(0,0,0,0.96)'
+        context.lineWidth = 1
+        context.beginPath(); context.moveTo(safeX - radius - 2, safeY); context.lineTo(safeX + radius + 2, safeY); context.stroke()
+        context.beginPath(); context.moveTo(safeX, safeY - radius - 2); context.lineTo(safeX, safeY + radius + 2); context.stroke()
+      }
       const label = String(candidate.candidateId || '')
       const metrics = context.measureText(label)
       const boxW = Math.ceil(metrics.width) + 8
@@ -2893,6 +2972,17 @@ async function interactionMainWorldVisualClick(clientX, clientY, expectedTag, ex
   if (hitIsIframe && !probeOnly) throw new Error('visual click point lands on an iframe surface; synthetic MAIN-world click cannot safely enter a cross-origin frame')
   const initialTarget = hitIsIframe ? hit : chooseTarget(hit)
   if (!(initialTarget instanceof Element) || !visible(initialTarget) || disabled(initialTarget)) throw new Error('visual click target is not actionable')
+  const wantsCloseTarget = /(?:关闭|移除|删除|清除|取消|close|remove|delete|clear|dismiss|[×✕✖]|(?:^|[\s:_-])x(?:$|[\s:_-]))/i.test(String(targetHint || ''))
+  if (visualAuthority && wantsCloseTarget) {
+    const closeEvidence = normalizeHint(targetEvidence(initialTarget))
+    const closeBusinessCore = normalizeHint(String(targetHint || ''))
+      .replace(/点击|帮我|请|关闭|移除|删除|清除|取消|筛选|搜索|标签|配置项|右侧|左侧|旁边|里面|其中|图标|按钮|控件|的|close|remove|delete|clear|dismiss|times|cross|cancel|x/g, '')
+    const hasCloseEvidence = /close|remove|delete|clear|dismiss|times|cross|cancel|facetremove|faclose|fatimes|关闭|移除|删除|清除|取消|×|✕|✖/.test(closeEvidence)
+    const hasBusinessContext = closeBusinessCore.length < 2 || closeEvidence.includes(closeBusinessCore)
+    if (!hasCloseEvidence || !hasBusinessContext) {
+      throw new Error(`visual close/remove preflight rejected this point before physical input: targetHint=${JSON.stringify(String(targetHint || ''))}; CURRENT point evidence=${JSON.stringify(closeEvidence.slice(0, 320) || '(empty)')}. Try the same fresh screenshot with the other visual strategy (precise XY versus targeted Action Map) instead of clicking this mismatched point.`)
+    }
+  }
   if (visualAuthority && compact(expectedVisualText) && !visualPointMatchesExpectedText(initialTarget, expectedVisualText)) {
     throw new Error(`visual screenshot point is not inside the item labeled ${JSON.stringify(expectedVisualText)}; refusing trusted input without relocating the coordinate`)
   }
