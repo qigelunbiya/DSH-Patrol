@@ -93,7 +93,7 @@ export function registerPatrolVisualClickTool(
       const pointerAction = args.pointerAction ?? 'left-click'
       const diagnosticPointerAction = pointerAction !== 'left-click'
       if (!diagnosticPointerAction && !hasCandidate && microVisualTarget(args.stepName, args.targetHint)) {
-        throw new Error('This is a small close/remove/x visual target. Free XY guessing is disabled for this target: call patrol_observe(includeImage=true, actionMap=true, targetHint=<完整业务目标>, focus...) and then retry patrol_visual_click_target with candidateId=A#.')
+        throw new Error('This is a small close/remove/x visual target. Free XY guessing is disabled for this target. Use a targeted Action Map: call patrol_observe(includeImage=true, actionMap=true, targetHint=<完整业务目标>, focus...) and then retry patrol_visual_click_target with candidateId=A#.')
       }
       if (!diagnosticPointerAction && !hasCandidate && outcomes.unverifiedPhysicalClicks(args) > 0) {
         throw new Error('A previous physical click for this business target was not verified. Do not guess another free XY point. Escalate to a fresh targeted Action Map with patrol_observe(includeImage=true, actionMap=true, targetHint=<完整业务目标>, focus...), then retry with candidateId=A#.')
