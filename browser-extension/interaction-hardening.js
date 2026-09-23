@@ -632,6 +632,8 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
   const closeIntent = /(?:关闭|移除|删除|清除|取消|close|remove|delete|clear|dismiss|[×✕✖]|(?:^|[\s:_-])x(?:$|[\s:_-]))/i.test(String(targetHint || ''))
   const closeBusinessCore = normalize(String(targetHint || '')
     .replace(/(?:点击|帮我|请|关闭|移除|删除|清除|取消|筛选|搜索|标签|配置项|右侧|左侧|旁边|里面|其中|图标|按钮|控件|的|close|remove|delete|clear|dismiss|[x×✕✖])/gi, ' '))
+  const genericBusinessCore = normalize(String(targetHint || '')
+    .replace(/(?:点击|帮我|请|找到|定位|打开|进入|选择|跳转|当前|这个|那个|页面|区域|目录|搜索结果|结果|链接|按钮|图标|控件|标签|配置项|输入框|搜索栏|右侧|左侧|旁边|里面|其中|的|click|open|enter|select|target|current|page|link|button|icon|control)/gi, ' '))
 
   const structuredIdentities = [...new Set((String(targetHint || '').match(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g) || []).map(compact).filter(Boolean))]
   const structuredActions = [...new Set((String(targetHint || '').match(/\b(?:RDP|SSH|VNC|SFTP|FTP|HTTP|HTTPS)\b/gi) || []).map(value => String(value).toUpperCase()))]
@@ -797,7 +799,18 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
     const candidateText = compact(element.innerText || element.textContent || '').slice(0, 120)
     const candidateTitle = compact(element.getAttribute?.('title') || '')
     const candidateAriaLabel = compact(element.getAttribute?.('aria-label') || '')
-    const actionText = compact([candidateAriaLabel, candidateTitle, candidateText, element instanceof HTMLInputElement ? element.value : ''].filter(Boolean).join(' ')).slice(0, 260)
+    const candidatePlaceholder = compact(element.getAttribute?.('placeholder') || '')
+    const candidateName = compact(element.getAttribute?.('name') || '')
+    const actionText = compact([
+      candidateAriaLabel,
+      candidateTitle,
+      candidatePlaceholder,
+      candidateName,
+      candidateText,
+      element instanceof HTMLInputElement ? element.value : '',
+      element.id,
+      [...(element.classList || [])].join(' '),
+    ].filter(Boolean).join(' ')).slice(0, 360)
     candidates.push({
       tag,
       role,
@@ -862,6 +875,26 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
         : []
       narrowed = contextualClose.length > 0 ? contextualClose : preciseClose
     }
+  } else if (!structuredTarget && genericBusinessCore.length >= 2) {
+    const textualMatches = narrowed.filter(candidate => {
+      const action = normalize(candidate.actionText || '')
+      const evidence = normalize([
+        candidate.actionText,
+        candidate.localContext,
+        candidate.rowContext,
+        candidate.href,
+        candidate.id,
+        candidate.className,
+      ].filter(Boolean).join(' '))
+      if (!evidence) return false
+      if (evidence.includes(genericBusinessCore)) return true
+      if (action.length >= 2 && genericBusinessCore.includes(action)) return true
+      return false
+    })
+    // Targeted Action Map is a visual grounding aid, not a semantic click.
+    // Narrow only when CURRENT DOM evidence gives a small, useful candidate
+    // set. Otherwise preserve the full visual choice instead of guessing.
+    if (textualMatches.length > 0 && textualMatches.length <= 16) narrowed = textualMatches
   }
   narrowed.sort((a,b) => a.top - b.top || a.left - b.left)
   return narrowed.map((candidate,index) => ({ ...candidate, candidateId: `A${index + 1}` }))
