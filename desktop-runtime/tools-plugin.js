@@ -137,7 +137,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_preview_visual_point',
-      description: 'Preview a proposed xRatio/yRatio on the latest CURRENT desktop_screenshot without clicking. Returns a same-size XY/1000 guide image with a bright green crosshair at the exact physical point that desktop_click_visual_point would use. For small icons, dense menus, adjacent rows, send buttons, close buttons, or any target where a one-row offset would be harmful, read_image(previewPath) and confirm the crosshair is on the intended control before issuing the real click with the SAME frameId/xRatio/yRatio.',
+      description: 'Preview a proposed xRatio/yRatio on the latest CURRENT desktop_screenshot without clicking. Returns a same-size XY/1000 guide image with a bright green crosshair plus previewId. For small icons, dense menus, adjacent rows, send buttons, close buttons, or any target where a one-row offset would be harmful, read_image(previewPath) and confirm the crosshair is on the intended control, then call desktop_click_visual_point(previewId=...). Do not restate or recompute the ratios: previewId binds the real click to the exact previewed point.',
       parameters: {
         xRatio: reqNum,
         yRatio: reqNum,
@@ -151,10 +151,11 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_click_visual_point',
-      description: 'Click a point identified from the latest CURRENT desktop_screenshot visual frame. The click is bound to the exact same top-level HWND and physical screen rectangle used for that screenshot; if the window moved/resized/recreated, the click is rejected and a new screenshot is required. xRatio/yRatio are 0..1 inside that frame. The top-right window-control zone is rejected by default.',
+      description: 'Click a point identified from the latest CURRENT desktop_screenshot visual frame. For precise targets, pass previewId returned by desktop_preview_visual_point: Patrol reuses the exact previewed ratios, verifies the physical cursor actually reaches the requested screen point, then injects the click with Windows SendInput. Without previewId, xRatio/yRatio are required. The click remains bound to the same HWND and physical screen rectangle; moved/resized/recreated windows are rejected.',
       parameters: {
-        xRatio: reqNum,
-        yRatio: reqNum,
+        xRatio: num,
+        yRatio: num,
+        previewId: str,
         frameId: str,
         button: { type: 'string', enum: ['left', 'right'] },
         processName: str,
