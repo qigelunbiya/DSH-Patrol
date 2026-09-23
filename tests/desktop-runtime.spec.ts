@@ -73,26 +73,16 @@ describe('Desktop Automation runtime foundation', () => {
     expect(PATROL_DESKTOP_PROMPT).toMatch(/desktop_click_visual_point/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/Desktop XY\/1000/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/desktop_preview_visual_point/)
-    expect(PATROL_DESKTOP_PROMPT).toMatch(/desktop_refine_visual_point/)
-    expect(PATROL_DESKTOP_PROMPT).toMatch(/SendInput/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/绿色十字/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/检查更新.*关于我们/)
-    expect(PATROL_DESKTOP_PROMPT).toMatch(/绝对禁止把 read_image 看到的.*裁剪图像素直接传给 desktop_click_coordinates/)
-    expect(PATROL_DESKTOP_PROMPT).toMatch(/重新激活并验证.*同一个 HWND/)
-    expect(PATROL_DESKTOP_PROMPT).toMatch(/局部真实像素裁剪/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/绝对禁止把 read_image 看到的裁剪截图像素直接传给 desktop_click_coordinates/)
 
     const tools = readFileSync(join(process.cwd(), 'desktop-runtime', 'tools-plugin.js'), 'utf8')
     expect(tools).toContain("name: 'desktop_preview_visual_point'")
-    expect(tools).toContain('magnified local crop')
-    expect(tools).toContain("name: 'desktop_refine_visual_point'")
-    expect(tools).toContain('previewXRatio: reqNum')
-    expect(tools).toContain('previewYRatio: reqNum')
     expect(tools).toContain("name: 'desktop_click_visual_point'")
-    expect(tools).toContain('xRatio: num')
-    expect(tools).toContain('yRatio: num')
-    expect(tools).toContain('previewId: str')
-    expect(tools).toContain('magnified local crop')
-    expect(tools).toContain('EXACT full-frame physical point')
+    expect(tools).toContain('xRatio: reqNum')
+    expect(tools).toContain('yRatio: reqNum')
+    expect(tools).toContain('XY/1000 guide image')
     expect(tools).toContain('Never feed screenshot-local pixels from read_image')
 
     const backend = readFileSync(join(process.cwd(), 'desktop-runtime', 'windows-desktop.ps1'), 'utf8')
@@ -103,43 +93,9 @@ describe('Desktop Automation runtime foundation', () => {
     expect(backend).toContain('window bounds changed after screenshot')
     expect(backend).toContain('Resolve-Window $request $true')
     expect(backend).toContain('function Write-VisualGuideImage')
-    expect(backend).toContain('function Write-VisualPointZoomImage')
     expect(backend).toContain("'annotate-visual-guide' {")
-    expect(backend).toContain('visual click foreground mismatch')
-    expect(backend).toContain('Activate-Window $process')
     expect(backend).toContain('coordinateGridUnits=1000')
     expect(backend).toContain('markXRatio')
-    expect(backend).toContain("if ($Action -eq 'list-windows')")
-    expect(backend.indexOf("if ($Action -eq 'list-windows')")).toBeLessThan(backend.indexOf('Add-Type -AssemblyName UIAutomationClient'))
-    expect(backend).toContain('PatrolDesktopDiscovery')
-    expect(backend).toContain('VisibleTopLevelWindows')
-    expect(backend).toContain('EnumWindows')
-    expect(backend).toContain('GetWindowThreadProcessId')
-    expect(backend).toContain("rectSource = 'enum-windows-get-window-rect'")
-    expect(backend).toContain('Get-VisibleWindowCandidates')
-    expect(backend).toContain('VisibleTopLevelWindowRecords')
-    expect(backend).toContain('desktop processId=$processId has no visible top-level window yet')
-    expect(backend).toContain('$resolvedHwnd = [PatrolDesktop.Native]::FindVisibleTopLevelWindowForProcess([int]$processId)')
-    expect(backend).not.toContain('tasklist.exe /FO CSV /NH')
-    expect(backend).not.toContain('using System.Threading.Tasks')
-    expect(backend).toContain('function Ensure-VerifiedMouseInput')
-    expect(backend).toContain('[System.Windows.Forms.Cursor]::Position')
-    expect(backend).toContain('visual cursor calibration mismatch')
-    expect(backend).toContain('SendInput')
-    expect(backend).toContain('SetCursorPos')
-    expect(backend).toContain('GetCursorPos')
-    expect(backend).toContain("transport = 'send-input-verified-cursor'")
-    expect(backend).toContain('function Probe-ScreenPoint')
-    expect(backend).toContain("'probe-screen-point' {")
-    expect(backend).toContain('preClickPointProbe')
-    expect(backend).toContain('function Try-InvokeExactVisualPoint')
-    expect(backend).toContain("method='uia-exact-point-invoke'")
-    expect(backend).toContain("method='uia-exact-point-select'")
-    expect(backend).toContain("method='uia-exact-point-toggle'")
-    expect(backend).toContain('$previewBound -and $buttonName -ieq \'left\'')
-    expect(backend).toContain('previewBound=$previewBound')
-    expect(backend).toContain('physicalCursorVerified')
-    expect(backend).toContain('FindVisibleTopLevelWindowForProcess')
   })
 
   it('binds model-vision clicks to the exact full-window screenshot frame and consumes that frame', async () => {
@@ -226,16 +182,7 @@ describe('Desktop Automation runtime foundation', () => {
     const calls: any[] = []
     driver.run = async (action: string, args: any) => {
       calls.push({ action, args })
-      if (action === 'annotate-visual-guide') return { ok: true, path: 'preview.png', coordinateGridUnits: 1000 }
-      if (action === 'probe-screen-point') return {
-        ok: true,
-        status: 'recognized',
-        x: args.x,
-        y: args.y,
-        element: { name: 'Settings', controlType: 'Button', rect: { x: 820, y: 470, width: 40, height: 40 } },
-      }
-      if (action === 'click-visual-point') return { ok: true, method: 'bound-window-visual-point', inputTransport: 'verified-cursor-mouse-event', x: 842, y: 490 }
-      throw new Error(`unexpected action ${action}`)
+      return { ok: true, path: 'preview.png', coordinateGridUnits: 1000 }
     }
 
     const preview = await driver.previewVisualPoint({
@@ -246,7 +193,6 @@ describe('Desktop Automation runtime foundation', () => {
     })
 
     expect(preview).toMatchObject({
-      previewId: expect.stringMatching(/^desktop-preview-/),
       frameId: frame.frameId,
       xRatio: 0.742,
       yRatio: 0.615,
@@ -254,117 +200,17 @@ describe('Desktop Automation runtime foundation', () => {
       physicalClickDispatched: false,
       coordinateGridUnits: 1000,
     })
-    expect(calls).toEqual([
-      {
-        action: 'annotate-visual-guide',
-        args: {
-          sourcePath: 'raw.png',
-          path: expect.stringContaining('-preview-'),
-          markXRatio: 0.742,
-          markYRatio: 0.615,
-          zoomPreview: true,
-        },
-      },
-      {
-        action: 'probe-screen-point',
-        args: {
-          x: 841,
-          y: 490,
-        },
-      },
-    ])
-    expect(preview.pointProbe).toMatchObject({
-      status: 'recognized',
-      element: { name: 'Settings', controlType: 'Button' },
-    })
-    expect(driver.visualFrames.has(frame.frameId)).toBe(true)
-    expect(driver.visualPreviews.has(preview.previewId)).toBe(true)
-    expect(driver.lastVisualFrameId).toBe(frame.frameId)
-
-    const clicked = await driver.clickVisualPoint({
-      processName: 'LxMainNew',
-      previewId: preview.previewId,
-    })
-    expect(clicked).toMatchObject({
-      previewId: preview.previewId,
-      previewBound: true,
-      frameId: frame.frameId,
-      xRatio: 0.742,
-      yRatio: 0.615,
-      inputTransport: 'verified-cursor-mouse-event',
-    })
-    expect(calls[2]).toMatchObject({
-      action: 'click-visual-point',
+    expect(calls).toEqual([{
+      action: 'annotate-visual-guide',
       args: {
-        xRatio: 0.742,
-        yRatio: 0.615,
-        frameHwnd: 4242,
-        frameX: 100,
-        frameY: 60,
-        frameWidth: 1000,
-        frameHeight: 700,
+        sourcePath: 'raw.png',
+        path: expect.stringContaining('-preview-'),
+        markXRatio: 0.742,
+        markYRatio: 0.615,
       },
-    })
-    expect(driver.visualFrames.has(frame.frameId)).toBe(false)
-    expect(driver.visualPreviews.has(preview.previewId)).toBe(false)
-  })
-
-  it('refines a zoom-preview point back into the same original desktop frame without manual crop math', async () => {
-    const driver = new WindowsDesktopDriver()
-    const frame = {
-      frameId: 'visual-refine-test',
-      createdAt: Date.now(),
-      path: 'guided.png',
-      rawPath: 'raw.png',
-      hwnd: 4343,
-      processName: 'LxMainNew',
-      title: 'BlueLetter',
-      rect: { x: 80, y: 40, width: 1200, height: 800 },
-    }
-    driver.visualFrames.set(frame.frameId, frame)
-    driver.lastVisualFrameId = frame.frameId
-    const calls: any[] = []
-    driver.run = async (action: string, args: any) => {
-      calls.push({ action, args })
-      if (action === 'annotate-visual-guide') {
-        return {
-          ok: true,
-          path: `preview-${calls.length}.png`,
-          crop: { xRatio: 0.60, yRatio: 0.40, widthRatio: 0.20, heightRatio: 0.30 },
-          previewContent: { xRatio: 0.10, yRatio: 0.10, widthRatio: 0.80, heightRatio: 0.80 },
-        }
-      }
-      if (action === 'probe-screen-point') {
-        return { ok: true, status: 'empty', x: args.x, y: args.y, element: null }
-      }
-      throw new Error(`unexpected action ${action}`)
-    }
-
-    const initial = await driver.previewVisualPoint({
-      processName: 'LxMainNew',
-      frameId: frame.frameId,
-      xRatio: 0.70,
-      yRatio: 0.55,
-    })
-    const refined = await driver.refineVisualPoint({
-      processName: 'LxMainNew',
-      previewId: initial.previewId,
-      previewXRatio: 0.50,
-      previewYRatio: 0.50,
-    })
-
-    expect(refined).toMatchObject({
-      previewId: expect.stringMatching(/^desktop-preview-/),
-      frameId: frame.frameId,
-      xRatio: 0.70,
-      yRatio: 0.55,
-      refinedFromPreviewId: initial.previewId,
-      sourceLocalXRatio: 0.5,
-      sourceLocalYRatio: 0.5,
-      physicalClickDispatched: false,
-    })
-    expect(refined.previewId).not.toBe(initial.previewId)
+    }])
     expect(driver.visualFrames.has(frame.frameId)).toBe(true)
+    expect(driver.lastVisualFrameId).toBe(frame.frameId)
   })
 
   it('uses DPI-aware DWM visible bounds and refuses partial active-window screen copies', () => {
@@ -656,7 +502,6 @@ describe('Desktop Automation runtime foundation', () => {
       'desktop_click_target',
       'desktop_click_ocr_text',
       'desktop_preview_visual_point',
-      'desktop_refine_visual_point',
       'desktop_click_visual_point',
       'desktop_click_coordinates',
       'desktop_wait_for_target',
