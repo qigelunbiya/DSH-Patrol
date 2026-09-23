@@ -21,6 +21,7 @@ async function setup(
   dispatch: (tool: string, args: JsonObject) => Promise<any>,
   clickOutcomes?: any,
   visualEvidence?: PatrolVisualEvidenceRegistry,
+  requirePreview = false,
 ) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-visual-click-'))
   roots.push(root)
@@ -37,7 +38,7 @@ async function setup(
       },
     },
   } as unknown as Context
-  registerPatrolVisualClickTool(ctx, store, { dispatch } as any, { maxSteps: 20, clickOutcomes, visualEvidence })
+  registerPatrolVisualClickTool(ctx, store, { dispatch } as any, { maxSteps: 20, clickOutcomes, visualEvidence, requirePreview })
   const tool = definitions.find(item => item.name === 'patrol_visual_click_target')
   if (!tool) throw new Error('patrol_visual_click_target not registered')
   const exec = {
@@ -717,6 +718,25 @@ describe('browser visual fallback click teaching', () => {
       xRatio: 0.1,
       yRatio: 0.8,
     }, exec)).rejects.toThrow(/visualFrameId.*Screenshot file names\/paths are not valid visual frames/i)
+    expect(calls).toEqual([])
+  })
+
+  it('requires a verified mark preview before any TEST MODE browser visual left-click', async () => {
+    const calls: string[] = []
+    const { tool, exec } = await setup(async (name) => {
+      calls.push(name)
+      throw new Error(`unexpected tool ${name}`)
+    }, undefined, undefined, true)
+
+    await expect(tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '点击百度一下',
+      targetHint: '百度一下按钮',
+      frameId: 'browser-visual-current',
+      xRatio: 0.55,
+      yRatio: 0.42,
+    }, exec)).rejects.toThrow(/preview-bound.*TEST MODE.*pointerAction=mark.*previewId/i)
+
     expect(calls).toEqual([])
   })
 
