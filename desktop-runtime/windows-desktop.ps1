@@ -6,33 +6,27 @@ param(
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-# Window discovery is intentionally a startup fast path. Keep candidate
-# discovery completely separate from precise HWND/DWM geometry: tasklist.exe is
-# a stable OS-owned process/window-title inventory and cannot block on a target
-# GUI thread's .NET/UIA properties. Precise screenshot/click actions below still
-# resolve the selected title/process back to a real HWND and DWM frame.
+# Window discovery is intentionally a startup fast path. Discovery must never
+# read GUI-owned title text or load UIA/Win32 helper assemblies: a hung or
+# half-created application window must not stall Patrol before it can inspect a
+# target. Return stable process/handle identity only; precise actions below
+# resolve the chosen process/HWND and obtain exact title/DWM geometry on demand.
 if ($Action -eq 'list-windows') {
-  $headers = @('ImageName','PID','SessionName','SessionNumber','MemUsage','Status','UserName','CPUTime','WindowTitle')
   $items = @()
-  try {
-    $rows = @(& tasklist.exe /V /FO CSV /NH 2>$null | ConvertFrom-Csv -Header $headers)
-    foreach ($row in $rows) {
-      $title = [string]$row.WindowTitle
-      $imageName = [string]$row.ImageName
-      $pidValue = 0
-      if ([string]::IsNullOrWhiteSpace($title) -or $title -eq 'N/A') { continue }
-      if (-not [int]::TryParse([string]$row.PID, [ref]$pidValue)) { continue }
-      $processName = [IO.Path]::GetFileNameWithoutExtension($imageName)
+  foreach ($process in (Get-Process -ErrorAction SilentlyContinue)) {
+    try {
+      $hwnd = [int64]$process.MainWindowHandle
+      if ($hwnd -eq 0) { continue }
       $items += [ordered]@{
-        processId = [int]$pidValue
-        processName = [string]$processName
-        title = $title
-        rectSource = 'tasklist-window-discovery'
+        processId = [int]$process.Id
+        processName = [string]$process.ProcessName
+        title = ''
+        hwnd = $hwnd
+        rectSource = 'process-hwnd-discovery'
       }
+    } catch {
+      # A process can exit between enumeration and property access.
     }
-  } catch {
-    # Discovery must fail soft. Precise tools can still target a known title or
-    # processName even if tasklist is temporarily unavailable.
   }
   [ordered]@{ ok=$true; windows=$items } | ConvertTo-Json -Depth 8 -Compress
   exit 0
