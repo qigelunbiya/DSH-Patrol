@@ -470,6 +470,95 @@ function Write-VisualGuideImage([string]$sourcePath, [string]$outputPath, $markX
   return [ordered]@{ ok=$true; path=$outputPath; width=[int]$width; height=[int]$height; coordinateGridUnits=1000 }
 }
 
+function Write-ModelVisionImage(
+  [string]$sourcePath,
+  [string]$outputPath,
+  [int]$maxWidth = 896,
+  [int]$maxHeight = 896,
+  [int]$jpegQuality = 68,
+  [double]$cropXRatio = 0,
+  [double]$cropYRatio = 0,
+  [double]$cropWidthRatio = 1,
+  [double]$cropHeightRatio = 1,
+  [bool]$upscale = $false
+) {
+  if (-not [IO.File]::Exists($sourcePath)) { throw "model vision source image not found: $sourcePath" }
+  if ($maxWidth -lt 64 -or $maxHeight -lt 64) { throw 'model vision max dimensions must be >= 64' }
+  if ($cropXRatio -lt 0 -or $cropYRatio -lt 0 -or $cropWidthRatio -le 0 -or $cropHeightRatio -le 0 -or
+      $cropXRatio + $cropWidthRatio -gt 1.000001 -or $cropYRatio + $cropHeightRatio -gt 1.000001) {
+    throw 'model vision crop ratios must stay inside the source image'
+  }
+
+  $directory = [IO.Path]::GetDirectoryName($outputPath)
+  if (-not [string]::IsNullOrWhiteSpace($directory)) { [IO.Directory]::CreateDirectory($directory) | Out-Null }
+
+  $source = [System.Drawing.Image]::FromFile($sourcePath)
+  $bitmap = $null
+  $graphics = $null
+  $encoderParams = $null
+  $qualityParam = $null
+  try {
+    $sourceWidth = [int]$source.Width
+    $sourceHeight = [int]$source.Height
+    $cropX = [int][Math]::Floor($sourceWidth * $cropXRatio)
+    $cropY = [int][Math]::Floor($sourceHeight * $cropYRatio)
+    $cropRight = [int][Math]::Ceiling($sourceWidth * ($cropXRatio + $cropWidthRatio))
+    $cropBottom = [int][Math]::Ceiling($sourceHeight * ($cropYRatio + $cropHeightRatio))
+    $cropRight = [Math]::Min($sourceWidth, [Math]::Max($cropX + 1, $cropRight))
+    $cropBottom = [Math]::Min($sourceHeight, [Math]::Max($cropY + 1, $cropBottom))
+    $cropWidth = [int]($cropRight - $cropX)
+    $cropHeight = [int]($cropBottom - $cropY)
+
+    $scale = [Math]::Min($maxWidth / [double]$cropWidth, $maxHeight / [double]$cropHeight)
+    if (-not $upscale) { $scale = [Math]::Min(1.0, $scale) }
+    else { $scale = [Math]::Min(3.5, $scale) }
+    $targetWidth = [Math]::Max(1, [int][Math]::Round($cropWidth * $scale))
+    $targetHeight = [Math]::Max(1, [int][Math]::Round($cropHeight * $scale))
+
+    $bitmap = [System.Drawing.Bitmap]::new($targetWidth, $targetHeight, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    $graphics.Clear([System.Drawing.Color]::White)
+    $graphics.CompositingMode = [System.Drawing.Drawing2D.CompositingMode]::SourceCopy
+    $graphics.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
+    $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+    $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+    $dest = [System.Drawing.Rectangle]::new(0, 0, $targetWidth, $targetHeight)
+    $graphics.DrawImage($source, $dest, $cropX, $cropY, $cropWidth, $cropHeight, [System.Drawing.GraphicsUnit]::Pixel)
+
+    $codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' } | Select-Object -First 1
+    if ($null -eq $codec) {
+      $bitmap.Save($outputPath, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+    } else {
+      $encoderParams = [System.Drawing.Imaging.EncoderParameters]::new(1)
+      $qualityParam = [System.Drawing.Imaging.EncoderParameter]::new([System.Drawing.Imaging.Encoder]::Quality, [int64][Math]::Max(35, [Math]::Min(92, $jpegQuality)))
+      $encoderParams.Param[0] = $qualityParam
+      $bitmap.Save($outputPath, $codec, $encoderParams)
+    }
+
+    return [ordered]@{
+      ok=$true
+      path=$outputPath
+      width=[int]$targetWidth
+      height=[int]$targetHeight
+      sourceWidth=[int]$sourceWidth
+      sourceHeight=[int]$sourceHeight
+      crop=[ordered]@{
+        xRatio=[double]($cropX / [double]$sourceWidth)
+        yRatio=[double]($cropY / [double]$sourceHeight)
+        widthRatio=[double]($cropWidth / [double]$sourceWidth)
+        heightRatio=[double]($cropHeight / [double]$sourceHeight)
+      }
+      jpegQuality=[int]$jpegQuality
+    }
+  } finally {
+    if ($qualityParam) { $qualityParam.Dispose() }
+    if ($encoderParams) { $encoderParams.Dispose() }
+    if ($graphics) { $graphics.Dispose() }
+    if ($bitmap) { $bitmap.Dispose() }
+    if ($source) { $source.Dispose() }
+  }
+}
 function Capture-Screenshot($request) {
   $path = [string](Get-Prop $request 'path' '')
   if ([string]::IsNullOrWhiteSpace($path)) { throw 'desktop screenshot path is required' }
@@ -856,6 +945,14 @@ try {
       $markXRatio = Get-Prop $request 'markXRatio' $null
       $markYRatio = Get-Prop $request 'markYRatio' $null
       Write-VisualGuideImage $sourcePath $path $markXRatio $markYRatio
+    }
+    'prepare-model-vision' {
+      $sourcePath = [string](Get-Prop $request 'sourcePath' '')
+      $path = [string](Get-Prop $request 'path' '')
+      if ([string]::IsNullOrWhiteSpace($sourcePath) -or [string]::IsNullOrWhiteSpace($path)) {
+        throw 'prepare-model-vision requires sourcePath and path'
+      }
+      Write-ModelVisionImage $sourcePath $path ([int](Get-Prop $request 'maxWidth' 896)) ([int](Get-Prop $request 'maxHeight' 896)) ([int](Get-Prop $request 'jpegQuality' 68)) ([double](Get-Prop $request 'cropXRatio' 0)) ([double](Get-Prop $request 'cropYRatio' 0)) ([double](Get-Prop $request 'cropWidthRatio' 1)) ([double](Get-Prop $request 'cropHeightRatio' 1)) ([bool](Get-Prop $request 'upscale' $false))
     }
     'screenshot' {
       Capture-Screenshot $request
