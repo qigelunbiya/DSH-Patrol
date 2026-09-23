@@ -217,6 +217,13 @@ describe('Desktop Automation runtime foundation', () => {
     driver.run = async (action: string, args: any) => {
       calls.push({ action, args })
       if (action === 'annotate-visual-guide') return { ok: true, path: 'preview.png', coordinateGridUnits: 1000 }
+      if (action === 'probe-screen-point') return {
+        ok: true,
+        status: 'recognized',
+        x: args.x,
+        y: args.y,
+        element: { name: 'Settings', controlType: 'Button', rect: { x: 820, y: 470, width: 40, height: 40 } },
+      }
       if (action === 'click-visual-point') return { ok: true, method: 'bound-window-visual-point', inputTransport: 'verified-cursor-mouse-event', x: 842, y: 490 }
       throw new Error(`unexpected action ${action}`)
     }
@@ -237,16 +244,29 @@ describe('Desktop Automation runtime foundation', () => {
       physicalClickDispatched: false,
       coordinateGridUnits: 1000,
     })
-    expect(calls).toEqual([{
-      action: 'annotate-visual-guide',
-      args: {
-        sourcePath: 'raw.png',
-        path: expect.stringContaining('-preview-'),
-        markXRatio: 0.742,
-        markYRatio: 0.615,
-        zoomPreview: true,
+    expect(calls).toEqual([
+      {
+        action: 'annotate-visual-guide',
+        args: {
+          sourcePath: 'raw.png',
+          path: expect.stringContaining('-preview-'),
+          markXRatio: 0.742,
+          markYRatio: 0.615,
+          zoomPreview: true,
+        },
       },
-    }])
+      {
+        action: 'probe-screen-point',
+        args: {
+          x: 841,
+          y: 490,
+        },
+      },
+    ])
+    expect(preview.pointProbe).toMatchObject({
+      status: 'recognized',
+      element: { name: 'Settings', controlType: 'Button' },
+    })
     expect(driver.visualFrames.has(frame.frameId)).toBe(true)
     expect(driver.visualPreviews.has(preview.previewId)).toBe(true)
     expect(driver.lastVisualFrameId).toBe(frame.frameId)
@@ -263,7 +283,7 @@ describe('Desktop Automation runtime foundation', () => {
       yRatio: 0.615,
       inputTransport: 'verified-cursor-mouse-event',
     })
-    expect(calls[1]).toMatchObject({
+    expect(calls[2]).toMatchObject({
       action: 'click-visual-point',
       args: {
         xRatio: 0.742,
@@ -303,6 +323,9 @@ describe('Desktop Automation runtime foundation', () => {
           crop: { xRatio: 0.60, yRatio: 0.40, widthRatio: 0.20, heightRatio: 0.30 },
           previewContent: { xRatio: 0.10, yRatio: 0.10, widthRatio: 0.80, heightRatio: 0.80 },
         }
+      }
+      if (action === 'probe-screen-point') {
+        return { ok: true, status: 'empty', x: args.x, y: args.y, element: null }
       }
       throw new Error(`unexpected action ${action}`)
     }
