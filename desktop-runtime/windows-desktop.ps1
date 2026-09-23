@@ -154,7 +154,7 @@ namespace PatrolDesktop {
     [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int maxCount);
     public static IntPtr FindVisibleTopLevelWindowForProcess(int processId) {
       IntPtr found = IntPtr.Zero;
-      long bestArea = -1;
+      long bestScore = Int64.MinValue;
       EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
         try {
           if (!IsWindowVisible(hWnd)) return true;
@@ -166,9 +166,14 @@ namespace PatrolDesktop {
           int width = rect.Right - rect.Left;
           int height = rect.Bottom - rect.Top;
           if (width <= 1 || height <= 1) return true;
+          string title = WindowTitle(hWnd);
           long area = (long)width * (long)height;
-          if (area > bestArea) {
-            bestArea = area;
+          // Real app main windows almost always expose a title. Transparent/
+          // message/helper top-level HWNDs often do not; never let a slightly
+          // larger helper window outrank the titled UIA root.
+          long score = area + (String.IsNullOrWhiteSpace(title) ? 0L : 1000000000000L);
+          if (score > bestScore) {
+            bestScore = score;
             found = hWnd;
           }
         } catch { }
