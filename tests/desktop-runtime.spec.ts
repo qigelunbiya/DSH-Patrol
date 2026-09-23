@@ -74,7 +74,7 @@ describe('Desktop Automation runtime foundation', () => {
     expect(PATROL_DESKTOP_PROMPT).toMatch(/完整应用窗口/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/imageX\/imageWidth/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/preview.*可选诊断/)
-    expect(PATROL_DESKTOP_PROMPT).toMatch(/绝对禁止把 read_image 看到的裁剪截图像素直接传给 desktop_click_coordinates/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/禁止把聊天 UI、屏幕分辨率、缩略图尺寸或任何裁剪图坐标混入应用点击/)
 
     const tools = readFileSync(join(process.cwd(), 'desktop-runtime', 'tools-plugin.js'), 'utf8')
     expect(tools).toContain("name: 'desktop_preview_visual_point'")
