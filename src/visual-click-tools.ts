@@ -189,7 +189,20 @@ export function registerPatrolVisualClickTool(
               if (!oldest) break
               visualPreviews.delete(oldest)
             }
-            previewLine = `Visual preview token: ${previewId}. After patrol_observe(includeImage=true) confirms the red crosshair is exactly on the intended control, call patrol_visual_click_target with this previewId and the same targetHint. Do not recompute or restate coordinates.`
+            const resolvedClickX = objectNumber(probed.value, 'resolvedClickX')
+            const resolvedClickY = objectNumber(probed.value, 'resolvedClickY')
+            const viewportWidth = objectNumber(probed.value, 'viewportWidth')
+            const viewportHeight = objectNumber(probed.value, 'viewportHeight')
+            const focusXRatio = resolvedClickX !== undefined && viewportWidth !== undefined && viewportWidth > 0
+              ? Math.max(0, Math.min(1, resolvedClickX / viewportWidth))
+              : undefined
+            const focusYRatio = resolvedClickY !== undefined && viewportHeight !== undefined && viewportHeight > 0
+              ? Math.max(0, Math.min(1, resolvedClickY / viewportHeight))
+              : undefined
+            const focusInstruction = focusXRatio !== undefined && focusYRatio !== undefined
+              ? ` For precise verification, call patrol_observe(includeImage=true, focusXRatio=${focusXRatio.toFixed(4)}, focusYRatio=${focusYRatio.toFixed(4)}, focusWidthRatio=0.22, focusHeightRatio=0.24) so the same red crosshair is inspected in a magnified CURRENT crop.`
+              : ' After patrol_observe(includeImage=true) confirms the red crosshair is exactly on the intended control, continue.'
+            previewLine = `Visual preview token: ${previewId}.${focusInstruction} Then call patrol_visual_click_target with this previewId and the same targetHint. Do not recompute or restate coordinates.`
           }
         }
         return [
