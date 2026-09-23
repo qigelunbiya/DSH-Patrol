@@ -19,12 +19,8 @@ namespace PatrolDesktop {
   public static class Native {
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
-    [StructLayout(LayoutKind.Sequential)]
-    public struct POINT { public int X; public int Y; }
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
-    [DllImport("user32.dll", SetLastError=true)] public static extern bool SetCursorPos(int X, int Y);
-    [DllImport("user32.dll", SetLastError=true)] public static extern bool GetCursorPos(out POINT point);
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
@@ -294,14 +290,13 @@ function Find-TargetElement($request) {
 }
 
 function Click-Point([int]$x, [int]$y, [int]$button = 0) {
-  if (-not [PatrolDesktop.Native]::SetCursorPos($x, $y)) {
-    throw "SetCursorPos failed for visual click at ($x,$y)"
-  }
+  # Keep the always-loaded Native type unchanged from the stable desktop
+  # baseline. Cursor.Position uses the same DPI-aware physical screen space as
+  # the screenshot frame; read it back before input so a coordinate mismatch
+  # can never be reported as a successful visual click.
+  [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($x, $y)
   Start-Sleep -Milliseconds 45
-  $point = New-Object PatrolDesktop.Native+POINT
-  if (-not [PatrolDesktop.Native]::GetCursorPos([ref]$point)) {
-    throw "GetCursorPos failed after moving to visual click point ($x,$y)"
-  }
+  $point = [System.Windows.Forms.Cursor]::Position
   if ([Math]::Abs([int]$point.X - $x) -gt 1 -or [Math]::Abs([int]$point.Y - $y) -gt 1) {
     throw "visual cursor calibration mismatch: requested=($x,$y) actual=($($point.X),$($point.Y))"
   }
@@ -314,17 +309,13 @@ function Click-Point([int]$x, [int]$y, [int]$button = 0) {
     [PatrolDesktop.Native]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
   }
   Start-Sleep -Milliseconds 35
-
-  $after = New-Object PatrolDesktop.Native+POINT
-  if (-not [PatrolDesktop.Native]::GetCursorPos([ref]$after)) {
-    throw "GetCursorPos failed after visual click at ($x,$y)"
-  }
+  $after = [System.Windows.Forms.Cursor]::Position
   return [ordered]@{
     requestedX = $x
     requestedY = $y
     actualX = [int]$after.X
     actualY = [int]$after.Y
-    transport = 'win32-mouse-event-verified-cursor'
+    transport = 'verified-cursor-mouse-event'
   }
 }
 function Invoke-Target($target) {
