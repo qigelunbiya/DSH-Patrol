@@ -201,7 +201,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     'dsh-patrol: semantic current-page click target resolver',
   )
   ctx.effect(
-    () => registerPatrolVisualClickTool(ctx, store, runner, { maxSteps: resolved.maxSteps, clickOutcomes, visualEvidence }),
+    () => registerPatrolVisualClickTool(ctx, store, runner, {
+      maxSteps: resolved.maxSteps,
+      clickOutcomes,
+      visualEvidence,
+      requirePreview: runtimePolicy.testMode,
+    }),
     'dsh-patrol: recordable screenshot-bound browser visual grounding',
   )
   ctx.effect(
