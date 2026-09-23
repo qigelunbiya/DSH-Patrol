@@ -479,33 +479,94 @@ function Find-TargetElement($request) {
   return $matches[0]
 }
 
-function Click-Point([int]$x, [int]$y, [int]$button = 0) {
-  # Keep the always-loaded Native type unchanged from the stable desktop
-  # baseline. Cursor.Position uses the same DPI-aware physical screen space as
-  # the screenshot frame; read it back before input so a coordinate mismatch
-  # can never be reported as a successful visual click.
-  [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($x, $y)
-  Start-Sleep -Milliseconds 45
-  $point = [System.Windows.Forms.Cursor]::Position
-  if ([Math]::Abs([int]$point.X - $x) -gt 1 -or [Math]::Abs([int]$point.Y - $y) -gt 1) {
-    throw "visual cursor calibration mismatch: requested=($x,$y) actual=($($point.X),$($point.Y))"
-  }
+function Ensure-VerifiedMouseInput {
+  if ('PatrolDesktopInput.Mouse' -as [type]) { return }
+  Add-Type @"
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+namespace PatrolDesktopInput {
+  public static class Mouse {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT { public int X; public int Y; }
 
-  if ($button -eq 1) {
-    [PatrolDesktop.Native]::mouse_event(0x0008, 0, 0, 0, [UIntPtr]::Zero)
-    [PatrolDesktop.Native]::mouse_event(0x0010, 0, 0, 0, [UIntPtr]::Zero)
-  } else {
-    [PatrolDesktop.Native]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-    [PatrolDesktop.Native]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+    [StructLayout(LayoutKind.Sequential)]
+    struct MOUSEINPUT {
+      public int dx;
+      public int dy;
+      public uint mouseData;
+      public uint dwFlags;
+      public uint time;
+      public IntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    struct INPUTUNION {
+      [FieldOffset(0)] public MOUSEINPUT mi;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct INPUT {
+      public uint type;
+      public INPUTUNION U;
+    }
+
+    [DllImport("user32.dll", SetLastError=true)] static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll", SetLastError=true)] static extern bool GetCursorPos(out POINT point);
+    [DllImport("user32.dll", SetLastError=true)] static extern uint SendInput(uint count, INPUT[] inputs, int size);
+
+    public static POINT ClickVerified(int x, int y, bool rightButton) {
+      if (!SetCursorPos(x, y)) {
+        throw new Win32Exception(Marshal.GetLastWin32Error(), "SetCursorPos failed");
+      }
+      System.Threading.Thread.Sleep(45);
+      POINT before;
+      if (!GetCursorPos(out before)) {
+        throw new Win32Exception(Marshal.GetLastWin32Error(), "GetCursorPos failed before click");
+      }
+      if (Math.Abs(before.X - x) > 1 || Math.Abs(before.Y - y) > 1) {
+        throw new InvalidOperationException(String.Format(
+          "visual cursor calibration mismatch: requested=({0},{1}) actual=({2},{3})",
+          x, y, before.X, before.Y));
+      }
+
+      uint down = rightButton ? 0x0008u : 0x0002u;
+      uint up = rightButton ? 0x0010u : 0x0004u;
+      INPUT[] inputs = new INPUT[2];
+      inputs[0].type = 0;
+      inputs[0].U.mi.dwFlags = down;
+      inputs[1].type = 0;
+      inputs[1].U.mi.dwFlags = up;
+      uint sent = SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT)));
+      if (sent != 2) {
+        throw new Win32Exception(Marshal.GetLastWin32Error(), String.Format(
+          "SendInput dispatched {0}/2 mouse events", sent));
+      }
+
+      System.Threading.Thread.Sleep(35);
+      POINT after;
+      if (!GetCursorPos(out after)) {
+        throw new Win32Exception(Marshal.GetLastWin32Error(), "GetCursorPos failed after click");
+      }
+      return after;
+    }
   }
-  Start-Sleep -Milliseconds 35
-  $after = [System.Windows.Forms.Cursor]::Position
+}
+"@
+}
+
+function Click-Point([int]$x, [int]$y, [int]$button = 0) {
+  # Compile the modern mouse transport lazily so list-windows and non-click
+  # desktop operations keep the stable lightweight bootstrap. The click itself
+  # is physical-screen-coordinate verified before SendInput is allowed.
+  Ensure-VerifiedMouseInput
+  $after = [PatrolDesktopInput.Mouse]::ClickVerified($x, $y, ($button -eq 1))
   return [ordered]@{
     requestedX = $x
     requestedY = $y
     actualX = [int]$after.X
     actualY = [int]$after.Y
-    transport = 'verified-cursor-mouse-event'
+    transport = 'send-input-verified-cursor'
   }
 }
 function Invoke-Target($target) {
