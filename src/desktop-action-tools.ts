@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { applyDesktopTargetDefaults, DESKTOP_ACTIONS, desktopArtifactForTool, desktopToolForAction, type DesktopAction } from './desktop.js'
@@ -65,7 +66,15 @@ export function registerPatrolDesktopActionTools(
       imageY: { type: 'number' },
       imageWidth: { type: 'number' },
       imageHeight: { type: 'number' },
-      regionId: { type: 'string', description: 'Ephemeral regionId from desktop_focus_visual_region. It is used only for CURRENT teaching and is never persisted; successful clicks are normalized to full-window xRatio/yRatio for replay.' },
+      regionId: { type: 'string', description: 'Ephemeral regionId from desktop_focus_visual_region. It is never persisted into the Runbook.' },
+      actionMapId: { type: 'string', description: 'Ephemeral Action Map id from desktop_visual_action_map. Never persisted.' },
+      candidateId: { type: 'string', description: 'Desktop Action Map candidate D1/D2/... selected visually by the model.' },
+      templatePath: { type: 'string', description: 'Replay-only learned icon template path. Normally generated automatically during candidate teaching.' },
+      expectedXRatio: { type: 'number' },
+      expectedYRatio: { type: 'number' },
+      searchWidthRatio: { type: 'number' },
+      searchHeightRatio: { type: 'number' },
+      minScore: { type: 'number' },
       frameId: { type: 'string', description: 'Ephemeral frameId from the immediately preceding desktop_screenshot. It is never persisted into the Runbook.' },
       allowWindowChrome: { type: 'boolean' },
       button: { type: 'string', enum: ['left', 'right'] },
@@ -137,7 +146,13 @@ async function executeAndRecordDesktopAction(
   assertSafePersistentText(stepName, 'stepName')
   if (notes !== undefined) assertSafePersistentText(notes, 'step notes')
   const definition = await loadEditable(store, inspectionId, maxSteps)
-  const effectiveExecutionArgs = applyDesktopTargetDefaults(definition, tool, executionArgs)
+  const stepId = nextStepId(definition.steps)
+  let preparedExecutionArgs = executionArgs
+  if (tool === 'desktop_click_visual_candidate') {
+    const templatePath = join(store.inspectionDirectory(inspectionId), 'desktop-templates', `${stepId}.jpg`)
+    preparedExecutionArgs = { ...executionArgs, templatePath }
+  }
+  const effectiveExecutionArgs = applyDesktopTargetDefaults(definition, tool, preparedExecutionArgs)
   const effectiveStoredArgs = applyDesktopTargetDefaults(definition, tool, storedArgs)
   assertSafeForStorage(effectiveStoredArgs)
 
@@ -146,28 +161,48 @@ async function executeAndRecordDesktopAction(
     return `Desktop teaching action failed and was NOT recorded. ${dispatched.error ?? dispatched.text ?? 'Unknown desktop error'}`
   }
 
+  let replayTool = tool
   let replayArgs = effectiveStoredArgs
-  if (tool === 'desktop_click_visual_point') {
+  if (tool === 'desktop_click_visual_point' || tool === 'desktop_click_focused_visual_point') {
     const mappedX = objectNumber(dispatched.value, 'xRatio')
     const mappedY = objectNumber(dispatched.value, 'yRatio')
     if (mappedX !== undefined && mappedY !== undefined) {
-      replayArgs = { ...effectiveStoredArgs, xRatio: mappedX, yRatio: mappedY }
-      delete replayArgs.imageX
-      delete replayArgs.imageY
-      delete replayArgs.imageWidth
-      delete replayArgs.imageHeight
-      delete replayArgs.regionId
-      delete replayArgs.frameId
+      replayTool = 'desktop_click_visual_point'
+      replayArgs = {
+        ...desktopWindowReplayArgs(effectiveStoredArgs),
+        xRatio: mappedX,
+        yRatio: mappedY,
+        ...(typeof effectiveStoredArgs.button === 'string' ? { button: effectiveStoredArgs.button } : {}),
+      }
+    }
+  }
+  if (tool === 'desktop_click_visual_candidate') {
+    const mappedX = objectNumber(dispatched.value, 'xRatio')
+    const mappedY = objectNumber(dispatched.value, 'yRatio')
+    const templatePath = objectString(dispatched.value, 'templatePath')
+    if (mappedX === undefined || mappedY === undefined || templatePath === undefined) {
+      throw new Error('desktop candidate click succeeded without learned template replay metadata')
+    }
+    replayTool = 'desktop_click_visual_template'
+    replayArgs = {
+      ...desktopWindowReplayArgs(effectiveStoredArgs),
+      templatePath,
+      expectedXRatio: mappedX,
+      expectedYRatio: mappedY,
+      searchWidthRatio: objectNumber(dispatched.value, 'templateSearchWidthRatio') ?? 0.20,
+      searchHeightRatio: objectNumber(dispatched.value, 'templateSearchHeightRatio') ?? 0.20,
+      minScore: objectNumber(dispatched.value, 'templateMinScore') ?? 0.76,
+      ...(typeof effectiveStoredArgs.button === 'string' ? { button: effectiveStoredArgs.button } : {}),
     }
   }
   assertSafeForStorage(replayArgs)
 
-  const artifact = desktopArtifactForTool(tool)
+  const artifact = desktopArtifactForTool(replayTool)
   const step: ToolStep = {
-    id: nextStepId(definition.steps),
+    id: stepId,
     kind: 'tool',
     name: stepName,
-    tool,
+    tool: replayTool,
     arguments: replayArgs,
     ...(artifact === undefined ? {} : { artifact }),
     ...(notes === undefined ? {} : { notes }),
@@ -201,7 +236,7 @@ async function executeAndRecordDesktopAction(
     output,
     ...(teachingArtifacts.length === 0 ? {} : { artifacts: teachingArtifacts }),
   })
-  return `Executed and recorded ${step.id} (${tool}).\n${output}`
+  return `Executed ${tool} and recorded ${step.id} (${replayTool}).\n${output}`
 }
 
 function desktopArguments(action: DesktopAction, args: Record<string, unknown>, persisted: boolean): JsonObject {
@@ -232,12 +267,30 @@ function desktopArguments(action: DesktopAction, args: Record<string, unknown>, 
       add('button', args.button); add('scope', args.scope); add('captureMethod', args.captureMethod); add('languages', args.languages)
       add('minXRatio', args.minXRatio); add('maxXRatio', args.maxXRatio); add('minYRatio', args.minYRatio); add('maxYRatio', args.maxYRatio)
       add('fileName', args.fileName); break
+    case 'click-visual-candidate':
+      add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
+      add('button', args.button)
+      if (!persisted) { add('frameId', args.frameId); add('actionMapId', args.actionMapId); add('candidateId', args.candidateId) }
+      break
+    case 'click-focused-visual-point':
+      add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
+      add('button', args.button)
+      if (!persisted) {
+        add('frameId', args.frameId); add('regionId', args.regionId)
+        add('imageX', args.imageX); add('imageY', args.imageY); add('imageWidth', args.imageWidth); add('imageHeight', args.imageHeight)
+      }
+      break
+    case 'click-visual-template':
+      add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
+      add('templatePath', args.templatePath); add('expectedXRatio', args.expectedXRatio); add('expectedYRatio', args.expectedYRatio)
+      add('searchWidthRatio', args.searchWidthRatio); add('searchHeightRatio', args.searchHeightRatio); add('minScore', args.minScore); add('button', args.button)
+      break
     case 'click-visual-point':
       add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
       add('xRatio', args.xRatio); add('yRatio', args.yRatio)
       add('imageX', args.imageX); add('imageY', args.imageY); add('imageWidth', args.imageWidth); add('imageHeight', args.imageHeight)
       add('button', args.button); add('allowWindowChrome', args.allowWindowChrome)
-      if (!persisted) { add('frameId', args.frameId); add('regionId', args.regionId) }
+      if (!persisted) add('frameId', args.frameId)
       break
     case 'click-coordinates':
       add('x', args.x); add('y', args.y); add('button', args.button); break
@@ -405,6 +458,15 @@ function objectString(value: unknown, key: string): string | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
   const child = (value as Record<string, unknown>)[key]
   return typeof child === 'string' && child.length > 0 ? child : undefined
+}
+
+function desktopWindowReplayArgs(args: JsonObject): JsonObject {
+  const out: JsonObject = {}
+  for (const key of ['processName', 'title', 'titleContains'] as const) {
+    const value = args[key]
+    if (typeof value === 'string' && value.trim() !== '') out[key] = value
+  }
+  return out
 }
 
 function objectNumber(value: unknown, key: string): number | undefined {
