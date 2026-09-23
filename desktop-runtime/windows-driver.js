@@ -94,7 +94,31 @@ export class WindowsDesktopDriver {
 
   async screenshot(args = {}, exec) {
     const path = await this.nextScreenshotPath(exec, args.fileName)
-    return await this.run('screenshot', { ...args, path }, exec)
+    const shot = await this.run('screenshot', { ...args, path }, exec)
+    if (args.visualGuide !== true || !shot?.path) return shot
+
+    const rawPath = String(shot.path)
+    const guidePath = siblingPngPath(rawPath, '-visual-guide')
+    try {
+      const guide = await this.run('annotate-visual-guide', {
+        sourcePath: rawPath,
+        path: guidePath,
+      }, exec)
+      return {
+        ...shot,
+        rawPath,
+        path: String(guide?.path || guidePath),
+        visualGuide: true,
+        coordinateGridUnits: 1000,
+      }
+    } catch (error) {
+      this.logger?.warn?.(`[dsh-patrol/desktop] visual guide overlay failed; using raw screenshot: ${errorMessage(error)}`)
+      return {
+        ...shot,
+        rawPath,
+        visualGuide: false,
+      }
+    }
   }
 
   async visualScreenshot(args = {}, exec) {
@@ -103,6 +127,7 @@ export class WindowsDesktopDriver {
       ...args,
       scope,
       captureMethod: 'screen',
+      visualGuide: args.visualGuide !== false,
     }, exec)
     if (scope !== 'active-window') return shot
 
@@ -127,6 +152,7 @@ export class WindowsDesktopDriver {
       frameId,
       createdAt: Date.now(),
       path: shot.path,
+      rawPath: shot.rawPath ?? shot.path,
       hwnd,
       processName: String(window?.processName ?? ''),
       title: String(window?.title ?? ''),
@@ -184,7 +210,43 @@ export class WindowsDesktopDriver {
       ...result,
       frameId,
       screenshotPath: frame.path,
+      rawScreenshotPath: frame.rawPath,
       frameBounds: frame.rect,
+    }
+  }
+
+  async previewVisualPoint(args = {}, exec) {
+    const requestedFrameId = String(args.frameId ?? '').trim()
+    const frameId = requestedFrameId || this.lastVisualFrameId
+    if (!frameId) throw new Error('desktop_preview_visual_point requires a fresh desktop_screenshot first')
+    const frame = this.visualFrames.get(frameId)
+    if (!frame) throw new Error(`desktop visual frame ${JSON.stringify(frameId)} is unavailable; take a new desktop_screenshot`)
+    if (Date.now() - frame.createdAt > 120000) {
+      this.visualFrames.delete(frameId)
+      if (this.lastVisualFrameId === frameId) this.lastVisualFrameId = undefined
+      throw new Error('desktop visual frame is stale; take a new desktop_screenshot')
+    }
+    assertVisualFrameTarget(frame, args)
+    const xRatio = ratioValue(args.xRatio, NaN, 'xRatio')
+    const yRatio = ratioValue(args.yRatio, NaN, 'yRatio')
+    const previewPath = siblingPngPath(frame.rawPath || frame.path, `-preview-${randomUUID().slice(0, 8)}`)
+    const preview = await this.run('annotate-visual-guide', {
+      sourcePath: frame.rawPath || frame.path,
+      path: previewPath,
+      markXRatio: xRatio,
+      markYRatio: yRatio,
+    }, exec)
+    return {
+      ...preview,
+      ok: true,
+      frameId,
+      xRatio,
+      yRatio,
+      previewPath: String(preview?.path || previewPath),
+      rawScreenshotPath: frame.rawPath,
+      frameBounds: frame.rect,
+      coordinateGridUnits: 1000,
+      physicalClickDispatched: false,
     }
   }
 
@@ -674,6 +736,12 @@ async function waitWithSignal(milliseconds, signal) {
     }
     signal?.addEventListener?.('abort', onAbort, { once: true })
   })
+}
+
+function siblingPngPath(path, suffix) {
+  const file = basename(String(path || 'screenshot.png'))
+  const stem = file.replace(/\.png$/i, '')
+  return join(dirname(String(path || '.')), `${stem}${suffix}.png`)
 }
 
 function screenshotBounds(shot) {
