@@ -216,9 +216,9 @@ export function registerPatrolObservationTools(
     async execute(args, exec: ToolRunContext) {
       const focusRequested = args.focusXRatio !== undefined || args.focusYRatio !== undefined
         || args.focusWidthRatio !== undefined || args.focusHeightRatio !== undefined
-      const actionMapTargetHint = typeof args.targetHint === 'string' ? args.targetHint.trim() : ''
+      const requestedActionMapTargetHint = typeof args.targetHint === 'string' ? args.targetHint.trim() : ''
       const actionMapRequested = args.actionMap === true
-        || (args.includeImage === true && actionMapTargetHint.length >= 2)
+        || (args.includeImage === true && requestedActionMapTargetHint.length >= 2)
       if (args.actionMap === true && args.includeImage !== true) {
         throw new Error('visual action-map observation requires includeImage=true')
       }
@@ -256,7 +256,7 @@ export function registerPatrolObservationTools(
           quality: VISUAL_SCREENSHOT_JPEG_QUALITY,
           coordinateGuide: !actionMapRequested,
           actionMap: actionMapRequested,
-          ...(actionMapRequested ? { actionMapTargetHint } : {}),
+          ...(actionMapRequested ? { actionMapTargetHint: requestedActionMapTargetHint } : {}),
           ...(focusRequested ? {
             focusXRatio: Number(args.focusXRatio),
             focusYRatio: Number(args.focusYRatio),
