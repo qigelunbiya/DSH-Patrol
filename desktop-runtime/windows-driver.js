@@ -19,6 +19,7 @@ export class WindowsDesktopDriver {
     this.commandTimeoutMs = options.commandTimeoutMs ?? 30000
     this.powerShell = options.powerShell || process.env.DSH_PATROL_POWERSHELL || 'powershell.exe'
     this.visualFrames = new Map()
+    this.visualPreviews = new Map()
     this.lastVisualFrameId = undefined
   }
 
@@ -181,9 +182,18 @@ export class WindowsDesktopDriver {
   }
 
   async clickVisualPoint(args = {}, exec) {
+    const previewId = String(args.previewId ?? '').trim()
+    const preview = previewId ? this.visualPreviews.get(previewId) : undefined
+    if (previewId && !preview) {
+      throw new Error(`desktop visual preview ${JSON.stringify(previewId)} is unavailable; create a new desktop_preview_visual_point`)
+    }
+
     const requestedFrameId = String(args.frameId ?? '').trim()
-    const frameId = requestedFrameId || this.lastVisualFrameId
+    const frameId = preview?.frameId || requestedFrameId || this.lastVisualFrameId
     if (!frameId) throw new Error('desktop_click_visual_point requires a fresh desktop_screenshot first')
+    if (preview && requestedFrameId && requestedFrameId !== preview.frameId) {
+      throw new Error('desktop visual preview belongs to a different frameId; use the preview-bound frame instead of mixing screenshots')
+    }
     const frame = this.visualFrames.get(frameId)
     if (!frame) {
       throw new Error(`desktop visual frame ${JSON.stringify(frameId)} is unavailable or already consumed; take a new desktop_screenshot`)
@@ -193,10 +203,22 @@ export class WindowsDesktopDriver {
       if (this.lastVisualFrameId === frameId) this.lastVisualFrameId = undefined
       throw new Error('desktop visual frame is stale; take a new desktop_screenshot')
     }
+    if (preview && Date.now() - preview.createdAt > 120000) {
+      this.visualPreviews.delete(previewId)
+      throw new Error('desktop visual preview is stale; preview the CURRENT screenshot again')
+    }
     assertVisualFrameTarget(frame, args)
+
+    const xRatio = preview ? preview.xRatio : ratioValue(args.xRatio, NaN, 'xRatio')
+    const yRatio = preview ? preview.yRatio : ratioValue(args.yRatio, NaN, 'yRatio')
+    if (!Number.isFinite(xRatio) || !Number.isFinite(yRatio)) {
+      throw new Error('desktop_click_visual_point requires xRatio/yRatio unless previewId binds an already verified visual point')
+    }
 
     const result = await this.run('click-visual-point', {
       ...args,
+      xRatio,
+      yRatio,
       hwnd: frame.hwnd,
       frameHwnd: frame.hwnd,
       frameX: frame.rect.x,
@@ -205,10 +227,17 @@ export class WindowsDesktopDriver {
       frameHeight: frame.rect.height,
     }, exec)
     this.visualFrames.delete(frameId)
+    for (const [id, item] of this.visualPreviews) {
+      if (item?.frameId === frameId) this.visualPreviews.delete(id)
+    }
     if (this.lastVisualFrameId === frameId) this.lastVisualFrameId = undefined
     return {
       ...result,
       frameId,
+      previewId: previewId || undefined,
+      previewBound: Boolean(preview),
+      xRatio,
+      yRatio,
       screenshotPath: frame.path,
       rawScreenshotPath: frame.rawPath,
       frameBounds: frame.rect,
@@ -236,9 +265,24 @@ export class WindowsDesktopDriver {
       markXRatio: xRatio,
       markYRatio: yRatio,
     }, exec)
+    const previewId = `desktop-preview-${randomUUID()}`
+    this.visualPreviews.set(previewId, {
+      previewId,
+      frameId,
+      createdAt: Date.now(),
+      xRatio,
+      yRatio,
+      previewPath: String(preview?.path || previewPath),
+    })
+    while (this.visualPreviews.size > 24) {
+      const oldest = this.visualPreviews.keys().next().value
+      if (!oldest) break
+      this.visualPreviews.delete(oldest)
+    }
     return {
       ...preview,
       ok: true,
+      previewId,
       frameId,
       xRatio,
       yRatio,
@@ -247,6 +291,7 @@ export class WindowsDesktopDriver {
       frameBounds: frame.rect,
       coordinateGridUnits: 1000,
       physicalClickDispatched: false,
+      clickContract: 'Pass previewId to desktop_click_visual_point; the real click will reuse these exact previewed ratios and ignore coordinate drift.',
     }
   }
 
