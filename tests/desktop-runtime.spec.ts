@@ -97,9 +97,9 @@ describe('Desktop Automation runtime foundation', () => {
     expect(backend).toContain("'annotate-visual-guide' {")
     expect(backend).toContain('coordinateGridUnits=1000')
     expect(backend).toContain('markXRatio')
-    expect(backend).toContain('SetCursorPos')
-    expect(backend).toContain('GetCursorPos')
-    expect(backend).toContain("transport = 'win32-mouse-event-verified-cursor'")
+    expect(backend).toContain('[System.Windows.Forms.Cursor]::Position')
+    expect(backend).toContain('visual cursor calibration mismatch')
+    expect(backend).toContain("transport = 'verified-cursor-mouse-event'")
   })
 
   it('binds model-vision clicks to the exact full-window screenshot frame and consumes that frame', async () => {
@@ -187,7 +187,7 @@ describe('Desktop Automation runtime foundation', () => {
     driver.run = async (action: string, args: any) => {
       calls.push({ action, args })
       if (action === 'annotate-visual-guide') return { ok: true, path: 'preview.png', coordinateGridUnits: 1000 }
-      if (action === 'click-visual-point') return { ok: true, method: 'bound-window-visual-point', inputTransport: 'win32-mouse-event-verified-cursor', x: 842, y: 490 }
+      if (action === 'click-visual-point') return { ok: true, method: 'bound-window-visual-point', inputTransport: 'verified-cursor-mouse-event', x: 842, y: 490 }
       throw new Error(`unexpected action ${action}`)
     }
 
@@ -230,7 +230,7 @@ describe('Desktop Automation runtime foundation', () => {
       frameId: frame.frameId,
       xRatio: 0.742,
       yRatio: 0.615,
-      inputTransport: 'win32-mouse-event-verified-cursor',
+      inputTransport: 'verified-cursor-mouse-event',
     })
     expect(calls[1]).toMatchObject({
       action: 'click-visual-point',
