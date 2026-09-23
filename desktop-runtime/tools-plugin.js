@@ -136,6 +136,20 @@ export function apply(ctx, config = {}) {
       execute: async (args, exec) => await driver.clickOcrText(compact(args), exec),
     }),
     defineTool({
+      name: 'desktop_preview_visual_point',
+      description: 'Preview a proposed xRatio/yRatio on the latest CURRENT desktop_screenshot without clicking. Returns a same-size XY/1000 guide image with a bright green crosshair at the exact physical point that desktop_click_visual_point would use. For small icons, dense menus, adjacent rows, send buttons, close buttons, or any target where a one-row offset would be harmful, read_image(previewPath) and confirm the crosshair is on the intended control before issuing the real click with the SAME frameId/xRatio/yRatio.',
+      parameters: {
+        xRatio: reqNum,
+        yRatio: reqNum,
+        frameId: str,
+        processName: str,
+        title: str,
+        titleContains: str,
+      },
+      output: jsonOutput('Desktop visual point previewed'),
+      execute: async (args, exec) => await driver.previewVisualPoint(compact(args), exec),
+    }),
+    defineTool({
       name: 'desktop_click_visual_point',
       description: 'Click a point identified from the latest CURRENT desktop_screenshot visual frame. The click is bound to the exact same top-level HWND and physical screen rectangle used for that screenshot; if the window moved/resized/recreated, the click is rejected and a new screenshot is required. xRatio/yRatio are 0..1 inside that frame. The top-right window-control zone is rejected by default.',
       parameters: {
@@ -290,7 +304,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_screenshot',
-      description: 'Capture a geometry-faithful model-vision frame. For active-window, Patrol activates the selected top-level window, resolves its visible DWM frame bounds, then screen-copies exactly that whole physical rectangle. It deliberately does NOT use PrintWindow because custom/GPU apps may report success while rendering only part of the UI. The result includes frameId; desktop_click_visual_point is bound to this exact HWND+rectangle.',
+      description: 'Capture a geometry-faithful model-vision frame. For active-window, Patrol activates the selected top-level window, resolves its visible DWM frame bounds, then screen-copies exactly that whole physical rectangle. It deliberately does NOT use PrintWindow because custom/GPU apps may report success while rendering only part of the UI. The returned path is a same-size XY/1000 guide overlay for model vision (rawPath preserves the clean capture); frameId remains bound to the exact HWND+rectangle. Use desktop_preview_visual_point before clicking small/dense targets.',
       parameters: {
         scope: { type: 'string', enum: ['active-window', 'screen'] },
         captureMethod: { type: 'string', enum: ['auto', 'print-window', 'screen'], description: 'Compatibility input. active-window visual screenshots always force geometry-faithful screen copy.' },
