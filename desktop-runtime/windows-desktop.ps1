@@ -26,25 +26,25 @@ namespace PatrolDesktop {
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
-    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowTextLengthW(IntPtr hWnd);
-    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int maxCount);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int maxCount);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
     [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
     public static IntPtr[] GetVisibleTopLevelWindows() {
       var windows = new List<IntPtr>();
       EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
-        if (IsWindowVisible(hWnd) && GetWindowTextLengthW(hWnd) > 0) windows.Add(hWnd);
+        if (IsWindowVisible(hWnd)) windows.Add(hWnd);
         return true;
       }, IntPtr.Zero);
       return windows.ToArray();
     }
     public static string GetWindowTitle(IntPtr hWnd) {
-      int length = GetWindowTextLengthW(hWnd);
-      if (length <= 0) return String.Empty;
-      var builder = new StringBuilder(length + 1);
-      GetWindowTextW(hWnd, builder, builder.Capacity);
-      return builder.ToString();
+      // Do not call GetWindowTextLength across processes: a newly-created GUI
+      // thread can transiently stall while its message pump is coming online.
+      // GetWindowTextW on a fixed buffer is sufficient for top-level captions.
+      var builder = new StringBuilder(2048);
+      int copied = GetWindowTextW(hWnd, builder, builder.Capacity);
+      return copied > 0 ? builder.ToString() : String.Empty;
     }
     public static uint GetWindowProcessId(IntPtr hWnd) {
       uint processId;
