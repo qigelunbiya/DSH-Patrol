@@ -71,12 +71,18 @@ describe('Desktop Automation runtime foundation', () => {
     expect(PATROL_DESKTOP_PROMPT).toMatch(/desktop_screenshot.*read_image/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/Windows OCR 只负责文字提取\/几何精修/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/desktop_click_visual_point/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/Desktop XY\/1000/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/desktop_preview_visual_point/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/绿色十字/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/检查更新.*关于我们/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/绝对禁止把 read_image 看到的裁剪截图像素直接传给 desktop_click_coordinates/)
 
     const tools = readFileSync(join(process.cwd(), 'desktop-runtime', 'tools-plugin.js'), 'utf8')
+    expect(tools).toContain("name: 'desktop_preview_visual_point'")
     expect(tools).toContain("name: 'desktop_click_visual_point'")
     expect(tools).toContain('xRatio: reqNum')
     expect(tools).toContain('yRatio: reqNum')
+    expect(tools).toContain('XY/1000 guide image')
     expect(tools).toContain('Never feed screenshot-local pixels from read_image')
 
     const backend = readFileSync(join(process.cwd(), 'desktop-runtime', 'windows-desktop.ps1'), 'utf8')
@@ -86,6 +92,10 @@ describe('Desktop Automation runtime foundation', () => {
     expect(backend).toContain('frameHwnd')
     expect(backend).toContain('window bounds changed after screenshot')
     expect(backend).toContain('Resolve-Window $request $true')
+    expect(backend).toContain('function Write-VisualGuideImage')
+    expect(backend).toContain("'annotate-visual-guide' {")
+    expect(backend).toContain('coordinateGridUnits=1000')
+    expect(backend).toContain('markXRatio')
   })
 
   it('binds model-vision clicks to the exact full-window screenshot frame and consumes that frame', async () => {
@@ -153,6 +163,54 @@ describe('Desktop Automation runtime foundation', () => {
       xRatio: 0.5,
       yRatio: 0.5,
     })).rejects.toThrow(/unavailable or already consumed/)
+  })
+
+  it('previews a desktop visual point on the same frame without consuming or clicking it', async () => {
+    const driver = new WindowsDesktopDriver()
+    const frame = {
+      frameId: 'visual-preview-test',
+      createdAt: Date.now(),
+      path: 'guided.png',
+      rawPath: 'raw.png',
+      hwnd: 4242,
+      processName: 'LxMainNew',
+      title: 'BlueLetter',
+      rect: { x: 100, y: 60, width: 1000, height: 700 },
+    }
+    driver.visualFrames.set(frame.frameId, frame)
+    driver.lastVisualFrameId = frame.frameId
+    const calls: any[] = []
+    driver.run = async (action: string, args: any) => {
+      calls.push({ action, args })
+      return { ok: true, path: 'preview.png', coordinateGridUnits: 1000 }
+    }
+
+    const preview = await driver.previewVisualPoint({
+      processName: 'LxMainNew',
+      frameId: frame.frameId,
+      xRatio: 0.742,
+      yRatio: 0.615,
+    })
+
+    expect(preview).toMatchObject({
+      frameId: frame.frameId,
+      xRatio: 0.742,
+      yRatio: 0.615,
+      previewPath: 'preview.png',
+      physicalClickDispatched: false,
+      coordinateGridUnits: 1000,
+    })
+    expect(calls).toEqual([{
+      action: 'annotate-visual-guide',
+      args: {
+        sourcePath: 'raw.png',
+        path: expect.stringContaining('-preview-'),
+        markXRatio: 0.742,
+        markYRatio: 0.615,
+      },
+    }])
+    expect(driver.visualFrames.has(frame.frameId)).toBe(true)
+    expect(driver.lastVisualFrameId).toBe(frame.frameId)
   })
 
   it('uses DPI-aware DWM visible bounds and refuses partial active-window screen copies', () => {
@@ -443,6 +501,7 @@ describe('Desktop Automation runtime foundation', () => {
       'desktop_snapshot',
       'desktop_click_target',
       'desktop_click_ocr_text',
+      'desktop_preview_visual_point',
       'desktop_click_visual_point',
       'desktop_click_coordinates',
       'desktop_wait_for_target',
