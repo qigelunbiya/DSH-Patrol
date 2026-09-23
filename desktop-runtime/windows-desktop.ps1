@@ -17,6 +17,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading.Tasks;
 namespace PatrolDesktop {
   public static class Native {
     [StructLayout(LayoutKind.Sequential)]
@@ -30,18 +31,58 @@ namespace PatrolDesktop {
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
     [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
-    public static IntPtr[] GetVisibleTopLevelWindows() {
-      var windows = new List<IntPtr>();
-      EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
-        if (IsWindowVisible(hWnd)) windows.Add(hWnd);
-        return true;
-      }, IntPtr.Zero);
-      return windows.ToArray();
+    public sealed class WindowRecordDto {
+      public int ProcessId;
+      public string ProcessName;
+      public string Title;
+      public long Hwnd;
+      public int X;
+      public int Y;
+      public int Width;
+      public int Height;
+    }
+    public static WindowRecordDto[] GetVisibleTopLevelWindowRecords(int timeoutMs) {
+      var gate = new object();
+      var records = new List<WindowRecordDto>();
+      Action enumerate = delegate() {
+        EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
+          try {
+            if (!IsWindowVisible(hWnd)) return true;
+            string title = GetWindowTitle(hWnd);
+            if (String.IsNullOrWhiteSpace(title)) return true;
+            uint processId = GetWindowProcessId(hWnd);
+            if (processId == 0) return true;
+            RECT rect;
+            if (!GetWindowRect(hWnd, out rect)) return true;
+            int width = rect.Right - rect.Left;
+            int height = rect.Bottom - rect.Top;
+            if (width <= 0 || height <= 0) return true;
+            var record = new WindowRecordDto {
+              ProcessId = unchecked((int)processId),
+              ProcessName = GetProcessName(processId),
+              Title = title,
+              Hwnd = hWnd.ToInt64(),
+              X = rect.Left,
+              Y = rect.Top,
+              Width = width,
+              Height = height
+            };
+            lock (gate) records.Add(record);
+          } catch {
+            // Windows disappear during enumeration; one bad HWND must never
+            // abort discovery of the remaining visible top-level windows.
+          }
+          return true;
+        }, IntPtr.Zero);
+      };
+      var task = Task.Factory.StartNew(enumerate);
+      try { task.Wait(Math.Max(100, timeoutMs)); } catch { }
+      lock (gate) return records.ToArray();
     }
     public static string GetWindowTitle(IntPtr hWnd) {
-      // Do not call GetWindowTextLength across processes: a newly-created GUI
-      // thread can transiently stall while its message pump is coming online.
-      // GetWindowTextW on a fixed buffer is sufficient for top-level captions.
+      // Fixed-buffer caption retrieval avoids a separate cross-process
+      // GetWindowTextLength call. The outer discovery task also has a hard
+      // deadline, so a pathological HWND cannot stall Patrol indefinitely.
       var builder = new StringBuilder(2048);
       int copied = GetWindowTextW(hWnd, builder, builder.Capacity);
       return copied > 0 ? builder.ToString() : String.Empty;
@@ -147,40 +188,24 @@ function Window-Record($process) {
 }
 
 function Get-Windows {
-  # Window discovery must never depend on Process.MainWindowTitle or precise DWM
-  # geometry for every process. Apps can temporarily block those managed
-  # properties while creating a WPF/Electron/Qt window. Enumerate visible HWNDs
-  # directly through user32; use exact DWM geometry only after a target has been
-  # selected for screenshot/click.
+  # Discovery is a bounded snapshot, not a precision geometry operation. The
+  # native enumerator has a 1.2s hard deadline and returns whatever visible
+  # top-level windows were safely collected by then. This prevents a hung/new
+  # WPF/Electron/Qt HWND from blocking the whole Patrol process.
   $items = @()
-  foreach ($hwnd in [PatrolDesktop.Native]::GetVisibleTopLevelWindows()) {
-    try {
-      $title = [PatrolDesktop.Native]::GetWindowTitle([IntPtr]$hwnd)
-      if ([string]::IsNullOrWhiteSpace($title)) { continue }
-      $processId = [int][PatrolDesktop.Native]::GetWindowProcessId([IntPtr]$hwnd)
-      if ($processId -le 0) { continue }
-      $processName = [PatrolDesktop.Native]::GetProcessName([uint32]$processId)
-      $rect = New-Object PatrolDesktop.Native+RECT
-      if (-not [PatrolDesktop.Native]::GetWindowRect([IntPtr]$hwnd, [ref]$rect)) { continue }
-      $width = [int]($rect.Right - $rect.Left)
-      $height = [int]($rect.Bottom - $rect.Top)
-      if ($width -le 0 -or $height -le 0) { continue }
-      $items += [ordered]@{
-        processId = $processId
-        processName = [string]$processName
-        title = [string]$title
-        hwnd = [int64]$hwnd
-        rect = [ordered]@{
-          x = [int]$rect.Left
-          y = [int]$rect.Top
-          width = $width
-          height = $height
-        }
-        rectSource = 'enum-windows-get-window-rect'
+  foreach ($record in [PatrolDesktop.Native]::GetVisibleTopLevelWindowRecords(1200)) {
+    $items += [ordered]@{
+      processId = [int]$record.ProcessId
+      processName = [string]$record.ProcessName
+      title = [string]$record.Title
+      hwnd = [int64]$record.Hwnd
+      rect = [ordered]@{
+        x = [int]$record.X
+        y = [int]$record.Y
+        width = [int]$record.Width
+        height = [int]$record.Height
       }
-    } catch {
-      # A top-level window may disappear while we enumerate it. Skip that one
-      # instead of failing or hanging the complete discovery call.
+      rectSource = 'bounded-enum-windows'
     }
   }
   return $items
