@@ -27,7 +27,7 @@ namespace PatrolDesktop {
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
-    [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int maxCount);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern IntPtr SendMessageTimeoutW(IntPtr hWnd, uint msg, IntPtr wParam, StringBuilder lParam, uint flags, uint timeoutMs, out IntPtr result);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
     [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
@@ -80,12 +80,23 @@ namespace PatrolDesktop {
       lock (gate) return records.ToArray();
     }
     public static string GetWindowTitle(IntPtr hWnd) {
-      // Fixed-buffer caption retrieval avoids a separate cross-process
-      // GetWindowTextLength call. The outer discovery task also has a hard
-      // deadline, so a pathological HWND cannot stall Patrol indefinitely.
+      // WM_GETTEXT is individually bounded as well as covered by the outer
+      // enumeration deadline. A newly-created/hung GUI thread can therefore
+      // neither stall this HWND nor the complete Patrol discovery call.
+      const uint WM_GETTEXT = 0x000D;
+      const uint SMTO_ABORTIFHUNG = 0x0002;
       var builder = new StringBuilder(2048);
-      int copied = GetWindowTextW(hWnd, builder, builder.Capacity);
-      return copied > 0 ? builder.ToString() : String.Empty;
+      IntPtr result;
+      IntPtr sent = SendMessageTimeoutW(
+        hWnd,
+        WM_GETTEXT,
+        (IntPtr)builder.Capacity,
+        builder,
+        SMTO_ABORTIFHUNG,
+        80,
+        out result
+      );
+      return sent != IntPtr.Zero && result.ToInt64() > 0 ? builder.ToString() : String.Empty;
     }
     public static uint GetWindowProcessId(IntPtr hWnd) {
       uint processId;
