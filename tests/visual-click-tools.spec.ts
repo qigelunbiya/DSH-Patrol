@@ -721,23 +721,10 @@ describe('browser visual fallback click teaching', () => {
     expect(calls).toEqual([])
   })
 
-  it('requires a verified mark preview before any TEST MODE browser visual left-click', async () => {
-    const calls: string[] = []
-    const { tool, exec } = await setup(async (name) => {
-      calls.push(name)
-      throw new Error(`unexpected tool ${name}`)
-    }, undefined, undefined, true)
-
-    await expect(tool.execute({
-      inspectionId: 'visual-click',
-      stepName: '点击百度一下',
-      targetHint: '百度一下按钮',
-      frameId: 'browser-visual-current',
-      xRatio: 0.55,
-      yRatio: 0.42,
-    }, exec)).rejects.toThrow(/preview-bound.*TEST MODE.*pointerAction=mark.*previewId/i)
-
-    expect(calls).toEqual([])
+  it('does not require the redundant mark-preview round trip before TEST MODE visual clicks', () => {
+    expect(visualToolSource).toContain('pointerAction=mark/previewId remains optional for diagnostics only')
+    expect(visualToolSource).not.toContain('preview-bound for accuracy in TEST MODE')
+    expect(visualToolSource).not.toContain('A naked visual left-click is never dispatched in TEST MODE')
   })
 
   it('keeps free XY and Action Map available as peer browser visual strategies', () => {
