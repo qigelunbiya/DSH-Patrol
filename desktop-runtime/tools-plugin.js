@@ -151,7 +151,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_click_visual_point',
-      description: 'Click a point identified from the latest CURRENT desktop_screenshot visual frame. For precise targets, pass previewId returned by desktop_preview_visual_point: Patrol reuses the exact previewed ratios, verifies the physical cursor actually reaches the requested screen point with Win32 SetCursorPos/GetCursorPos, then emits the native mouse button transition. Without previewId, xRatio/yRatio are required. The click remains bound to the same HWND and physical screen rectangle; moved/resized/recreated windows are rejected.',
+      description: 'Click a point identified from the latest CURRENT desktop_screenshot visual frame. For precise targets, pass previewId returned by desktop_preview_visual_point: Patrol reuses the exact previewed ratios, moves the physical cursor to the requested screen point, reads the OS cursor position back to verify the same physical coordinate, then emits the native mouse button transition. Without previewId, xRatio/yRatio are required. The click remains bound to the same HWND and physical screen rectangle; moved/resized/recreated windows are rejected.',
       parameters: {
         xRatio: num,
         yRatio: num,
