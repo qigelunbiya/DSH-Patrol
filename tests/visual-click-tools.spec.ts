@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,6 +11,7 @@ import { PatrolStore } from '../src/store.ts'
 import type { InspectionDefinition, JsonObject } from '../src/types.ts'
 import { createPatrolVisualEvidenceRegistry, type PatrolVisualEvidenceRegistry } from '../src/visual-evidence-registry.ts'
 
+const visualToolSource = readFileSync(join(process.cwd(), 'src', 'visual-click-tools.ts'), 'utf8')
 const roots: string[] = []
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
@@ -608,47 +610,13 @@ describe('browser visual fallback click teaching', () => {
     expect(calls).toEqual([])
   })
 
-  it('requires Action Map candidateId for tiny close/x controls instead of guessing free XY', async () => {
-    const calls: string[] = []
-    const { tool, exec } = await setup(async (name) => {
-      calls.push(name)
-      throw new Error(`unexpected tool ${name}`)
-    })
-
-    await expect(tool.execute({
-      inspectionId: 'visual-click',
-      stepName: '点击我的任务的 x',
-      targetHint: '我的任务筛选标签右侧的 x 关闭按钮',
-      frameId: 'browser-visual-current',
-      xRatio: 0.52,
-      yRatio: 0.13,
-    }, exec)).rejects.toThrow(/small close\/remove\/x visual target.*Action Map.*candidateId=A#/i)
-
-    expect(calls).toEqual([])
-  })
-
-  it('escalates a second unverified free-coordinate attempt to Action Map', async () => {
-    const outcomes = createPatrolClickOutcomeTracker()
-    const input = {
-      inspectionId: 'visual-click',
-      stepName: '点击工具栏图标',
-      targetHint: '目标工具栏图标',
-    }
-    outcomes.recordUnverifiedPhysicalClick(input)
-    const calls: string[] = []
-    const { tool, exec } = await setup(async (name) => {
-      calls.push(name)
-      throw new Error(`unexpected tool ${name}`)
-    }, outcomes)
-
-    await expect(tool.execute({
-      ...input,
-      frameId: 'browser-visual-current',
-      xRatio: 0.41,
-      yRatio: 0.22,
-    }, exec)).rejects.toThrow(/previous physical click.*not verified.*Action Map.*candidateId=A#/i)
-
-    expect(calls).toEqual([])
+  it('keeps free XY and Action Map available as peer browser visual strategies', () => {
+    expect(visualToolSource).not.toContain('Free XY guessing is disabled for this target')
+    expect(visualToolSource).not.toContain('Do not guess another free XY point')
+    expect(visualToolSource).toContain('If this Action Map candidate is wrong')
+    expect(visualToolSource).toContain('try a precise free XY point')
+    expect(visualToolSource).toContain('If this free XY point is wrong')
+    expect(visualToolSource).toContain('try a fresh targeted Action Map')
   })
 
   it('refuses CAPTCHA/image-code targets before any browser visual dispatch', async () => {
