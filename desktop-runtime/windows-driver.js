@@ -355,6 +355,8 @@ export class WindowsDesktopDriver {
         .filter(key => typeof args[key] === 'string' && args[key].trim() !== '')
         .map(key => [key, args[key]]),
     )
+    if (Number.isInteger(args.processId)) windowArgs.processId = args.processId
+    if (Number.isInteger(args.hwnd)) windowArgs.hwnd = args.hwnd
     if (Object.keys(windowArgs).length > 0) {
       await this.run('activate-window', windowArgs, exec)
     }
