@@ -625,11 +625,6 @@ function visualTargetMismatch(targetHint: string | undefined, value: unknown): s
   return `targetHint expects ${expected.label}, but CURRENT clicked DOM evidence was ${JSON.stringify(haystack.slice(0, 320) || '(empty)')}`
 }
 
-function preciseBrowserVisualTarget(stepName: string | undefined, targetHint: string | undefined): boolean {
-  const text = [stepName, targetHint].filter(Boolean).join(' ')
-  return /(?:关闭|移除|删除|清除|取消|close|remove|delete|clear|dismiss|\bx\b|[×✕✖])/i.test(text)
-}
-
 function learnedVisualLocatorText(value: unknown): string | undefined {
   const candidates = [
     objectString(value, 'targetAriaLabel'),
