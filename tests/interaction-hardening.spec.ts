@@ -48,6 +48,16 @@ describe('browser interaction hardening layer', () => {
     expect(source).toContain('REFUSED before physical input')
   })
 
+  it('renders a separate magnified Action Map candidate sheet with exact safe-point crosses', () => {
+    expect(source).toContain('interactionRenderActionCandidateZoomSheetInWorker')
+    expect(source).toContain('PATROL TARGET ZOOM')
+    expect(source).toContain('choose A# only')
+    expect(source).toContain('Green crosshair = exact safe point')
+    expect(source).toContain('actionMapZoomDataUrl')
+    expect(source).toContain('actionMapZoomCount')
+    expect(source).toContain('candidates.length > 16')
+  })
+
   it('preflights close/remove visual points before trusted input instead of blindly clicking a nearby search field', () => {
     expect(source).toContain('visual close/remove preflight rejected this point before physical input')
     expect(source).toContain('hasCloseEvidence')
