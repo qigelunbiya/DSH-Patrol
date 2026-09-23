@@ -112,6 +112,23 @@ describe('current-page observation evidence fallback', () => {
     expect(value.actionMapTargetHint).toBe('10.192.3.174 行的 RDP')
   })
 
+  it('automatically requests a targeted Action Map when visual observation has a concrete targetHint', async () => {
+    const harness = setupObservationHarness({ readImage: 'success', captcha: false })
+    const value = await harness.tool.execute({
+      inspectionId: 'demo',
+      includeImage: true,
+      targetHint: '百度搜索栏',
+    }, harness.exec)
+
+    expect(harness.screenshotArgs.at(-1)).toMatchObject({
+      actionMap: true,
+      actionMapTargetHint: '百度搜索栏',
+      coordinateGuide: false,
+    })
+    expect(value.actionMap).toBe(true)
+    expect(value.actionMapTargeted).toBe(true)
+  })
+
   it('attaches a second magnified candidate sheet for small targeted Action Maps', async () => {
     const harness = setupObservationHarness({ readImage: 'success', captcha: false, actionMapZoom: true })
     const value = await harness.tool.execute({

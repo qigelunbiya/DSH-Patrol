@@ -83,13 +83,13 @@ export function registerPatrolObservationTools(
 ): () => void {
   const observe = defineTool({
     name: 'patrol_observe',
-    description: 'Read-only CURRENT-page observation. Captures a screenshot for freshness/OCR and can attach that exact CURRENT image with includeImage=true whenever the model decides vision is useful. There is no fixed screenshot-count limit; before a new visual attachment Patrol offloads older model-visible image blocks through Harness image/offload, trims oversized TEXT tool results separately, and keeps the raster DPR-aware/bounded for local-model stability. Does not record a Runbook step.',
+    description: 'Read-only CURRENT-page observation. Captures a screenshot for freshness/OCR and can attach that exact CURRENT image with includeImage=true whenever the model decides vision is useful. For ordinary browser visual clicking, pass a concrete targetHint together with includeImage=true: Patrol automatically builds a targeted browser Action Map so the model chooses A# while browser code owns the verified safe-point geometry. Explicit actionMap=true remains supported. There is no fixed screenshot-count limit; before a new visual attachment Patrol offloads older model-visible image blocks through Harness image/offload, trims oversized TEXT tool results separately, and keeps the raster DPR-aware/bounded for local-model stability. Does not record a Runbook step.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       tabId: { type: 'integer' },
       includeImage: { type: 'boolean', description: 'Attach the CURRENT screenshot image to model context. Default false; use only when OCR/DOM evidence is insufficient.' },
-      actionMap: { type: 'boolean', description: 'Overlay stable A1/A2/... boxes around CURRENT interactive controls. When actionMap=true, targetHint is required so the map can be narrowed to the intended business target instead of labeling dozens of unrelated controls.' },
-      targetHint: { type: 'string', description: 'Required when actionMap=true. Concrete CURRENT business target, e.g. “10.192.3.174 行的 RDP” or “评论输入框”. Structured row targets are filtered by row identity + action before labels are rendered.' },
+      actionMap: { type: 'boolean', description: 'Overlay stable A1/A2/... boxes around CURRENT interactive controls. Explicit actionMap=true requires targetHint. When includeImage=true already carries a concrete targetHint, Patrol automatically enables this targeted Action Map even if actionMap is omitted.' },
+      targetHint: { type: 'string', description: 'Concrete CURRENT business target, e.g. “百度搜索栏”, “龙之信条2 百度百科结果”, “10.192.3.174 行的 RDP” or “评论输入框”. With includeImage=true it automatically requests a targeted Action Map; structured row targets are filtered by row identity + action before labels are rendered.' },
       focusXRatio: { type: 'number', description: 'Optional coarse X center (0..1) for a focused visual crop. Use after a full-frame visual estimate when the target is small or a calibration mark missed.' },
       focusYRatio: { type: 'number', description: 'Optional coarse Y center (0..1) for a focused visual crop. Requires includeImage=true and focusXRatio.' },
       focusWidthRatio: { type: 'number', description: 'Focused crop width as a fraction of the CURRENT visual viewport. Default 0.30; clamped to 0.12..0.72.' },
@@ -216,6 +216,9 @@ export function registerPatrolObservationTools(
     async execute(args, exec: ToolRunContext) {
       const focusRequested = args.focusXRatio !== undefined || args.focusYRatio !== undefined
         || args.focusWidthRatio !== undefined || args.focusHeightRatio !== undefined
+      const requestedActionMapTargetHint = typeof args.targetHint === 'string' ? args.targetHint.trim() : ''
+      const actionMapRequested = args.actionMap === true
+        || (args.includeImage === true && requestedActionMapTargetHint.length >= 2)
       if (args.actionMap === true && args.includeImage !== true) {
         throw new Error('visual action-map observation requires includeImage=true')
       }
@@ -251,9 +254,9 @@ export function registerPatrolObservationTools(
         ...(args.includeImage === true ? {
           maxWidth: VISUAL_SCREENSHOT_MAX_WIDTH,
           quality: VISUAL_SCREENSHOT_JPEG_QUALITY,
-          coordinateGuide: args.actionMap !== true,
-          actionMap: args.actionMap === true,
-          ...(args.actionMap === true ? { actionMapTargetHint: String(args.targetHint).trim() } : {}),
+          coordinateGuide: !actionMapRequested,
+          actionMap: actionMapRequested,
+          ...(actionMapRequested ? { actionMapTargetHint: requestedActionMapTargetHint } : {}),
           ...(focusRequested ? {
             focusXRatio: Number(args.focusXRatio),
             focusYRatio: Number(args.focusYRatio),

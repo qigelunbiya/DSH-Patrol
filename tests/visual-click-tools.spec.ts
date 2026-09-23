@@ -297,6 +297,88 @@ describe('browser visual fallback click teaching', () => {
     expect((saved.steps[0] as any).arguments.candidateId).toBeUndefined()
   })
 
+  it('uses candidate-owned visible text for navigation without forcing the model to retype expectedVisualText', async () => {
+    let reads = 0
+    const { store, tool, exec } = await setup(async (name, args) => {
+      if (name === 'browser_read_page') {
+        reads += 1
+        const before = reads === 1
+        const url = before ? 'https://www.baidu.com/s?wd=dragon' : 'https://baike.baidu.com/item/dragon'
+        const title = before ? '百度搜索' : '龙之信条2_百度百科'
+        const text = before ? '搜索结果' : '龙之信条2 百度百科'
+        return { ok: true, text, value: { ok: true, url, title, text } }
+      }
+      if (name === 'browser_snapshot') {
+        const before = reads <= 1
+        return {
+          ok: true,
+          text: 'snapshot',
+          value: {
+            ok: true,
+            url: before ? 'https://www.baidu.com/s?wd=dragon' : 'https://baike.baidu.com/item/dragon',
+            title: before ? '百度搜索' : '龙之信条2_百度百科',
+            elements: [],
+          },
+        }
+      }
+      if (name === 'browser_visual_click') {
+        expect(args).toMatchObject({
+          frameId: 'browser-visual-current',
+          candidateId: 'A2',
+          visualAuthority: true,
+        })
+        expect(args.expectedVisualText).toBeUndefined()
+        return {
+          ok: true,
+          text: 'candidate navigation clicked',
+          value: {
+            ok: true,
+            candidateId: 'A2',
+            actionCandidateExpectedText: '龙之信条2 百度百科',
+            actionCandidateKind: 'anchor',
+            actionCandidateHref: 'https://baike.baidu.com/item/dragon',
+            xRatio: 0.31,
+            yRatio: 0.77,
+            requestedXRatio: 0.31,
+            requestedYRatio: 0.77,
+            selectorHint: 'top-frame::a.baike-result',
+            selectorReplaySafe: true,
+            selectorQuality: 'strong',
+            bindingActionable: true,
+            bindingSource: 'visual-action-map-post-click-learning',
+            visualAuthority: true,
+            urlIdentity: 'https://www.baidu.com/s?wd=dragon',
+            viewportWidth: 1280,
+            viewportHeight: 720,
+            captureClientLeft: 0,
+            captureClientTop: 0,
+            captureWidth: 1280,
+            captureHeight: 720,
+            captureMode: 'capture-visible-tab-layout-viewport',
+            scrollX: 0,
+            scrollY: 0,
+            targetTag: 'a',
+            targetRole: 'link',
+            targetText: '龙之信条2 百度百科',
+            targetStateChanged: false,
+          },
+        }
+      }
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    const result = await tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '点击龙之信条2百度百科搜索结果',
+      targetHint: '龙之信条2 百度百科搜索结果',
+      frameId: 'browser-visual-current',
+      candidateId: 'A2',
+    }, exec)
+
+    expect(result).toContain('candidate A2')
+    expect((await store.load('visual-click')).steps).toHaveLength(1)
+  })
+
   it('supports mark/right-click visual calibration without recording a Runbook step', async () => {
     for (const pointerAction of ['mark', 'right-click'] as const) {
       const calls: Array<{ tool: string; args: JsonObject }> = []
@@ -727,11 +809,10 @@ describe('browser visual fallback click teaching', () => {
     expect(visualToolSource).not.toContain('A naked visual left-click is never dispatched in TEST MODE')
   })
 
-  it('keeps free XY and Action Map available as peer browser visual strategies', () => {
-    expect(visualToolSource).not.toContain('Free XY guessing is disabled for this target')
-    expect(visualToolSource).not.toContain('Do not guess another free XY point')
-    expect(visualToolSource).toContain('If this Action Map candidate is wrong')
-    expect(visualToolSource).toContain('switch to a precise free XY point')
+  it('makes Action Map candidates primary and keeps free XY as an uncovered-target fallback', () => {
+    expect(visualToolSource).toContain('prefer an A# from the CURRENT targeted Action Map')
+    expect(visualToolSource).toContain('Free XY is a fallback only')
+    expect(visualToolSource).toContain('Use free XY only when no CURRENT candidate covers the intended target')
     expect(visualToolSource).toContain('If this free XY point is wrong')
     expect(visualToolSource).toContain('capture a fresh targeted Action Map')
   })

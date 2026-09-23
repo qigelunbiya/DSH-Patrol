@@ -63,8 +63,17 @@ describe('browser interaction hardening layer', () => {
     expect(source).toContain("requestedCandidateId && typeof selectedCandidate?.role === 'string'")
     expect(source).toContain("requestedCandidateId && typeof selectedCandidate?.ariaLabel === 'string'")
     expect(source).toContain("requestedCandidateId && typeof selectedCandidate?.title === 'string'")
+    expect(source).toContain('actionCandidateExpectedText')
+    expect(source).toContain('candidateExpectedVisualText')
     expect(source).toContain('actionCandidateFingerprint')
     expect(source).toContain('candidate.localContext')
+  })
+
+  it('does not hard-fail screenshots solely because an HTTP(S) tab is still loading after the bounded wait', () => {
+    expect(source).toContain('interactionTabHasCapturableUrl')
+    expect(source).toContain('A committed HTTP(S) document can usually be captured while Chrome still')
+    expect(source).toContain('if (!interactionTabHasCapturableUrl(tab))')
+    expect(source).not.toContain('target tab is not ready for screenshot')
   })
 
   it('preflights close/remove visual points before trusted input instead of blindly clicking a nearby search field', () => {
