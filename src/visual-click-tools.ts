@@ -56,7 +56,7 @@ export function registerPatrolVisualClickTool(
   let visualPreviewSequence = 0
   const tool = defineTool({
     name: 'patrol_visual_click_target',
-    description: 'Direct screenshot-bound browser teaching click. Choose the target from the CURRENT patrol_observe(includeImage=true) screenshot using either free XY or Action Map candidateId and click it directly. candidateId clicks use the candidate safe-point and candidate fingerprint from that exact visual frame; free XY uses the exact chosen screenshot coordinate. pointerAction=mark/previewId remains optional for diagnostics only and is never required before a normal click. After the physical click, Patrol verifies the business result and learns reusable DOM/semantic identity for replay. Never use for image-code/CAPTCHA.',
+    description: 'Direct screenshot-bound browser teaching click. For ordinary visible browser controls, links, inputs and small icons, prefer an A# from the CURRENT targeted Action Map: the model chooses WHICH candidate and Patrol clicks that candidate\'s program-verified safe point. Free XY is a fallback only when the CURRENT Action Map has no candidate covering a canvas/custom-drawn/special target. pointerAction=mark/previewId remains optional for diagnostics only and is never required before a normal click. Navigation candidates carry their own CURRENT visible text/title/aria evidence, so the model does not need to manually retype expectedVisualText for an A# click. After the physical click, Patrol verifies the business result and learns reusable DOM/semantic identity for replay. Never use for image-code/CAPTCHA.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
@@ -66,7 +66,7 @@ export function registerPatrolVisualClickTool(
       yRatio: { type: 'number', description: 'Normalized screenshot coordinate for free-point visual clicks. Optional when candidateId or previewId is supplied.' },
       candidateId: { type: 'string', description: 'A visual A1/A2/... label chosen by the model from patrol_observe(includeImage=true, actionMap=true). When the candidate is visually clear, click it directly; Patrol binds the click to that candidate safe-point and fingerprint. Use mark only when the model itself is uncertain.' },
       targetHint: { type: 'string', required: true, description: 'Concrete CURRENT business intent, e.g. 评论输入框/发布按钮/点赞按钮/完整视频标题. It labels post-click verification and learned DOM/semantic binding; it does not authorize or relocate the live screenshot coordinate.' },
-      expectedVisualText: { type: 'string', description: 'Exact visible label/title read from the attached CURRENT screenshot. Required for navigation/card/video visual clicks so Patrol can verify the chosen screenshot point belongs to that exact item before trusted input and verify the destination afterwards.' },
+      expectedVisualText: { type: 'string', description: 'Optional extra exact visible label/title from the attached CURRENT screenshot. Action Map candidate clicks automatically carry candidate-visible text/title/aria evidence; free-XY navigation/card/video clicks still require expectedVisualText so Patrol can verify the raw point and destination.' },
       visualAuthority: { type: 'boolean', description: 'Backward-compatible flag. Live patrol_visual_click_target teaching is coordinate-authoritative regardless of this value; replay may still use learned semantic/selector recovery.' },
       pointerAction: {
         type: 'string',
@@ -122,9 +122,9 @@ export function registerPatrolVisualClickTool(
       if (args.expectedVisualText !== undefined) assertSafePersistentText(args.expectedVisualText, 'expectedVisualText')
       const pointerAction = args.pointerAction ?? 'left-click'
       const diagnosticPointerAction = pointerAction !== 'left-click'
-      if (!diagnosticPointerAction && navigationLikeBusinessAction(args.stepName, args.targetHint)
+      if (!diagnosticPointerAction && !hasCandidate && navigationLikeBusinessAction(args.stepName, args.targetHint)
         && (typeof args.expectedVisualText !== 'string' || args.expectedVisualText.trim().length < 4)) {
-        throw new Error('navigation/card visual clicks require expectedVisualText copied from the model-visible CURRENT screenshot; generic labels such as “视频卡片区域” are not sufficient')
+        throw new Error('free-XY navigation/card visual clicks require expectedVisualText copied from the model-visible CURRENT screenshot; prefer a targeted Action Map candidateId when the target is a normal visible link/card/control')
       }
       if (args.expectedText !== undefined) assertSafePersistentText(args.expectedText, 'expectedText')
       if (args.conditionExpectedText !== undefined) assertSafePersistentText(args.conditionExpectedText, 'conditionExpectedText')
@@ -219,8 +219,9 @@ export function registerPatrolVisualClickTool(
 
       const definition = await loadEditable(store, args.inspectionId, options.maxSteps)
       const expectation = optionalExpectation(args.expectedText, args.expectationMode, args.caseSensitive)
-      const isVisualNavigation = navigationLikeBusinessAction(args.stepName, args.targetHint)
-        && typeof args.expectedVisualText === 'string' && args.expectedVisualText.trim().length >= 4
+      const navigationAction = navigationLikeBusinessAction(args.stepName, args.targetHint)
+      const isVisualNavigation = navigationAction && (hasCandidate
+        || (typeof args.expectedVisualText === 'string' && args.expectedVisualText.trim().length >= 4))
       const tabBaseline = isVisualNavigation
         ? await captureBrowserTabBaseline(runner, exec)
         : undefined
@@ -251,7 +252,7 @@ export function registerPatrolVisualClickTool(
           boundPreview
             ? 'The click reused the exact visually marked point; capture a fresh CURRENT frame and mark a different point instead of nudging this preview token.'
             : hasCandidate
-              ? 'If this Action Map candidate is wrong, capture a fresh screenshot and switch to a precise free XY point instead of repeating the same candidate.'
+              ? 'If this Action Map candidate is wrong, capture a fresh targeted Action Map and choose a different A#. Use free XY only when no CURRENT candidate covers the intended target.'
               : 'If this free XY point is wrong, capture a fresh targeted Action Map and choose a candidateId instead of repeating nearby guessed coordinates.',
         ].filter(Boolean).join('\n')
       }
@@ -266,6 +267,12 @@ export function registerPatrolVisualClickTool(
         ].filter(Boolean).join('\n')
       }
 
+      const explicitExpectedVisualText = typeof args.expectedVisualText === 'string' ? args.expectedVisualText.trim() : ''
+      const effectiveExpectedVisualText = explicitExpectedVisualText
+        || (hasCandidate ? objectString(clicked.value, 'actionCandidateExpectedText') : undefined)
+        || (hasCandidate ? objectString(clicked.value, 'targetText') : undefined)
+        || (hasCandidate ? objectString(clicked.value, 'targetAriaLabel') : undefined)
+        || (hasCandidate ? objectString(clicked.value, 'targetTitle') : undefined)
       let navigationTabId = args.tabId
       let tabReconciliationEvidence = ''
       if (isVisualNavigation) {
@@ -273,7 +280,7 @@ export function registerPatrolVisualClickTool(
           runner,
           exec,
           tabBaseline,
-          args.expectedVisualText,
+          effectiveExpectedVisualText,
         )
         if (reconciled?.ambiguous) {
           outcomes.recordUnverifiedPhysicalClick(args)
@@ -286,8 +293,8 @@ export function registerPatrolVisualClickTool(
         if (reconciled?.selected) {
           navigationTabId = reconciled.selected.id
           tabReconciliationEvidence = reconciled.closedTabIds.length > 0
-            ? `Selected fresh tab ${reconciled.selected.id} for ${JSON.stringify(args.expectedVisualText)} and closed wrong fresh sibling tab(s): ${reconciled.closedTabIds.join(', ')}.`
-            : `Selected fresh tab ${reconciled.selected.id} for ${JSON.stringify(args.expectedVisualText)}.`
+            ? `Selected fresh tab ${reconciled.selected.id} for ${JSON.stringify(effectiveExpectedVisualText ?? args.targetHint)} and closed wrong fresh sibling tab(s): ${reconciled.closedTabIds.join(', ')}.`
+            : `Selected fresh tab ${reconciled.selected.id} for ${JSON.stringify(effectiveExpectedVisualText ?? args.targetHint)}.`
         }
       }
 
@@ -312,7 +319,7 @@ export function registerPatrolVisualClickTool(
           beforeState,
           navigationTabId,
           args.targetHint,
-          args.expectedVisualText,
+          effectiveExpectedVisualText,
         )
         verificationAttempts = verified.attempts
         if (!verified.ok) {
@@ -325,7 +332,7 @@ export function registerPatrolVisualClickTool(
         }
         verificationMethod = 'state-change'
         verificationEvidence = [
-          verified.evidence ?? `navigation reached the screenshot-selected item ${JSON.stringify(args.expectedVisualText)}`,
+          verified.evidence ?? `navigation reached the screenshot-selected item ${JSON.stringify(effectiveExpectedVisualText ?? args.targetHint)}`,
           tabReconciliationEvidence,
         ].filter(Boolean).join(' ')
       } else if (expectation.expectation !== undefined) {
@@ -558,7 +565,7 @@ async function verifyAutomaticStateChange(runner: PatrolRunner, exec: ToolRunCon
 function navigationLikeBusinessAction(stepName: string | undefined, targetHint: string | undefined): boolean {
   const text = normalizePageText([stepName, targetHint].filter(Boolean).join(' '))
   if (!text || inPageControlHint(text)) return false
-  return /(?:点击|打开|进入|选择|访问|跳转).*(?:视频|卡片|封面|详情|文章|结果|链接)|(?:视频|卡片|封面|详情).*(?:打开|进入|跳转)/i.test(text)
+  return /(?:点击|打开|进入|选择|访问|跳转).*(?:视频|卡片|封面|详情|文章|结果|链接|百科|官网|标题|条目)|(?:视频|卡片|封面|详情|结果|链接|百科|官网|标题|条目).*(?:打开|进入|跳转|点击)/i.test(text)
 }
 
 function visualTextContains(haystack: string, needle: string): boolean {
