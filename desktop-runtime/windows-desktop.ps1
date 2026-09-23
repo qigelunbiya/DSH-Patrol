@@ -398,6 +398,33 @@ function Get-Snapshot($request) {
   }
 }
 
+function Probe-ScreenPoint([int]$x, [int]$y) {
+  try {
+    $point = New-Object System.Windows.Point([double]$x, [double]$y)
+    $element = [System.Windows.Automation.AutomationElement]::FromPoint($point)
+    if ($null -eq $element) {
+      return [ordered]@{ ok=$true; x=$x; y=$y; status='empty'; element=$null }
+    }
+    $record = Element-Record $element
+    return [ordered]@{
+      ok=$true
+      x=$x
+      y=$y
+      status=$(if ($null -eq $record) { 'unreadable' } else { 'recognized' })
+      element=$record
+    }
+  } catch {
+    return [ordered]@{
+      ok=$true
+      x=$x
+      y=$y
+      status='unavailable'
+      element=$null
+      error=$_.Exception.Message
+    }
+  }
+}
+
 function Find-TargetElement($request) {
   $resolved = Get-Root $request
   $name = [string](Get-Prop $request 'name' '')
@@ -1088,9 +1115,10 @@ try {
 
       $x = [int][Math]::Round($frameX + (($frameWidth - 1) * $xRatio))
       $y = [int][Math]::Round($frameY + (($frameHeight - 1) * $yRatio))
+      $preClickPointProbe = Probe-ScreenPoint $x $y
       $buttonName = [string](Get-Prop $request 'button' 'left')
       $input = Click-Point $x $y ($(if ($buttonName -ieq 'right') { 1 } else { 0 }))
-      [ordered]@{ ok=$true; method='bound-window-visual-point'; inputTransport=[string]$input.transport; foregroundVerified=$true; foregroundHwnd=[int64]$foregroundBeforeClick; x=$x; y=$y; actualCursorX=[int]$input.actualX; actualCursorY=[int]$input.actualY; xRatio=$xRatio; yRatio=$yRatio; button=$buttonName; frameHwnd=$frameHwnd; frameRect=[ordered]@{x=$frameX;y=$frameY;width=$frameWidth;height=$frameHeight}; window=$record }
+      [ordered]@{ ok=$true; method='bound-window-visual-point'; inputTransport=[string]$input.transport; foregroundVerified=$true; foregroundHwnd=[int64]$foregroundBeforeClick; x=$x; y=$y; actualCursorX=[int]$input.actualX; actualCursorY=[int]$input.actualY; xRatio=$xRatio; yRatio=$yRatio; button=$buttonName; frameHwnd=$frameHwnd; frameRect=[ordered]@{x=$frameX;y=$frameY;width=$frameWidth;height=$frameHeight}; preClickPointProbe=$preClickPointProbe; window=$record }
     }
     'drag' {
       $fromX=[int](Get-Prop $request 'fromX' 0); $fromY=[int](Get-Prop $request 'fromY' 0)
@@ -1187,6 +1215,11 @@ try {
       if($milliseconds -lt 0 -or $milliseconds -gt 600000){throw 'wait milliseconds must be between 0 and 600000'}
       Start-Sleep -Milliseconds $milliseconds
       [ordered]@{ok=$true;milliseconds=$milliseconds}
+    }
+    'probe-screen-point' {
+      $x = [int](Get-Prop $request 'x' 0)
+      $y = [int](Get-Prop $request 'y' 0)
+      Probe-ScreenPoint $x $y
     }
     'annotate-visual-guide' {
       $sourcePath = [string](Get-Prop $request 'sourcePath' '')
