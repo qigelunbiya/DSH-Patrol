@@ -56,15 +56,15 @@ export function registerPatrolVisualClickTool(
   let visualPreviewSequence = 0
   const tool = defineTool({
     name: 'patrol_visual_click_target',
-    description: 'Preview-bound screenshot browser teaching click. Choose a point from patrol_observe(includeImage=true) using either free XY or Action Map candidateId, but NEVER dispatch the first visual estimate directly: call pointerAction=mark, re-observe the CURRENT page to verify the red crosshair, then perform the real left click only with previewId. previewId reuses the exact verified frame coordinate without DOM/Accessibility relocation. After the physical click, Patrol verifies the business result and learns reusable DOM/semantic identity for replay. Never use for image-code/CAPTCHA.',
+    description: 'Direct screenshot-bound browser teaching click. Choose the target from the CURRENT patrol_observe(includeImage=true) screenshot using either free XY or Action Map candidateId and click it directly. candidateId clicks use the candidate safe-point and candidate fingerprint from that exact visual frame; free XY uses the exact chosen screenshot coordinate. pointerAction=mark/previewId remains optional for diagnostics only and is never required before a normal click. After the physical click, Patrol verifies the business result and learns reusable DOM/semantic identity for replay. Never use for image-code/CAPTCHA.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
       frameId: { type: 'string', description: 'visualFrameId returned by patrol_observe(includeImage=true). Optional when previewId is supplied.' },
-      previewId: { type: 'string', description: 'Token returned by pointerAction=mark. A left-click with previewId reuses the exact marked frame coordinate, so the real click cannot drift from the visually verified red crosshair.' },
+      previewId: { type: 'string', description: 'Optional diagnostic token returned by pointerAction=mark. Normal visual clicks do not require it.' },
       xRatio: { type: 'number', description: 'Normalized screenshot coordinate for free-point visual clicks. Optional when candidateId or previewId is supplied.' },
       yRatio: { type: 'number', description: 'Normalized screenshot coordinate for free-point visual clicks. Optional when candidateId or previewId is supplied.' },
-      candidateId: { type: 'string', description: 'A visual A1/A2/... label chosen by the model from patrol_observe(includeImage=true, actionMap=true). For ambiguous/small targets, first call this tool with pointerAction=mark; then visually verify the red crosshair and perform the real click with previewId.' },
+      candidateId: { type: 'string', description: 'A visual A1/A2/... label chosen by the model from patrol_observe(includeImage=true, actionMap=true). When the candidate is visually clear, click it directly; Patrol binds the click to that candidate safe-point and fingerprint. Use mark only when the model itself is uncertain.' },
       targetHint: { type: 'string', required: true, description: 'Concrete CURRENT business intent, e.g. 评论输入框/发布按钮/点赞按钮/完整视频标题. It labels post-click verification and learned DOM/semantic binding; it does not authorize or relocate the live screenshot coordinate.' },
       expectedVisualText: { type: 'string', description: 'Exact visible label/title read from the attached CURRENT screenshot. Required for navigation/card/video visual clicks so Patrol can verify the chosen screenshot point belongs to that exact item before trusted input and verify the destination afterwards.' },
       visualAuthority: { type: 'boolean', description: 'Backward-compatible flag. Live patrol_visual_click_target teaching is coordinate-authoritative regardless of this value; replay may still use learned semantic/selector recovery.' },
@@ -122,9 +122,6 @@ export function registerPatrolVisualClickTool(
       if (args.expectedVisualText !== undefined) assertSafePersistentText(args.expectedVisualText, 'expectedVisualText')
       const pointerAction = args.pointerAction ?? 'left-click'
       const diagnosticPointerAction = pointerAction !== 'left-click'
-      if (options.requirePreview === true && !diagnosticPointerAction && !boundPreview) {
-        throw new Error('Browser visual left-clicks are preview-bound for accuracy in TEST MODE. First call patrol_visual_click_target with pointerAction=mark using the chosen Action Map candidateId or free xRatio/yRatio. Then call patrol_observe(includeImage=true) and visually confirm the red crosshair is inside the intended CURRENT control. Only then call patrol_visual_click_target again with the returned previewId and the same targetHint. A naked visual left-click is never dispatched in TEST MODE.')
-      }
       if (!diagnosticPointerAction && navigationLikeBusinessAction(args.stepName, args.targetHint)
         && (typeof args.expectedVisualText !== 'string' || args.expectedVisualText.trim().length < 4)) {
         throw new Error('navigation/card visual clicks require expectedVisualText copied from the model-visible CURRENT screenshot; generic labels such as “视频卡片区域” are not sufficient')
@@ -254,8 +251,8 @@ export function registerPatrolVisualClickTool(
           boundPreview
             ? 'The click reused the exact visually marked point; capture a fresh CURRENT frame and mark a different point instead of nudging this preview token.'
             : hasCandidate
-              ? 'If this Action Map candidate is wrong, mark it first or switch strategy: capture a fresh screenshot and try a precise free XY point instead of repeating the same candidate.'
-              : 'If this free XY point is wrong, mark it first or switch strategy: capture a fresh targeted Action Map and choose a candidateId instead of repeating nearby guessed coordinates.',
+              ? 'If this Action Map candidate is wrong, capture a fresh screenshot and switch to a precise free XY point instead of repeating the same candidate.'
+              : 'If this free XY point is wrong, capture a fresh targeted Action Map and choose a candidateId instead of repeating nearby guessed coordinates.',
         ].filter(Boolean).join('\n')
       }
       outcomes.recordVisualPhysicalClick(args)
