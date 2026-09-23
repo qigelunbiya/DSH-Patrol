@@ -487,6 +487,113 @@ function Write-VisualGuideImage([string]$sourcePath, [string]$outputPath, $markX
   return [ordered]@{ ok=$true; path=$outputPath; width=[int]$width; height=[int]$height; coordinateGridUnits=1000 }
 }
 
+function Write-VisualPointZoomImage([string]$sourcePath, [string]$outputPath, [double]$markXRatio, [double]$markYRatio) {
+  if (-not [IO.File]::Exists($sourcePath)) { throw "visual zoom source image not found: $sourcePath" }
+  if ($markXRatio -lt 0 -or $markXRatio -gt 1 -or $markYRatio -lt 0 -or $markYRatio -gt 1) {
+    throw 'visual zoom preview requires mark ratios between 0 and 1'
+  }
+  $directory = [IO.Path]::GetDirectoryName($outputPath)
+  if (-not [string]::IsNullOrWhiteSpace($directory)) { [IO.Directory]::CreateDirectory($directory) | Out-Null }
+
+  $source = [System.Drawing.Image]::FromFile($sourcePath)
+  $bitmap = $null
+  $graphics = $null
+  $markerPen = $null
+  $markerBrush = $null
+  $framePen = $null
+  $font = $null
+  $smallFont = $null
+  $textBrush = $null
+  $backgroundBrush = $null
+  try {
+    $sourceWidth = [int]$source.Width
+    $sourceHeight = [int]$source.Height
+    if ($sourceWidth -le 0 -or $sourceHeight -le 0) { throw 'visual zoom source image has invalid dimensions' }
+
+    $markX = [double](($sourceWidth - 1) * $markXRatio)
+    $markY = [double](($sourceHeight - 1) * $markYRatio)
+    $cropWidth = [int][Math]::Min($sourceWidth, [Math]::Max(180, [Math]::Round($sourceWidth * 0.30)))
+    $cropHeight = [int][Math]::Min($sourceHeight, [Math]::Max(150, [Math]::Round($sourceHeight * 0.30)))
+    $cropX = [int][Math]::Max(0, [Math]::Min($sourceWidth - $cropWidth, [Math]::Round($markX - $cropWidth / 2.0)))
+    $cropY = [int][Math]::Max(0, [Math]::Min($sourceHeight - $cropHeight, [Math]::Round($markY - $cropHeight / 2.0)))
+
+    $outputWidth = 900
+    $headerHeight = 58
+    $outputHeight = 620
+    $contentX = 12
+    $contentY = $headerHeight
+    $contentWidth = $outputWidth - 24
+    $contentHeight = $outputHeight - $headerHeight - 12
+
+    $bitmap = [System.Drawing.Bitmap]::new($outputWidth, $outputHeight)
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    $graphics.Clear([System.Drawing.Color]::FromArgb(18, 20, 24))
+    $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+    $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+
+    $scale = [Math]::Min($contentWidth / [double]$cropWidth, $contentHeight / [double]$cropHeight)
+    $drawWidth = [single]($cropWidth * $scale)
+    $drawHeight = [single]($cropHeight * $scale)
+    $drawX = [single]($contentX + ($contentWidth - $drawWidth) / 2.0)
+    $drawY = [single]($contentY + ($contentHeight - $drawHeight) / 2.0)
+
+    $srcRect = [System.Drawing.Rectangle]::new($cropX, $cropY, $cropWidth, $cropHeight)
+    $dstRect = [System.Drawing.RectangleF]::new($drawX, $drawY, $drawWidth, $drawHeight)
+    $graphics.DrawImage($source, $dstRect, $srcRect, [System.Drawing.GraphicsUnit]::Pixel)
+
+    $framePen = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(210, 255, 255, 255), [single]2)
+    $graphics.DrawRectangle($framePen, [single]$drawX, [single]$drawY, [single]$drawWidth, [single]$drawHeight)
+
+    $previewX = [single]($drawX + ($markX - $cropX) * $scale)
+    $previewY = [single]($drawY + ($markY - $cropY) * $scale)
+    $radius = [single]10
+    $markerPen = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(255, 0, 255, 80), [single]4)
+    $markerBrush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(210, 0, 255, 80))
+    $graphics.DrawEllipse($markerPen, $previewX - $radius, $previewY - $radius, $radius * 2, $radius * 2)
+    $graphics.DrawLine($markerPen, $previewX - 18, $previewY, $previewX + 18, $previewY)
+    $graphics.DrawLine($markerPen, $previewX, $previewY - 18, $previewX, $previewY + 18)
+    $graphics.FillEllipse($markerBrush, $previewX - 2, $previewY - 2, [single]4, [single]4)
+
+    $font = [System.Drawing.Font]::new('Arial', [single]17, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
+    $smallFont = [System.Drawing.Font]::new('Arial', [single]12, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
+    $textBrush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::White)
+    $backgroundBrush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(220, 0, 0, 0))
+    $graphics.FillRectangle($backgroundBrush, [single]0, [single]0, [single]$outputWidth, [single]$headerHeight)
+    $label = "DESKTOP VISUAL ZOOM  X$([Math]::Round($markXRatio * 1000)) / Y$([Math]::Round($markYRatio * 1000))"
+    $graphics.DrawString($label, $font, $textBrush, [single]12, [single]8)
+    $graphics.DrawString('Green crosshair = the EXACT preview-bound physical screen point. Confirm the control, not just the icon neighborhood.', $smallFont, $textBrush, [single]12, [single]34)
+
+    $bitmap.Save($outputPath, [System.Drawing.Imaging.ImageFormat]::Png)
+    return [ordered]@{
+      ok=$true
+      path=$outputPath
+      width=$outputWidth
+      height=$outputHeight
+      previewZoom=$true
+      markXRatio=$markXRatio
+      markYRatio=$markYRatio
+      crop=[ordered]@{
+        xRatio=[double]($cropX / [double]$sourceWidth)
+        yRatio=[double]($cropY / [double]$sourceHeight)
+        widthRatio=[double]($cropWidth / [double]$sourceWidth)
+        heightRatio=[double]($cropHeight / [double]$sourceHeight)
+      }
+    }
+  } finally {
+    if ($backgroundBrush) { $backgroundBrush.Dispose() }
+    if ($textBrush) { $textBrush.Dispose() }
+    if ($smallFont) { $smallFont.Dispose() }
+    if ($font) { $font.Dispose() }
+    if ($framePen) { $framePen.Dispose() }
+    if ($markerBrush) { $markerBrush.Dispose() }
+    if ($markerPen) { $markerPen.Dispose() }
+    if ($graphics) { $graphics.Dispose() }
+    if ($bitmap) { $bitmap.Dispose() }
+    if ($source) { $source.Dispose() }
+  }
+}
+
 function Capture-Screenshot($request) {
   $path = [string](Get-Prop $request 'path' '')
   if ([string]::IsNullOrWhiteSpace($path)) { throw 'desktop screenshot path is required' }
@@ -867,7 +974,13 @@ try {
       }
       $markXRatio = Get-Prop $request 'markXRatio' $null
       $markYRatio = Get-Prop $request 'markYRatio' $null
-      Write-VisualGuideImage $sourcePath $path $markXRatio $markYRatio
+      $zoomPreview = [bool](Get-Prop $request 'zoomPreview' $false)
+      if ($zoomPreview) {
+        if ($null -eq $markXRatio -or $null -eq $markYRatio) { throw 'zoom preview requires markXRatio and markYRatio' }
+        Write-VisualPointZoomImage $sourcePath $path ([double]$markXRatio) ([double]$markYRatio)
+      } else {
+        Write-VisualGuideImage $sourcePath $path $markXRatio $markYRatio
+      }
     }
     'screenshot' {
       Capture-Screenshot $request
