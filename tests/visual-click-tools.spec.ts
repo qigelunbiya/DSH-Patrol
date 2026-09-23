@@ -333,6 +333,10 @@ describe('browser visual fallback click teaching', () => {
       }, exec)
 
       expect(result).toContain('X=580, Y=520')
+      if (pointerAction === 'mark') {
+        expect(result).toMatch(/Visual preview token: browser-preview-/)
+        expect(result).toContain('Do not recompute or restate coordinates')
+      }
       expect(result).toMatch(/not written to the Runbook|never become replay steps/i)
       expect(calls).toHaveLength(1)
       expect(calls[0]).toMatchObject({
@@ -341,6 +345,112 @@ describe('browser visual fallback click teaching', () => {
       })
       expect((await store.load('visual-click')).steps).toHaveLength(0)
     }
+  })
+
+  it('binds the real browser click to the exact point previously verified by mark preview', async () => {
+    const calls: Array<{ tool: string; args: JsonObject }> = []
+    const { store, tool, exec } = await setup(async (name, args) => {
+      calls.push({ tool: name, args })
+      if (name === 'browser_read_page') {
+        return { ok: true, text: 'before', value: { ok: true, url: 'https://example.com/', text: 'before' } }
+      }
+      if (name === 'browser_snapshot') {
+        return { ok: true, text: 'snapshot', value: { ok: true, url: 'https://example.com/', elements: [] } }
+      }
+      if (name === 'browser_visual_click' && args.pointerAction === 'mark') {
+        return {
+          ok: true,
+          text: 'marked',
+          value: {
+            ok: true,
+            xRatio: 0.3725,
+            yRatio: 0.4415,
+            requestedXRatio: 0.37,
+            requestedYRatio: 0.44,
+            pointerAction: 'mark',
+            targetTag: 'button',
+            targetRole: 'button',
+            targetText: '我的任务 ×',
+          },
+        }
+      }
+      if (name === 'browser_visual_click' && args.pointerAction === 'left-click') {
+        expect(args).toMatchObject({
+          frameId: 'browser-visual-current',
+          xRatio: 0.3725,
+          yRatio: 0.4415,
+          targetHint: '我的任务右侧的 x 关闭按钮',
+          visualAuthority: true,
+        })
+        expect(args).not.toHaveProperty('candidateId')
+        return {
+          ok: true,
+          text: 'clicked exact preview point',
+          value: {
+            ok: true,
+            xRatio: 0.3725,
+            yRatio: 0.4415,
+            requestedXRatio: 0.3725,
+            requestedYRatio: 0.4415,
+            selectorHint: 'top-frame::.facet-remove',
+            urlIdentity: 'https://example.com/',
+            viewportWidth: 1280,
+            viewportHeight: 720,
+            viewportScale: 1,
+            captureClientLeft: 0,
+            captureClientTop: 0,
+            captureWidth: 1280,
+            captureHeight: 720,
+            captureMode: 'capture-visible-tab-layout-viewport',
+            scrollX: 0,
+            scrollY: 0,
+            targetTag: 'i',
+            targetRole: 'button',
+            targetText: '×',
+            targetTitle: '关闭',
+            targetAriaLabel: '关闭我的任务',
+            targetClassName: 'o_facet_remove',
+            bindingActionable: true,
+            selectorReplaySafe: true,
+            selectorQuality: 'strong',
+            bindingSource: 'visual-hit-test-post-click-learning',
+            visualAuthority: true,
+            targetStateChanged: true,
+            stateEvidence: 'clicked visual target detached/re-rendered',
+          },
+        }
+      }
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    const marked = await tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '预览我的任务关闭按钮',
+      targetHint: '我的任务右侧的 x 关闭按钮',
+      frameId: 'browser-visual-current',
+      xRatio: 0.37,
+      yRatio: 0.44,
+      pointerAction: 'mark',
+    }, exec)
+    const previewId = marked.match(/Visual preview token: (browser-preview-[\w-]+)/)?.[1]
+    expect(previewId).toBeTruthy()
+
+    const clicked = await tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '关闭我的任务',
+      targetHint: '我的任务右侧的 x 关闭按钮',
+      previewId,
+    }, exec)
+
+    expect(clicked).toContain('browser_visual_click')
+    expect((await store.load('visual-click')).steps).toHaveLength(1)
+    const physical = calls.filter(call => call.tool === 'browser_visual_click')
+    expect(physical).toHaveLength(2)
+    expect(physical[1]?.args).toMatchObject({
+      xRatio: 0.3725,
+      yRatio: 0.4415,
+      pointerAction: 'left-click',
+    })
   })
 
   it('keeps every live patrol visual teaching click coordinate-authoritative even when the flag is omitted', async () => {
