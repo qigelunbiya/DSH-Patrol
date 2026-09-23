@@ -643,6 +643,21 @@ try {
       [ordered]@{ ok=$true; spec=$spec }
     }
     'launch-app' {
+      $requestedFile = [string](Get-Prop $request 'file' '')
+      $requestedApp = [string](Get-Prop $request 'app' '')
+      if ([string]::IsNullOrWhiteSpace($requestedFile) -and -not [string]::IsNullOrWhiteSpace($requestedApp)) {
+        $running = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+          $_.MainWindowHandle -ne 0 -and (
+            ([string]$_.MainWindowTitle).IndexOf($requestedApp, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            ([string]$_.ProcessName).IndexOf($requestedApp, [StringComparison]::OrdinalIgnoreCase) -ge 0
+          )
+        })
+        if ($running.Count -eq 1) {
+          Activate-Window $running[0]
+          [ordered]@{ ok=$true; mode='existing-window'; processId=[int]$running[0].Id; resolvedName=[string]$running[0].MainWindowTitle; window=(Window-Record $running[0]) }
+          break
+        }
+      }
       $spec = Resolve-AppLaunchSpec $request
       $argumentList = @(Get-Prop $request 'arguments' @())
       $workingDirectory = [string](Get-Prop $request 'workingDirectory' '')
