@@ -73,6 +73,8 @@ describe('Desktop Automation runtime foundation', () => {
     expect(PATROL_DESKTOP_PROMPT).toMatch(/desktop_click_visual_point/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/Desktop XY\/1000/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/desktop_preview_visual_point/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/desktop_refine_visual_point/)
+    expect(PATROL_DESKTOP_PROMPT).toMatch(/SendInput/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/绿色十字/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/检查更新.*关于我们/)
     expect(PATROL_DESKTOP_PROMPT).toMatch(/绝对禁止把 read_image 看到的.*裁剪图像素直接传给 desktop_click_coordinates/)
@@ -81,6 +83,9 @@ describe('Desktop Automation runtime foundation', () => {
 
     const tools = readFileSync(join(process.cwd(), 'desktop-runtime', 'tools-plugin.js'), 'utf8')
     expect(tools).toContain("name: 'desktop_preview_visual_point'")
+    expect(tools).toContain("name: 'desktop_refine_visual_point'")
+    expect(tools).toContain('previewXRatio: reqNum')
+    expect(tools).toContain('previewYRatio: reqNum')
     expect(tools).toContain("name: 'desktop_click_visual_point'")
     expect(tools).toContain('xRatio: num')
     expect(tools).toContain('yRatio: num')
@@ -268,6 +273,61 @@ describe('Desktop Automation runtime foundation', () => {
     })
     expect(driver.visualFrames.has(frame.frameId)).toBe(false)
     expect(driver.visualPreviews.has(preview.previewId)).toBe(false)
+  })
+
+  it('refines a zoom-preview point back into the same original desktop frame without manual crop math', async () => {
+    const driver = new WindowsDesktopDriver()
+    const frame = {
+      frameId: 'visual-refine-test',
+      createdAt: Date.now(),
+      path: 'guided.png',
+      rawPath: 'raw.png',
+      hwnd: 4343,
+      processName: 'LxMainNew',
+      title: 'BlueLetter',
+      rect: { x: 80, y: 40, width: 1200, height: 800 },
+    }
+    driver.visualFrames.set(frame.frameId, frame)
+    driver.lastVisualFrameId = frame.frameId
+    const calls: any[] = []
+    driver.run = async (action: string, args: any) => {
+      calls.push({ action, args })
+      if (action === 'annotate-visual-guide') {
+        return {
+          ok: true,
+          path: `preview-${calls.length}.png`,
+          crop: { xRatio: 0.60, yRatio: 0.40, widthRatio: 0.20, heightRatio: 0.30 },
+          previewContent: { xRatio: 0.10, yRatio: 0.10, widthRatio: 0.80, heightRatio: 0.80 },
+        }
+      }
+      throw new Error(`unexpected action ${action}`)
+    }
+
+    const initial = await driver.previewVisualPoint({
+      processName: 'LxMainNew',
+      frameId: frame.frameId,
+      xRatio: 0.70,
+      yRatio: 0.55,
+    })
+    const refined = await driver.refineVisualPoint({
+      processName: 'LxMainNew',
+      previewId: initial.previewId,
+      previewXRatio: 0.50,
+      previewYRatio: 0.50,
+    })
+
+    expect(refined).toMatchObject({
+      previewId: expect.stringMatching(/^desktop-preview-/),
+      frameId: frame.frameId,
+      xRatio: 0.70,
+      yRatio: 0.55,
+      refinedFromPreviewId: initial.previewId,
+      sourceLocalXRatio: 0.5,
+      sourceLocalYRatio: 0.5,
+      physicalClickDispatched: false,
+    })
+    expect(refined.previewId).not.toBe(initial.previewId)
+    expect(driver.visualFrames.has(frame.frameId)).toBe(true)
   })
 
   it('uses DPI-aware DWM visible bounds and refuses partial active-window screen copies', () => {
@@ -559,6 +619,7 @@ describe('Desktop Automation runtime foundation', () => {
       'desktop_click_target',
       'desktop_click_ocr_text',
       'desktop_preview_visual_point',
+      'desktop_refine_visual_point',
       'desktop_click_visual_point',
       'desktop_click_coordinates',
       'desktop_wait_for_target',
