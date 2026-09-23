@@ -23,6 +23,7 @@ export class WindowsDesktopDriver {
     this.powerShell = options.powerShell || process.env.DSH_PATROL_POWERSHELL || 'powershell.exe'
     this.visualFrames = new Map()
     this.visualRegions = new Map()
+    this.visualActionMaps = new Map()
     this.lastVisualFrameId = undefined
   }
 
@@ -269,6 +270,8 @@ export class WindowsDesktopDriver {
       },
     }
     this.visualRegions.set(regionId, region)
+    frame.focusedRegionId = regionId
+    frame.visualMode = 'focused-region'
     while (this.visualRegions.size > 24) {
       const oldest = this.visualRegions.keys().next().value
       if (!oldest) break
@@ -283,7 +286,252 @@ export class WindowsDesktopDriver {
       height: region.height,
       crop: region.crop,
       coordinateMapping: 'focused-region-image-pixel-to-full-window-ratio',
-      clickContract: 'Read this focused image. For the target center inside it, call desktop_click_visual_point with the SAME frameId + regionId + imageX/imageY/imageWidth/imageHeight from this focused image. Patrol maps it back to the original full-window frame automatically.',
+      clickContract: 'This frame is now FOCUSED-REGION LOCKED. Read this image, then call desktop_click_focused_visual_point with SAME frameId + regionId + imageX/imageY/imageWidth/imageHeight. Full-frame desktop_click_visual_point is rejected until a new desktop_screenshot.',
+    }
+  }
+
+  async visualActionMap(args = {}, exec) {
+    const requestedFrameId = String(args.frameId ?? '').trim()
+    const frameId = requestedFrameId || this.lastVisualFrameId
+    if (!frameId) throw new Error('desktop_visual_action_map requires a fresh desktop_screenshot first')
+    const frame = this.visualFrames.get(frameId)
+    if (!frame) throw new Error(`desktop visual frame ${JSON.stringify(frameId)} is unavailable; take a new desktop_screenshot`)
+    if (Date.now() - frame.createdAt > 120000) {
+      this.consumeVisualFrame(frameId)
+      throw new Error('desktop visual frame is stale; take a new desktop_screenshot')
+    }
+    assertVisualFrameTarget(frame, args)
+
+    let crop
+    const regionId = String(args.regionId ?? '').trim()
+    if (regionId) {
+      const region = this.visualRegions.get(regionId)
+      if (!region || region.frameId !== frameId) throw new Error('desktop_visual_action_map regionId is unavailable or belongs to another frame')
+      crop = region.crop
+    } else {
+      const centerX = ratioValue(args.centerXRatio, 0.5, 'centerXRatio')
+      const centerY = ratioValue(args.centerYRatio, 0.5, 'centerYRatio')
+      const widthRatio = Math.max(0.08, Math.min(0.75, Number.isFinite(Number(args.widthRatio)) ? Number(args.widthRatio) : 0.28))
+      const heightRatio = Math.max(0.08, Math.min(0.75, Number.isFinite(Number(args.heightRatio)) ? Number(args.heightRatio) : 0.28))
+      crop = {
+        xRatio: Math.max(0, Math.min(1 - widthRatio, centerX - widthRatio / 2)),
+        yRatio: Math.max(0, Math.min(1 - heightRatio, centerY - heightRatio / 2)),
+        widthRatio,
+        heightRatio,
+      }
+    }
+
+    const mapId = `desktop-map-${randomUUID()}`
+    const path = siblingJpegPath(frame.rawPath || frame.path, `-action-map-${randomUUID().slice(0, 8)}`)
+    const built = await this.run('build-visual-action-map', {
+      sourcePath: frame.rawPath || frame.path,
+      path,
+      cropXRatio: crop.xRatio,
+      cropYRatio: crop.yRatio,
+      cropWidthRatio: crop.widthRatio,
+      cropHeightRatio: crop.heightRatio,
+      maxCandidates: Number.isInteger(args.maxCandidates) ? Math.max(3, Math.min(30, args.maxCandidates)) : 18,
+    }, exec)
+    const candidates = normalizeDesktopVisualCandidates(built?.candidates)
+    if (candidates.length === 0) {
+      throw new Error('desktop visual Action Map found no stable visual candidates in this region; focus a tighter/different CURRENT region')
+    }
+    const map = {
+      mapId,
+      frameId,
+      createdAt: Date.now(),
+      path: String(built?.path || path),
+      crop,
+      candidates,
+    }
+    this.visualActionMaps.set(mapId, map)
+    frame.activeActionMapId = mapId
+    frame.visualMode = 'action-map'
+    while (this.visualActionMaps.size > 24) {
+      const oldest = this.visualActionMaps.keys().next().value
+      if (!oldest) break
+      this.visualActionMaps.delete(oldest)
+    }
+    return {
+      ok: true,
+      frameId,
+      actionMapId: mapId,
+      path: map.path,
+      crop,
+      candidateCount: candidates.length,
+      candidates,
+      clickContract: 'Read this Desktop Action Map and choose D#. Call desktop_click_visual_candidate with SAME frameId + actionMapId + candidateId. Patrol clicks the program-computed bbox center; do not provide x/y.',
+    }
+  }
+
+  async clickVisualCandidate(args = {}, exec) {
+    const frameId = String(args.frameId ?? '').trim()
+    const mapId = String(args.actionMapId ?? '').trim()
+    const candidateId = String(args.candidateId ?? '').trim().toUpperCase()
+    if (!frameId || !mapId || !candidateId) throw new Error('desktop_click_visual_candidate requires frameId, actionMapId and candidateId')
+    const frame = this.visualFrames.get(frameId)
+    const map = this.visualActionMaps.get(mapId)
+    if (!frame || !map || map.frameId !== frameId) throw new Error('desktop visual Action Map is unavailable or stale; take a new screenshot/map')
+    if (frame.activeActionMapId !== mapId) throw new Error('desktop visual frame is bound to a different CURRENT Action Map')
+    assertVisualFrameTarget(frame, args)
+    const candidate = map.candidates.find(item => item.candidateId === candidateId)
+    if (!candidate) throw new Error(`desktop visual candidate ${JSON.stringify(candidateId)} not found; available=${map.candidates.map(item => item.candidateId).join(',')}`)
+
+    let templatePath
+    if (typeof args.templatePath === 'string' && args.templatePath.trim()) {
+      templatePath = args.templatePath.trim()
+      await this.run('prepare-model-vision', {
+        sourcePath: frame.rawPath || frame.path,
+        path: templatePath,
+        maxWidth: 2048,
+        maxHeight: 2048,
+        jpegQuality: 92,
+        cropXRatio: candidate.leftRatio,
+        cropYRatio: candidate.topRatio,
+        cropWidthRatio: candidate.widthRatio,
+        cropHeightRatio: candidate.heightRatio,
+        upscale: false,
+      }, exec)
+    }
+
+    const result = await this.run('click-visual-point', {
+      processName: frame.processName,
+      title: frame.title,
+      xRatio: candidate.centerXRatio,
+      yRatio: candidate.centerYRatio,
+      button: args.button === 'right' ? 'right' : 'left',
+      hwnd: frame.hwnd,
+      frameHwnd: frame.hwnd,
+      frameX: frame.rect.x,
+      frameY: frame.rect.y,
+      frameWidth: frame.rect.width,
+      frameHeight: frame.rect.height,
+    }, exec)
+    this.consumeVisualFrame(frameId)
+    return {
+      ...result,
+      frameId,
+      actionMapId: mapId,
+      candidateId,
+      candidate,
+      xRatio: candidate.centerXRatio,
+      yRatio: candidate.centerYRatio,
+      coordinateMapping: 'desktop-action-map-bbox-center',
+      ...(templatePath ? {
+        templatePath,
+        templateSearchWidthRatio: Math.max(0.12, Math.min(0.32, candidate.widthRatio * 8)),
+        templateSearchHeightRatio: Math.max(0.12, Math.min(0.32, candidate.heightRatio * 8)),
+        templateMinScore: 0.76,
+      } : {}),
+    }
+  }
+
+  async clickFocusedVisualPoint(args = {}, exec) {
+    const frameId = String(args.frameId ?? '').trim()
+    const regionId = String(args.regionId ?? '').trim()
+    if (!frameId || !regionId) throw new Error('desktop_click_focused_visual_point requires frameId and regionId')
+    const frame = this.visualFrames.get(frameId)
+    const region = this.visualRegions.get(regionId)
+    if (!frame || !region || region.frameId !== frameId) throw new Error('desktop focused visual region is unavailable or stale')
+    if (frame.focusedRegionId !== regionId) throw new Error('desktop frame is bound to a different focused region')
+    assertVisualFrameTarget(frame, args)
+    const imageX = Number(args.imageX)
+    const imageY = Number(args.imageY)
+    const imageWidth = Number(args.imageWidth)
+    const imageHeight = Number(args.imageHeight)
+    if (![imageX, imageY, imageWidth, imageHeight].every(Number.isFinite)
+      || imageWidth <= 1 || imageHeight <= 1
+      || imageX < 0 || imageX > imageWidth || imageY < 0 || imageY > imageHeight) {
+      throw new Error('desktop_click_focused_visual_point requires valid imageX/imageY/imageWidth/imageHeight from the focused image')
+    }
+    const localX = imageX / imageWidth
+    const localY = imageY / imageHeight
+    const xRatio = ratioValue(region.crop.xRatio + localX * region.crop.widthRatio, NaN, 'focused image X mapping')
+    const yRatio = ratioValue(region.crop.yRatio + localY * region.crop.heightRatio, NaN, 'focused image Y mapping')
+    const result = await this.run('click-visual-point', {
+      processName: frame.processName,
+      title: frame.title,
+      xRatio,
+      yRatio,
+      button: args.button === 'right' ? 'right' : 'left',
+      hwnd: frame.hwnd,
+      frameHwnd: frame.hwnd,
+      frameX: frame.rect.x,
+      frameY: frame.rect.y,
+      frameWidth: frame.rect.width,
+      frameHeight: frame.rect.height,
+    }, exec)
+    this.consumeVisualFrame(frameId)
+    return {
+      ...result,
+      frameId,
+      regionId,
+      xRatio,
+      yRatio,
+      coordinateMapping: 'focused-region-forced-click',
+      modelImagePoint: { x: imageX, y: imageY, width: imageWidth, height: imageHeight },
+      regionCrop: region.crop,
+    }
+  }
+
+  async clickVisualTemplate(args = {}, exec) {
+    const templatePath = String(args.templatePath ?? '').trim()
+    if (!templatePath) throw new Error('desktop_click_visual_template requires templatePath')
+    const expectedXRatio = ratioValue(args.expectedXRatio, NaN, 'expectedXRatio')
+    const expectedYRatio = ratioValue(args.expectedYRatio, NaN, 'expectedYRatio')
+    const searchWidthRatio = Math.max(0.08, Math.min(0.45, Number.isFinite(Number(args.searchWidthRatio)) ? Number(args.searchWidthRatio) : 0.20))
+    const searchHeightRatio = Math.max(0.08, Math.min(0.45, Number.isFinite(Number(args.searchHeightRatio)) ? Number(args.searchHeightRatio) : 0.20))
+    const minScore = Math.max(0.50, Math.min(0.98, Number.isFinite(Number(args.minScore)) ? Number(args.minScore) : 0.76))
+
+    const shot = await this.screenshot({
+      ...args,
+      scope: 'active-window',
+      captureMethod: 'screen',
+      visualGuide: false,
+    }, exec)
+    const sourcePath = String(shot?.rawPath ?? shot?.path ?? '')
+    const rect = screenshotBounds(shot)
+    const window = shot?.window
+    const hwnd = finiteNumber(window?.hwnd, 0)
+    if (!sourcePath || !hwnd || rect.width <= 0 || rect.height <= 0) throw new Error('desktop template replay could not capture a valid target window')
+    const match = await this.run('match-visual-template', {
+      sourcePath,
+      templatePath,
+      expectedXRatio,
+      expectedYRatio,
+      searchWidthRatio,
+      searchHeightRatio,
+    }, exec)
+    const score = finiteNumber(match?.score, -1)
+    if (match?.matched !== true || score < minScore) {
+      throw new Error(`desktop learned icon template did not match confidently: score=${score.toFixed(3)} required>=${minScore.toFixed(3)}; rebuild the teaching candidate/template`)
+    }
+    const xRatio = ratioValue(match.centerXRatio, NaN, 'template centerXRatio')
+    const yRatio = ratioValue(match.centerYRatio, NaN, 'template centerYRatio')
+    const result = await this.run('click-visual-point', {
+      processName: String(window?.processName ?? args.processName ?? ''),
+      title: String(window?.title ?? ''),
+      xRatio,
+      yRatio,
+      button: args.button === 'right' ? 'right' : 'left',
+      hwnd,
+      frameHwnd: hwnd,
+      frameX: rect.x,
+      frameY: rect.y,
+      frameWidth: rect.width,
+      frameHeight: rect.height,
+    }, exec)
+    return {
+      ...result,
+      method: 'learned-icon-template',
+      templatePath,
+      templateScore: score,
+      templateScale: finiteNumber(match?.scale, 1),
+      xRatio,
+      yRatio,
+      searchWidthRatio,
+      searchHeightRatio,
+      minScore,
     }
   }
 
@@ -301,6 +549,12 @@ export class WindowsDesktopDriver {
       throw new Error('desktop visual frame is stale; take a new desktop_screenshot')
     }
     assertVisualFrameTarget(frame, args)
+    if (frame.focusedRegionId) {
+      throw new Error('desktop visual frame is focused-region locked; use desktop_click_focused_visual_point with the focused region image, or take a new desktop_screenshot')
+    }
+    if (frame.activeActionMapId) {
+      throw new Error('desktop visual frame has an active Action Map; use desktop_click_visual_candidate with candidateId, or take a new desktop_screenshot')
+    }
 
     const directRatioX = Number(args.xRatio)
     const directRatioY = Number(args.yRatio)
@@ -317,31 +571,10 @@ export class WindowsDesktopDriver {
       throw new Error('desktop_click_visual_point requires either xRatio/yRatio or imageX/imageY/imageWidth/imageHeight')
     }
 
-    const regionId = String(args.regionId ?? '').trim()
-    let region
-    if (regionId) {
-      region = this.visualRegions.get(regionId)
-      if (!region) throw new Error(`desktop visual region ${JSON.stringify(regionId)} is unavailable; focus the CURRENT frame again`)
-      if (region.frameId !== frameId) throw new Error('desktop visual region belongs to a different screenshot frame')
-      if (Date.now() - region.createdAt > 120000) {
-        this.visualRegions.delete(regionId)
-        throw new Error('desktop visual region is stale; focus the CURRENT frame again')
-      }
-      if (!hasImagePoint) throw new Error('desktop click with regionId requires imageX/imageY/imageWidth/imageHeight from that focused region image')
-    }
-
     const localXRatio = hasImagePoint ? ratioValue(imageX / imageWidth, NaN, 'imageX/imageWidth') : undefined
     const localYRatio = hasImagePoint ? ratioValue(imageY / imageHeight, NaN, 'imageY/imageHeight') : undefined
-    const xRatio = hasDirectRatio
-      ? ratioValue(directRatioX, NaN, 'xRatio')
-      : region
-        ? ratioValue(region.crop.xRatio + localXRatio * region.crop.widthRatio, NaN, 'focused image X mapping')
-        : localXRatio
-    const yRatio = hasDirectRatio
-      ? ratioValue(directRatioY, NaN, 'yRatio')
-      : region
-        ? ratioValue(region.crop.yRatio + localYRatio * region.crop.heightRatio, NaN, 'focused image Y mapping')
-        : localYRatio
+    const xRatio = hasDirectRatio ? ratioValue(directRatioX, NaN, 'xRatio') : localXRatio
+    const yRatio = hasDirectRatio ? ratioValue(directRatioY, NaN, 'yRatio') : localYRatio
 
     const result = await this.run('click-visual-point', {
       ...args,
@@ -354,11 +587,7 @@ export class WindowsDesktopDriver {
       frameWidth: frame.rect.width,
       frameHeight: frame.rect.height,
     }, exec)
-    this.visualFrames.delete(frameId)
-    for (const [id, item] of this.visualRegions) {
-      if (item.frameId === frameId) this.visualRegions.delete(id)
-    }
-    if (this.lastVisualFrameId === frameId) this.lastVisualFrameId = undefined
+    this.consumeVisualFrame(frameId)
     return {
       ...result,
       frameId,
@@ -369,14 +598,22 @@ export class WindowsDesktopDriver {
       yRatio,
       coordinateMapping: hasDirectRatio
         ? 'full-window-normalized-ratio'
-        : region
-          ? 'focused-region-image-pixel-to-full-window-ratio'
-          : 'model-image-pixel-to-full-window-ratio',
-      ...(region ? { regionId, regionCrop: region.crop } : {}),
+        : 'model-image-pixel-to-full-window-ratio',
       ...(hasImagePoint ? {
         modelImagePoint: { x: imageX, y: imageY, width: imageWidth, height: imageHeight },
       } : {}),
     }
+  }
+
+  consumeVisualFrame(frameId) {
+    this.visualFrames.delete(frameId)
+    for (const [id, item] of this.visualRegions) {
+      if (item.frameId === frameId) this.visualRegions.delete(id)
+    }
+    for (const [id, item] of this.visualActionMaps) {
+      if (item.frameId === frameId) this.visualActionMaps.delete(id)
+    }
+    if (this.lastVisualFrameId === frameId) this.lastVisualFrameId = undefined
   }
 
   async previewVisualPoint(args = {}, exec) {
@@ -842,6 +1079,32 @@ export function ocrRegionDescriptor(args = {}) {
     throw new Error('OCR region minimum ratios must not exceed maximum ratios')
   }
   return region
+}
+
+function normalizeDesktopVisualCandidates(value) {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return []
+    const row = item
+    const candidateId = String(row.CandidateId ?? row.candidateId ?? `D${index + 1}`).trim().toUpperCase()
+    const leftRatio = finiteNumber(row.LeftRatio ?? row.leftRatio, NaN)
+    const topRatio = finiteNumber(row.TopRatio ?? row.topRatio, NaN)
+    const widthRatio = finiteNumber(row.WidthRatio ?? row.widthRatio, NaN)
+    const heightRatio = finiteNumber(row.HeightRatio ?? row.heightRatio, NaN)
+    const centerXRatio = finiteNumber(row.CenterXRatio ?? row.centerXRatio, NaN)
+    const centerYRatio = finiteNumber(row.CenterYRatio ?? row.centerYRatio, NaN)
+    if (![leftRatio, topRatio, widthRatio, heightRatio, centerXRatio, centerYRatio].every(Number.isFinite)) return []
+    return [{
+      candidateId,
+      leftRatio,
+      topRatio,
+      widthRatio,
+      heightRatio,
+      centerXRatio,
+      centerYRatio,
+      score: finiteNumber(row.Score ?? row.score, 0),
+    }]
+  })
 }
 
 function ratioValue(value, fallback, name) {
