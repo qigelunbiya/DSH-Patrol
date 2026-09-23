@@ -242,6 +242,7 @@ export class WindowsDesktopDriver {
       screenshotPath: frame.path,
       rawScreenshotPath: frame.rawPath,
       frameBounds: frame.rect,
+      ...(preview?.pointProbe === undefined ? {} : { previewPointProbe: preview.pointProbe }),
     }
   }
 
@@ -267,6 +268,20 @@ export class WindowsDesktopDriver {
       markYRatio: yRatio,
       zoomPreview: true,
     }, exec)
+    const absoluteX = Math.round(frame.rect.x + ((frame.rect.width - 1) * xRatio))
+    const absoluteY = Math.round(frame.rect.y + ((frame.rect.height - 1) * yRatio))
+    let pointProbe
+    try {
+      pointProbe = await this.run('probe-screen-point', { x: absoluteX, y: absoluteY }, exec)
+    } catch (error) {
+      pointProbe = {
+        ok: true,
+        status: 'unavailable',
+        error: errorMessage(error),
+        x: absoluteX,
+        y: absoluteY,
+      }
+    }
     const previewId = `desktop-preview-${randomUUID()}`
     this.visualPreviews.set(previewId, {
       previewId,
@@ -277,6 +292,7 @@ export class WindowsDesktopDriver {
       previewPath: String(preview?.path || previewPath),
       crop: preview?.crop,
       previewContent: preview?.previewContent,
+      pointProbe,
     })
     while (this.visualPreviews.size > 24) {
       const oldest = this.visualPreviews.keys().next().value
@@ -294,8 +310,10 @@ export class WindowsDesktopDriver {
       rawScreenshotPath: frame.rawPath,
       frameBounds: frame.rect,
       coordinateGridUnits: 1000,
+      absoluteScreenPoint: { x: absoluteX, y: absoluteY },
+      pointProbe,
       physicalClickDispatched: false,
-      clickContract: 'Read the magnified previewPath and confirm the green crosshair is on the intended control. Then pass previewId to desktop_click_visual_point; the real click will reuse these exact previewed ratios and ignore coordinate drift.',
+      clickContract: 'Read the magnified previewPath and confirm the green crosshair is on the intended control. If pointProbe.status=recognized, also inspect pointProbe.element name/controlType/rect: a clear conflict with the visual target means refine before clicking. If UIA is empty/unavailable, trust the magnified visual crop. Then pass previewId to desktop_click_visual_point; the real click will reuse these exact previewed ratios and ignore coordinate drift.',
     }
   }
 
