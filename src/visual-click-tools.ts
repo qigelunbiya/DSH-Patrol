@@ -121,6 +121,12 @@ export function registerPatrolVisualClickTool(
       if (args.expectedVisualText !== undefined) assertSafePersistentText(args.expectedVisualText, 'expectedVisualText')
       const pointerAction = args.pointerAction ?? 'left-click'
       const diagnosticPointerAction = pointerAction !== 'left-click'
+      if (!diagnosticPointerAction && !boundPreview && preciseBrowserVisualTarget(args.stepName, args.targetHint)) {
+        throw new Error('This small/close/remove visual target requires visual calibration before any real click. First call patrol_visual_click_target with pointerAction=mark using either candidateId or xRatio/yRatio, then patrol_observe(includeImage=true) to confirm the red crosshair, and finally click with the returned previewId.')
+      }
+      if (!diagnosticPointerAction && !boundPreview && outcomes.unverifiedPhysicalClicks(args) > 0) {
+        throw new Error('This business target already had an unverified physical visual click. A second naked XY/Action-Map click is blocked: mark the next candidate/point first, visually confirm the red crosshair, then reuse previewId for the real click.')
+      }
       if (!diagnosticPointerAction && navigationLikeBusinessAction(args.stepName, args.targetHint)
         && (typeof args.expectedVisualText !== 'string' || args.expectedVisualText.trim().length < 4)) {
         throw new Error('navigation/card visual clicks require expectedVisualText copied from the model-visible CURRENT screenshot; generic labels such as “视频卡片区域” are not sufficient')
@@ -620,6 +626,11 @@ function visualTargetMismatch(targetHint: string | undefined, value: unknown): s
   const expected = groups.find(group => group.hint.test(hint))
   if (expected === undefined || expected.evidence.test(haystack)) return undefined
   return `targetHint expects ${expected.label}, but CURRENT clicked DOM evidence was ${JSON.stringify(haystack.slice(0, 320) || '(empty)')}`
+}
+
+function preciseBrowserVisualTarget(stepName: string | undefined, targetHint: string | undefined): boolean {
+  const text = [stepName, targetHint].filter(Boolean).join(' ')
+  return /(?:关闭|移除|删除|清除|取消|close|remove|delete|clear|dismiss|\bx\b|[×✕✖])/i.test(text)
 }
 
 function learnedVisualLocatorText(value: unknown): string | undefined {
