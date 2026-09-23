@@ -83,9 +83,26 @@ function Get-VisualWindowRect($process) {
   }
 }
 
-function Window-Record($process) {
+function Window-Record($process, [bool]$preciseGeometry = $true) {
   if ($null -eq $process -or $process.MainWindowHandle -eq 0) { return $null }
-  $visualRect = Get-VisualWindowRect $process
+  if ($preciseGeometry) {
+    $visualRect = Get-VisualWindowRect $process
+  } else {
+    # Window discovery only needs a stable coarse rectangle. Avoid invoking
+    # DWM extended-frame measurement for every unrelated process, especially
+    # while a GUI process is still constructing its first WPF/Electron window.
+    $rect = New-Object PatrolDesktop.Native+RECT
+    if (-not [PatrolDesktop.Native]::GetWindowRect([IntPtr]$process.MainWindowHandle, [ref]$rect)) {
+      return $null
+    }
+    $visualRect = [ordered]@{
+      x = [int]$rect.Left
+      y = [int]$rect.Top
+      width = [int]($rect.Right - $rect.Left)
+      height = [int]($rect.Bottom - $rect.Top)
+      source = 'get-window-rect-discovery'
+    }
+  }
   return [ordered]@{
     processId = [int]$process.Id
     processName = [string]$process.ProcessName
@@ -104,7 +121,7 @@ function Window-Record($process) {
 function Get-Windows {
   $items = @()
   foreach ($process in (Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and -not [string]::IsNullOrWhiteSpace($_.MainWindowTitle) })) {
-    $record = Window-Record $process
+    $record = Window-Record $process $false
     if ($null -ne $record) { $items += $record }
   }
   return $items
