@@ -6,116 +6,6 @@ param(
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-# Window discovery is an independent Win32 fast path. Do not enumerate
-# Process.MainWindowTitle/MainWindowHandle here: those .NET properties can
-# block or remain stale while WPF/Electron/Chromium windows are initializing.
-# EnumWindows gives Patrol the actual visible top-level HWND/PID/physical rect.
-if ($Action -eq 'list-windows') {
-  if (-not ('PatrolDesktopDiscovery.Native' -as [type])) {
-    Add-Type @"
-using System;
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
-using System.Text;
-namespace PatrolDesktopDiscovery {
-  public sealed class WindowDto {
-    public int ProcessId;
-    public string ProcessName;
-    public string Title;
-    public long Hwnd;
-    public int X;
-    public int Y;
-    public int Width;
-    public int Height;
-  }
-
-  public static class Native {
-    [StructLayout(LayoutKind.Sequential)]
-    struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
-    delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-    [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
-    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
-    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
-    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-    [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int maxCount);
-    [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr OpenProcess(uint access, bool inheritHandle, uint processId);
-    [DllImport("kernel32.dll", SetLastError=true)] static extern bool CloseHandle(IntPtr handle);
-    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool QueryFullProcessImageNameW(IntPtr process, uint flags, StringBuilder path, ref uint size);
-
-    static string ProcessName(uint processId) {
-      const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
-      IntPtr process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, processId);
-      if (process == IntPtr.Zero) return String.Empty;
-      try {
-        uint size = 32768;
-        var path = new StringBuilder((int)size);
-        if (!QueryFullProcessImageNameW(process, 0, path, ref size)) return String.Empty;
-        try { return System.IO.Path.GetFileNameWithoutExtension(path.ToString()); }
-        catch { return String.Empty; }
-      } finally { CloseHandle(process); }
-    }
-
-    static string Title(IntPtr hWnd) {
-      var text = new StringBuilder(2048);
-      int count = GetWindowTextW(hWnd, text, text.Capacity);
-      return count > 0 ? text.ToString() : String.Empty;
-    }
-
-    public static WindowDto[] VisibleTopLevelWindows() {
-      var rows = new List<WindowDto>();
-      EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
-        try {
-          if (!IsWindowVisible(hWnd)) return true;
-          RECT rect;
-          if (!GetWindowRect(hWnd, out rect)) return true;
-          int width = rect.Right - rect.Left;
-          int height = rect.Bottom - rect.Top;
-          if (width <= 1 || height <= 1) return true;
-          uint processId;
-          GetWindowThreadProcessId(hWnd, out processId);
-          if (processId == 0) return true;
-          string title = Title(hWnd);
-          if (String.IsNullOrWhiteSpace(title)) return true;
-          rows.Add(new WindowDto {
-            ProcessId = unchecked((int)processId),
-            ProcessName = ProcessName(processId),
-            Title = title,
-            Hwnd = hWnd.ToInt64(),
-            X = rect.Left,
-            Y = rect.Top,
-            Width = width,
-            Height = height
-          });
-        } catch { }
-        return true;
-      }, IntPtr.Zero);
-      return rows.ToArray();
-    }
-  }
-}
-"@
-  }
-
-  $items = @()
-  foreach ($row in [PatrolDesktopDiscovery.Native]::VisibleTopLevelWindows()) {
-    $items += [ordered]@{
-      processId = [int]$row.ProcessId
-      processName = [string]$row.ProcessName
-      title = [string]$row.Title
-      hwnd = [int64]$row.Hwnd
-      rect = [ordered]@{
-        x = [int]$row.X
-        y = [int]$row.Y
-        width = [int]$row.Width
-        height = [int]$row.Height
-      }
-      rectSource = 'enum-windows-get-window-rect'
-    }
-  }
-  [ordered]@{ ok=$true; windows=$items } | ConvertTo-Json -Depth 8 -Compress
-  exit 0
-}
-
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName System.Drawing
@@ -125,18 +15,10 @@ if (-not ('PatrolDesktop.Native' -as [type])) {
   Add-Type @"
 using System;
 using System.Runtime.InteropServices;
-using System.Text;
 namespace PatrolDesktop {
   public static class Native {
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
-    public sealed class WindowRecordDto {
-      public int ProcessId;
-      public long Hwnd;
-      public string Title;
-      public int Width;
-      public int Height;
-    }
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
@@ -147,77 +29,6 @@ namespace PatrolDesktop {
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint nFlags);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
-    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
-    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-    [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
-    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-    [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int maxCount);
-    public static IntPtr FindVisibleTopLevelWindowForProcess(int processId) {
-      IntPtr found = IntPtr.Zero;
-      long bestScore = Int64.MinValue;
-      EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
-        try {
-          if (!IsWindowVisible(hWnd)) return true;
-          uint pid;
-          GetWindowThreadProcessId(hWnd, out pid);
-          if (pid != unchecked((uint)processId)) return true;
-          RECT rect;
-          if (!GetWindowRect(hWnd, out rect)) return true;
-          int width = rect.Right - rect.Left;
-          int height = rect.Bottom - rect.Top;
-          if (width <= 1 || height <= 1) return true;
-          string title = WindowTitle(hWnd);
-          long area = (long)width * (long)height;
-          // Real app main windows almost always expose a title. Transparent/
-          // message/helper top-level HWNDs often do not; never let a slightly
-          // larger helper window outrank the titled UIA root.
-          long score = area + (String.IsNullOrWhiteSpace(title) ? 0L : 1000000000000L);
-          if (score > bestScore) {
-            bestScore = score;
-            found = hWnd;
-          }
-        } catch { }
-        return true;
-      }, IntPtr.Zero);
-      return found;
-    }
-    public static string WindowTitle(IntPtr hWnd) {
-      var text = new StringBuilder(2048);
-      int count = GetWindowTextW(hWnd, text, text.Capacity);
-      return count > 0 ? text.ToString() : String.Empty;
-    }
-    public static int WindowProcessId(IntPtr hWnd) {
-      uint pid;
-      GetWindowThreadProcessId(hWnd, out pid);
-      return unchecked((int)pid);
-    }
-    public static WindowRecordDto[] VisibleTopLevelWindowRecords() {
-      var rows = new System.Collections.Generic.List<WindowRecordDto>();
-      EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
-        try {
-          if (!IsWindowVisible(hWnd)) return true;
-          RECT rect;
-          if (!GetWindowRect(hWnd, out rect)) return true;
-          int width = rect.Right - rect.Left;
-          int height = rect.Bottom - rect.Top;
-          if (width <= 1 || height <= 1) return true;
-          uint pid;
-          GetWindowThreadProcessId(hWnd, out pid);
-          if (pid == 0) return true;
-          string title = WindowTitle(hWnd);
-          if (String.IsNullOrWhiteSpace(title)) return true;
-          rows.Add(new WindowRecordDto {
-            ProcessId = unchecked((int)pid),
-            Hwnd = hWnd.ToInt64(),
-            Title = title,
-            Width = width,
-            Height = height
-          });
-        } catch { }
-        return true;
-      }, IntPtr.Zero);
-      return rows.ToArray();
-    }
   }
 }
 "@
@@ -299,27 +110,6 @@ function Get-Windows {
   return $items
 }
 
-function New-WindowProcessView([int]$processId, [int64]$hwnd, [string]$title, [int]$width = 0, [int]$height = 0) {
-  $p = Get-Process -Id $processId -ErrorAction SilentlyContinue
-  if ($null -eq $p) { return $null }
-  return [pscustomobject]@{
-    Id = [int]$p.Id
-    ProcessName = [string]$p.ProcessName
-    MainWindowHandle = [int64]$hwnd
-    MainWindowTitle = [string]$title
-    WindowArea = [int64]([Math]::Max(0, $width) * [Math]::Max(0, $height))
-  }
-}
-
-function Get-VisibleWindowCandidates {
-  $items = @()
-  foreach ($row in [PatrolDesktop.Native]::VisibleTopLevelWindowRecords()) {
-    $view = New-WindowProcessView ([int]$row.ProcessId) ([int64]$row.Hwnd) ([string]$row.Title) ([int]$row.Width) ([int]$row.Height)
-    if ($null -ne $view) { $items += $view }
-  }
-  return $items
-}
-
 function Resolve-Window($request, [bool]$allowForeground = $true) {
   $processId = Get-Prop $request 'processId'
   $hwnd = Get-Prop $request 'hwnd'
@@ -328,23 +118,17 @@ function Resolve-Window($request, [bool]$allowForeground = $true) {
   $titleContains = [string](Get-Prop $request 'titleContains' '')
 
   if ($null -ne $hwnd -and [int64]$hwnd -ne 0) {
-    $pidForHwnd = [PatrolDesktop.Native]::WindowProcessId([IntPtr][int64]$hwnd)
-    if ($pidForHwnd -eq 0) { throw "desktop window hwnd=$hwnd not found" }
-    $view = New-WindowProcessView $pidForHwnd ([int64]$hwnd) ([PatrolDesktop.Native]::WindowTitle([IntPtr][int64]$hwnd))
-    if ($null -eq $view) { throw "desktop window hwnd=$hwnd process not found" }
-    return $view
+    $p = Get-Process | Where-Object { $_.MainWindowHandle -eq [int64]$hwnd } | Select-Object -First 1
+    if ($null -eq $p) { throw "desktop window hwnd=$hwnd not found" }
+    return $p
   }
   if ($null -ne $processId) {
-    $resolvedHwnd = [PatrolDesktop.Native]::FindVisibleTopLevelWindowForProcess([int]$processId)
-    if ($resolvedHwnd -eq [IntPtr]::Zero) {
-      throw "desktop processId=$processId has no visible top-level window yet"
-    }
-    $view = New-WindowProcessView ([int]$processId) ([int64]$resolvedHwnd) ([PatrolDesktop.Native]::WindowTitle($resolvedHwnd))
-    if ($null -eq $view) { throw "desktop processId=$processId not found" }
-    return $view
+    $p = Get-Process -Id ([int]$processId) -ErrorAction SilentlyContinue
+    if ($null -eq $p -or $p.MainWindowHandle -eq 0) { throw "desktop processId=$processId has no main window" }
+    return $p
   }
 
-  $windows = @(Get-VisibleWindowCandidates)
+  $windows = @(Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and -not [string]::IsNullOrWhiteSpace($_.MainWindowTitle) })
   if (-not [string]::IsNullOrWhiteSpace($processName)) {
     $windows = @($windows | Where-Object { $_.ProcessName -ieq $processName })
   }
@@ -363,11 +147,8 @@ function Resolve-Window($request, [bool]$allowForeground = $true) {
   if ($allowForeground -and [string]::IsNullOrWhiteSpace($processName) -and [string]::IsNullOrWhiteSpace($title) -and [string]::IsNullOrWhiteSpace($titleContains)) {
     $foreground = [PatrolDesktop.Native]::GetForegroundWindow()
     if ($foreground -eq [IntPtr]::Zero) { throw 'no foreground desktop window is available' }
-    $foregroundPid = [PatrolDesktop.Native]::WindowProcessId($foreground)
-    if ($foregroundPid -ne 0) {
-      $view = New-WindowProcessView $foregroundPid ([int64]$foreground) ([PatrolDesktop.Native]::WindowTitle($foreground))
-      if ($null -ne $view) { return $view }
-    }
+    $p = Get-Process | Where-Object { $_.MainWindowHandle -eq [int64]$foreground } | Select-Object -First 1
+    if ($null -ne $p) { return $p }
   }
 
   throw 'desktop window not found; call desktop_list_windows and use processName/titleContains'
@@ -385,8 +166,7 @@ function Activate-Window($process) {
     if ($foreground -eq $target) { return }
   }
   $foreground = [PatrolDesktop.Native]::GetForegroundWindow()
-  $actualPid = [PatrolDesktop.Native]::WindowProcessId($foreground)
-  $actual = if ($actualPid -ne 0) { New-WindowProcessView $actualPid ([int64]$foreground) ([PatrolDesktop.Native]::WindowTitle($foreground)) } else { $null }
+  $actual = Get-Process | Where-Object { $_.MainWindowHandle -eq [int64]$foreground } | Select-Object -First 1
   $actualLabel = if ($null -eq $actual) { [string][int64]$foreground } else { "$($actual.ProcessName):$($actual.MainWindowTitle)" }
   throw "failed to verify foreground desktop window $($process.ProcessName):$($process.MainWindowTitle); actual=$actualLabel"
 }
@@ -463,68 +243,6 @@ function Get-Snapshot($request) {
   }
 }
 
-function Probe-ScreenPoint([int]$x, [int]$y) {
-  try {
-    $point = New-Object System.Windows.Point([double]$x, [double]$y)
-    $element = [System.Windows.Automation.AutomationElement]::FromPoint($point)
-    if ($null -eq $element) {
-      return [ordered]@{ ok=$true; x=$x; y=$y; status='empty'; element=$null }
-    }
-    $record = Element-Record $element
-    return [ordered]@{
-      ok=$true
-      x=$x
-      y=$y
-      status=$(if ($null -eq $record) { 'unreadable' } else { 'recognized' })
-      element=$record
-    }
-  } catch {
-    return [ordered]@{
-      ok=$true
-      x=$x
-      y=$y
-      status='unavailable'
-      element=$null
-      error=$_.Exception.Message
-    }
-  }
-}
-
-function Try-InvokeExactVisualPoint([int]$x, [int]$y) {
-  try {
-    $point = New-Object System.Windows.Point([double]$x, [double]$y)
-    $element = [System.Windows.Automation.AutomationElement]::FromPoint($point)
-    if ($null -eq $element) {
-      return [ordered]@{ invoked=$false; method='none'; element=$null }
-    }
-
-    $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
-    $current = $element
-    for ($depth = 0; $depth -lt 5 -and $null -ne $current; $depth++) {
-      $record = Element-Record $current
-      $pattern = $null
-      if ($current.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) {
-        ([System.Windows.Automation.InvokePattern]$pattern).Invoke()
-        return [ordered]@{ invoked=$true; method='uia-exact-point-invoke'; depth=$depth; element=$record }
-      }
-      $pattern = $null
-      if ($current.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$pattern)) {
-        ([System.Windows.Automation.SelectionItemPattern]$pattern).Select()
-        return [ordered]@{ invoked=$true; method='uia-exact-point-select'; depth=$depth; element=$record }
-      }
-      $pattern = $null
-      if ($current.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$pattern)) {
-        ([System.Windows.Automation.TogglePattern]$pattern).Toggle()
-        return [ordered]@{ invoked=$true; method='uia-exact-point-toggle'; depth=$depth; element=$record }
-      }
-      try { $current = $walker.GetParent($current) } catch { $current = $null }
-    }
-    return [ordered]@{ invoked=$false; method='no-actionable-pattern'; element=(Element-Record $element) }
-  } catch {
-    return [ordered]@{ invoked=$false; method='uia-unavailable'; element=$null; error=$_.Exception.Message }
-  }
-}
-
 function Find-TargetElement($request) {
   $resolved = Get-Root $request
   $name = [string](Get-Prop $request 'name' '')
@@ -571,96 +289,18 @@ function Find-TargetElement($request) {
   return $matches[0]
 }
 
-function Ensure-VerifiedMouseInput {
-  if ('PatrolDesktopInput.Mouse' -as [type]) { return }
-  Add-Type @"
-using System;
-using System.ComponentModel;
-using System.Runtime.InteropServices;
-namespace PatrolDesktopInput {
-  public static class Mouse {
-    [StructLayout(LayoutKind.Sequential)]
-    public struct POINT { public int X; public int Y; }
-
-    [StructLayout(LayoutKind.Sequential)]
-    struct MOUSEINPUT {
-      public int dx;
-      public int dy;
-      public uint mouseData;
-      public uint dwFlags;
-      public uint time;
-      public IntPtr dwExtraInfo;
-    }
-
-    [StructLayout(LayoutKind.Explicit)]
-    struct INPUTUNION {
-      [FieldOffset(0)] public MOUSEINPUT mi;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    struct INPUT {
-      public uint type;
-      public INPUTUNION U;
-    }
-
-    [DllImport("user32.dll", SetLastError=true)] static extern bool SetCursorPos(int x, int y);
-    [DllImport("user32.dll", SetLastError=true)] static extern bool GetCursorPos(out POINT point);
-    [DllImport("user32.dll", SetLastError=true)] static extern uint SendInput(uint count, INPUT[] inputs, int size);
-
-    public static POINT ClickVerified(int x, int y, bool rightButton) {
-      if (!SetCursorPos(x, y)) {
-        throw new Win32Exception(Marshal.GetLastWin32Error(), "SetCursorPos failed");
-      }
-      System.Threading.Thread.Sleep(45);
-      POINT before;
-      if (!GetCursorPos(out before)) {
-        throw new Win32Exception(Marshal.GetLastWin32Error(), "GetCursorPos failed before click");
-      }
-      if (Math.Abs(before.X - x) > 1 || Math.Abs(before.Y - y) > 1) {
-        throw new InvalidOperationException(String.Format(
-          "visual cursor calibration mismatch: requested=({0},{1}) actual=({2},{3})",
-          x, y, before.X, before.Y));
-      }
-
-      uint down = rightButton ? 0x0008u : 0x0002u;
-      uint up = rightButton ? 0x0010u : 0x0004u;
-      INPUT[] inputs = new INPUT[2];
-      inputs[0].type = 0;
-      inputs[0].U.mi.dwFlags = down;
-      inputs[1].type = 0;
-      inputs[1].U.mi.dwFlags = up;
-      uint sent = SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT)));
-      if (sent != 2) {
-        throw new Win32Exception(Marshal.GetLastWin32Error(), String.Format(
-          "SendInput dispatched {0}/2 mouse events", sent));
-      }
-
-      System.Threading.Thread.Sleep(35);
-      POINT after;
-      if (!GetCursorPos(out after)) {
-        throw new Win32Exception(Marshal.GetLastWin32Error(), "GetCursorPos failed after click");
-      }
-      return after;
-    }
-  }
-}
-"@
-}
-
 function Click-Point([int]$x, [int]$y, [int]$button = 0) {
-  # Compile the modern mouse transport lazily so list-windows and non-click
-  # desktop operations keep the stable lightweight bootstrap. The click itself
-  # is physical-screen-coordinate verified before SendInput is allowed.
-  Ensure-VerifiedMouseInput
-  $after = [PatrolDesktopInput.Mouse]::ClickVerified($x, $y, ($button -eq 1))
-  return [ordered]@{
-    requestedX = $x
-    requestedY = $y
-    actualX = [int]$after.X
-    actualY = [int]$after.Y
-    transport = 'send-input-verified-cursor'
+  [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($x, $y)
+  Start-Sleep -Milliseconds 40
+  if ($button -eq 1) {
+    [PatrolDesktop.Native]::mouse_event(0x0008, 0, 0, 0, [UIntPtr]::Zero)
+    [PatrolDesktop.Native]::mouse_event(0x0010, 0, 0, 0, [UIntPtr]::Zero)
+  } else {
+    [PatrolDesktop.Native]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+    [PatrolDesktop.Native]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
   }
 }
+
 function Invoke-Target($target) {
   $element = $target.Element
   $pattern = $null
@@ -676,7 +316,7 @@ function Invoke-Target($target) {
   $rect = $target.Record.rect
   $x = [int]($rect.x + [Math]::Max(1, [Math]::Floor($rect.width / 2)))
   $y = [int]($rect.y + [Math]::Max(1, [Math]::Floor($rect.height / 2)))
-  [void](Click-Point $x $y 0)
+  Click-Point $x $y 0
   return 'bounding-rect-click'
 }
 
@@ -689,7 +329,7 @@ function Focus-Target($target) {
     $rect = $target.Record.rect
     $x = [int]($rect.x + [Math]::Max(1, [Math]::Floor($rect.width / 2)))
     $y = [int]($rect.y + [Math]::Max(1, [Math]::Floor($rect.height / 2)))
-    [void](Click-Point $x $y 0)
+    Click-Point $x $y 0
     Start-Sleep -Milliseconds 80
     return 'bounding-rect-click'
   }
@@ -828,119 +468,6 @@ function Write-VisualGuideImage([string]$sourcePath, [string]$outputPath, $markX
     if ($source) { $source.Dispose() }
   }
   return [ordered]@{ ok=$true; path=$outputPath; width=[int]$width; height=[int]$height; coordinateGridUnits=1000 }
-}
-
-function Write-VisualPointZoomImage([string]$sourcePath, [string]$outputPath, [double]$markXRatio, [double]$markYRatio) {
-  if (-not [IO.File]::Exists($sourcePath)) { throw "visual zoom source image not found: $sourcePath" }
-  if ($markXRatio -lt 0 -or $markXRatio -gt 1 -or $markYRatio -lt 0 -or $markYRatio -gt 1) {
-    throw 'visual zoom preview requires mark ratios between 0 and 1'
-  }
-  $directory = [IO.Path]::GetDirectoryName($outputPath)
-  if (-not [string]::IsNullOrWhiteSpace($directory)) { [IO.Directory]::CreateDirectory($directory) | Out-Null }
-
-  $source = [System.Drawing.Image]::FromFile($sourcePath)
-  $bitmap = $null
-  $graphics = $null
-  $markerPen = $null
-  $markerBrush = $null
-  $framePen = $null
-  $font = $null
-  $smallFont = $null
-  $textBrush = $null
-  $backgroundBrush = $null
-  try {
-    $sourceWidth = [int]$source.Width
-    $sourceHeight = [int]$source.Height
-    if ($sourceWidth -le 0 -or $sourceHeight -le 0) { throw 'visual zoom source image has invalid dimensions' }
-
-    $markX = [double](($sourceWidth - 1) * $markXRatio)
-    $markY = [double](($sourceHeight - 1) * $markYRatio)
-    $cropWidth = [int][Math]::Min($sourceWidth, [Math]::Max(180, [Math]::Round($sourceWidth * 0.30)))
-    $cropHeight = [int][Math]::Min($sourceHeight, [Math]::Max(150, [Math]::Round($sourceHeight * 0.30)))
-    $cropX = [int][Math]::Max(0, [Math]::Min($sourceWidth - $cropWidth, [Math]::Round($markX - $cropWidth / 2.0)))
-    $cropY = [int][Math]::Max(0, [Math]::Min($sourceHeight - $cropHeight, [Math]::Round($markY - $cropHeight / 2.0)))
-
-    $outputWidth = 900
-    $headerHeight = 58
-    $outputHeight = 620
-    $contentX = 12
-    $contentY = $headerHeight
-    $contentWidth = $outputWidth - 24
-    $contentHeight = $outputHeight - $headerHeight - 12
-
-    $bitmap = [System.Drawing.Bitmap]::new($outputWidth, $outputHeight)
-    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-    $graphics.Clear([System.Drawing.Color]::FromArgb(18, 20, 24))
-    $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-    $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
-    $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-
-    $scale = [Math]::Min($contentWidth / [double]$cropWidth, $contentHeight / [double]$cropHeight)
-    $drawWidth = [single]($cropWidth * $scale)
-    $drawHeight = [single]($cropHeight * $scale)
-    $drawX = [single]($contentX + ($contentWidth - $drawWidth) / 2.0)
-    $drawY = [single]($contentY + ($contentHeight - $drawHeight) / 2.0)
-
-    $srcRect = [System.Drawing.Rectangle]::new($cropX, $cropY, $cropWidth, $cropHeight)
-    $dstRect = [System.Drawing.RectangleF]::new($drawX, $drawY, $drawWidth, $drawHeight)
-    $graphics.DrawImage($source, $dstRect, $srcRect, [System.Drawing.GraphicsUnit]::Pixel)
-
-    $framePen = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(210, 255, 255, 255), [single]2)
-    $graphics.DrawRectangle($framePen, [single]$drawX, [single]$drawY, [single]$drawWidth, [single]$drawHeight)
-
-    $previewX = [single]($drawX + ($markX - $cropX) * $scale)
-    $previewY = [single]($drawY + ($markY - $cropY) * $scale)
-    $radius = [single]10
-    $markerPen = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(255, 0, 255, 80), [single]4)
-    $markerBrush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(210, 0, 255, 80))
-    $graphics.DrawEllipse($markerPen, $previewX - $radius, $previewY - $radius, $radius * 2, $radius * 2)
-    $graphics.DrawLine($markerPen, $previewX - 18, $previewY, $previewX + 18, $previewY)
-    $graphics.DrawLine($markerPen, $previewX, $previewY - 18, $previewX, $previewY + 18)
-    $graphics.FillEllipse($markerBrush, $previewX - 2, $previewY - 2, [single]4, [single]4)
-
-    $font = [System.Drawing.Font]::new('Arial', [single]17, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
-    $smallFont = [System.Drawing.Font]::new('Arial', [single]12, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
-    $textBrush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::White)
-    $backgroundBrush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(220, 0, 0, 0))
-    $graphics.FillRectangle($backgroundBrush, [single]0, [single]0, [single]$outputWidth, [single]$headerHeight)
-    $label = "DESKTOP VISUAL ZOOM  X$([Math]::Round($markXRatio * 1000)) / Y$([Math]::Round($markYRatio * 1000))"
-    $graphics.DrawString($label, $font, $textBrush, [single]12, [single]8)
-    $graphics.DrawString('Green crosshair = the EXACT preview-bound physical screen point. Confirm the control, not just the icon neighborhood.', $smallFont, $textBrush, [single]12, [single]34)
-
-    $bitmap.Save($outputPath, [System.Drawing.Imaging.ImageFormat]::Png)
-    return [ordered]@{
-      ok=$true
-      path=$outputPath
-      width=$outputWidth
-      height=$outputHeight
-      previewZoom=$true
-      markXRatio=$markXRatio
-      markYRatio=$markYRatio
-      crop=[ordered]@{
-        xRatio=[double]($cropX / [double]$sourceWidth)
-        yRatio=[double]($cropY / [double]$sourceHeight)
-        widthRatio=[double]($cropWidth / [double]$sourceWidth)
-        heightRatio=[double]($cropHeight / [double]$sourceHeight)
-      }
-      previewContent=[ordered]@{
-        xRatio=[double]($drawX / [double]$outputWidth)
-        yRatio=[double]($drawY / [double]$outputHeight)
-        widthRatio=[double]($drawWidth / [double]$outputWidth)
-        heightRatio=[double]($drawHeight / [double]$outputHeight)
-      }
-    }
-  } finally {
-    if ($backgroundBrush) { $backgroundBrush.Dispose() }
-    if ($textBrush) { $textBrush.Dispose() }
-    if ($smallFont) { $smallFont.Dispose() }
-    if ($font) { $font.Dispose() }
-    if ($framePen) { $framePen.Dispose() }
-    if ($markerBrush) { $markerBrush.Dispose() }
-    if ($markerPen) { $markerPen.Dispose() }
-    if ($graphics) { $graphics.Dispose() }
-    if ($bitmap) { $bitmap.Dispose() }
-    if ($source) { $source.Dispose() }
-  }
 }
 
 function Capture-Screenshot($request) {
@@ -1165,7 +692,7 @@ try {
     'click-coordinates' {
       $x = [int](Get-Prop $request 'x' 0); $y = [int](Get-Prop $request 'y' 0)
       $buttonName = [string](Get-Prop $request 'button' 'left')
-      [void](Click-Point $x $y ($(if ($buttonName -ieq 'right') { 1 } else { 0 })))
+      Click-Point $x $y ($(if ($buttonName -ieq 'right') { 1 } else { 0 }))
       [ordered]@{ ok=$true; x=$x; y=$y; button=$buttonName }
     }
     'click-visual-point' {
@@ -1190,16 +717,6 @@ try {
         throw 'click-visual-point requires a bound visual frame from desktop_screenshot'
       }
 
-      # The screenshot was captured with this window foreground, but model
-      # vision/preview/tool traffic may have changed foreground ownership before
-      # the physical click. Re-activate and verify the exact bound HWND first;
-      # then re-check the original screenshot geometry before sending input.
-      Activate-Window $process
-      $foregroundBeforeClick = [PatrolDesktop.Native]::GetForegroundWindow()
-      if ([int64]$foregroundBeforeClick -ne $frameHwnd) {
-        throw "visual click foreground mismatch: expected hwnd=$frameHwnd actual=$([int64]$foregroundBeforeClick)"
-      }
-
       $record = Window-Record $process
       if ([int64]$record.hwnd -ne $frameHwnd) {
         throw 'visual frame is stale: the target HWND changed; take a new desktop_screenshot'
@@ -1215,26 +732,9 @@ try {
 
       $x = [int][Math]::Round($frameX + (($frameWidth - 1) * $xRatio))
       $y = [int][Math]::Round($frameY + (($frameHeight - 1) * $yRatio))
-      $preClickPointProbe = Probe-ScreenPoint $x $y
       $buttonName = [string](Get-Prop $request 'button' 'left')
-      $previewId = [string](Get-Prop $request 'previewId' '')
-      $previewBound = -not [string]::IsNullOrWhiteSpace($previewId)
-      $exactPointAction = $null
-      if ($previewBound -and $buttonName -ieq 'left') {
-        $exactPointAction = Try-InvokeExactVisualPoint $x $y
-      }
-      if ($null -ne $exactPointAction -and $exactPointAction.invoked -eq $true) {
-        $input = [ordered]@{
-          transport = [string]$exactPointAction.method
-          actualX = $null
-          actualY = $null
-          physicalCursorVerified = $false
-        }
-      } else {
-        $input = Click-Point $x $y ($(if ($buttonName -ieq 'right') { 1 } else { 0 }))
-        $input['physicalCursorVerified'] = $true
-      }
-      [ordered]@{ ok=$true; method='bound-window-visual-point'; inputTransport=[string]$input.transport; foregroundVerified=$true; foregroundHwnd=[int64]$foregroundBeforeClick; previewBound=$previewBound; physicalCursorVerified=[bool]$input.physicalCursorVerified; x=$x; y=$y; actualCursorX=$input.actualX; actualCursorY=$input.actualY; xRatio=$xRatio; yRatio=$yRatio; button=$buttonName; frameHwnd=$frameHwnd; frameRect=[ordered]@{x=$frameX;y=$frameY;width=$frameWidth;height=$frameHeight}; preClickPointProbe=$preClickPointProbe; exactPointAction=$exactPointAction; window=$record }
+      Click-Point $x $y ($(if ($buttonName -ieq 'right') { 1 } else { 0 }))
+      [ordered]@{ ok=$true; method='bound-window-visual-point'; x=$x; y=$y; xRatio=$xRatio; yRatio=$yRatio; button=$buttonName; frameHwnd=$frameHwnd; frameRect=[ordered]@{x=$frameX;y=$frameY;width=$frameWidth;height=$frameHeight}; window=$record }
     }
     'drag' {
       $fromX=[int](Get-Prop $request 'fromX' 0); $fromY=[int](Get-Prop $request 'fromY' 0)
@@ -1332,11 +832,6 @@ try {
       Start-Sleep -Milliseconds $milliseconds
       [ordered]@{ok=$true;milliseconds=$milliseconds}
     }
-    'probe-screen-point' {
-      $x = [int](Get-Prop $request 'x' 0)
-      $y = [int](Get-Prop $request 'y' 0)
-      Probe-ScreenPoint $x $y
-    }
     'annotate-visual-guide' {
       $sourcePath = [string](Get-Prop $request 'sourcePath' '')
       $path = [string](Get-Prop $request 'path' '')
@@ -1345,13 +840,7 @@ try {
       }
       $markXRatio = Get-Prop $request 'markXRatio' $null
       $markYRatio = Get-Prop $request 'markYRatio' $null
-      $zoomPreview = [bool](Get-Prop $request 'zoomPreview' $false)
-      if ($zoomPreview) {
-        if ($null -eq $markXRatio -or $null -eq $markYRatio) { throw 'zoom preview requires markXRatio and markYRatio' }
-        Write-VisualPointZoomImage $sourcePath $path ([double]$markXRatio) ([double]$markYRatio)
-      } else {
-        Write-VisualGuideImage $sourcePath $path $markXRatio $markYRatio
-      }
+      Write-VisualGuideImage $sourcePath $path $markXRatio $markYRatio
     }
     'screenshot' {
       Capture-Screenshot $request
