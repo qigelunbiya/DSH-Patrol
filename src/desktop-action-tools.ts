@@ -62,6 +62,7 @@ export function registerPatrolDesktopActionTools(
       xRatio: { type: 'number' },
       yRatio: { type: 'number' },
       frameId: { type: 'string', description: 'Ephemeral frameId from the immediately preceding desktop_screenshot. It is never persisted into the Runbook.' },
+      previewId: { type: 'string', description: 'Ephemeral desktop-preview-* token from desktop_preview_visual_point. It binds execution to the exact visually verified point and is never persisted; the resolved xRatio/yRatio are stored after success.' },
       allowWindowChrome: { type: 'boolean' },
       button: { type: 'string', enum: ['left', 'right'] },
       fromX: { type: 'integer' },
@@ -134,12 +135,25 @@ async function executeAndRecordDesktopAction(
   const definition = await loadEditable(store, inspectionId, maxSteps)
   const effectiveExecutionArgs = applyDesktopTargetDefaults(definition, tool, executionArgs)
   const effectiveStoredArgs = applyDesktopTargetDefaults(definition, tool, storedArgs)
-  assertSafeForStorage(effectiveStoredArgs)
 
   const dispatched = await runner.dispatch(tool, effectiveExecutionArgs, exec)
   if (!dispatched.ok) {
     return `Desktop teaching action failed and was NOT recorded. ${dispatched.error ?? dispatched.text ?? 'Unknown desktop error'}`
   }
+
+  let recordedArgs = effectiveStoredArgs
+  if (tool === 'desktop_click_visual_point') {
+    const resolvedX = objectNumber(dispatched.value, 'xRatio')
+    const resolvedY = objectNumber(dispatched.value, 'yRatio')
+    if ((typeof recordedArgs.xRatio !== 'number' || typeof recordedArgs.yRatio !== 'number')
+      && resolvedX !== undefined && resolvedY !== undefined) {
+      recordedArgs = { ...recordedArgs, xRatio: resolvedX, yRatio: resolvedY }
+    }
+    if (typeof recordedArgs.xRatio !== 'number' || typeof recordedArgs.yRatio !== 'number') {
+      return 'Desktop visual click executed, but Patrol did NOT record it because the provider did not return resolved replay xRatio/yRatio for the preview-bound point.'
+    }
+  }
+  assertSafeForStorage(recordedArgs)
 
   const artifact = desktopArtifactForTool(tool)
   const step: ToolStep = {
@@ -147,7 +161,7 @@ async function executeAndRecordDesktopAction(
     kind: 'tool',
     name: stepName,
     tool,
-    arguments: effectiveStoredArgs,
+    arguments: recordedArgs,
     ...(artifact === undefined ? {} : { artifact }),
     ...(notes === undefined ? {} : { notes }),
     recordedAt: new Date().toISOString(),
@@ -214,7 +228,7 @@ function desktopArguments(action: DesktopAction, args: Record<string, unknown>, 
     case 'click-visual-point':
       add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
       add('xRatio', args.xRatio); add('yRatio', args.yRatio); add('button', args.button); add('allowWindowChrome', args.allowWindowChrome)
-      if (!persisted) add('frameId', args.frameId)
+      if (!persisted) { add('frameId', args.frameId); add('previewId', args.previewId) }
       break
     case 'click-coordinates':
       add('x', args.x); add('y', args.y); add('button', args.button); break
@@ -268,11 +282,15 @@ function desktopArguments(action: DesktopAction, args: Record<string, unknown>, 
       add('path', args.path); add('recursive', args.recursive); break
   }
 
-  validateRequiredDesktopArguments(action, out)
+  const allowDeferredVisualGeometry = persisted
+    && action === 'click-visual-point'
+    && typeof args.previewId === 'string'
+    && args.previewId.trim() !== ''
+  validateRequiredDesktopArguments(action, out, allowDeferredVisualGeometry)
   return out
 }
 
-function validateRequiredDesktopArguments(action: DesktopAction, args: JsonObject): void {
+function validateRequiredDesktopArguments(action: DesktopAction, args: JsonObject, allowDeferredVisualGeometry = false): void {
   const requireText = (key: string) => {
     if (typeof args[key] !== 'string' || String(args[key]).trim() === '') throw new Error(`${action} requires ${key}`)
   }
@@ -291,10 +309,13 @@ function validateRequiredDesktopArguments(action: DesktopAction, args: JsonObjec
     case 'open-path':
     case 'delete-path': requireText('path'); break
     case 'click-visual-point': {
+      if (allowDeferredVisualGeometry) break
       const xRatio = args.xRatio
       const yRatio = args.yRatio
-      if (typeof xRatio !== 'number' || !Number.isFinite(xRatio) || xRatio < 0 || xRatio > 1) throw new Error('click-visual-point requires xRatio between 0 and 1')
-      if (typeof yRatio !== 'number' || !Number.isFinite(yRatio) || yRatio < 0 || yRatio > 1) throw new Error('click-visual-point requires yRatio between 0 and 1')
+      const previewId = args.previewId
+      if (typeof previewId === 'string' && previewId.trim() !== '') break
+      if (typeof xRatio !== 'number' || !Number.isFinite(xRatio) || xRatio < 0 || xRatio > 1) throw new Error('click-visual-point requires xRatio between 0 and 1 or previewId')
+      if (typeof yRatio !== 'number' || !Number.isFinite(yRatio) || yRatio < 0 || yRatio > 1) throw new Error('click-visual-point requires yRatio between 0 and 1 or previewId')
       break
     }
     case 'click-target':
@@ -372,4 +393,10 @@ function objectString(value: unknown, key: string): string | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
   const child = (value as Record<string, unknown>)[key]
   return typeof child === 'string' && child.length > 0 ? child : undefined
+}
+
+function objectNumber(value: unknown, key: string): number | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const child = (value as Record<string, unknown>)[key]
+  return typeof child === 'number' && Number.isFinite(child) ? child : undefined
 }
