@@ -738,6 +738,10 @@ async function waitWithSignal(milliseconds, signal) {
   })
 }
 
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error)
+}
+
 function siblingPngPath(path, suffix) {
   const file = basename(String(path || 'screenshot.png'))
   const stem = file.replace(/\.png$/i, '')
