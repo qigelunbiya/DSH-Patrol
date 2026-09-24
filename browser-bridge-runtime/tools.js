@@ -375,6 +375,109 @@ export function registerTools(ctx, bridge, config = {}) {
         }
       },
     }),
+
+    defineTool({
+      name: 'browser_visual_action_map',
+      description: 'Internal browser-only Desktop-style visual Action Map builder. It uses the clean raster already bound to a CURRENT browser visual frame, crops a coarse region, runs the browser-local copy of the proven Desktop edge/component algorithm, and saves a V1/V2/... map image. It never clicks and never calls desktop-runtime.',
+      parameters: {
+        frameId: reqStr,
+        centerXRatio: reqNum,
+        centerYRatio: reqNum,
+        widthRatio: optNum,
+        heightRatio: optNum,
+        maxCandidates: optInt,
+        tabId: optInt,
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: reqBool,
+            frameId: reqStr,
+            actionMapId: reqStr,
+            path: reqStr,
+            width: reqNum,
+            height: reqNum,
+            candidateCount: reqInt,
+            candidateSummary: str,
+            method: reqStr,
+          },
+        },
+        render: (_args, value) => [{ type: 'text', text: `Browser visual Action Map ${value.actionMapId}: ${value.candidateCount} candidate(s). Read ${value.path} and choose V#.` }],
+      },
+      presentCall: args => generic('Build browser visual Action Map', { frameId: args.frameId, centerXRatio: args.centerXRatio, centerYRatio: args.centerYRatio }),
+      execute: async (args, exec) => {
+        const value = requireOk(await run(bridge, exec, 'browserVisualActionMap', {
+          frameId: args.frameId,
+          centerXRatio: args.centerXRatio,
+          centerYRatio: args.centerYRatio,
+          widthRatio: args.widthRatio,
+          heightRatio: args.heightRatio,
+          maxCandidates: args.maxCandidates,
+          tabId: args.tabId,
+        }, timeoutMs), 'browserVisualActionMap')
+        const workspaceRoot = exec?.agent?.session?.header?.cwd
+        const path = bridge.saveScreenshot(value.dataUrl, workspaceRoot)
+        return clean({
+          ok: true,
+          frameId: value.frameId,
+          actionMapId: value.actionMapId,
+          path,
+          width: value.width,
+          height: value.height,
+          candidateCount: value.candidateCount,
+          candidateSummary: value.candidateSummary,
+          method: value.method,
+        })
+      },
+    }),
+    defineTool({
+      name: 'browser_resolve_visual_candidate',
+      description: 'Internal no-click resolver for a V# candidate from browser_visual_action_map. It validates that the same frame/map/tab/URL/scroll/viewport are still CURRENT and returns the program-computed bbox-center ratio.',
+      parameters: {
+        frameId: reqStr,
+        actionMapId: reqStr,
+        candidateId: reqStr,
+        tabId: optInt,
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: reqBool,
+            frameId: reqStr,
+            actionMapId: reqStr,
+            candidateId: reqStr,
+            xRatio: reqNum,
+            yRatio: reqNum,
+            coordinateMapping: reqStr,
+            method: reqStr,
+          },
+        },
+        render: (_args, value) => [{ type: 'text', text: `Resolved ${value.candidateId} from ${value.actionMapId} to program-owned bbox center.` }],
+      },
+      presentCall: args => generic('Resolve browser visual candidate', { actionMapId: args.actionMapId, candidateId: args.candidateId }),
+      execute: async (args, exec) => {
+        const value = requireOk(await run(bridge, exec, 'browserResolveVisualCandidate', {
+          frameId: args.frameId,
+          actionMapId: args.actionMapId,
+          candidateId: args.candidateId,
+          tabId: args.tabId,
+        }, timeoutMs), 'browserResolveVisualCandidate')
+        return clean({
+          ok: true,
+          frameId: value.frameId,
+          actionMapId: value.actionMapId,
+          candidateId: value.candidateId,
+          xRatio: value.xRatio,
+          yRatio: value.yRatio,
+          coordinateMapping: value.coordinateMapping,
+          method: value.method,
+        })
+      },
+    }),
     defineTool({
       name: 'browser_visual_click',
       description: 'Internal Patrol primitive for vision-first browser teaching. Live teaching clicks the exact fresh screenshot point; successful hits learn semantic/DOM identity for replay. Replay tries learned semantic identity, then selector, then guarded URL/scroll/viewport geometry.',

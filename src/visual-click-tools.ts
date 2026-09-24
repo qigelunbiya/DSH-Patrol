@@ -53,26 +53,87 @@ export function registerPatrolVisualClickTool(
     xRatio: number
     yRatio: number
     createdAt: number
-    source?: 'manual' | 'ocr'
+    source?: 'manual' | 'ocr' | 'action-map'
+    actionMapId?: string
+    visualCandidateId?: string
     ocrText?: string
     ocrMatchedText?: string
     ocrRelation?: 'center' | 'close-right'
   }>()
   let visualPreviewSequence = 0
+
+  const actionMapTool = defineTool({
+    name: 'patrol_browser_visual_action_map',
+    description: 'PRIMARY browser visual grounding for unlabeled controls. Mirrors the proven Desktop Action Map workflow but is a completely separate browser implementation: start from the SAME full CURRENT patrol_observe(includeImage=true) frame, give only a coarse target-region center, then Patrol builds a browser-local V1/V2/... Action Map from screenshot pixels. Read the returned map image, choose V#, and click with patrol_browser_click_visual_candidate. The final click uses the program-computed bbox center; never estimate final x/y. No desktop-runtime code is imported or modified.',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+      frameId: { type: 'string', description: 'Optional CURRENT browser visual frame. Normally omit; Patrol auto-binds the latest model-visible full browser frame for this inspection.' },
+      centerXRatio: { type: 'number', required: true, description: 'Coarse center of the target region on the full CURRENT screenshot, 0..1. This is only for cropping the map, never the final click.' },
+      centerYRatio: { type: 'number', required: true, description: 'Coarse center of the target region on the full CURRENT screenshot, 0..1.' },
+      widthRatio: { type: 'number', description: 'Coarse map-region width. Default 0.46; use about 0.36..0.60 for most controls.' },
+      heightRatio: { type: 'number', description: 'Coarse map-region height. Default 0.42; use about 0.32..0.54 for most controls.' },
+      maxCandidates: { type: 'integer', description: 'Maximum V# candidates. Default 18, bounded 3..30.' },
+      tabId: { type: 'integer' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec: ToolRunContext) {
+      await store.load(args.inspectionId)
+      const frameId = String(args.frameId ?? '').trim()
+        || options.visualEvidence?.latest(args.inspectionId)
+        || ''
+      if (!/^browser-visual-[a-z0-9-]+$/i.test(frameId)) {
+        throw new Error('patrol_browser_visual_action_map requires a model-visible full CURRENT browser frame from patrol_observe(includeImage=true)')
+      }
+      const centerXRatio = Number(args.centerXRatio)
+      const centerYRatio = Number(args.centerYRatio)
+      if (![centerXRatio, centerYRatio].every(Number.isFinite)
+        || centerXRatio < 0 || centerXRatio > 1 || centerYRatio < 0 || centerYRatio > 1) {
+        throw new Error('browser visual Action Map requires coarse centerXRatio/centerYRatio between 0 and 1')
+      }
+      const evidence = options.visualEvidence?.consume(frameId, args.inspectionId)
+      if (evidence?.ok === false) throw new Error(`browser visual Action Map refused: ${evidence.reason}`)
+      const built = await runner.dispatch('browser_visual_action_map', compactObject({
+        frameId,
+        centerXRatio,
+        centerYRatio,
+        widthRatio: typeof args.widthRatio === 'number' ? args.widthRatio : undefined,
+        heightRatio: typeof args.heightRatio === 'number' ? args.heightRatio : undefined,
+        maxCandidates: Number.isInteger(args.maxCandidates) ? args.maxCandidates : undefined,
+        tabId: args.tabId,
+      }), exec)
+      if (!built.ok) throw new Error(built.error ?? built.text ?? 'browser visual Action Map failed')
+      const actionMapId = objectString(built.value, 'actionMapId')
+      const path = objectString(built.value, 'path')
+      const candidateCount = objectNumber(built.value, 'candidateCount')
+      if (!actionMapId || !path || candidateCount === undefined || candidateCount < 1) {
+        throw new Error('browser visual Action Map returned incomplete map metadata')
+      }
+      return [
+        `Browser Action Map READY: frameId=${frameId}; actionMapId=${actionMapId}; candidates=${candidateCount}.`,
+        `Call read_image with this exact path: ${path}`,
+        'Choose the V# whose red bbox/green center is inside the intended control. Then call patrol_browser_click_visual_candidate with the SAME actionMapId and candidateId. Do not provide imageX/imageY/xRatio/yRatio.',
+        objectString(built.value, 'candidateSummary') ? `Candidate geometry (diagnostic only; choose visually from the map):\n${objectString(built.value, 'candidateSummary')}` : '',
+        'This Browser Action Map is browser-local and independent from Desktop/Application visual state.',
+      ].filter(Boolean).join('\n')
+    },
+  })
+
   const tool = defineTool({
     name: 'patrol_visual_click_target',
-    description: 'Primary browser visual click. Browser TEST teaching now mirrors the proven Desktop strategy: visible TEXT targets use CURRENT screenshot Windows OCR geometry (ocrText) and Patrol clicks the OCR bounding-box center; an adjacent close/remove icon uses ocrRelation=close-right, anchored on OCR text with a no-input safety probe before trusted mouse input. Large unlabeled controls may use CURRENT-raster imageX/imageY. Do not use B#/A# Action Maps, read_image screenshot paths, or model-guessed xRatio/yRatio for new TEST teaching. Live visual clicks require trusted Chrome debugger mouse input. Never use for image-code/CAPTCHA.',
+    description: 'Compatibility/recording engine for browser visual clicks. New TEST teaching must use the Desktop-style browser tools: visible text through patrol_browser_click_ocr_text; unlabeled controls through patrol_observe(includeImage=true) → patrol_browser_visual_action_map → read_image → patrol_browser_click_visual_candidate. The browser Action Map is a browser-local copy of the proven Desktop image-geometry algorithm and clicks program-owned V# bbox centers. Legacy A#/B#/manual imageX/imageY/xRatio paths are not part of new TEST teaching. Never use for image-code/CAPTCHA.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
       frameId: { type: 'string', description: 'Optional explicit browser visualFrameId. Normally omit it: Patrol automatically uses the latest model-visible patrol_observe(includeImage=true) frame for this inspection. Screenshot file names/paths are never valid frame IDs.' },
       previewId: { type: 'string', description: 'Legacy diagnostic token; do not use for new TEST teaching.' },
+      actionMapId: { type: 'string', description: 'Browser-local Desktop-style Action Map id returned by patrol_browser_visual_action_map.' },
+      visualCandidateId: { type: 'string', description: 'V1/V2/... candidate chosen from the browser Action Map image. Program geometry owns the final bbox-center click.' },
       ocrText: { type: 'string', description: 'Preferred for any visible browser text target. Patrol captures a fresh CURRENT screenshot, runs Windows OCR with bounding boxes, resolves this text, and clicks the OCR geometry. Examples: 百度一下, 龙之信条 2 - 百度百科, 7.发售版本, 我的任务.' },
       ocrMatch: { type: 'string', enum: ['exact', 'contains'], description: 'OCR text match mode. Prefer exact; contains is for harmless punctuation or extra-text variation.' },
       ocrIndex: { type: 'integer', description: 'Optional zero-based occurrence only when CURRENT OCR reports multiple visible matches and the intended occurrence is known.' },
       ocrRelation: { type: 'string', enum: ['center', 'close-right'], description: 'center clicks the OCR text bbox center. close-right anchors on ocrText and locates a verified close/remove control immediately to its right without a physical probe click; use for 我的任务右侧×.' },
-      imageX: { type: 'number', description: 'CURRENT screenshot pixel X only for a large UNLABELED control such as an empty search/input box. If the control has visible text, prefer ocrText.' },
-      imageY: { type: 'number', description: 'CURRENT screenshot pixel Y only for a large UNLABELED control. Visible text targets should use ocrText.' },
+      imageX: { type: 'number', description: 'Legacy compatibility only. New TEST browser visual teaching uses V# Action Map candidates or OCR text geometry.' },
+      imageY: { type: 'number', description: 'Legacy compatibility only. New TEST browser visual teaching uses V# Action Map candidates or OCR text geometry.' },
       imageWidth: { type: 'number', description: 'Optional validation copy of modelRasterWidth from CURRENT patrol_observe. If supplied and it does not match the bound frame, Patrol refuses the click.' },
       imageHeight: { type: 'number', description: 'Optional validation copy of modelRasterHeight from CURRENT patrol_observe. If supplied and it does not match the bound frame, Patrol refuses the click.' },
       xRatio: { type: 'number', description: 'Legacy compatibility only. New TEST teaching rejects model-guessed xRatio/yRatio.' },
@@ -98,6 +159,50 @@ export function registerPatrolVisualClickTool(
     },
     output: TEXT_OUTPUT,
     async execute(args, exec: ToolRunContext) {
+      const requestedActionMapId = typeof args.actionMapId === 'string' ? args.actionMapId.trim() : ''
+      const requestedVisualCandidateId = typeof args.visualCandidateId === 'string' ? args.visualCandidateId.trim().toUpperCase() : ''
+      let actionMapPreviewId = ''
+      if (requestedActionMapId || requestedVisualCandidateId) {
+        if (!requestedActionMapId || !/^V[1-9]\d*$/i.test(requestedVisualCandidateId)) {
+          throw new Error('Desktop-style browser visual candidate click requires BOTH actionMapId and visualCandidateId=V#')
+        }
+        if (args.previewId || args.ocrText || args.imageX !== undefined || args.imageY !== undefined || args.xRatio !== undefined || args.yRatio !== undefined || args.pixelCandidateId || args.candidateId) {
+          throw new Error('V# Action Map candidate is a complete browser visual grounding source; do not combine it with OCR, A#/B#, previewId, or free coordinates')
+        }
+        const explicitFrameId = String(args.frameId ?? '').trim()
+        if (!/^browser-visual-[a-z0-9-]+$/i.test(explicitFrameId)) {
+          throw new Error('V# Action Map candidate click requires the SAME frameId returned by patrol_browser_visual_action_map')
+        }
+        const resolved = await runner.dispatch('browser_resolve_visual_candidate', compactObject({
+          frameId: explicitFrameId,
+          actionMapId: requestedActionMapId,
+          candidateId: requestedVisualCandidateId,
+          tabId: args.tabId,
+        }), exec)
+        if (!resolved.ok) throw new Error(resolved.error ?? resolved.text ?? 'browser visual Action Map candidate resolution failed')
+        const frameId = objectString(resolved.value, 'frameId')
+        const xRatio = objectNumber(resolved.value, 'xRatio')
+        const yRatio = objectNumber(resolved.value, 'yRatio')
+        if (!frameId || xRatio === undefined || yRatio === undefined) {
+          throw new Error('browser visual Action Map candidate resolver returned incomplete program-owned geometry')
+        }
+        visualPreviewSequence += 1
+        actionMapPreviewId = `browser-vcandidate-${Date.now().toString(36)}-${visualPreviewSequence.toString(36)}`
+        visualPreviews.set(actionMapPreviewId, {
+          previewId: actionMapPreviewId,
+          inspectionId: args.inspectionId,
+          targetHint: String(args.targetHint ?? '').trim(),
+          frameId,
+          xRatio,
+          yRatio,
+          createdAt: Date.now(),
+          source: 'action-map',
+          actionMapId: requestedActionMapId,
+          visualCandidateId: requestedVisualCandidateId,
+        })
+        options.visualEvidence?.mark(frameId, args.inspectionId)
+      }
+
       const requestedOcrText = typeof args.ocrText === 'string' ? args.ocrText.trim() : ''
       const requestedOcrRelation = args.ocrRelation === 'close-right' ? 'close-right' : 'center'
       let ocrPreviewId = ''
@@ -138,7 +243,7 @@ export function registerPatrolVisualClickTool(
         })
         options.visualEvidence?.mark(frameId, args.inspectionId)
       }
-      const requestedPreviewId = ocrPreviewId || (typeof args.previewId === 'string' ? args.previewId.trim() : '')
+      const requestedPreviewId = actionMapPreviewId || ocrPreviewId || (typeof args.previewId === 'string' ? args.previewId.trim() : '')
       const boundPreview = requestedPreviewId ? visualPreviews.get(requestedPreviewId) : undefined
       if (requestedPreviewId && !boundPreview) {
         throw new Error(`browser visual preview ${JSON.stringify(requestedPreviewId)} is unavailable or stale; mark the CURRENT target again before clicking`)
@@ -168,44 +273,25 @@ export function registerPatrolVisualClickTool(
         && pointX >= 0 && pointX <= 1 && pointY >= 0 && pointY <= 1
       const requestedPointerAction = args.pointerAction ?? 'left-click'
       const ocrOwnedPoint = boundPreview?.source === 'ocr'
+      const actionMapOwnedPoint = boundPreview?.source === 'action-map'
+      const programOwnedPoint = ocrOwnedPoint || actionMapOwnedPoint
       const liveTestClick = options.testMode === true && requestedPointerAction === 'left-click'
-      const largeVisualControl = testModeLargeVisualControl(args.stepName, args.targetHint)
-      const precisionOcrGroundingRequired = liveTestClick
-        && testModePrecisionTargetRequiresOcrGeometry(args.stepName, args.targetHint)
       if ([hasPixelCandidate, hasCandidate, hasImagePoint, hasRatioPoint || Boolean(boundPreview)].filter(Boolean).length > 1) {
-        throw new Error('visual click requires exactly one coordinate source: pixelCandidateId=B#, imageX/imageY, candidateId=A#, xRatio/yRatio, or previewId')
+        throw new Error('visual click requires exactly one coordinate source')
       }
-      if (liveTestClick && !ocrOwnedPoint && (hasPixelCandidate || hasCandidate || Boolean(boundPreview))) {
-        throw new Error('TEST MODE legacy browser A#/B#/preview visual grounding is disabled for new teaching. Visible text must use ocrText; adjacent close/remove uses ocrRelation="close-right"; only a large unlabeled control may use CURRENT-raster imageX/imageY.')
-      }
-      if (liveTestClick && hasRatioPoint && !ocrOwnedPoint) {
+      if (liveTestClick && !programOwnedPoint && (hasPixelCandidate || hasCandidate || hasImagePoint || hasRatioPoint || Boolean(boundPreview))) {
         throw new Error([
-          'TEST MODE live xRatio/yRatio visual clicking is disabled before physical input because normalized guessing caused repeated browser misclicks.',
-          largeVisualControl
-            ? 'For this large control, use imageX/imageY from the exact CURRENT model-visible raster returned by patrol_observe(includeImage=true).'
-            : 'For visible text use ocrText=<CURRENT visible text>. For a close/remove icon next to visible text use ocrRelation="close-right".',
-          'Do not manually convert screenshot pixels to normalized ratios.',
+          'TEST MODE old browser visual grounding is disabled before physical input.',
+          'Visible text: use patrol_browser_click_ocr_text.',
+          'Unlabeled control/icon/search box: patrol_observe(includeImage=true) → patrol_browser_visual_action_map → read_image → patrol_browser_click_visual_candidate(V#).',
+          'Do not use A#, B#, previewId, imageX/imageY, or xRatio/yRatio for new browser TEST teaching.',
         ].join(' '))
       }
-      if (liveTestClick && hasImagePoint && !largeVisualControl && !ocrOwnedPoint) {
-        throw new Error('TEST MODE direct imageX/imageY is reserved for large unlabeled input/search controls. Visible text targets must use ocrText; adjacent close/remove icons use ocrRelation="close-right". Do not recover with B#/A#/focused crops.')
-      }
       if (!hasPixelCandidate && !hasCandidate && !hasImagePoint && !hasRatioPoint && !boundPreview) {
-        if (precisionOcrGroundingRequired) throw new Error('TEST MODE precision target requires screenshot OCR grounding: use ocrText=<CURRENT visible target text>. For a close/remove icon adjacent to visible text, use ocrRelation="close-right". Do not use B#/A# Action Maps or read_image screenshot paths.')
-        if (liveTestClick && largeVisualControl) {
-          throw new Error([
-            'TEST MODE large-control visual click requires imageX/imageY from the exact CURRENT model-visible screenshot raster.',
-            'Use patrol_observe(includeImage=true, actionMap=false, pixelActionMap=false, targetHint=<same target>) and provide the target center as imageX/imageY; do not use xRatio/yRatio.',
-          ].join(' '))
-        }
         if (liveTestClick) {
-          throw new Error([
-            'TEST MODE visual click has no live grounding source yet.',
-            'Use imageX/imageY only for a clearly large UNLABELED control; visible text targets use ocrText and adjacent close/remove uses ocrRelation="close-right".',
-            'xRatio/yRatio is not accepted for live TEST clicking.',
-          ].join(' '))
+          throw new Error('TEST MODE browser visual click needs either OCR text geometry or a V# from patrol_browser_visual_action_map; free coordinates and old A#/B# paths are disabled')
         }
-        throw new Error('visual click requires pixelCandidateId=B# from a CURRENT Browser Pixel Action Map, imageX/imageY, candidateId=A#, previewId, or legacy xRatio/yRatio')
+        throw new Error('visual click requires a browser visual grounding source')
       }
       const explicitFrameId = String(args.frameId ?? '').trim()
       const frameId = boundPreview?.frameId
@@ -223,8 +309,8 @@ export function registerPatrolVisualClickTool(
       if (args.expectedVisualText !== undefined) assertSafePersistentText(args.expectedVisualText, 'expectedVisualText')
       const pointerAction = requestedPointerAction
       const diagnosticPointerAction = pointerAction !== 'left-click'
-      if (precisionOcrGroundingRequired && !ocrOwnedPoint) {
-        throw new Error('TEST MODE precision target requires browser screenshot OCR geometry. Use ocrText=<visible target text>; for a close/remove icon immediately beside that text use ocrRelation="close-right". Legacy B#/A# Action Maps are not accepted for new precision teaching.')
+      if (liveTestClick && !programOwnedPoint) {
+        throw new Error('TEST MODE browser visual click requires program-owned OCR geometry or a Desktop-style browser V# candidate')
       }
       const ocrExpectedVisualText = ocrOwnedPoint && boundPreview?.ocrRelation === 'center'
         ? boundPreview.ocrMatchedText || boundPreview.ocrText
@@ -373,10 +459,12 @@ export function registerPatrolVisualClickTool(
           'Visual click failed before Patrol could confirm a physical click, so this attempt does NOT consume the visual physical-click budget. The same frameId may be retried if CURRENT URL/scroll/zoom/viewport are still unchanged.',
           clicked.error ?? clicked.text ?? 'Unknown browser visual click error',
           'Reuse this frameId freely while the CURRENT page geometry still matches it; capture a new patrol_observe(includeImage=true) only after navigation, scroll, zoom, viewport/layout changes, or when a new screenshot is actually useful.',
-          ocrOwnedPoint
-            ? 'The click used fresh CURRENT screenshot OCR geometry. Re-run the same ocrText against a fresh CURRENT screenshot; do not switch to B#/A#, read_image paths, or coordinate nudging.'
-            : boundPreview
-              ? 'The click reused the exact visually marked point; capture a fresh CURRENT frame and mark a different point instead of nudging this preview token.'
+          actionMapOwnedPoint
+            ? 'The click used the program-computed V# bbox center from the browser-local Desktop-style Action Map. Rebuild the map from a fresh CURRENT full frame if the target moved; never nudge coordinates.'
+            : ocrOwnedPoint
+              ? 'The click used fresh CURRENT screenshot OCR geometry. Re-run the same visible text against a fresh CURRENT screenshot.'
+              : boundPreview
+                ? 'The click reused a legacy preview point; new TEST teaching should rebuild a V# Action Map instead.'
             : hasPixelCandidate
               ? 'If this B# was wrong, capture a fresh focused Browser Pixel Action Map and choose a different B# whose red bbox/crosshair lies inside the intended target. Do not nudge viewport coordinates manually.'
             : hasCandidate
@@ -597,7 +685,7 @@ export function registerPatrolVisualClickTool(
         targetClassHint: objectString(clicked.value, 'targetClassName'),
       })
       const condition = optionalCondition(args.conditionSourceStepId, args.conditionExpectedText, args.conditionMode)
-      const targetNote = `视觉目标：${args.targetHint.trim()}${ocrOwnedPoint ? `；OCR视觉锚点：${boundPreview?.ocrMatchedText || boundPreview?.ocrText || ''}${boundPreview?.ocrRelation === 'close-right' ? '（右侧关闭）' : ''}` : hasPixelCandidate ? `；旧像素视觉编号：${pixelCandidateId}` : hasCandidate ? `；旧视觉编号：${candidateId}` : ''}`
+      const targetNote = `视觉目标：${args.targetHint.trim()}${actionMapOwnedPoint ? `；Browser Action Map：${boundPreview?.actionMapId || ''}/${boundPreview?.visualCandidateId || ''}` : ocrOwnedPoint ? `；OCR视觉锚点：${boundPreview?.ocrMatchedText || boundPreview?.ocrText || ''}${boundPreview?.ocrRelation === 'close-right' ? '（右侧关闭）' : ''}` : hasPixelCandidate ? `；旧像素视觉编号：${pixelCandidateId}` : hasCandidate ? `；旧视觉编号：${candidateId}` : ''}`
       const providedNotes = [targetNote, args.notes?.trim()].filter(Boolean).join('\n')
       const step: ToolStep = {
         id: nextStepId(definition.steps),
@@ -627,17 +715,21 @@ export function registerPatrolVisualClickTool(
 
       return [
         `Executed and recorded ${step.id} (browser_visual_click) after CURRENT model-visible visual-state verification.`,
-        ocrOwnedPoint
-          ? `Browser Windows OCR resolved ${JSON.stringify(boundPreview?.ocrMatchedText || boundPreview?.ocrText || '')} with relation=${boundPreview?.ocrRelation || 'center'} to xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; no model coordinate guess, B#, A#, or screenshot file read was used.`
-          : hasPixelCandidate
+        actionMapOwnedPoint
+          ? `Browser Desktop-style Action Map resolved ${boundPreview?.visualCandidateId || 'V#'} from ${boundPreview?.actionMapId || ''} to program-owned bbox center xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; the model selected only V#, never the final coordinate.`
+          : ocrOwnedPoint
+            ? `Browser Windows OCR resolved ${JSON.stringify(boundPreview?.ocrMatchedText || boundPreview?.ocrText || '')} with relation=${boundPreview?.ocrRelation || 'center'} to xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; no model coordinate guess was used.`
+            : hasPixelCandidate
             ? `Legacy Browser Pixel Action Map candidate ${pixelCandidateId} resolved to xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}.`
             : hasCandidate
               ? `Legacy visual action-map candidate ${candidateId} resolved to xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}.`
               : `Visual point saved for replay: xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; model-requested=(${pointX.toFixed(4)}, ${pointY.toFixed(4)}); capture=${captureWidth ?? viewportWidth}x${captureHeight ?? viewportHeight} CSS px at (${captureClientLeft ?? 0}, ${captureClientTop ?? 0}).`,
         objectBoolean(clicked.value, 'visualAuthority') === true
-          ? (ocrOwnedPoint
-              ? 'Visual grounding used fresh screenshot OCR geometry. For close-right, DOM was consulted only by a no-input local safety probe around the OCR anchor before the trusted click; it did not search the page for a different business target.'
-              : hasPixelCandidate
+          ? (actionMapOwnedPoint
+              ? 'Visual grounding used a browser-local copy of the proven Desktop Action Map geometry: screenshot pixels generated V# candidates and the program-owned bbox center was sent through trusted Chrome debugger mouse input. Desktop runtime/state was not used.'
+              : ocrOwnedPoint
+                ? 'Visual grounding used fresh screenshot OCR geometry.'
+                : hasPixelCandidate
                 ? 'Legacy B# visual grounding was used.'
                 : hasCandidate
                   ? 'Legacy A# action-map grounding was used.'
@@ -658,7 +750,98 @@ export function registerPatrolVisualClickTool(
       ].filter(Boolean).join('\n')
     },
   })
-  return ctx.tools.register(tool)
+
+  const browserOcrTextTool = defineTool({
+    name: 'patrol_browser_click_ocr_text',
+    description: 'Browser counterpart of desktop_click_ocr_text. For a CURRENT visible text control/link/button/menu/chapter, capture a fresh browser screenshot internally, use Windows OCR line geometry, and click the OCR bbox center with trusted Chrome mouse input. This is the simple PRIMARY browser visual path for text; no selector, A#/B#, imageX/imageY, or model coordinate guess is required.',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+      stepName: { type: 'string', required: true },
+      text: { type: 'string', required: true },
+      match: { type: 'string', enum: ['exact', 'contains'] },
+      index: { type: 'integer' },
+      targetHint: { type: 'string', description: 'Optional business label. Defaults to the visible OCR text.' },
+      tabId: { type: 'integer' },
+      expectedText: { type: 'string' },
+      expectationMode: { type: 'string', enum: ['contains', 'not-contains'] },
+      caseSensitive: { type: 'boolean' },
+      conditionSourceStepId: { type: 'string' },
+      conditionExpectedText: { type: 'string' },
+      conditionMode: { type: 'string', enum: ['contains', 'not-contains'] },
+      notes: { type: 'string' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec: ToolRunContext) {
+      return await (tool as any).execute(compactObject({
+        inspectionId: args.inspectionId,
+        stepName: args.stepName,
+        ocrText: args.text,
+        ocrMatch: args.match ?? 'exact',
+        ...(Number.isInteger(args.index) ? { ocrIndex: args.index } : {}),
+        targetHint: typeof args.targetHint === 'string' && args.targetHint.trim() ? args.targetHint.trim() : args.text,
+        visualAuthority: true,
+        tabId: args.tabId,
+        expectedText: args.expectedText,
+        expectationMode: args.expectationMode,
+        caseSensitive: args.caseSensitive,
+        conditionSourceStepId: args.conditionSourceStepId,
+        conditionExpectedText: args.conditionExpectedText,
+        conditionMode: args.conditionMode,
+        notes: args.notes,
+      }), exec)
+    },
+  })
+
+  const browserVisualCandidateTool = defineTool({
+    name: 'patrol_browser_click_visual_candidate',
+    description: 'Browser counterpart of desktop_click_visual_candidate. Click exactly one V# selected from patrol_browser_visual_action_map. Supply only the SAME frameId + actionMapId + candidateId; Patrol resolves the program-computed bbox center, validates CURRENT page geometry, sends trusted Chrome mouse input, verifies the business result, and records the reusable browser_visual_click step. Never supply x/y.',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+      stepName: { type: 'string', required: true },
+      frameId: { type: 'string', required: true },
+      actionMapId: { type: 'string', required: true },
+      candidateId: { type: 'string', required: true },
+      targetHint: { type: 'string', description: 'Optional business label. Defaults to stepName.' },
+      expectedVisualText: { type: 'string', description: 'For navigation/card/link targets, copy the exact visible target text when one exists so the destination can be verified.' },
+      tabId: { type: 'integer' },
+      expectedText: { type: 'string' },
+      expectationMode: { type: 'string', enum: ['contains', 'not-contains'] },
+      caseSensitive: { type: 'boolean' },
+      conditionSourceStepId: { type: 'string' },
+      conditionExpectedText: { type: 'string' },
+      conditionMode: { type: 'string', enum: ['contains', 'not-contains'] },
+      notes: { type: 'string' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec: ToolRunContext) {
+      return await (tool as any).execute(compactObject({
+        inspectionId: args.inspectionId,
+        stepName: args.stepName,
+        frameId: args.frameId,
+        actionMapId: args.actionMapId,
+        visualCandidateId: args.candidateId,
+        targetHint: typeof args.targetHint === 'string' && args.targetHint.trim() ? args.targetHint.trim() : args.stepName,
+        expectedVisualText: args.expectedVisualText,
+        visualAuthority: true,
+        tabId: args.tabId,
+        expectedText: args.expectedText,
+        expectationMode: args.expectationMode,
+        caseSensitive: args.caseSensitive,
+        conditionSourceStepId: args.conditionSourceStepId,
+        conditionExpectedText: args.conditionExpectedText,
+        conditionMode: args.conditionMode,
+        notes: args.notes,
+      }), exec)
+    },
+  })
+
+  const disposers = [
+    ctx.tools.register(actionMapTool),
+    ctx.tools.register(browserOcrTextTool),
+    ctx.tools.register(browserVisualCandidateTool),
+    ctx.tools.register(tool),
+  ]
+  return () => { for (const dispose of disposers) dispose() }
 }
 
 async function capturePageState(runner: PatrolRunner, exec: ToolRunContext, tabId: number | undefined): Promise<PageState | undefined> {
@@ -704,30 +887,6 @@ async function verifyAutomaticStateChange(runner: PatrolRunner, exec: ToolRunCon
   }
   return { ok: false, attempts: AUTO_VERIFY_DELAYS_MS.length }
 }
-function testModeLargeVisualControl(stepName: string | undefined, targetHint: string | undefined): boolean {
-  const text = normalizePageText([stepName, targetHint].filter(Boolean).join(' '))
-  if (!text) return false
-  const explicitTinyOverride = /(?:[x×✕✖]|关闭|移除|删除|清除|三点|省略号|齿轮|小图标|图标)/i.test(text)
-  if (explicitTinyOverride) return false
-  return /(?:搜索结果页)?(?:搜索框|搜索栏)|输入框|编辑框|文本框|地址栏|大输入区|空白输入区|无文字大控件/i.test(text)
-}
-
-function testModePrecisionTargetRequiresOcrGeometry(stepName: string | undefined, targetHint: string | undefined): boolean {
-  const raw = [stepName, targetHint].filter(Boolean).join(' ')
-  const text = normalizePageText(raw)
-  if (!text) return false
-
-  const explicitTiny = /(?:[x×✕✖]|关闭|移除|删除|清除|三点|省略号|齿轮|小图标|图标)/i.test(text)
-  if (explicitTiny) return true
-  if (testModeLargeVisualControl(stepName, targetHint)) return false
-
-  const textDense = /(?:菜单项|下拉项|列表项|标签页|标签|tab|目录|章节|条目|标题|链接|搜索结果|百科|官网|发售版本|版本项)/i.test(text)
-    || /(?:第\s*\d+\s*(?:项|章|节|条)|\d+\s*[.．。、:：-]\s*[\p{L}\p{N}])/u.test(raw)
-  if (textDense) return true
-  if (navigationLikeBusinessAction(stepName, targetHint)) return true
-  return /(?:点击|打开|进入|选择).*(?:文字|文本|结果|项目|选项|入口)/i.test(text)
-}
-
 function navigationLikeBusinessAction(stepName: string | undefined, targetHint: string | undefined): boolean {
   const text = normalizePageText([stepName, targetHint].filter(Boolean).join(' '))
   if (!text || inPageControlHint(text)) return false

@@ -14,6 +14,11 @@ const INTERACTION_SCREENSHOT_READY_TIMEOUT_MS = 3000
 const INTERACTION_SCREENSHOT_READY_POLL_MS = 100
 const interactionVisualFrames = new Map()
 let interactionVisualFrameSequence = 0
+// Browser-only copy of the proven Desktop Action Map state machine.
+// It deliberately does NOT import/call desktop-runtime; the browser owns its
+// screenshot bytes, candidate maps and viewport mapping independently.
+const interactionBrowserVisualActionMaps = new Map()
+let interactionBrowserVisualActionMapSequence = 0
 const interactionPreviousSendDomCommand = sendDomCommand
 const interactionPreviousHandleCommand = handleCommand
 
@@ -64,6 +69,8 @@ sendDomCommand = async function interactionHardenedSendDomCommand(cmd, args = {}
 handleCommand = async function interactionHardenedHandleCommand(cmd, args = {}) {
   if (cmd === 'activateTab') return await interactionActivateTab(args)
   if (cmd === 'screenshot') return await interactionScreenshot(args)
+  if (cmd === 'browserVisualActionMap') return await interactionBrowserVisualActionMap(args)
+  if (cmd === 'browserResolveVisualCandidate') return await interactionBrowserResolveVisualCandidate(args)
   if (cmd === 'visualClick') return await interactionVisualClick(args)
   if (cmd === 'typeFocused') return await interactionTypeFocused(args)
   if (cmd === 'select') return await interactionSelect(args)
@@ -315,7 +322,7 @@ async function interactionScreenshot(args) {
   }
 
   const after = await interactionViewportState(tabId)
-  const visualFrame = interactionRegisterVisualFrame(tabId, before, after, captureGeometry, actionCandidates, pixelCandidates, modelRasterWidth, modelRasterHeight)
+  const visualFrame = interactionRegisterVisualFrame(tabId, before, after, captureGeometry, actionCandidates, pixelCandidates, modelRasterWidth, modelRasterHeight, ocrDataUrl)
 
   return {
     ok: true,
@@ -1577,7 +1584,7 @@ function interactionCurrentReplayCaptureGeometry(viewport, recordedMode = '', re
   }
 }
 
-function interactionRegisterVisualFrame(tabId, before, after, captureGeometry, actionCandidates = [], pixelCandidates = [], modelRasterWidth, modelRasterHeight) {
+function interactionRegisterVisualFrame(tabId, before, after, captureGeometry, actionCandidates = [], pixelCandidates = [], modelRasterWidth, modelRasterHeight, sourceDataUrl = '') {
   if (!interactionSameViewport(before, after, 1)) return undefined
   const geometry = captureGeometry || interactionVisibleTabCaptureGeometry(before)
   if (!geometry
@@ -1611,6 +1618,7 @@ function interactionRegisterVisualFrame(tabId, before, after, captureGeometry, a
     modelRasterHeight: Number.isFinite(Number(modelRasterHeight)) ? Number(modelRasterHeight) : undefined,
     actionCandidates: Array.isArray(actionCandidates) ? actionCandidates.map(candidate => ({ ...candidate })) : [],
     pixelCandidates: Array.isArray(pixelCandidates) ? pixelCandidates.map(candidate => ({ ...candidate })) : [],
+    sourceDataUrl: typeof sourceDataUrl === 'string' ? sourceDataUrl : '',
   }
   interactionVisualFrames.set(frameId, frame)
   return {
@@ -1628,6 +1636,364 @@ function interactionRegisterVisualFrame(tabId, before, after, captureGeometry, a
     captureMode: frame.captureMode,
     ...(Number.isFinite(Number(frame.modelRasterWidth)) ? { modelRasterWidth: Number(frame.modelRasterWidth) } : {}),
     ...(Number.isFinite(Number(frame.modelRasterHeight)) ? { modelRasterHeight: Number(frame.modelRasterHeight) } : {}),
+  }
+}
+
+
+function interactionNormalizeBrowserVisualActionMapCrop(args = {}) {
+  const centerX = Number.isFinite(Number(args.centerXRatio)) ? Number(args.centerXRatio) : 0.5
+  const centerY = Number.isFinite(Number(args.centerYRatio)) ? Number(args.centerYRatio) : 0.5
+  const requestedWidth = Number.isFinite(Number(args.widthRatio)) ? Number(args.widthRatio) : 0.46
+  const requestedHeight = Number.isFinite(Number(args.heightRatio)) ? Number(args.heightRatio) : 0.42
+  const widthRatio = Math.max(0.12, Math.min(0.90, requestedWidth))
+  const heightRatio = Math.max(0.12, Math.min(0.90, requestedHeight))
+  return {
+    xRatio: Math.max(0, Math.min(1 - widthRatio, Math.max(0, Math.min(1, centerX)) - widthRatio / 2)),
+    yRatio: Math.max(0, Math.min(1 - heightRatio, Math.max(0, Math.min(1, centerY)) - heightRatio / 2)),
+    widthRatio,
+    heightRatio,
+    centerXRatio: Math.max(0, Math.min(1, centerX)),
+    centerYRatio: Math.max(0, Math.min(1, centerY)),
+  }
+}
+
+// Browser-local port of Desktop Automation's BuildActionMap algorithm.
+// Keep thresholds/dilation/IoU close to the proven Desktop implementation,
+// then add one browser-only rescue for wide thin inputs such as search boxes.
+// DOM/Accessibility never participates in candidate generation.
+async function interactionBuildDesktopStyleBrowserActionMapInWorker(source, crop, jpegQuality, maxCandidates = 18) {
+  if (typeof OffscreenCanvas !== 'function' || typeof createImageBitmap !== 'function') return undefined
+  if (typeof dataUrlToBlob !== 'function' || typeof blobToDataUrl !== 'function') return undefined
+  const bitmap = await createImageBitmap(dataUrlToBlob(source))
+  try {
+    const sourceWidth = Number(bitmap.width || 0)
+    const sourceHeight = Number(bitmap.height || 0)
+    if (!Number.isFinite(sourceWidth) || !Number.isFinite(sourceHeight) || sourceWidth <= 0 || sourceHeight <= 0) return undefined
+
+    const sx = Math.max(0, Math.min(sourceWidth - 1, Math.floor(sourceWidth * crop.xRatio)))
+    const sy = Math.max(0, Math.min(sourceHeight - 1, Math.floor(sourceHeight * crop.yRatio)))
+    const sr = Math.max(sx + 1, Math.min(sourceWidth, Math.ceil(sourceWidth * (crop.xRatio + crop.widthRatio))))
+    const sb = Math.max(sy + 1, Math.min(sourceHeight, Math.ceil(sourceHeight * (crop.yRatio + crop.heightRatio))))
+    const cropWidth = sr - sx
+    const cropHeight = sb - sy
+    const workScale = Math.min(1, 768 / Math.max(cropWidth, cropHeight))
+    const workWidth = Math.max(1, Math.round(cropWidth * workScale))
+    const workHeight = Math.max(1, Math.round(cropHeight * workScale))
+
+    const work = new OffscreenCanvas(workWidth, workHeight)
+    const context = work.getContext('2d', { alpha: false, willReadFrequently: true })
+    if (!context) return undefined
+    context.drawImage(bitmap, sx, sy, cropWidth, cropHeight, 0, 0, workWidth, workHeight)
+    const pixels = context.getImageData(0, 0, workWidth, workHeight).data
+    const gray = new Uint8Array(workWidth * workHeight)
+    for (let i = 0, p = 0; i < gray.length; i += 1, p += 4) {
+      gray[i] = (pixels[p] * 77 + pixels[p + 1] * 150 + pixels[p + 2] * 29) >> 8
+    }
+
+    let edge = new Uint8Array(workWidth * workHeight)
+    const threshold = 30
+    for (let y = 1; y < workHeight - 1; y += 1) {
+      const row = y * workWidth
+      for (let xx = 1; xx < workWidth - 1; xx += 1) {
+        const i = row + xx
+        const g = gray[i]
+        const delta = Math.max(
+          Math.abs(g - gray[i - 1]),
+          Math.abs(g - gray[i + 1]),
+          Math.abs(g - gray[i - workWidth]),
+          Math.abs(g - gray[i + workWidth]),
+        )
+        if (delta >= threshold) edge[i] = 1
+      }
+    }
+
+    for (let pass = 0; pass < 2; pass += 1) {
+      const expanded = edge.slice()
+      for (let y = 1; y < workHeight - 1; y += 1) {
+        const row = y * workWidth
+        for (let xx = 1; xx < workWidth - 1; xx += 1) {
+          const i = row + xx
+          if (!edge[i]) continue
+          expanded[i - 1] = 1
+          expanded[i + 1] = 1
+          expanded[i - workWidth] = 1
+          expanded[i + workWidth] = 1
+          expanded[i - workWidth - 1] = 1
+          expanded[i - workWidth + 1] = 1
+          expanded[i + workWidth - 1] = 1
+          expanded[i + workWidth + 1] = 1
+        }
+      }
+      edge = expanded
+    }
+
+    const visited = new Uint8Array(workWidth * workHeight)
+    const queue = new Int32Array(workWidth * workHeight)
+    const raw = []
+    const scaleX = cropWidth / workWidth
+    const scaleY = cropHeight / workHeight
+
+    for (let y0 = 1; y0 < workHeight - 1; y0 += 1) {
+      for (let x0 = 1; x0 < workWidth - 1; x0 += 1) {
+        const seed = y0 * workWidth + x0
+        if (!edge[seed] || visited[seed]) continue
+        let head = 0
+        let tail = 0
+        queue[tail++] = seed
+        visited[seed] = 1
+        let minX = x0, maxX = x0, minY = y0, maxY = y0, count = 0
+
+        while (head < tail) {
+          const i = queue[head++]
+          const y = Math.floor(i / workWidth)
+          const xx = i - y * workWidth
+          count += 1
+          if (xx < minX) minX = xx
+          if (xx > maxX) maxX = xx
+          if (y < minY) minY = y
+          if (y > maxY) maxY = y
+          const neighbors = [i - 1, i + 1, i - workWidth, i + workWidth]
+          for (const ni of neighbors) {
+            if (ni < 0 || ni >= edge.length || visited[ni] || !edge[ni]) continue
+            const ny = Math.floor(ni / workWidth)
+            const nx = ni - ny * workWidth
+            if (nx <= 0 || nx >= workWidth - 1 || ny <= 0 || ny >= workHeight - 1) continue
+            visited[ni] = 1
+            queue[tail++] = ni
+          }
+        }
+
+        let bw = maxX - minX + 1
+        let bh = maxY - minY + 1
+        let area = bw * bh
+        if (count < 12 || bw < 5 || bh < 5) continue
+
+        const wideThinBrowserControl = bw <= workWidth * 0.96
+          && bh <= workHeight * 0.38
+          && area <= workWidth * workHeight * 0.32
+          && bw / Math.max(1, bh) >= 3
+        if (!wideThinBrowserControl
+          && (bw > workWidth * 0.48 || bh > workHeight * 0.48 || area > workWidth * workHeight * 0.20)) continue
+
+        const aspect = bw / Math.max(1, bh)
+        if (aspect < 0.12 || aspect > (wideThinBrowserControl ? 20 : 8)) continue
+
+        const pad = Math.max(3, Math.min(8, Math.floor(Math.max(bw, bh) / 8)))
+        minX = Math.max(0, minX - pad)
+        minY = Math.max(0, minY - pad)
+        maxX = Math.min(workWidth - 1, maxX + pad)
+        maxY = Math.min(workHeight - 1, maxY + pad)
+        bw = maxX - minX + 1
+        bh = maxY - minY + 1
+        area = bw * bh
+
+        const left = sx + Math.round(minX * scaleX)
+        const top = sy + Math.round(minY * scaleY)
+        const width = Math.max(1, Math.min(sourceWidth - left, Math.round(bw * scaleX)))
+        const height = Math.max(1, Math.min(sourceHeight - top, Math.round(bh * scaleY)))
+        raw.push({
+          left,
+          top,
+          width,
+          height,
+          leftRatio: left / sourceWidth,
+          topRatio: top / sourceHeight,
+          widthRatio: width / sourceWidth,
+          heightRatio: height / sourceHeight,
+          centerXRatio: (left + width / 2) / sourceWidth,
+          centerYRatio: (top + height / 2) / sourceHeight,
+          score: count / Math.sqrt(Math.max(1, area)),
+          browserWideThinRescue: wideThinBrowserControl,
+        })
+      }
+    }
+
+    const iou = (a, b) => {
+      const left = Math.max(a.left, b.left)
+      const top = Math.max(a.top, b.top)
+      const right = Math.min(a.left + a.width, b.left + b.width)
+      const bottom = Math.min(a.top + a.height, b.top + b.height)
+      if (right <= left || bottom <= top) return 0
+      const inter = (right - left) * (bottom - top)
+      const union = a.width * a.height + b.width * b.height - inter
+      return union <= 0 ? 0 : inter / union
+    }
+
+    raw.sort((a, b) => b.score - a.score || a.top - b.top || a.left - b.left)
+    const selected = []
+    for (const item of raw) {
+      if (selected.length >= Math.max(3, Math.min(30, Number(maxCandidates) || 18))) break
+      if (selected.some(existing => iou(item, existing) > 0.42)) continue
+      selected.push(item)
+    }
+    selected.sort((a, b) => a.top - b.top || a.left - b.left)
+    selected.forEach((item, index) => { item.candidateId = 'V' + (index + 1) })
+
+    const mapMax = 900
+    let mapScale = Math.min(mapMax / cropWidth, mapMax / cropHeight)
+    if (mapScale > 2.5) mapScale = 2.5
+    const mapWidth = Math.max(1, Math.round(cropWidth * mapScale))
+    const mapHeight = Math.max(1, Math.round(cropHeight * mapScale))
+    const map = new OffscreenCanvas(mapWidth, mapHeight)
+    const mapContext = map.getContext('2d', { alpha: false })
+    if (!mapContext) return undefined
+    mapContext.imageSmoothingEnabled = true
+    mapContext.drawImage(bitmap, sx, sy, cropWidth, cropHeight, 0, 0, mapWidth, mapHeight)
+
+    const fontPx = 12
+    mapContext.font = '800 ' + fontPx + 'px Arial, sans-serif'
+    mapContext.textBaseline = 'top'
+    for (const item of selected) {
+      const xx = (item.left - sx) * mapScale
+      const yy = (item.top - sy) * mapScale
+      const ww = Math.max(2, item.width * mapScale)
+      const hh = Math.max(2, item.height * mapScale)
+      const cx = xx + ww / 2
+      const cy = yy + hh / 2
+      mapContext.strokeStyle = 'rgba(255,45,45,0.96)'
+      mapContext.lineWidth = 2
+      mapContext.strokeRect(xx, yy, ww, hh)
+      mapContext.strokeStyle = 'rgba(0,255,110,0.98)'
+      mapContext.lineWidth = 2
+      mapContext.beginPath(); mapContext.moveTo(cx - 8, cy); mapContext.lineTo(cx + 8, cy); mapContext.stroke()
+      mapContext.beginPath(); mapContext.moveTo(cx, cy - 8); mapContext.lineTo(cx, cy + 8); mapContext.stroke()
+
+      const label = item.candidateId
+      const metrics = mapContext.measureText(label)
+      const labelW = Math.ceil(metrics.width) + 8
+      const labelH = fontPx + 6
+      const labelX = Math.max(0, Math.min(mapWidth - labelW, xx))
+      const labelY = Math.max(0, Math.min(mapHeight - labelH, yy - labelH))
+      mapContext.fillStyle = 'rgba(200,0,0,0.92)'
+      mapContext.fillRect(labelX, labelY, labelW, labelH)
+      mapContext.fillStyle = '#ffffff'
+      mapContext.fillText(label, labelX + 4, labelY + 3)
+    }
+
+    const blob = await map.convertToBlob({
+      type: 'image/jpeg',
+      quality: Math.max(0.76, Math.min(0.96, Number(jpegQuality) / 100)),
+    })
+    return {
+      dataUrl: await blobToDataUrl(blob),
+      width: mapWidth,
+      height: mapHeight,
+      sourceWidth,
+      sourceHeight,
+      crop: {
+        xRatio: sx / sourceWidth,
+        yRatio: sy / sourceHeight,
+        widthRatio: cropWidth / sourceWidth,
+        heightRatio: cropHeight / sourceHeight,
+      },
+      candidates: selected,
+    }
+  } finally {
+    if (typeof bitmap.close === 'function') bitmap.close()
+  }
+}
+
+async function interactionBrowserVisualActionMap(args = {}) {
+  const tabId = await resolveTabId(args.tabId)
+  interactionPruneVisualFrames()
+  const frameId = typeof args.frameId === 'string' ? args.frameId.trim() : ''
+  if (!frameId) throw new Error('browserVisualActionMap requires frameId from a fresh CURRENT browser screenshot')
+  const frame = interactionVisualFrames.get(frameId)
+  if (!frame) throw new Error('browser visual frame is unavailable; capture a fresh patrol_observe(includeImage=true)')
+  if (frame.tabId !== tabId) throw new Error('browser visual frame belongs to another tab')
+  if (!frame.sourceDataUrl) throw new Error('browser visual frame has no clean source raster; capture a fresh patrol_observe(includeImage=true)')
+  if (frame.captureMode === 'cdp-focused-region') {
+    throw new Error('browserVisualActionMap requires the full CURRENT browser frame; do not build it from an old focused crop')
+  }
+  const current = await interactionViewportState(tabId)
+  if (!interactionSameViewport(frame, current, 2)) {
+    throw new Error('browser visual frame is stale: URL/scroll/zoom/viewport changed after screenshot')
+  }
+
+  const crop = interactionNormalizeBrowserVisualActionMapCrop(args)
+  const built = await interactionBuildDesktopStyleBrowserActionMapInWorker(
+    frame.sourceDataUrl,
+    crop,
+    Number.isInteger(args.quality) ? args.quality : 90,
+    Number.isInteger(args.maxCandidates) ? args.maxCandidates : 18,
+  )
+  if (!built?.dataUrl || !Array.isArray(built.candidates) || built.candidates.length === 0) {
+    throw new Error('browser Desktop-style Action Map found no stable visual candidates; choose a slightly different/coarser CURRENT region')
+  }
+
+  interactionBrowserVisualActionMapSequence += 1
+  const actionMapId = 'browser-vmap-' + Date.now().toString(36) + '-' + interactionBrowserVisualActionMapSequence.toString(36)
+  const map = {
+    actionMapId,
+    frameId,
+    tabId,
+    createdAt: Date.now(),
+    crop: built.crop,
+    candidates: built.candidates.map(candidate => ({ ...candidate })),
+  }
+  interactionBrowserVisualActionMaps.set(actionMapId, map)
+  frame.activeBrowserVisualActionMapId = actionMapId
+  while (interactionBrowserVisualActionMaps.size > 24) {
+    const oldest = interactionBrowserVisualActionMaps.keys().next().value
+    if (!oldest) break
+    interactionBrowserVisualActionMaps.delete(oldest)
+  }
+  return {
+    ok: true,
+    frameId,
+    actionMapId,
+    dataUrl: built.dataUrl,
+    width: built.width,
+    height: built.height,
+    crop: built.crop,
+    candidateCount: map.candidates.length,
+    candidates: map.candidates,
+    candidateSummary: map.candidates.map(candidate =>
+      [
+        candidate.candidateId,
+        'bboxRatio=' + candidate.leftRatio.toFixed(4) + ',' + candidate.topRatio.toFixed(4) + ',' + candidate.widthRatio.toFixed(4) + ',' + candidate.heightRatio.toFixed(4),
+        'centerRatio=' + candidate.centerXRatio.toFixed(4) + ',' + candidate.centerYRatio.toFixed(4),
+      ].join(' | ')
+    ).join('\n'),
+    method: 'browser-local-desktop-style-action-map',
+  }
+}
+
+async function interactionBrowserResolveVisualCandidate(args = {}) {
+  const tabId = await resolveTabId(args.tabId)
+  interactionPruneVisualFrames()
+  const frameId = typeof args.frameId === 'string' ? args.frameId.trim() : ''
+  const actionMapId = typeof args.actionMapId === 'string' ? args.actionMapId.trim() : ''
+  const candidateId = typeof args.candidateId === 'string' ? args.candidateId.trim().toUpperCase() : ''
+  if (!frameId || !actionMapId || !candidateId) {
+    throw new Error('browserResolveVisualCandidate requires frameId, actionMapId and candidateId')
+  }
+  const frame = interactionVisualFrames.get(frameId)
+  const map = interactionBrowserVisualActionMaps.get(actionMapId)
+  if (!frame || !map || map.frameId !== frameId || map.tabId !== tabId) {
+    throw new Error('browser visual Action Map is unavailable/stale or belongs to another frame/tab')
+  }
+  if (frame.activeBrowserVisualActionMapId !== actionMapId) {
+    throw new Error('browser visual frame is bound to a different CURRENT Action Map')
+  }
+  const current = await interactionViewportState(tabId)
+  if (!interactionSameViewport(frame, current, 2)) {
+    throw new Error('browser visual Action Map is stale: URL/scroll/zoom/viewport changed after map generation')
+  }
+  const candidate = map.candidates.find(item => String(item?.candidateId || '').toUpperCase() === candidateId)
+  if (!candidate) {
+    throw new Error('browser visual candidate ' + JSON.stringify(candidateId) + ' not found; available=' + map.candidates.map(item => item.candidateId).join(','))
+  }
+  return {
+    ok: true,
+    frameId,
+    actionMapId,
+    candidateId,
+    xRatio: Number(candidate.centerXRatio),
+    yRatio: Number(candidate.centerYRatio),
+    candidate: { ...candidate },
+    coordinateMapping: 'browser-desktop-style-action-map-bbox-center',
+    method: 'browser-local-desktop-style-action-map',
   }
 }
 
