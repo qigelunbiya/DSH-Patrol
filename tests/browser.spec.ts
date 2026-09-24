@@ -20,6 +20,15 @@ describe('browser policy', () => {
     expect(isSafeBrowserTool('browser_count')).toBe(true)
     expect(isSafeBrowserTool('browser_detect_auth_challenge')).toBe(true)
     expect(isSafeBrowserTool('browser_visual_click')).toBe(true)
+    // Browser visual teaching wrappers dispatch these three provider primitives
+    // through PatrolRunner. They are internal-safe, not direct model tools and
+    // not persisted as replayable Runbook steps.
+    expect(isSafeBrowserTool('browser_resolve_ocr_visual_target')).toBe(true)
+    expect(isSafeBrowserTool('browser_visual_action_map')).toBe(true)
+    expect(isSafeBrowserTool('browser_resolve_visual_candidate')).toBe(true)
+    expect(isReplayableBrowserTool('browser_resolve_ocr_visual_target')).toBe(false)
+    expect(isReplayableBrowserTool('browser_visual_action_map')).toBe(false)
+    expect(isReplayableBrowserTool('browser_resolve_visual_candidate')).toBe(false)
     expect(isSafeBrowserTool('browser_type_focused')).toBe(true)
     expect(isSafeBrowserTool('browser_eval')).toBe(false)
     expect(isReplayableBrowserTool('browser_status')).toBe(false)
