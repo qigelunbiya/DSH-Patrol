@@ -459,10 +459,12 @@ export function registerPatrolVisualClickTool(
           'Visual click failed before Patrol could confirm a physical click, so this attempt does NOT consume the visual physical-click budget. The same frameId may be retried if CURRENT URL/scroll/zoom/viewport are still unchanged.',
           clicked.error ?? clicked.text ?? 'Unknown browser visual click error',
           'Reuse this frameId freely while the CURRENT page geometry still matches it; capture a new patrol_observe(includeImage=true) only after navigation, scroll, zoom, viewport/layout changes, or when a new screenshot is actually useful.',
-          ocrOwnedPoint
-            ? 'The click used fresh CURRENT screenshot OCR geometry. Re-run the same ocrText against a fresh CURRENT screenshot; do not switch to B#/A#, read_image paths, or coordinate nudging.'
-            : boundPreview
-              ? 'The click reused the exact visually marked point; capture a fresh CURRENT frame and mark a different point instead of nudging this preview token.'
+          actionMapOwnedPoint
+            ? 'The click used the program-computed V# bbox center from the browser-local Desktop-style Action Map. Rebuild the map from a fresh CURRENT full frame if the target moved; never nudge coordinates.'
+            : ocrOwnedPoint
+              ? 'The click used fresh CURRENT screenshot OCR geometry. Re-run the same visible text against a fresh CURRENT screenshot.'
+              : boundPreview
+                ? 'The click reused a legacy preview point; new TEST teaching should rebuild a V# Action Map instead.'
             : hasPixelCandidate
               ? 'If this B# was wrong, capture a fresh focused Browser Pixel Action Map and choose a different B# whose red bbox/crosshair lies inside the intended target. Do not nudge viewport coordinates manually.'
             : hasCandidate
@@ -683,7 +685,7 @@ export function registerPatrolVisualClickTool(
         targetClassHint: objectString(clicked.value, 'targetClassName'),
       })
       const condition = optionalCondition(args.conditionSourceStepId, args.conditionExpectedText, args.conditionMode)
-      const targetNote = `视觉目标：${args.targetHint.trim()}${ocrOwnedPoint ? `；OCR视觉锚点：${boundPreview?.ocrMatchedText || boundPreview?.ocrText || ''}${boundPreview?.ocrRelation === 'close-right' ? '（右侧关闭）' : ''}` : hasPixelCandidate ? `；旧像素视觉编号：${pixelCandidateId}` : hasCandidate ? `；旧视觉编号：${candidateId}` : ''}`
+      const targetNote = `视觉目标：${args.targetHint.trim()}${actionMapOwnedPoint ? `；Browser Action Map：${boundPreview?.actionMapId || ''}/${boundPreview?.visualCandidateId || ''}` : ocrOwnedPoint ? `；OCR视觉锚点：${boundPreview?.ocrMatchedText || boundPreview?.ocrText || ''}${boundPreview?.ocrRelation === 'close-right' ? '（右侧关闭）' : ''}` : hasPixelCandidate ? `；旧像素视觉编号：${pixelCandidateId}` : hasCandidate ? `；旧视觉编号：${candidateId}` : ''}`
       const providedNotes = [targetNote, args.notes?.trim()].filter(Boolean).join('\n')
       const step: ToolStep = {
         id: nextStepId(definition.steps),
@@ -713,17 +715,21 @@ export function registerPatrolVisualClickTool(
 
       return [
         `Executed and recorded ${step.id} (browser_visual_click) after CURRENT model-visible visual-state verification.`,
-        ocrOwnedPoint
-          ? `Browser Windows OCR resolved ${JSON.stringify(boundPreview?.ocrMatchedText || boundPreview?.ocrText || '')} with relation=${boundPreview?.ocrRelation || 'center'} to xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; no model coordinate guess, B#, A#, or screenshot file read was used.`
-          : hasPixelCandidate
+        actionMapOwnedPoint
+          ? `Browser Desktop-style Action Map resolved ${boundPreview?.visualCandidateId || 'V#'} from ${boundPreview?.actionMapId || ''} to program-owned bbox center xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; the model selected only V#, never the final coordinate.`
+          : ocrOwnedPoint
+            ? `Browser Windows OCR resolved ${JSON.stringify(boundPreview?.ocrMatchedText || boundPreview?.ocrText || '')} with relation=${boundPreview?.ocrRelation || 'center'} to xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; no model coordinate guess was used.`
+            : hasPixelCandidate
             ? `Legacy Browser Pixel Action Map candidate ${pixelCandidateId} resolved to xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}.`
             : hasCandidate
               ? `Legacy visual action-map candidate ${candidateId} resolved to xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}.`
               : `Visual point saved for replay: xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; model-requested=(${pointX.toFixed(4)}, ${pointY.toFixed(4)}); capture=${captureWidth ?? viewportWidth}x${captureHeight ?? viewportHeight} CSS px at (${captureClientLeft ?? 0}, ${captureClientTop ?? 0}).`,
         objectBoolean(clicked.value, 'visualAuthority') === true
-          ? (ocrOwnedPoint
-              ? 'Visual grounding used fresh screenshot OCR geometry. For close-right, DOM was consulted only by a no-input local safety probe around the OCR anchor before the trusted click; it did not search the page for a different business target.'
-              : hasPixelCandidate
+          ? (actionMapOwnedPoint
+              ? 'Visual grounding used a browser-local copy of the proven Desktop Action Map geometry: screenshot pixels generated V# candidates and the program-owned bbox center was sent through trusted Chrome debugger mouse input. Desktop runtime/state was not used.'
+              : ocrOwnedPoint
+                ? 'Visual grounding used fresh screenshot OCR geometry.'
+                : hasPixelCandidate
                 ? 'Legacy B# visual grounding was used.'
                 : hasCandidate
                   ? 'Legacy A# action-map grounding was used.'
