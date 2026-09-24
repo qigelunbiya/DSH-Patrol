@@ -9,7 +9,7 @@ describe('TEST MODE operational click fallbacks', () => {
     expect(source).toContain('createPatrolTestModePlanningGuard(clickOutcomes)')
     expect(source).toContain('strategy counters')
     expect(source).toContain("build=${TEST_MODE_BUILD_MARKER}")
-    expect(source).toContain("test-real-visual-grounding-v13")
+    expect(source).toContain("test-browser-visual-surface-v14")
     expect(source).toContain("browserStrategy=user-directed(default=hybrid)")
   })
 

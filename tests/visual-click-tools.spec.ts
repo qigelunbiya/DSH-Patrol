@@ -39,7 +39,16 @@ async function setup(
       },
     },
   } as unknown as Context
-  registerPatrolVisualClickTool(ctx, store, { dispatch } as any, { maxSteps: 20, clickOutcomes, visualEvidence, requirePreview, testMode })
+  registerPatrolVisualClickTool(ctx, store, { dispatch } as any, {
+    maxSteps: 20,
+    clickOutcomes,
+    visualEvidence,
+    requirePreview,
+    testMode,
+    // Most unit cases exercise the compatibility engine directly. Production
+    // TEST mode hides this large wrapper from the model tool surface.
+    registerCompatibilityTool: true,
+  })
   const tool = definitions.find(item => item.name === 'patrol_visual_click_target')
   if (!tool) throw new Error('patrol_visual_click_target not registered')
   const exec = {
@@ -67,6 +76,39 @@ function draftDefinition(): InspectionDefinition {
     metadata: { createdAt: now, updatedAt: now, taskChecklist: ['给视频点赞'] },
   }
 }
+
+describe('browser visual model surface', () => {
+  it('hides the large compatibility wrapper in TEST mode while keeping the three simple browser visual tools', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-visual-surface-'))
+    roots.push(root)
+    const store = new PatrolStore(root)
+    await store.init()
+    await store.create(draftDefinition())
+    const definitions: any[] = []
+    const ctx = {
+      tools: {
+        register(definition: any) {
+          definitions.push(definition)
+          return () => {}
+        },
+      },
+    } as unknown as Context
+
+    registerPatrolVisualClickTool(ctx, store, { dispatch: async () => ({ ok: true }) } as any, {
+      maxSteps: 20,
+      testMode: true,
+      registerCompatibilityTool: false,
+    })
+
+    const names = definitions.map(item => item.name)
+    expect(names).toEqual([
+      'patrol_browser_visual_action_map',
+      'patrol_browser_click_ocr_text',
+      'patrol_browser_click_visual_candidate',
+    ])
+    expect(names).not.toContain('patrol_visual_click_target')
+  })
+})
 
 describe('browser visual fallback click teaching', () => {
   it('forwards CURRENT model-raster image pixels without model-side ratio conversion', async () => {

@@ -35,6 +35,13 @@ export interface PatrolVisualClickOptions {
   visualEvidence?: PatrolVisualEvidenceRegistry
   requirePreview?: boolean
   testMode?: boolean
+  /**
+   * Keep the large legacy visual-click wrapper available to the model.
+   * TEST mode deliberately hides it: OCR/V# wrappers still call the same
+   * internal engine, while the model sees a much smaller, non-overlapping
+   * tool surface. Stored Runbooks replay browser_visual_click directly.
+   */
+  registerCompatibilityTool?: boolean
 }
 
 export function registerPatrolVisualClickTool(
@@ -839,7 +846,7 @@ export function registerPatrolVisualClickTool(
     ctx.tools.register(actionMapTool),
     ctx.tools.register(browserOcrTextTool),
     ctx.tools.register(browserVisualCandidateTool),
-    ctx.tools.register(tool),
+    ...(options.registerCompatibilityTool === false ? [] : [ctx.tools.register(tool)]),
   ]
   return () => { for (const dispose of disposers) dispose() }
 }
