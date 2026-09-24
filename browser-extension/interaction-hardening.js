@@ -1522,8 +1522,22 @@ function interactionPruneVisualFrames() {
 
 function interactionVisibleTabCaptureGeometry(viewport) {
   if (!viewport || typeof viewport !== 'object') return undefined
-  const width = Number(viewport.innerWidth || viewport.width)
-  const height = Number(viewport.innerHeight || viewport.height)
+  const visualWidth = Number(viewport.width)
+  const visualHeight = Number(viewport.height)
+  const visualLeft = Number(viewport.offsetLeft || 0)
+  const visualTop = Number(viewport.offsetTop || 0)
+  if ([visualWidth, visualHeight, visualLeft, visualTop].every(Number.isFinite)
+    && visualWidth > 0 && visualHeight > 0) {
+    return {
+      captureClientLeft: visualLeft,
+      captureClientTop: visualTop,
+      captureWidth: visualWidth,
+      captureHeight: visualHeight,
+      captureMode: 'capture-visible-tab-visual-viewport',
+    }
+  }
+  const width = Number(viewport.innerWidth)
+  const height = Number(viewport.innerHeight)
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return undefined
   return {
     captureClientLeft: 0,
@@ -1537,7 +1551,20 @@ function interactionVisibleTabCaptureGeometry(viewport) {
 function interactionCurrentReplayCaptureGeometry(viewport, recordedMode = '', recorded = {}) {
   if (!viewport || typeof viewport !== 'object') return undefined
   if (recordedMode === 'capture-visible-tab-layout-viewport') {
-    return interactionVisibleTabCaptureGeometry(viewport)
+    const captureWidth = Number(viewport.innerWidth || viewport.width)
+    const captureHeight = Number(viewport.innerHeight || viewport.height)
+    if (![captureWidth, captureHeight].every(Number.isFinite) || captureWidth <= 0 || captureHeight <= 0) return undefined
+    return {
+      captureClientLeft: 0,
+      captureClientTop: 0,
+      captureWidth,
+      captureHeight,
+      captureMode: 'capture-visible-tab-layout-viewport',
+    }
+  }
+  if (recordedMode === 'capture-visible-tab-visual-viewport') {
+    const geometry = interactionVisibleTabCaptureGeometry(viewport)
+    return geometry?.captureMode === 'capture-visible-tab-visual-viewport' ? geometry : undefined
   }
   if (recordedMode === 'cdp-focused-region') {
     const recordedViewportWidth = Number(recorded.viewportWidth)
@@ -2017,6 +2044,8 @@ async function interactionVisualClick(args) {
   const frameId = typeof args.frameId === 'string' ? args.frameId.trim() : ''
   const requestedCandidateId = typeof args.candidateId === 'string' ? args.candidateId.trim().toUpperCase() : ''
   const requestedPixelCandidateId = typeof args.pixelCandidateId === 'string' ? args.pixelCandidateId.trim().toUpperCase() : ''
+  const requestedVisualActionMapId = typeof args.visualActionMapId === 'string' ? args.visualActionMapId.trim() : ''
+  const requestedVisualCandidateId = typeof args.visualCandidateId === 'string' ? args.visualCandidateId.trim().toUpperCase() : ''
   const requestedImageX = Number(args.imageX)
   const requestedImageY = Number(args.imageY)
   const requestedImageWidth = Number(args.imageWidth)
@@ -2033,9 +2062,28 @@ async function interactionVisualClick(args) {
     if (frame.tabId !== tabId) throw new Error('browser visual frame belongs to a different tab; capture a fresh visual observation')
     let selectedCandidate
     let selectedPixelCandidate
-    const liveCoordinateSourceCount = [Boolean(requestedCandidateId), Boolean(requestedPixelCandidateId), hasRequestedImagePoint, Number.isFinite(xRatio) && Number.isFinite(yRatio)].filter(Boolean).length
+    let selectedVisualCandidate
+    const hasVisualActionMapId = Boolean(requestedVisualActionMapId)
+    const hasVisualCandidateId = Boolean(requestedVisualCandidateId)
+    if (hasVisualActionMapId !== hasVisualCandidateId) {
+      throw new Error('visualClick V# binding requires BOTH visualActionMapId and visualCandidateId')
+    }
+    const hasRequestedVisualCandidate = hasVisualActionMapId && hasVisualCandidateId
+    const liveCoordinateSourceCount = [hasRequestedVisualCandidate, Boolean(requestedCandidateId), Boolean(requestedPixelCandidateId), hasRequestedImagePoint, Number.isFinite(xRatio) && Number.isFinite(yRatio)].filter(Boolean).length
     if (liveCoordinateSourceCount > 1) {
-      throw new Error('visualClick must use exactly one live coordinate source: pixelCandidateId OR candidateId OR imageX/imageY OR xRatio/yRatio')
+      throw new Error('visualClick must use exactly one live coordinate source: visualActionMapId+visualCandidateId OR pixelCandidateId OR candidateId OR imageX/imageY OR xRatio/yRatio')
+    }
+    if (hasRequestedVisualCandidate) {
+      const resolvedVisualCandidate = await interactionBrowserResolveVisualCandidate({
+        tabId,
+        frameId,
+        actionMapId: requestedVisualActionMapId,
+        candidateId: requestedVisualCandidateId,
+      })
+      selectedVisualCandidate = resolvedVisualCandidate.candidate
+      xRatio = Number(resolvedVisualCandidate.xRatio)
+      yRatio = Number(resolvedVisualCandidate.yRatio)
+      coordinateSource = 'browser-visual-action-map-candidate'
     }
     if (hasRequestedImagePoint) {
       const rasterWidth = Number(frame.modelRasterWidth)
@@ -2097,7 +2145,7 @@ async function interactionVisualClick(args) {
     }
     if (!Number.isFinite(xRatio) || !Number.isFinite(yRatio)
       || xRatio < 0 || xRatio > 1 || yRatio < 0 || yRatio > 1) {
-      throw new Error('visualClick requires pixelCandidateId=B# from a browser pixel map, candidateId=A# from a DOM Action Map, imageX/imageY, or xRatio/yRatio between 0 and 1')
+      throw new Error('visualClick requires visualActionMapId+visualCandidateId=V# from the CURRENT browser Action Map, pixelCandidateId=B#, candidateId=A#, imageX/imageY, or xRatio/yRatio between 0 and 1')
     }
     const current = await interactionViewportState(tabId)
     if (!interactionSameViewport(frame, current, 2)) {
@@ -2211,6 +2259,13 @@ async function interactionVisualClick(args) {
         pointerAction,
         ...(requestedCandidateId ? { candidateId: requestedCandidateId } : {}),
         ...(requestedPixelCandidateId ? { pixelCandidateId: requestedPixelCandidateId } : {}),
+        ...(hasRequestedVisualCandidate ? {
+          visualActionMapId: requestedVisualActionMapId,
+          visualCandidateId: requestedVisualCandidateId,
+          visualCandidateBBox: [selectedVisualCandidate?.leftRatio, selectedVisualCandidate?.topRatio, selectedVisualCandidate?.widthRatio, selectedVisualCandidate?.heightRatio]
+            .map(value => Number.isFinite(Number(value)) ? Number(value).toFixed(6) : '')
+            .join(','),
+        } : {}),
         targetStateChanged: false,
         stateEvidence: `visual pointer diagnostic ${pointerAction} executed at the exact screenshot coordinate`,
         inputTransport: 'chrome-debugger',
@@ -2238,6 +2293,15 @@ async function interactionVisualClick(args) {
         clicked.modelRasterHeight = Number(frame.modelRasterHeight)
       }
     }
+    if (hasRequestedVisualCandidate && clicked && typeof clicked === 'object') {
+      clicked.visualActionMapId = requestedVisualActionMapId
+      clicked.visualCandidateId = requestedVisualCandidateId
+      clicked.visualCandidateBBox = [selectedVisualCandidate?.leftRatio, selectedVisualCandidate?.topRatio, selectedVisualCandidate?.widthRatio, selectedVisualCandidate?.heightRatio]
+        .map(value => Number.isFinite(Number(value)) ? Number(value).toFixed(6) : '')
+        .join(',')
+      clicked.visualCandidateCenterXRatio = Number(selectedVisualCandidate?.centerXRatio)
+      clicked.visualCandidateCenterYRatio = Number(selectedVisualCandidate?.centerYRatio)
+    }
     if (requestedPixelCandidateId && clicked && typeof clicked === 'object') {
       clicked.pixelCandidateId = requestedPixelCandidateId
       clicked.pixelCandidateBBox = `${selectedPixelCandidate.left},${selectedPixelCandidate.top},${selectedPixelCandidate.width},${selectedPixelCandidate.height}`
@@ -2257,7 +2321,7 @@ async function interactionVisualClick(args) {
         selectedCandidate?.title ? `title=${selectedCandidate.title}` : '',
       ].filter(Boolean).join('; ')
     }
-    return interactionVisualClickResult(clicked, frame, xRatio, yRatio, requestedPixelCandidateId ? 'bound-pixel-action-map-candidate' : requestedCandidateId ? 'bound-action-map-candidate' : 'bound-current-visual-frame')
+    return interactionVisualClickResult(clicked, frame, xRatio, yRatio, hasRequestedVisualCandidate ? 'bound-browser-visual-action-map-candidate' : requestedPixelCandidateId ? 'bound-pixel-action-map-candidate' : requestedCandidateId ? 'bound-action-map-candidate' : 'bound-current-visual-frame')
   }
 
   if (!Number.isFinite(xRatio) || !Number.isFinite(yRatio)
@@ -3527,6 +3591,11 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
     cdpPiercedAction: clicked.cdpPiercedAction === true,
     physicalClickUncertain: clicked.physicalClickUncertain === true,
     ...(typeof clicked.pointerAction === 'string' ? { pointerAction: clicked.pointerAction } : {}),
+    ...(typeof clicked.visualActionMapId === 'string' ? { visualActionMapId: clicked.visualActionMapId } : {}),
+    ...(typeof clicked.visualCandidateId === 'string' ? { visualCandidateId: clicked.visualCandidateId } : {}),
+    ...(typeof clicked.visualCandidateBBox === 'string' ? { visualCandidateBBox: clicked.visualCandidateBBox } : {}),
+    ...(Number.isFinite(Number(clicked.visualCandidateCenterXRatio)) ? { visualCandidateCenterXRatio: Number(clicked.visualCandidateCenterXRatio) } : {}),
+    ...(Number.isFinite(Number(clicked.visualCandidateCenterYRatio)) ? { visualCandidateCenterYRatio: Number(clicked.visualCandidateCenterYRatio) } : {}),
     ...(typeof clicked.pixelCandidateId === 'string' ? { pixelCandidateId: clicked.pixelCandidateId } : {}),
     ...(typeof clicked.pixelCandidateBBox === 'string' ? { pixelCandidateBBox: clicked.pixelCandidateBBox } : {}),
     ...(Number.isFinite(Number(clicked.pixelCandidateCenterX)) ? { pixelCandidateCenterX: Number(clicked.pixelCandidateCenterX) } : {}),

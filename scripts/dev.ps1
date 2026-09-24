@@ -36,6 +36,24 @@ if (-not (Test-Path -LiteralPath $HarnessRoot)) {
     throw "Harness checkout does not exist: $HarnessRoot"
 }
 
+# pnpm dsh web starts Node with --import tsx and then loads the whole Harness
+# workspace graph. A partially populated/stale Harness node_modules can therefore
+# fail as a bare ERR_MODULE_NOT_FOUND before Patrol itself starts. Repair the
+# frozen workspace dependency closure on every dev launch; pnpm is effectively a
+# no-op when the lockfile and node_modules are already current.
+Write-Host "===== Verify DeepSeek Harness dependencies =====" -ForegroundColor Cyan
+Push-Location $HarnessRoot
+try {
+    $harnessLock = Join-Path $HarnessRoot "pnpm-lock.yaml"
+    if (-not (Test-Path -LiteralPath $harnessLock)) {
+        throw "Harness pnpm-lock.yaml is missing: $harnessLock"
+    }
+    Invoke-NativeChecked pnpm install --frozen-lockfile --prefer-offline
+    Invoke-NativeChecked node -e "import('tsx').then(()=>console.log('Harness ESM dependency probe: OK')).catch(error=>{console.error(error);process.exit(1)})"
+} finally {
+    Pop-Location
+}
+
 if (-not $SkipPull) {
     Write-Host "===== Update DSH Patrol main =====" -ForegroundColor Cyan
     Push-Location $ProjectRoot
