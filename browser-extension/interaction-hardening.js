@@ -928,6 +928,11 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
       } else {
         narrowed = preciseClose
       }
+    } else {
+      // Explicit close/remove intent must never degrade to unrelated controls
+      // such as the surrounding search input. Fail closed and ask for a
+      // fresher/tighter visual observation instead.
+      narrowed = []
     }
   } else if (!structuredTarget && genericBusinessCore.length >= 2) {
     const textualMatches = narrowed.filter(candidate => {
