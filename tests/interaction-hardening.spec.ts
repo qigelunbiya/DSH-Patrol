@@ -66,6 +66,13 @@ describe('browser interaction hardening layer', () => {
     expect(source).toContain("(pixelGrounding ? 0.40 : 0.30)")
   })
 
+  it('supports a no-input browser visual probe for OCR-anchored close controls', () => {
+    expect(source).toContain("['left-click', 'right-click', 'hover', 'mark', 'probe']")
+    expect(source).toContain("if (pointerAction === 'probe')")
+    expect(source).toContain("stateEvidence: 'visual safety probe verified the screenshot-derived point without physical input'")
+    expect(source).toContain('visual close/remove preflight rejected this point before physical input')
+  })
+
   it('builds browser B# candidates from screenshot pixels without desktop or DOM geometry', () => {
     expect(source).toContain('interactionBuildPixelActionMapInWorker')
     expect(source).toContain("item.candidateId = `B${index + 1}`")
