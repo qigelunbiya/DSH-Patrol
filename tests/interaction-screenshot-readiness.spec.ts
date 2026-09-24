@@ -185,7 +185,7 @@ describe('Patrol screenshot tab readiness', () => {
     })
     expect(reused).toMatchObject({
       ok: true,
-      transport: 'bound-current-visual-frame+synthetic-main-world',
+      transport: 'bound-current-visual-frame+trusted-native-mouse',
       xRatio: 0.2,
       yRatio: 0.8,
     })
