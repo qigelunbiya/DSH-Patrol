@@ -273,44 +273,25 @@ export function registerPatrolVisualClickTool(
         && pointX >= 0 && pointX <= 1 && pointY >= 0 && pointY <= 1
       const requestedPointerAction = args.pointerAction ?? 'left-click'
       const ocrOwnedPoint = boundPreview?.source === 'ocr'
+      const actionMapOwnedPoint = boundPreview?.source === 'action-map'
+      const programOwnedPoint = ocrOwnedPoint || actionMapOwnedPoint
       const liveTestClick = options.testMode === true && requestedPointerAction === 'left-click'
-      const largeVisualControl = testModeLargeVisualControl(args.stepName, args.targetHint)
-      const precisionOcrGroundingRequired = liveTestClick
-        && testModePrecisionTargetRequiresOcrGeometry(args.stepName, args.targetHint)
       if ([hasPixelCandidate, hasCandidate, hasImagePoint, hasRatioPoint || Boolean(boundPreview)].filter(Boolean).length > 1) {
-        throw new Error('visual click requires exactly one coordinate source: pixelCandidateId=B#, imageX/imageY, candidateId=A#, xRatio/yRatio, or previewId')
+        throw new Error('visual click requires exactly one coordinate source')
       }
-      if (liveTestClick && !ocrOwnedPoint && (hasPixelCandidate || hasCandidate || Boolean(boundPreview))) {
-        throw new Error('TEST MODE legacy browser A#/B#/preview visual grounding is disabled for new teaching. Visible text must use ocrText; adjacent close/remove uses ocrRelation="close-right"; only a large unlabeled control may use CURRENT-raster imageX/imageY.')
-      }
-      if (liveTestClick && hasRatioPoint && !ocrOwnedPoint) {
+      if (liveTestClick && !programOwnedPoint && (hasPixelCandidate || hasCandidate || hasImagePoint || hasRatioPoint || Boolean(boundPreview))) {
         throw new Error([
-          'TEST MODE live xRatio/yRatio visual clicking is disabled before physical input because normalized guessing caused repeated browser misclicks.',
-          largeVisualControl
-            ? 'For this large control, use imageX/imageY from the exact CURRENT model-visible raster returned by patrol_observe(includeImage=true).'
-            : 'For visible text use ocrText=<CURRENT visible text>. For a close/remove icon next to visible text use ocrRelation="close-right".',
-          'Do not manually convert screenshot pixels to normalized ratios.',
+          'TEST MODE old browser visual grounding is disabled before physical input.',
+          'Visible text: use patrol_browser_click_ocr_text.',
+          'Unlabeled control/icon/search box: patrol_observe(includeImage=true) → patrol_browser_visual_action_map → read_image → patrol_browser_click_visual_candidate(V#).',
+          'Do not use A#, B#, previewId, imageX/imageY, or xRatio/yRatio for new browser TEST teaching.',
         ].join(' '))
       }
-      if (liveTestClick && hasImagePoint && !largeVisualControl && !ocrOwnedPoint) {
-        throw new Error('TEST MODE direct imageX/imageY is reserved for large unlabeled input/search controls. Visible text targets must use ocrText; adjacent close/remove icons use ocrRelation="close-right". Do not recover with B#/A#/focused crops.')
-      }
       if (!hasPixelCandidate && !hasCandidate && !hasImagePoint && !hasRatioPoint && !boundPreview) {
-        if (precisionOcrGroundingRequired) throw new Error('TEST MODE precision target requires screenshot OCR grounding: use ocrText=<CURRENT visible target text>. For a close/remove icon adjacent to visible text, use ocrRelation="close-right". Do not use B#/A# Action Maps or read_image screenshot paths.')
-        if (liveTestClick && largeVisualControl) {
-          throw new Error([
-            'TEST MODE large-control visual click requires imageX/imageY from the exact CURRENT model-visible screenshot raster.',
-            'Use patrol_observe(includeImage=true, actionMap=false, pixelActionMap=false, targetHint=<same target>) and provide the target center as imageX/imageY; do not use xRatio/yRatio.',
-          ].join(' '))
-        }
         if (liveTestClick) {
-          throw new Error([
-            'TEST MODE visual click has no live grounding source yet.',
-            'Use imageX/imageY only for a clearly large UNLABELED control; visible text targets use ocrText and adjacent close/remove uses ocrRelation="close-right".',
-            'xRatio/yRatio is not accepted for live TEST clicking.',
-          ].join(' '))
+          throw new Error('TEST MODE browser visual click needs either OCR text geometry or a V# from patrol_browser_visual_action_map; free coordinates and old A#/B# paths are disabled')
         }
-        throw new Error('visual click requires pixelCandidateId=B# from a CURRENT Browser Pixel Action Map, imageX/imageY, candidateId=A#, previewId, or legacy xRatio/yRatio')
+        throw new Error('visual click requires a browser visual grounding source')
       }
       const explicitFrameId = String(args.frameId ?? '').trim()
       const frameId = boundPreview?.frameId
@@ -328,8 +309,8 @@ export function registerPatrolVisualClickTool(
       if (args.expectedVisualText !== undefined) assertSafePersistentText(args.expectedVisualText, 'expectedVisualText')
       const pointerAction = requestedPointerAction
       const diagnosticPointerAction = pointerAction !== 'left-click'
-      if (precisionOcrGroundingRequired && !ocrOwnedPoint) {
-        throw new Error('TEST MODE precision target requires browser screenshot OCR geometry. Use ocrText=<visible target text>; for a close/remove icon immediately beside that text use ocrRelation="close-right". Legacy B#/A# Action Maps are not accepted for new precision teaching.')
+      if (liveTestClick && !programOwnedPoint) {
+        throw new Error('TEST MODE browser visual click requires program-owned OCR geometry or a Desktop-style browser V# candidate')
       }
       const ocrExpectedVisualText = ocrOwnedPoint && boundPreview?.ocrRelation === 'center'
         ? boundPreview.ocrMatchedText || boundPreview.ocrText
