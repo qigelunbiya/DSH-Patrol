@@ -272,14 +272,6 @@ function desktopArguments(action: DesktopAction, args: Record<string, unknown>, 
       add('button', args.button)
       if (!persisted) { add('frameId', args.frameId); add('actionMapId', args.actionMapId); add('candidateId', args.candidateId) }
       break
-    case 'click-focused-visual-point':
-      add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
-      add('button', args.button)
-      if (!persisted) {
-        add('frameId', args.frameId); add('regionId', args.regionId)
-        add('imageX', args.imageX); add('imageY', args.imageY); add('imageWidth', args.imageWidth); add('imageHeight', args.imageHeight)
-      }
-      break
     case 'click-visual-template':
       add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
       add('templatePath', args.templatePath); add('expectedXRatio', args.expectedXRatio); add('expectedYRatio', args.expectedYRatio)
