@@ -53,24 +53,32 @@ export function registerPatrolVisualClickTool(
     xRatio: number
     yRatio: number
     createdAt: number
+    source?: 'manual' | 'ocr'
+    ocrText?: string
+    ocrMatchedText?: string
+    ocrRelation?: 'center' | 'close-right'
   }>()
   let visualPreviewSequence = 0
   const tool = defineTool({
     name: 'patrol_visual_click_target',
-    description: 'Primary browser visual click. TEST MODE has two live grounding paths: large obvious controls such as wide search/input boxes and large buttons use CURRENT-raster imageX/imageY; precision targets such as text links/results, chapters/menu/tab items, close x/× and small icons use focused Browser Pixel Grounding and pixelCandidateId=B#. Live xRatio/yRatio guessing is disabled in TEST MODE. Precision targets also reject legacy DOM A# candidateId and previewId before physical input. B# geometry comes only from CURRENT screenshot pixels and Patrol clicks its bbox center through the bound frame mapping. Live visual clicks require trusted Chrome debugger mouse input and never silently substitute element.click() or synthetic MouseEvents. Never use for image-code/CAPTCHA.',
+    description: 'Primary browser visual click. Browser TEST teaching now mirrors the proven Desktop strategy: visible TEXT targets use CURRENT screenshot Windows OCR geometry (ocrText) and Patrol clicks the OCR bounding-box center; an adjacent close/remove icon uses ocrRelation=close-right, anchored on OCR text with a no-input safety probe before trusted mouse input. Large unlabeled controls may use CURRENT-raster imageX/imageY. Do not use B#/A# Action Maps, read_image screenshot paths, or model-guessed xRatio/yRatio for new TEST teaching. Live visual clicks require trusted Chrome debugger mouse input. Never use for image-code/CAPTCHA.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
       frameId: { type: 'string', description: 'Optional explicit browser visualFrameId. Normally omit it: Patrol automatically uses the latest model-visible patrol_observe(includeImage=true) frame for this inspection. Screenshot file names/paths are never valid frame IDs.' },
-      previewId: { type: 'string', description: 'Optional diagnostic token returned by pointerAction=mark. Normal visual clicks do not require it.' },
-      imageX: { type: 'number', description: 'CURRENT screenshot pixel X for large obvious controls only. In TEST MODE, precision targets such as text links/results, menu/chapter/tab items, close x/× and small icons reject direct imageX/imageY and require pixelCandidateId=B# from a focused Browser Pixel Action Map.' },
-      imageY: { type: 'number', description: 'CURRENT screenshot pixel Y for large obvious controls only. In TEST MODE, precision targets reject direct imageX/imageY and require pixelCandidateId=B#.' },
+      previewId: { type: 'string', description: 'Legacy diagnostic token; do not use for new TEST teaching.' },
+      ocrText: { type: 'string', description: 'Preferred for any visible browser text target. Patrol captures a fresh CURRENT screenshot, runs Windows OCR with bounding boxes, resolves this text, and clicks the OCR geometry. Examples: 百度一下, 龙之信条 2 - 百度百科, 7.发售版本, 我的任务.' },
+      ocrMatch: { type: 'string', enum: ['exact', 'contains'], description: 'OCR text match mode. Prefer exact; contains is for harmless punctuation or extra-text variation.' },
+      ocrIndex: { type: 'integer', description: 'Optional zero-based occurrence only when CURRENT OCR reports multiple visible matches and the intended occurrence is known.' },
+      ocrRelation: { type: 'string', enum: ['center', 'close-right'], description: 'center clicks the OCR text bbox center. close-right anchors on ocrText and locates a verified close/remove control immediately to its right without a physical probe click; use for 我的任务右侧×.' },
+      imageX: { type: 'number', description: 'CURRENT screenshot pixel X only for a large UNLABELED control such as an empty search/input box. If the control has visible text, prefer ocrText.' },
+      imageY: { type: 'number', description: 'CURRENT screenshot pixel Y only for a large UNLABELED control. Visible text targets should use ocrText.' },
       imageWidth: { type: 'number', description: 'Optional validation copy of modelRasterWidth from CURRENT patrol_observe. If supplied and it does not match the bound frame, Patrol refuses the click.' },
       imageHeight: { type: 'number', description: 'Optional validation copy of modelRasterHeight from CURRENT patrol_observe. If supplied and it does not match the bound frame, Patrol refuses the click.' },
-      xRatio: { type: 'number', description: 'Legacy normalized screenshot X fallback for compatibility/replay diagnostics. TEST MODE live left-click teaching rejects xRatio/yRatio entirely; use imageX/imageY for large controls or pixelCandidateId=B# for precision targets.' },
-      yRatio: { type: 'number', description: 'Legacy normalized screenshot Y fallback for compatibility/replay diagnostics. TEST MODE live left-click teaching rejects xRatio/yRatio entirely.' },
-      pixelCandidateId: { type: 'string', description: 'Preferred B1/B2/... label from a CURRENT Browser Pixel Action Map. B# is computed from screenshot pixels only; Patrol clicks the program-computed bbox center. Use this for focused small/text/dense targets instead of estimating raw coordinates.' },
-      candidateId: { type: 'string', description: 'Legacy A1/A2/... label from explicit patrol_observe(..., actionMap=true). In TEST MODE, precision targets are not allowed to use A#; they must use pure-pixel B# grounding.' },
+      xRatio: { type: 'number', description: 'Legacy compatibility only. New TEST teaching rejects model-guessed xRatio/yRatio.' },
+      yRatio: { type: 'number', description: 'Legacy compatibility only. New TEST teaching rejects model-guessed xRatio/yRatio.' },
+      pixelCandidateId: { type: 'string', description: 'Legacy browser Pixel Action Map compatibility only. Do not use for new TEST teaching; visible text uses ocrText.' },
+      candidateId: { type: 'string', description: 'Legacy DOM Action Map compatibility only. Do not use for new TEST teaching.' },
       targetHint: { type: 'string', required: true, description: 'Concrete CURRENT business intent, e.g. 评论输入框/发布按钮/点赞按钮/完整视频标题. It labels post-click verification and learned DOM/semantic binding; it does not authorize or relocate the live screenshot coordinate.' },
       expectedVisualText: { type: 'string', description: 'Optional extra exact visible label/title from the attached CURRENT screenshot. Action Map candidate clicks automatically carry candidate-visible text/title/aria evidence; free-XY navigation/card/video clicks still require expectedVisualText so Patrol can verify the raw point and destination.' },
       visualAuthority: { type: 'boolean', description: 'Backward-compatible flag. Live patrol_visual_click_target teaching is coordinate-authoritative regardless of this value; replay may still use learned semantic/selector recovery.' },
