@@ -59,6 +59,17 @@ describe('browser interaction hardening layer', () => {
     expect(source).toContain('narrowed = []')
   })
 
+  it('builds browser B# candidates from screenshot pixels without desktop or DOM geometry', () => {
+    expect(source).toContain('interactionBuildPixelActionMapInWorker')
+    expect(source).toContain("item.candidateId = `B${index + 1}`")
+    expect(source).toContain("coordinateSource = 'pixel-action-map-candidate'")
+    expect(source).toContain('frame.pixelCandidates')
+    expect(source).toContain('selectedPixelCandidate.centerX')
+    expect(source).toContain('selectedPixelCandidate.centerY')
+    expect(source).toContain('pixelActionMap')
+    expect(source).not.toContain('PatrolDesktopVision')
+  })
+
   it('renders a separate magnified Action Map candidate sheet with exact safe-point crosses', () => {
     expect(source).toContain('interactionRenderActionCandidateZoomSheetInWorker')
     expect(source).toContain('PATROL TARGET ZOOM')
