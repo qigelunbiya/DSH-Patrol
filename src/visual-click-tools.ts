@@ -173,12 +173,12 @@ export function registerPatrolVisualClickTool(
         if (!/^browser-visual-[a-z0-9-]+$/i.test(explicitFrameId)) {
           throw new Error('V# Action Map candidate click requires the SAME frameId returned by patrol_browser_visual_action_map')
         }
-        const resolved = await runner.dispatch('browser_resolve_visual_candidate', {
+        const resolved = await runner.dispatch('browser_resolve_visual_candidate', compactObject({
           frameId: explicitFrameId,
           actionMapId: requestedActionMapId,
           candidateId: requestedVisualCandidateId,
           tabId: args.tabId,
-        }, exec)
+        }), exec)
         if (!resolved.ok) throw new Error(resolved.error ?? resolved.text ?? 'browser visual Action Map candidate resolution failed')
         const frameId = objectString(resolved.value, 'frameId')
         const xRatio = objectNumber(resolved.value, 'xRatio')
