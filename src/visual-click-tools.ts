@@ -772,7 +772,7 @@ export function registerPatrolVisualClickTool(
     },
     output: TEXT_OUTPUT,
     async execute(args, exec: ToolRunContext) {
-      return await (tool as any).execute({
+      return await (tool as any).execute(compactObject({
         inspectionId: args.inspectionId,
         stepName: args.stepName,
         ocrText: args.text,
@@ -788,7 +788,7 @@ export function registerPatrolVisualClickTool(
         conditionExpectedText: args.conditionExpectedText,
         conditionMode: args.conditionMode,
         notes: args.notes,
-      }, exec)
+      }), exec)
     },
   })
 
@@ -814,7 +814,7 @@ export function registerPatrolVisualClickTool(
     },
     output: TEXT_OUTPUT,
     async execute(args, exec: ToolRunContext) {
-      return await (tool as any).execute({
+      return await (tool as any).execute(compactObject({
         inspectionId: args.inspectionId,
         stepName: args.stepName,
         frameId: args.frameId,
@@ -831,7 +831,7 @@ export function registerPatrolVisualClickTool(
         conditionExpectedText: args.conditionExpectedText,
         conditionMode: args.conditionMode,
         notes: args.notes,
-      }, exec)
+      }), exec)
     },
   })
 
