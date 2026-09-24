@@ -427,8 +427,8 @@ export function registerPatrolVisualClickTool(
         return 'Visual click reached a verified state but returned incomplete replay geometry, so it was NOT persisted. Capture a fresh visual observation and reteach the target.'
       }
 
-      const effectiveXRatio = objectNumber(clicked.value, 'xRatio') ?? (hasPoint ? pointX : undefined)
-      const effectiveYRatio = objectNumber(clicked.value, 'yRatio') ?? (hasPoint ? pointY : undefined)
+      const effectiveXRatio = objectNumber(clicked.value, 'xRatio') ?? ((hasRatioPoint || boundPreview) ? pointX : undefined)
+      const effectiveYRatio = objectNumber(clicked.value, 'yRatio') ?? ((hasRatioPoint || boundPreview) ? pointY : undefined)
       if (effectiveXRatio === undefined || effectiveYRatio === undefined
         || !Number.isFinite(effectiveXRatio) || !Number.isFinite(effectiveYRatio)) {
         outcomes.recordUnverifiedPhysicalClick(args)
