@@ -133,7 +133,7 @@ export function registerPatrolVisualClickTool(
           createdAt: Date.now(),
           source: 'ocr',
           ocrText: requestedOcrText,
-          ocrMatchedText: objectString(resolved.value, 'matchedText'),
+          ...(objectString(resolved.value, 'matchedText') ? { ocrMatchedText: objectString(resolved.value, 'matchedText')! } : {}),
           ocrRelation: requestedOcrRelation,
         })
         options.visualEvidence?.mark(frameId, args.inspectionId)
