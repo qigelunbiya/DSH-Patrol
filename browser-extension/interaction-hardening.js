@@ -309,7 +309,14 @@ async function interactionScreenshot(args) {
     actionMap,
     actionMapTargeted: args.actionMap === true && actionMapTargetHint.length > 0,
     ...(actionMapTargetHint ? { actionMapTargetHint } : {}),
-    ...(args.actionMap === true ? { actionCandidateCount: actionCandidates.length } : {}),
+    ...(args.actionMap === true ? {
+      actionCandidateCount: actionCandidates.length,
+      actionCandidateSummary: actionCandidates.slice(0, 16).map(candidate => {
+        const label = compact(candidate.text || candidate.ariaLabel || candidate.title || candidate.ownerContext || candidate.actionText || '').slice(0, 96)
+        const owner = compact(candidate.ownerContext || '').slice(0, 96)
+        return [candidate.candidateId, candidate.activationKind, label ? `text=${label}` : '', owner && owner !== label ? `owner=${owner}` : ''].filter(Boolean).join(' | ')
+      }).join('\n'),
+    } : {}),
     ...(actionMapZoomDataUrl ? { actionMapZoom: true, actionMapZoomCount } : {}),
     focusedVisual,
     ...(focusedVisual && focusRegion ? {
@@ -533,7 +540,7 @@ async function interactionCollectVisualActionCandidates(tabId, captureGeometry, 
 
 function interactionMainWorldCollectVisualActionCandidates(capture, targetHint = '') {
   const compact = value => String(value || '').replace(/\s+/g, ' ').trim()
-  const normalize = value => compact(value).replace(/\s+/g, '').toLocaleLowerCase()
+  const normalize = value => compact(value).replace(/[\s._·。．、,:：;；/\\()（）\[\]【】{}<>《》“”‘’'"\-—–]+/g, '').toLocaleLowerCase()
   const capLeft = Number(capture?.left || 0)
   const capTop = Number(capture?.top || 0)
   const capWidth = Number(capture?.width || 0)
@@ -645,11 +652,32 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
     }
     return compact([...new Set(contexts.filter(Boolean))].join(' | ')).slice(0, 900)
   }
+  const microActionOwnerContext = element => {
+    let node = element?.parentElement
+    for (let depth = 0; node instanceof Element && depth < 5; depth += 1) {
+      const rect = node.getBoundingClientRect()
+      const text = compact([
+        node.getAttribute?.('aria-label'),
+        node.getAttribute?.('title'),
+        node.innerText,
+        node.textContent,
+      ].filter(Boolean).join(' '))
+      if (text && text.length <= 180
+        && Number(rect.width) > 0 && Number(rect.height) > 0
+        && Number(rect.width) <= 520 && Number(rect.height) <= 110) {
+        return text
+      }
+      node = node.parentElement
+    }
+    return ''
+  }
   const closeIntent = /(?:关闭|移除|删除|清除|取消|close|remove|delete|clear|dismiss|[×✕✖]|(?:^|[\s:_-])x(?:$|[\s:_-]))/i.test(String(targetHint || ''))
   const closeBusinessCore = normalize(String(targetHint || '')
     .replace(/(?:点击|帮我|请|关闭|移除|删除|清除|取消|筛选|搜索|标签|配置项|右侧|左侧|旁边|里面|其中|图标|按钮|控件|的|close|remove|delete|clear|dismiss|[x×✕✖])/gi, ' '))
   const genericBusinessCore = normalize(String(targetHint || '')
     .replace(/(?:点击|帮我|请|找到|定位|打开|进入|选择|跳转|当前|这个|那个|页面|区域|目录|搜索结果|结果|链接|按钮|图标|控件|标签|配置项|输入框|搜索栏|右侧|左侧|旁边|里面|其中|的|click|open|enter|select|target|current|page|link|button|icon|control)/gi, ' '))
+  const strongTextIntent = /(?:目录|章节|搜索结果|百科|标题|条目|第\s*\d+|["“”'][^"“”']{2,}["“”'])/i.test(String(targetHint || ''))
+    || /\d+\s*[.．。、:：-]\s*[\u3400-\u9fffA-Za-z]/.test(String(targetHint || ''))
 
   const structuredIdentities = [...new Set((String(targetHint || '').match(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g) || []).map(compact).filter(Boolean))]
   const structuredActions = [...new Set((String(targetHint || '').match(/\b(?:RDP|SSH|VNC|SFTP|FTP|HTTP|HTTPS)\b/gi) || []).map(value => String(value).toUpperCase()))]
@@ -812,6 +840,7 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
 
     const rowContext = logicalRowContext(element)
     const localContext = localCandidateContext(element)
+    const ownerContext = microCloseAction ? microActionOwnerContext(element) : ''
     const candidateText = compact(element.innerText || element.textContent || '').slice(0, 120)
     const candidateTitle = compact(element.getAttribute?.('title') || '')
     const candidateAriaLabel = compact(element.getAttribute?.('aria-label') || '')
@@ -835,6 +864,7 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
       ariaLabel: candidateAriaLabel,
       actionText,
       localContext,
+      ownerContext,
       rowContext: rowContext.text,
       rowKey: rowContext.key,
       rowOrdinal: rowContext.ordinal,
@@ -883,13 +913,15 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
     const preciseClose = narrowed.filter(candidate => candidate.microActionKind === 'close')
     if (preciseClose.length > 0) {
       const contextualClose = closeBusinessCore.length >= 2
-        ? preciseClose.filter(candidate => normalize([
-            candidate.localContext,
-            candidate.rowContext,
-            candidate.actionText,
-          ].filter(Boolean).join(' ')).includes(closeBusinessCore))
+        ? preciseClose.filter(candidate => normalize(candidate.ownerContext || '').includes(closeBusinessCore))
         : []
-      narrowed = contextualClose.length > 0 ? contextualClose : preciseClose
+      if (closeBusinessCore.length >= 2) {
+        narrowed = contextualClose.length > 0
+          ? contextualClose
+          : preciseClose.length === 1 ? preciseClose : []
+      } else {
+        narrowed = preciseClose
+      }
     }
   } else if (!structuredTarget && genericBusinessCore.length >= 2) {
     const textualMatches = narrowed.filter(candidate => {
@@ -911,6 +943,7 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
     // Narrow only when CURRENT DOM evidence gives a small, useful candidate
     // set. Otherwise preserve the full visual choice instead of guessing.
     if (textualMatches.length > 0 && textualMatches.length <= 16) narrowed = textualMatches
+    else if (strongTextIntent && textualMatches.length === 0) narrowed = []
   }
   narrowed.sort((a,b) => a.top - b.top || a.left - b.left)
   return narrowed.map((candidate,index) => ({ ...candidate, candidateId: `A${index + 1}` }))
