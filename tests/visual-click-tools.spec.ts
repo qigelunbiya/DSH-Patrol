@@ -22,6 +22,7 @@ async function setup(
   clickOutcomes?: any,
   visualEvidence?: PatrolVisualEvidenceRegistry,
   requirePreview = false,
+  testMode = false,
 ) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-patrol-visual-click-'))
   roots.push(root)
@@ -38,7 +39,7 @@ async function setup(
       },
     },
   } as unknown as Context
-  registerPatrolVisualClickTool(ctx, store, { dispatch } as any, { maxSteps: 20, clickOutcomes, visualEvidence, requirePreview })
+  registerPatrolVisualClickTool(ctx, store, { dispatch } as any, { maxSteps: 20, clickOutcomes, visualEvidence, requirePreview, testMode })
   const tool = definitions.find(item => item.name === 'patrol_visual_click_target')
   if (!tool) throw new Error('patrol_visual_click_target not registered')
   const exec = {
@@ -144,6 +145,128 @@ describe('browser visual fallback click teaching', () => {
     expect(result).toContain('browser_visual_click')
     expect(calls.some(call => call.tool === 'browser_visual_click' && call.args.imageX === 742)).toBe(true)
     expect((await store.load('visual-click')).steps).toHaveLength(1)
+  })
+
+  it('hard-rejects TEST MODE ratio clicks for precision text/navigation targets before any browser dispatch', async () => {
+    const calls: string[] = []
+    const visualEvidence = createPatrolVisualEvidenceRegistry()
+    visualEvidence.mark('browser-visual-precision', 'visual-click')
+    const { tool, exec } = await setup(async (name) => {
+      calls.push(name)
+      throw new Error(`unexpected tool ${name}`)
+    }, undefined, visualEvidence, false, true)
+
+    await expect(tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '点击龙之信条2百度百科搜索结果',
+      targetHint: '龙之信条 2 - 百度百科 搜索结果链接',
+      expectedVisualText: '龙之信条 2 - 百度百科',
+      xRatio: 0.25,
+      yRatio: 0.15,
+    }, exec)).rejects.toThrow(/TEST MODE precision visual click refused before physical input.*requires Browser Pixel Grounding.*pixelCandidateId="B#"/i)
+
+    expect(calls).toEqual([])
+  })
+
+  it('hard-rejects TEST MODE image pixels for tiny close targets before physical input', async () => {
+    const calls: string[] = []
+    const visualEvidence = createPatrolVisualEvidenceRegistry()
+    visualEvidence.mark('browser-visual-close', 'visual-click')
+    const { tool, exec } = await setup(async (name) => {
+      calls.push(name)
+      throw new Error(`unexpected tool ${name}`)
+    }, undefined, visualEvidence, false, true)
+
+    await expect(tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '关闭我的任务筛选',
+      targetHint: '我的任务右侧的×',
+      imageX: 742,
+      imageY: 112,
+      imageWidth: 1024,
+      imageHeight: 576,
+    }, exec)).rejects.toThrow(/TEST MODE precision visual click refused before physical input.*focused.*pixelActionMap=true/i)
+
+    expect(calls).toEqual([])
+  })
+
+  it('hard-rejects legacy A# for TEST MODE precision chapter targets', async () => {
+    const calls: string[] = []
+    const visualEvidence = createPatrolVisualEvidenceRegistry()
+    visualEvidence.mark('browser-visual-chapter', 'visual-click')
+    const { tool, exec } = await setup(async (name) => {
+      calls.push(name)
+      throw new Error(`unexpected tool ${name}`)
+    }, undefined, visualEvidence, false, true)
+
+    await expect(tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '点击7.发售版本',
+      targetHint: '7.发售版本 章节',
+      candidateId: 'A7',
+    }, exec)).rejects.toThrow(/Do not use xRatio\/yRatio, imageX\/imageY, previewId, or legacy A# candidateId/i)
+
+    expect(calls).toEqual([])
+  })
+
+  it('allows large obvious controls to keep direct image-pixel clicking in TEST MODE', async () => {
+    const visualEvidence = createPatrolVisualEvidenceRegistry()
+    visualEvidence.mark('browser-visual-search', 'visual-click')
+    let dispatched = false
+    const { tool, exec } = await setup(async (name, args) => {
+      if (name === 'browser_read_page') return { ok: true, text: '百度', value: { ok: true, url: 'https://www.baidu.com/', title: '百度一下', text: '百度' } }
+      if (name === 'browser_snapshot') return { ok: true, text: 'snapshot', value: { ok: true, url: 'https://www.baidu.com/', title: '百度一下', elements: [] } }
+      if (name === 'browser_visual_click') {
+        dispatched = true
+        expect(args).toMatchObject({
+          frameId: 'browser-visual-search',
+          imageX: 512,
+          imageY: 300,
+          targetHint: '百度搜索框',
+          visualAuthority: true,
+        })
+        return {
+          ok: true,
+          text: 'focused search box',
+          value: {
+            ok: true,
+            xRatio: 0.5, yRatio: 0.5,
+            requestedXRatio: 0.5, requestedYRatio: 0.5,
+            coordinateSource: 'model-raster-pixel',
+            targetFocusedEditable: true,
+            targetStateChanged: true,
+            targetTag: 'input',
+            targetRole: 'textbox',
+            targetText: '',
+            selectorHint: '#kw',
+            selectorReplaySafe: true,
+            selectorQuality: 'strong',
+            bindingActionable: true,
+            bindingSource: 'visual-hit-test-post-click-learning',
+            visualAuthority: true,
+            urlIdentity: 'https://www.baidu.com/',
+            viewportWidth: 1024, viewportHeight: 600,
+            captureClientLeft: 0, captureClientTop: 0, captureWidth: 1024, captureHeight: 600,
+            captureMode: 'cdp-css-visual-viewport',
+            scrollX: 0, scrollY: 0,
+          },
+        }
+      }
+      throw new Error(`unexpected tool ${name}`)
+    }, undefined, visualEvidence, false, true)
+
+    const result = await tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '点击百度搜索框',
+      targetHint: '百度搜索框',
+      imageX: 512,
+      imageY: 300,
+      imageWidth: 1024,
+      imageHeight: 600,
+    }, exec)
+
+    expect(dispatched).toBe(true)
+    expect(result).toContain('browser_visual_click')
   })
 
   it('uses a Browser Pixel Action Map B# candidate without model-provided coordinates', async () => {
