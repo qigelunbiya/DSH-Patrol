@@ -182,7 +182,7 @@ describe('browser visual fallback click teaching', () => {
       expectedVisualText: '龙之信条 2 - 百度百科',
       xRatio: 0.25,
       yRatio: 0.15,
-    }, exec)).rejects.toThrow(/TEST MODE precision visual click refused before physical input.*requires Browser Pixel Grounding.*pixelCandidateId="B#"/i)
+    }, exec)).rejects.toThrow(/TEST MODE live xRatio\/yRatio visual clicking is disabled.*pixelActionMap=true.*pixelCandidateId="B#"/i)
 
     expect(calls).toEqual([])
   })
@@ -1193,7 +1193,7 @@ describe('browser visual fallback click teaching', () => {
     expect(visualToolSource).toContain('Browser Pixel Grounding')
     expect(visualToolSource).toContain('pixelCandidateId=B#')
     expect(visualToolSource).toContain('B# geometry comes only from CURRENT screenshot pixels')
-    expect(visualToolSource).toContain('Large obvious controls such as wide search/input boxes and large buttons may still use direct imageX/imageY')
+    expect(visualToolSource).toContain('large obvious controls such as wide search/input boxes and large buttons use CURRENT-raster imageX/imageY')
     expect(visualToolSource).toContain('DOM A# candidateId are rejected before physical input')
     expect(visualToolSource).toContain('Live xRatio/yRatio guessing is disabled in TEST MODE')
     expect(visualToolSource).toContain('targetRole')
