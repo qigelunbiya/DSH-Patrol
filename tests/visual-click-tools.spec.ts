@@ -147,7 +147,197 @@ describe('browser visual fallback click teaching', () => {
     expect((await store.load('visual-click')).steps).toHaveLength(1)
   })
 
-  it('gives only the B# recovery path when a TEST MODE precision target has no coordinate source yet', async () => {
+  it('uses fresh browser Windows OCR geometry for a visible text button without model coordinates', async () => {
+    const calls: Array<{ tool: string; args: JsonObject }> = []
+    const { store, tool, exec } = await setup(async (name, args) => {
+      calls.push({ tool: name, args })
+      if (name === 'browser_resolve_ocr_visual_target') {
+        expect(args).toMatchObject({
+          text: '百度一下',
+          match: 'exact',
+          relation: 'center',
+          targetHint: '百度一下按钮',
+        })
+        return {
+          ok: true,
+          text: 'resolved OCR target',
+          value: {
+            ok: true,
+            frameId: 'browser-visual-ocr-button',
+            xRatio: 0.71,
+            yRatio: 0.36,
+            imageX: 1136,
+            imageY: 360,
+            imageWidth: 1600,
+            imageHeight: 1000,
+            matchedText: '百度一下',
+            relation: 'center',
+          },
+        }
+      }
+      if (name === 'browser_read_page') {
+        return { ok: true, text: '百度首页', value: { ok: true, url: 'https://www.baidu.com/', title: '百度一下', text: '百度首页' } }
+      }
+      if (name === 'browser_snapshot') {
+        return { ok: true, text: 'snapshot', value: { ok: true, url: 'https://www.baidu.com/', title: '百度一下', elements: [] } }
+      }
+      if (name === 'browser_visual_click') {
+        expect(args).toMatchObject({
+          frameId: 'browser-visual-ocr-button',
+          xRatio: 0.71,
+          yRatio: 0.36,
+          targetHint: '百度一下按钮',
+          expectedVisualText: '百度一下',
+          visualAuthority: true,
+          pointerAction: 'left-click',
+        })
+        expect(args).not.toHaveProperty('imageX')
+        expect(args).not.toHaveProperty('pixelCandidateId')
+        expect(args).not.toHaveProperty('candidateId')
+        return {
+          ok: true,
+          text: 'clicked OCR button',
+          value: {
+            ok: true,
+            xRatio: 0.71,
+            yRatio: 0.36,
+            requestedXRatio: 0.71,
+            requestedYRatio: 0.36,
+            coordinateSource: 'normalized-ratio',
+            targetTag: 'input',
+            targetRole: 'button',
+            targetText: '百度一下',
+            targetStateChanged: true,
+            selectorHint: 'top-frame::#su',
+            selectorReplaySafe: true,
+            selectorQuality: 'strong',
+            bindingActionable: true,
+            bindingSource: 'visual-hit-test-post-click-learning',
+            visualAuthority: true,
+            urlIdentity: 'https://www.baidu.com/',
+            viewportWidth: 1600,
+            viewportHeight: 1000,
+            captureClientLeft: 0,
+            captureClientTop: 0,
+            captureWidth: 1600,
+            captureHeight: 1000,
+            captureMode: 'cdp-css-visual-viewport',
+            scrollX: 0,
+            scrollY: 0,
+          },
+        }
+      }
+      throw new Error(`unexpected tool ${name}`)
+    }, undefined, createPatrolVisualEvidenceRegistry(), false, true)
+
+    const result = await tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '点击百度一下',
+      targetHint: '百度一下按钮',
+      ocrText: '百度一下',
+      ocrMatch: 'exact',
+    }, exec)
+
+    expect(result).toContain('Browser Windows OCR resolved "百度一下"')
+    expect(result).toContain('no model coordinate guess')
+    expect(calls[0]?.tool).toBe('browser_resolve_ocr_visual_target')
+    expect((await store.load('visual-click')).steps).toHaveLength(1)
+  })
+
+  it('uses OCR owner text plus close-right safety resolution for an adjacent x without B#/A#/manual pixels', async () => {
+    const calls: Array<{ tool: string; args: JsonObject }> = []
+    const { store, tool, exec } = await setup(async (name, args) => {
+      calls.push({ tool: name, args })
+      if (name === 'browser_resolve_ocr_visual_target') {
+        expect(args).toMatchObject({
+          text: '我的任务',
+          relation: 'close-right',
+          targetHint: '关闭我的任务筛选',
+        })
+        return {
+          ok: true,
+          text: 'resolved close to right of OCR anchor',
+          value: {
+            ok: true,
+            frameId: 'browser-visual-ocr-close',
+            xRatio: 0.63,
+            yRatio: 0.12,
+            imageX: 1008,
+            imageY: 120,
+            imageWidth: 1600,
+            imageHeight: 1000,
+            matchedText: '我的任务',
+            relation: 'close-right',
+          },
+        }
+      }
+      if (name === 'browser_read_page') {
+        return { ok: true, text: '我的任务 开放任务', value: { ok: true, url: 'http://example.test/tasks', title: '任务', text: '我的任务 开放任务' } }
+      }
+      if (name === 'browser_snapshot') {
+        return { ok: true, text: 'snapshot', value: { ok: true, url: 'http://example.test/tasks', title: '任务', elements: [] } }
+      }
+      if (name === 'browser_visual_click') {
+        expect(args).toMatchObject({
+          frameId: 'browser-visual-ocr-close',
+          xRatio: 0.63,
+          yRatio: 0.12,
+          targetHint: '关闭我的任务筛选',
+          visualAuthority: true,
+          pointerAction: 'left-click',
+        })
+        expect(args).not.toHaveProperty('expectedVisualText')
+        expect(args).not.toHaveProperty('pixelCandidateId')
+        expect(args).not.toHaveProperty('candidateId')
+        return {
+          ok: true,
+          text: 'clicked close',
+          value: {
+            ok: true,
+            xRatio: 0.63,
+            yRatio: 0.12,
+            requestedXRatio: 0.63,
+            requestedYRatio: 0.12,
+            coordinateSource: 'normalized-ratio',
+            targetTag: 'span',
+            targetText: '×',
+            targetStateChanged: true,
+            selectorHint: 'top-frame::.filter-chip .remove',
+            selectorReplaySafe: true,
+            selectorQuality: 'medium',
+            bindingActionable: true,
+            bindingSource: 'visual-hit-test-post-click-learning',
+            visualAuthority: true,
+            urlIdentity: 'http://example.test/tasks',
+            viewportWidth: 1600,
+            viewportHeight: 1000,
+            captureClientLeft: 0,
+            captureClientTop: 0,
+            captureWidth: 1600,
+            captureHeight: 1000,
+            captureMode: 'cdp-css-visual-viewport',
+            scrollX: 0,
+            scrollY: 0,
+          },
+        }
+      }
+      throw new Error(`unexpected tool ${name}`)
+    }, undefined, createPatrolVisualEvidenceRegistry(), false, true)
+
+    const result = await tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '关闭我的任务筛选',
+      targetHint: '关闭我的任务筛选',
+      ocrText: '我的任务',
+      ocrRelation: 'close-right',
+    }, exec)
+
+    expect(result).toContain('relation=close-right')
+    expect(result).toContain('no model coordinate guess')
+    expect((await store.load('visual-click')).steps).toHaveLength(1)
+  })
+
+  it('gives only the OCR recovery path when a TEST MODE precision target has no coordinate source yet', async () => {
     const calls: string[] = []
     const visualEvidence = createPatrolVisualEvidenceRegistry()
     visualEvidence.mark('browser-visual-nosource', 'visual-click')
@@ -161,7 +351,7 @@ describe('browser visual fallback click teaching', () => {
       stepName: '点击龙之信条2百度百科搜索结果',
       targetHint: '龙之信条 2 - 百度百科 搜索结果链接',
       expectedVisualText: '龙之信条 2 - 百度百科',
-    }, exec)).rejects.toThrow(/requires Browser Pixel Grounding.*Do not use xRatio\/yRatio, imageX\/imageY, previewId, or legacy A# candidateId.*pixelActionMap=true.*pixelCandidateId="B#"/i)
+    }, exec)).rejects.toThrow(/requires screenshot OCR grounding.*ocrText=.*close-right.*Do not use B#\/A# Action Maps or read_image/i)
 
     expect(calls).toEqual([])
   })
@@ -182,7 +372,7 @@ describe('browser visual fallback click teaching', () => {
       expectedVisualText: '龙之信条 2 - 百度百科',
       xRatio: 0.25,
       yRatio: 0.15,
-    }, exec)).rejects.toThrow(/TEST MODE live xRatio\/yRatio visual clicking is disabled.*pixelActionMap=true.*pixelCandidateId="B#"/i)
+    }, exec)).rejects.toThrow(/TEST MODE live xRatio\/yRatio visual clicking is disabled.*visible text use ocrText.*close-right/i)
 
     expect(calls).toEqual([])
   })
@@ -204,7 +394,7 @@ describe('browser visual fallback click teaching', () => {
       imageY: 112,
       imageWidth: 1024,
       imageHeight: 576,
-    }, exec)).rejects.toThrow(/TEST MODE precision visual click refused before physical input.*focused.*pixelActionMap=true/i)
+    }, exec)).rejects.toThrow(/direct imageX\/imageY is reserved for large unlabeled.*Visible text targets must use ocrText.*close-right/i)
 
     expect(calls).toEqual([])
   })
@@ -223,7 +413,7 @@ describe('browser visual fallback click teaching', () => {
       stepName: '点击7.发售版本',
       targetHint: '7.发售版本 章节',
       candidateId: 'A7',
-    }, exec)).rejects.toThrow(/Do not use xRatio\/yRatio, imageX\/imageY, previewId, or legacy A# candidateId/i)
+    }, exec)).rejects.toThrow(/legacy browser A#\/B#\/preview visual grounding is disabled.*Visible text must use ocrText/i)
 
     expect(calls).toEqual([])
   })
@@ -308,77 +498,23 @@ describe('browser visual fallback click teaching', () => {
     expect(result).toContain('browser_visual_click')
   })
 
-  it('uses a Browser Pixel Action Map B# candidate without model-provided coordinates', async () => {
+  it('rejects legacy B# candidates in TEST MODE and directs new teaching to OCR geometry', async () => {
+    const calls: string[] = []
     const visualEvidence = createPatrolVisualEvidenceRegistry()
     visualEvidence.mark('browser-visual-bmap', 'visual-click')
-    const calls: Array<{ tool: string; args: JsonObject }> = []
-    const { store, tool, exec } = await setup(async (name, args) => {
-      calls.push({ tool: name, args })
-      if (name === 'browser_read_page') {
-        return { ok: true, text: '我的任务 开放任务', value: { ok: true, url: 'http://example.test/tasks', title: '任务', text: '我的任务 开放任务' } }
-      }
-      if (name === 'browser_snapshot') {
-        return { ok: true, text: 'snapshot', value: { ok: true, url: 'http://example.test/tasks', title: '任务', elements: [] } }
-      }
-      if (name === 'browser_visual_click') {
-        expect(args).toMatchObject({
-          frameId: 'browser-visual-bmap',
-          pixelCandidateId: 'B3',
-          targetHint: '我的任务右侧的×',
-          visualAuthority: true,
-          pointerAction: 'left-click',
-        })
-        expect(args).not.toHaveProperty('imageX')
-        expect(args).not.toHaveProperty('candidateId')
-        return {
-          ok: true,
-          text: 'clicked B3',
-          value: {
-            ok: true,
-            pixelCandidateId: 'B3',
-            pixelCandidateBBox: '700,70,18,18',
-            pixelCandidateCenterX: 709,
-            pixelCandidateCenterY: 79,
-            xRatio: 0.692,
-            yRatio: 0.137,
-            requestedXRatio: 0.692,
-            requestedYRatio: 0.137,
-            coordinateSource: 'pixel-action-map-candidate',
-            targetTag: 'span',
-            targetText: '×',
-            targetStateChanged: true,
-            selectorHint: 'top-frame::.filter-chip .remove',
-            selectorReplaySafe: true,
-            selectorQuality: 'medium',
-            bindingActionable: true,
-            bindingSource: 'visual-hit-test-post-click-learning',
-            visualAuthority: true,
-            urlIdentity: 'http://example.test/tasks',
-            viewportWidth: 1280,
-            viewportHeight: 720,
-            captureClientLeft: 0,
-            captureClientTop: 0,
-            captureWidth: 1280,
-            captureHeight: 720,
-            captureMode: 'cdp-focused-region',
-            scrollX: 0,
-            scrollY: 0,
-          },
-        }
-      }
+    const { tool, exec } = await setup(async (name) => {
+      calls.push(name)
       throw new Error(`unexpected tool ${name}`)
     }, undefined, visualEvidence, false, true)
 
-    const result = await tool.execute({
+    await expect(tool.execute({
       inspectionId: 'visual-click',
       stepName: '关闭我的任务筛选',
       targetHint: '我的任务右侧的×',
       pixelCandidateId: 'B3',
-    }, exec)
+    }, exec)).rejects.toThrow(/legacy browser A#\/B#\/preview visual grounding is disabled.*ocrText.*close-right/i)
 
-    expect(result).toContain('browser_visual_click')
-    expect(calls.some(call => call.tool === 'browser_visual_click' && call.args.pixelCandidateId === 'B3')).toBe(true)
-    expect((await store.load('visual-click')).steps).toHaveLength(1)
+    expect(calls).toEqual([])
   })
 
   it('auto-binds candidate clicks to the latest model-visible frame when frameId is omitted', async () => {
@@ -664,8 +800,8 @@ describe('browser visual fallback click teaching', () => {
       candidateId: 'A4',
     }, exec)
 
-    expect(result).toContain('candidate A4')
-    expect(result).toContain('model selected the labeled box')
+    expect(result).toContain('Legacy visual action-map candidate A4')
+    expect(result).toContain('Legacy A# action-map grounding was used')
     const saved = await store.load('visual-click')
     expect(saved.steps).toHaveLength(1)
     expect((saved.steps[0] as any).arguments).toMatchObject({
@@ -1065,7 +1201,7 @@ describe('browser visual fallback click teaching', () => {
       frameId: 'browser-visual-current',
       xRatio: 0.3,
       yRatio: 0.35,
-    }, exec)).rejects.toThrow(/require[s]? expectedVisualText.*CURRENT model-visible screenshot/i)
+    }, exec)).rejects.toThrow(/visual navigation requires visible target text.*ocrText.*CURRENT screenshot OCR geometry/i)
     expect(calls).toEqual([])
   })
 
@@ -1184,18 +1320,19 @@ describe('browser visual fallback click teaching', () => {
 
   it('does not require the redundant mark-preview round trip before TEST MODE visual clicks', () => {
     expect(visualToolSource).toContain('pointerAction')
-    expect(visualToolSource).toContain('Optional diagnostic token returned by pointerAction=mark')
+    expect(visualToolSource).toContain('Legacy diagnostic token; do not use for new TEST teaching')
     expect(visualToolSource).not.toContain('preview-bound for accuracy in TEST MODE')
     expect(visualToolSource).not.toContain('A naked visual left-click is never dispatched in TEST MODE')
   })
 
-  it('makes focused Browser Pixel Action Map B# the primary small-target strategy', () => {
-    expect(visualToolSource).toContain('Browser Pixel Grounding')
-    expect(visualToolSource).toContain('pixelCandidateId=B#')
-    expect(visualToolSource).toContain('B# geometry comes only from CURRENT screenshot pixels')
-    expect(visualToolSource).toContain('large obvious controls such as wide search/input boxes and large buttons use CURRENT-raster imageX/imageY')
-    expect(visualToolSource).toContain('Precision targets also reject legacy DOM A# candidateId and previewId before physical input')
-    expect(visualToolSource).toContain('Live xRatio/yRatio guessing is disabled in TEST MODE')
+  it('makes Windows OCR bbox geometry the primary TEST path for visible browser text', () => {
+    expect(visualToolSource).toContain('visible TEXT targets use CURRENT screenshot Windows OCR geometry')
+    expect(visualToolSource).toContain('ocrText')
+    expect(visualToolSource).toContain('ocrRelation=close-right')
+    expect(visualToolSource).toContain('Do not use B#/A# Action Maps')
+    expect(visualToolSource).toContain('Legacy browser Pixel Action Map compatibility only')
+    expect(visualToolSource).toContain('Legacy DOM Action Map compatibility only')
+    expect(visualToolSource).toContain('TEST MODE legacy browser A#/B#/preview visual grounding is disabled')
     expect(visualToolSource).toContain('targetRole')
     expect(visualToolSource).toContain('targetTag')
     expect(visualToolSource).toContain('trusted Chrome debugger mouse input')

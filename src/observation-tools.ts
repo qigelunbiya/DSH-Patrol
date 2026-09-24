@@ -83,18 +83,18 @@ export function registerPatrolObservationTools(
 ): () => void {
   const observe = defineTool({
     name: 'patrol_observe',
-    description: 'Read-only CURRENT-page observation for browser vision. Primary grounding is now Browser Pixel Grounding: first inspect a raw CURRENT screenshot; for small/text/dense targets request a focused crop and pure-image pixelActionMap so Patrol labels visual components B1/B2/... using only screenshot pixels. The model chooses WHICH B#; browser code clicks that B# bbox center through the frame geometry. DOM Action Map A# is compatibility-only and explicit actionMap=true. Large obvious controls may still use direct imageX/imageY. There is no fixed screenshot-count limit; older model-visible images are offloaded before new attachments. Does not record a Runbook step.',
+    description: 'Read-only CURRENT-page observation for browser vision. New TEST visual teaching is OCR-first: visible text targets should go directly to patrol_visual_click_target(ocrText=...) so Patrol captures a fresh screenshot internally and clicks Windows-OCR bbox geometry without read_image/focused B#/A#. Use includeImage=true mainly for large unlabeled controls or genuinely visual context, then imageX/imageY on that exact raster. pixelActionMap/actionMap remain legacy compatibility diagnostics only. Does not record a Runbook step.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       tabId: { type: 'integer' },
-      includeImage: { type: 'boolean', description: 'Attach the CURRENT screenshot image to model context. Default false; use only when OCR/DOM evidence is insufficient.' },
-      pixelActionMap: { type: 'boolean', description: 'Pure screenshot-pixel B1/B2/... overlay. Recommended for small controls, text links, menu items and close icons after narrowing with focusXRatio/focusYRatio. If a focused crop is requested and actionMap is not enabled, pixelActionMap defaults to true unless explicitly false. B# candidates are computed from image edges/components only, independent of DOM.' },
-      actionMap: { type: 'boolean', description: 'Legacy DOM/semantic A1/A2/... compatibility overlay. EXPLICIT opt-in only; actionMap=true requires targetHint and disables the pure-pixel B# map for that observation.' },
-      targetHint: { type: 'string', description: 'Concrete CURRENT business target, e.g. “百度搜索栏”, “龙之信条2 百度百科结果”, “7.发售版本” or “我的任务右侧的×”. It is context only; it does not choose DOM geometry. For small targets first use the raw screenshot to estimate a coarse focus center, then request a focused pixelActionMap and choose B#.' },
+      includeImage: { type: 'boolean', description: 'Attach the CURRENT screenshot image to model context. For visible text clicks, normally skip this and call patrol_visual_click_target(ocrText=...) directly; use includeImage=true for large unlabeled controls or genuinely visual layout inspection.' },
+      pixelActionMap: { type: 'boolean', description: 'LEGACY compatibility diagnostic only. Do not use B# for new TEST teaching; visible text uses patrol_visual_click_target(ocrText=...), adjacent close/remove uses ocrRelation=close-right.' },
+      actionMap: { type: 'boolean', description: 'LEGACY DOM A# compatibility diagnostic only. Do not use for new TEST visual teaching.' },
+      targetHint: { type: 'string', description: 'Concrete CURRENT business target. It is context only. Visible text targets should be executed via patrol_visual_click_target(ocrText=<visible text>) rather than focused B#/A#.' },
       focusXRatio: { type: 'number', description: 'Optional coarse X center (0..1) for a focused visual crop. Use after a full-frame visual estimate when the target is small or a calibration mark missed.' },
       focusYRatio: { type: 'number', description: 'Optional coarse Y center (0..1) for a focused visual crop. Requires includeImage=true and focusXRatio.' },
-      focusWidthRatio: { type: 'number', description: 'Focused crop width as a fraction of the CURRENT visual viewport. For Browser Pixel Grounding prefer 0.34..0.48 so a coarse model estimate does not crop the target out; runtime also expands pixelActionMap crops to a safe minimum. Clamped to 0.12..0.72.' },
-      focusHeightRatio: { type: 'number', description: 'Focused crop height as a fraction of the CURRENT visual viewport. For Browser Pixel Grounding prefer 0.30..0.42; runtime expands pixelActionMap crops to a safe minimum. Clamped to 0.12..0.72.' },
+      focusWidthRatio: { type: 'number', description: 'Legacy/manual focused crop width. New TEST text clicking should use OCR geometry instead of focused crops.' },
+      focusHeightRatio: { type: 'number', description: 'Legacy/manual focused crop height. New TEST text clicking should use OCR geometry instead of focused crops.' },
     },
     output: {
       schema: {
@@ -176,24 +176,24 @@ export function registerPatrolObservationTools(
           ...(value.visualFrameId ? [`Visual click frame READY: ${value.visualFrameId}; viewport=${value.viewportWidth ?? '?'}x${value.viewportHeight ?? '?'}; capture=${value.captureWidth ?? value.viewportWidth ?? '?'}x${value.captureHeight ?? value.viewportHeight ?? '?'} at (${value.captureClientLeft ?? 0}, ${value.captureClientTop ?? 0}); scroll=(${value.scrollX ?? '?'}, ${value.scrollY ?? '?'})`] : []),
           `Evidence: ${hasImage ? 'MODEL-VISIBLE image attached + compact OCR/DOM' : 'compact OCR/DOM only'}`,
           ...(hasImage && value.pixelActionMap === true ? [
-            `BROWSER PIXEL ACTION MAP READY: ${value.pixelCandidateCount ?? 0} pure-image candidate(s) are outlined B1/B2/... on this exact CURRENT raster. These B# boxes come only from screenshot pixels, not DOM/Accessibility. Visually choose the B# whose red box/crosshair lies INSIDE the intended target, then call patrol_visual_click_target(pixelCandidateId="B#", visualAuthority=true). Do not convert B# to xRatio/imageX manually.`,
+            `LEGACY BROWSER PIXEL ACTION MAP: ${value.pixelCandidateCount ?? 0} B# candidate(s) are present. New TEST teaching must not use B#; visible text uses patrol_visual_click_target(ocrText=...), and adjacent x/× uses ocrRelation="close-right". Use this map only for historical compatibility diagnostics.`,
             ...(value.pixelCandidateSummary ? [`CURRENT B# pixel geometry (for diagnostics only; choose by image):\n${value.pixelCandidateSummary}`] : []),
           ] : []),
           ...(hasImage && value.coordinateGuide === true ? [
             value.focusedVisual === true
-              ? `FOCUSED RAW VISUAL FRAME: this attached crop is exactly ${value.modelRasterWidth ?? value.image?.width ?? '?'}x${value.modelRasterHeight ?? value.image?.height ?? '?'} model pixels and covers only the indicated CURRENT-page region. Identify the target center on THIS crop and call patrol_visual_click_target(imageX=<pixel>, imageY=<pixel>, imageWidth=${value.modelRasterWidth ?? value.image?.width ?? '?'}, imageHeight=${value.modelRasterHeight ?? value.image?.height ?? '?'}). Patrol maps crop pixels -> capture geometry -> viewport exactly once. The XY/1000 overlay is only a visual aid; do not manually convert to CSS coordinates.`
-              : `RAW VISUAL CLICK FRAME: the attached CURRENT raster is exactly ${value.modelRasterWidth ?? value.image?.width ?? '?'}x${value.modelRasterHeight ?? value.image?.height ?? '?'} model pixels. For patrol_visual_click_target, prefer the target center as imageX/imageY on this exact raster and copy imageWidth/imageHeight for frame validation. Patrol owns the only raster->viewport conversion. Do not infer coordinates from OS screen size, CSS viewport size, devicePixelRatio, or chat preview size. The XY/1000 overlay is only a coarse visual aid.`,
+              ? `LEGACY/MANUAL FOCUSED FRAME: this crop is ${value.modelRasterWidth ?? value.image?.width ?? '?'}x${value.modelRasterHeight ?? value.image?.height ?? '?'} model pixels. New TEST teaching should not use focused crops for visible text: call patrol_visual_click_target(ocrText=<visible text>) instead. imageX/imageY is only for a genuinely unlabeled visual control.`
+              : `RAW VISUAL FRAME: this CURRENT raster is ${value.modelRasterWidth ?? value.image?.width ?? '?'}x${value.modelRasterHeight ?? value.image?.height ?? '?'} model pixels. If the target has visible text, do NOT estimate coordinates from this image; use patrol_visual_click_target(ocrText=<visible text>) so Windows OCR owns the bbox geometry. Use imageX/imageY only for a large unlabeled control. Never convert to xRatio/yRatio.`,
           ] : []),
           ...(hasImage && value.actionMapStrictTargetMiss === true ? [
-            `STRICT TARGET MISS for ${JSON.stringify(value.actionMapTargetHint || args.targetHint || '')}: no safe CURRENT Action Map candidate matched the explicit text/close target. Do NOT guess a nearby A# or free XY. Refresh/re-focus the CURRENT page and request the same concrete target again.`,
+            `LEGACY A# TARGET MISS for ${JSON.stringify(value.actionMapTargetHint || args.targetHint || '')}. Do not recover by guessing A#/XY in new TEST teaching; use screenshot OCR geometry (ocrText) when visible text exists.`,
           ] : []),
           ...(hasImage && value.actionMap === true ? [
             value.actionMapTargeted === true
-              ? `EXPLICIT TARGETED ACTION MAP READY for ${JSON.stringify(value.actionMapTargetHint || args.targetHint || '')}: ${value.actionCandidateCount ?? 0} matching CURRENT control(s) are outlined with A1/A2/... labels. This is the optional compatibility path; for raw visual clicking prefer a fresh actionMap=false observation and imageX/imageY.`
-              : `EXPLICIT ACTION MAP READY: ${value.actionCandidateCount ?? 0} CURRENT interactive control(s) are outlined with A1/A2/... labels. Use candidateId only when you deliberately requested this compatibility mode.`,
+              ? `LEGACY TARGETED A# MAP for ${JSON.stringify(value.actionMapTargetHint || args.targetHint || '')}: ${value.actionCandidateCount ?? 0} candidate(s). New TEST teaching should use ocrText for visible text instead.`
+              : `LEGACY A# MAP: ${value.actionCandidateCount ?? 0} CURRENT interactive control(s). This is compatibility-only; do not use candidateId for new TEST teaching.`,
             ...(value.actionCandidateSummary ? [`CURRENT A# bindings from browser geometry:\n${value.actionCandidateSummary}`] : []),
             ...(hasActionMapZoom ? [
-              `ACTION MAP TARGET ZOOM attached as a SECOND image: ${value.actionMapZoomCount ?? value.actionCandidateCount ?? 0} candidate crop(s) are magnified in A# cards. Use the zoom image to decide WHICH A# is the intended control; the green crosshair in each card is the exact browser safe point. NEVER derive xRatio/yRatio from the zoom sheet because its pixels are not page coordinates.`,
+              `LEGACY A# zoom image attached (${value.actionMapZoomCount ?? value.actionCandidateCount ?? 0} candidates). Do not use it for new TEST teaching.`,
             ] : []),
           ] : []),
           ...(args.includeImage === true && !hasImage ? ['VISUAL CLICK DISABLED: includeImage=true did not produce a model-visible image; do not guess screenshot coordinates.'] : []),
@@ -234,8 +234,9 @@ export function registerPatrolObservationTools(
         || args.focusWidthRatio !== undefined || args.focusHeightRatio !== undefined
       const requestedActionMapTargetHint = typeof args.targetHint === 'string' ? args.targetHint.trim() : ''
       const actionMapRequested = args.actionMap === true
-      const pixelActionMapRequested = args.pixelActionMap === true
-        || (focusRequested && args.pixelActionMap !== false && !actionMapRequested)
+      // A focused crop must never silently turn into the old B# workflow.
+      // Legacy B# is available only when explicitly requested.
+      const pixelActionMapRequested = args.pixelActionMap === true && !actionMapRequested
       if (args.actionMap === true && args.includeImage !== true) {
         throw new Error('visual action-map observation requires includeImage=true')
       }

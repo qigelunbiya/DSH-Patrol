@@ -53,24 +53,32 @@ export function registerPatrolVisualClickTool(
     xRatio: number
     yRatio: number
     createdAt: number
+    source?: 'manual' | 'ocr'
+    ocrText?: string
+    ocrMatchedText?: string
+    ocrRelation?: 'center' | 'close-right'
   }>()
   let visualPreviewSequence = 0
   const tool = defineTool({
     name: 'patrol_visual_click_target',
-    description: 'Primary browser visual click. TEST MODE has two live grounding paths: large obvious controls such as wide search/input boxes and large buttons use CURRENT-raster imageX/imageY; precision targets such as text links/results, chapters/menu/tab items, close x/× and small icons use focused Browser Pixel Grounding and pixelCandidateId=B#. Live xRatio/yRatio guessing is disabled in TEST MODE. Precision targets also reject legacy DOM A# candidateId and previewId before physical input. B# geometry comes only from CURRENT screenshot pixels and Patrol clicks its bbox center through the bound frame mapping. Live visual clicks require trusted Chrome debugger mouse input and never silently substitute element.click() or synthetic MouseEvents. Never use for image-code/CAPTCHA.',
+    description: 'Primary browser visual click. Browser TEST teaching now mirrors the proven Desktop strategy: visible TEXT targets use CURRENT screenshot Windows OCR geometry (ocrText) and Patrol clicks the OCR bounding-box center; an adjacent close/remove icon uses ocrRelation=close-right, anchored on OCR text with a no-input safety probe before trusted mouse input. Large unlabeled controls may use CURRENT-raster imageX/imageY. Do not use B#/A# Action Maps, read_image screenshot paths, or model-guessed xRatio/yRatio for new TEST teaching. Live visual clicks require trusted Chrome debugger mouse input. Never use for image-code/CAPTCHA.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
       frameId: { type: 'string', description: 'Optional explicit browser visualFrameId. Normally omit it: Patrol automatically uses the latest model-visible patrol_observe(includeImage=true) frame for this inspection. Screenshot file names/paths are never valid frame IDs.' },
-      previewId: { type: 'string', description: 'Optional diagnostic token returned by pointerAction=mark. Normal visual clicks do not require it.' },
-      imageX: { type: 'number', description: 'CURRENT screenshot pixel X for large obvious controls only. In TEST MODE, precision targets such as text links/results, menu/chapter/tab items, close x/× and small icons reject direct imageX/imageY and require pixelCandidateId=B# from a focused Browser Pixel Action Map.' },
-      imageY: { type: 'number', description: 'CURRENT screenshot pixel Y for large obvious controls only. In TEST MODE, precision targets reject direct imageX/imageY and require pixelCandidateId=B#.' },
+      previewId: { type: 'string', description: 'Legacy diagnostic token; do not use for new TEST teaching.' },
+      ocrText: { type: 'string', description: 'Preferred for any visible browser text target. Patrol captures a fresh CURRENT screenshot, runs Windows OCR with bounding boxes, resolves this text, and clicks the OCR geometry. Examples: 百度一下, 龙之信条 2 - 百度百科, 7.发售版本, 我的任务.' },
+      ocrMatch: { type: 'string', enum: ['exact', 'contains'], description: 'OCR text match mode. Prefer exact; contains is for harmless punctuation or extra-text variation.' },
+      ocrIndex: { type: 'integer', description: 'Optional zero-based occurrence only when CURRENT OCR reports multiple visible matches and the intended occurrence is known.' },
+      ocrRelation: { type: 'string', enum: ['center', 'close-right'], description: 'center clicks the OCR text bbox center. close-right anchors on ocrText and locates a verified close/remove control immediately to its right without a physical probe click; use for 我的任务右侧×.' },
+      imageX: { type: 'number', description: 'CURRENT screenshot pixel X only for a large UNLABELED control such as an empty search/input box. If the control has visible text, prefer ocrText.' },
+      imageY: { type: 'number', description: 'CURRENT screenshot pixel Y only for a large UNLABELED control. Visible text targets should use ocrText.' },
       imageWidth: { type: 'number', description: 'Optional validation copy of modelRasterWidth from CURRENT patrol_observe. If supplied and it does not match the bound frame, Patrol refuses the click.' },
       imageHeight: { type: 'number', description: 'Optional validation copy of modelRasterHeight from CURRENT patrol_observe. If supplied and it does not match the bound frame, Patrol refuses the click.' },
-      xRatio: { type: 'number', description: 'Legacy normalized screenshot X fallback for compatibility/replay diagnostics. TEST MODE live left-click teaching rejects xRatio/yRatio entirely; use imageX/imageY for large controls or pixelCandidateId=B# for precision targets.' },
-      yRatio: { type: 'number', description: 'Legacy normalized screenshot Y fallback for compatibility/replay diagnostics. TEST MODE live left-click teaching rejects xRatio/yRatio entirely.' },
-      pixelCandidateId: { type: 'string', description: 'Preferred B1/B2/... label from a CURRENT Browser Pixel Action Map. B# is computed from screenshot pixels only; Patrol clicks the program-computed bbox center. Use this for focused small/text/dense targets instead of estimating raw coordinates.' },
-      candidateId: { type: 'string', description: 'Legacy A1/A2/... label from explicit patrol_observe(..., actionMap=true). In TEST MODE, precision targets are not allowed to use A#; they must use pure-pixel B# grounding.' },
+      xRatio: { type: 'number', description: 'Legacy compatibility only. New TEST teaching rejects model-guessed xRatio/yRatio.' },
+      yRatio: { type: 'number', description: 'Legacy compatibility only. New TEST teaching rejects model-guessed xRatio/yRatio.' },
+      pixelCandidateId: { type: 'string', description: 'Legacy browser Pixel Action Map compatibility only. Do not use for new TEST teaching; visible text uses ocrText.' },
+      candidateId: { type: 'string', description: 'Legacy DOM Action Map compatibility only. Do not use for new TEST teaching.' },
       targetHint: { type: 'string', required: true, description: 'Concrete CURRENT business intent, e.g. 评论输入框/发布按钮/点赞按钮/完整视频标题. It labels post-click verification and learned DOM/semantic binding; it does not authorize or relocate the live screenshot coordinate.' },
       expectedVisualText: { type: 'string', description: 'Optional extra exact visible label/title from the attached CURRENT screenshot. Action Map candidate clicks automatically carry candidate-visible text/title/aria evidence; free-XY navigation/card/video clicks still require expectedVisualText so Patrol can verify the raw point and destination.' },
       visualAuthority: { type: 'boolean', description: 'Backward-compatible flag. Live patrol_visual_click_target teaching is coordinate-authoritative regardless of this value; replay may still use learned semantic/selector recovery.' },
@@ -90,7 +98,47 @@ export function registerPatrolVisualClickTool(
     },
     output: TEXT_OUTPUT,
     async execute(args, exec: ToolRunContext) {
-      const requestedPreviewId = typeof args.previewId === 'string' ? args.previewId.trim() : ''
+      const requestedOcrText = typeof args.ocrText === 'string' ? args.ocrText.trim() : ''
+      const requestedOcrRelation = args.ocrRelation === 'close-right' ? 'close-right' : 'center'
+      let ocrPreviewId = ''
+      if (requestedOcrText) {
+        assertSafePersistentText(requestedOcrText, 'ocrText')
+        if (args.previewId || args.imageX !== undefined || args.imageY !== undefined || args.xRatio !== undefined || args.yRatio !== undefined || args.pixelCandidateId || args.candidateId) {
+          throw new Error('ocrText is a complete browser visual grounding source; do not combine it with previewId, imageX/imageY, xRatio/yRatio, B#, or A#')
+        }
+        const resolved = await runner.dispatch('browser_resolve_ocr_visual_target', compactObject({
+          text: requestedOcrText,
+          match: args.ocrMatch === 'contains' || (args.ocrMatch === undefined && requestedOcrRelation === 'close-right') ? 'contains' : 'exact',
+          index: Number.isInteger(args.ocrIndex) ? args.ocrIndex : undefined,
+          relation: requestedOcrRelation,
+          targetHint: args.targetHint,
+          tabId: args.tabId,
+        }), exec)
+        if (!resolved.ok) throw new Error(resolved.error ?? resolved.text ?? 'browser OCR visual target resolution failed')
+        const frameId = objectString(resolved.value, 'frameId')
+        const xRatio = objectNumber(resolved.value, 'xRatio')
+        const yRatio = objectNumber(resolved.value, 'yRatio')
+        if (!frameId || xRatio === undefined || yRatio === undefined) {
+          throw new Error('browser OCR visual target resolver returned incomplete frame geometry')
+        }
+        visualPreviewSequence += 1
+        ocrPreviewId = `browser-ocr-${Date.now().toString(36)}-${visualPreviewSequence.toString(36)}`
+        visualPreviews.set(ocrPreviewId, {
+          previewId: ocrPreviewId,
+          inspectionId: args.inspectionId,
+          targetHint: String(args.targetHint ?? '').trim(),
+          frameId,
+          xRatio,
+          yRatio,
+          createdAt: Date.now(),
+          source: 'ocr',
+          ocrText: requestedOcrText,
+          ...(objectString(resolved.value, 'matchedText') ? { ocrMatchedText: objectString(resolved.value, 'matchedText')! } : {}),
+          ocrRelation: requestedOcrRelation,
+        })
+        options.visualEvidence?.mark(frameId, args.inspectionId)
+      }
+      const requestedPreviewId = ocrPreviewId || (typeof args.previewId === 'string' ? args.previewId.trim() : '')
       const boundPreview = requestedPreviewId ? visualPreviews.get(requestedPreviewId) : undefined
       if (requestedPreviewId && !boundPreview) {
         throw new Error(`browser visual preview ${JSON.stringify(requestedPreviewId)} is unavailable or stale; mark the CURRENT target again before clicking`)
@@ -119,24 +167,31 @@ export function registerPatrolVisualClickTool(
       const hasRatioPoint = Number.isFinite(pointX) && Number.isFinite(pointY)
         && pointX >= 0 && pointX <= 1 && pointY >= 0 && pointY <= 1
       const requestedPointerAction = args.pointerAction ?? 'left-click'
+      const ocrOwnedPoint = boundPreview?.source === 'ocr'
       const liveTestClick = options.testMode === true && requestedPointerAction === 'left-click'
       const largeVisualControl = testModeLargeVisualControl(args.stepName, args.targetHint)
-      const precisionPixelGroundingRequired = liveTestClick
-        && testModePrecisionTargetRequiresPixelGrounding(args.stepName, args.targetHint)
+      const precisionOcrGroundingRequired = liveTestClick
+        && testModePrecisionTargetRequiresOcrGeometry(args.stepName, args.targetHint)
       if ([hasPixelCandidate, hasCandidate, hasImagePoint, hasRatioPoint || Boolean(boundPreview)].filter(Boolean).length > 1) {
         throw new Error('visual click requires exactly one coordinate source: pixelCandidateId=B#, imageX/imageY, candidateId=A#, xRatio/yRatio, or previewId')
       }
-      if (liveTestClick && hasRatioPoint) {
+      if (liveTestClick && !ocrOwnedPoint && (hasPixelCandidate || hasCandidate || Boolean(boundPreview))) {
+        throw new Error('TEST MODE legacy browser A#/B#/preview visual grounding is disabled for new teaching. Visible text must use ocrText; adjacent close/remove uses ocrRelation="close-right"; only a large unlabeled control may use CURRENT-raster imageX/imageY.')
+      }
+      if (liveTestClick && hasRatioPoint && !ocrOwnedPoint) {
         throw new Error([
           'TEST MODE live xRatio/yRatio visual clicking is disabled before physical input because normalized guessing caused repeated browser misclicks.',
           largeVisualControl
             ? 'For this large control, use imageX/imageY from the exact CURRENT model-visible raster returned by patrol_observe(includeImage=true).'
-            : 'Use a focused patrol_observe(..., pixelActionMap=true) and click pixelCandidateId="B#" for a precision target.',
+            : 'For visible text use ocrText=<CURRENT visible text>. For a close/remove icon next to visible text use ocrRelation="close-right".',
           'Do not manually convert screenshot pixels to normalized ratios.',
         ].join(' '))
       }
+      if (liveTestClick && hasImagePoint && !largeVisualControl && !ocrOwnedPoint) {
+        throw new Error('TEST MODE direct imageX/imageY is reserved for large unlabeled input/search controls. Visible text targets must use ocrText; adjacent close/remove icons use ocrRelation="close-right". Do not recover with B#/A#/focused crops.')
+      }
       if (!hasPixelCandidate && !hasCandidate && !hasImagePoint && !hasRatioPoint && !boundPreview) {
-        if (precisionPixelGroundingRequired) throw new Error(testModePixelGroundingInstruction(args.targetHint))
+        if (precisionOcrGroundingRequired) throw new Error('TEST MODE precision target requires screenshot OCR grounding: use ocrText=<CURRENT visible target text>. For a close/remove icon adjacent to visible text, use ocrRelation="close-right". Do not use B#/A# Action Maps or read_image screenshot paths.')
         if (liveTestClick && largeVisualControl) {
           throw new Error([
             'TEST MODE large-control visual click requires imageX/imageY from the exact CURRENT model-visible screenshot raster.',
@@ -146,7 +201,7 @@ export function registerPatrolVisualClickTool(
         if (liveTestClick) {
           throw new Error([
             'TEST MODE visual click has no live grounding source yet.',
-            'Use imageX/imageY only for a clearly large control; otherwise use a focused patrol_observe(..., pixelActionMap=true) and pixelCandidateId="B#".',
+            'Use imageX/imageY only for a clearly large UNLABELED control; visible text targets use ocrText and adjacent close/remove uses ocrRelation="close-right".',
             'xRatio/yRatio is not accepted for live TEST clicking.',
           ].join(' '))
         }
@@ -168,12 +223,16 @@ export function registerPatrolVisualClickTool(
       if (args.expectedVisualText !== undefined) assertSafePersistentText(args.expectedVisualText, 'expectedVisualText')
       const pointerAction = requestedPointerAction
       const diagnosticPointerAction = pointerAction !== 'left-click'
-      if (precisionPixelGroundingRequired && !hasPixelCandidate) {
-        throw new Error(testModePixelGroundingInstruction(args.targetHint))
+      if (precisionOcrGroundingRequired && !ocrOwnedPoint) {
+        throw new Error('TEST MODE precision target requires browser screenshot OCR geometry. Use ocrText=<visible target text>; for a close/remove icon immediately beside that text use ocrRelation="close-right". Legacy B#/A# Action Maps are not accepted for new precision teaching.')
       }
+      const ocrExpectedVisualText = ocrOwnedPoint && boundPreview?.ocrRelation === 'center'
+        ? boundPreview.ocrMatchedText || boundPreview.ocrText
+        : undefined
       if (!diagnosticPointerAction && !hasCandidate && navigationLikeBusinessAction(args.stepName, args.targetHint)
-        && (typeof args.expectedVisualText !== 'string' || args.expectedVisualText.trim().length < 4)) {
-        throw new Error('direct screenshot-coordinate navigation/card clicks require expectedVisualText copied from the CURRENT model-visible screenshot so Patrol can verify the destination')
+        && (typeof args.expectedVisualText !== 'string' || args.expectedVisualText.trim().length < 4)
+        && !ocrExpectedVisualText) {
+        throw new Error('visual navigation requires visible target text. Prefer ocrText so Patrol can use CURRENT screenshot OCR geometry and verify the destination.')
       }
       if (args.expectedText !== undefined) assertSafePersistentText(args.expectedText, 'expectedText')
       if (args.conditionExpectedText !== undefined) assertSafePersistentText(args.conditionExpectedText, 'conditionExpectedText')
@@ -201,7 +260,7 @@ export function registerPatrolVisualClickTool(
           xRatio: hasRatioPoint || boundPreview ? pointX : undefined,
           yRatio: hasRatioPoint || boundPreview ? pointY : undefined,
           targetHint: args.targetHint,
-          expectedVisualText: args.expectedVisualText,
+          expectedVisualText: args.expectedVisualText ?? ocrExpectedVisualText,
           visualAuthority: true,
           pointerAction,
           tabId: args.tabId,
@@ -280,6 +339,7 @@ export function registerPatrolVisualClickTool(
       const navigationAction = navigationLikeBusinessAction(args.stepName, args.targetHint)
       const isVisualNavigation = navigationAction && (hasCandidate
         || hasPixelCandidate
+        || Boolean(ocrExpectedVisualText)
         || (typeof args.expectedVisualText === 'string' && args.expectedVisualText.trim().length >= 4))
       const tabBaseline = isVisualNavigation
         ? await captureBrowserTabBaseline(runner, exec)
@@ -303,7 +363,7 @@ export function registerPatrolVisualClickTool(
         xRatio: hasRatioPoint || boundPreview ? pointX : undefined,
         yRatio: hasRatioPoint || boundPreview ? pointY : undefined,
         targetHint: args.targetHint,
-        expectedVisualText: args.expectedVisualText,
+        expectedVisualText: args.expectedVisualText ?? ocrExpectedVisualText,
         visualAuthority,
         pointerAction: 'left-click',
         tabId: args.tabId,
@@ -313,8 +373,10 @@ export function registerPatrolVisualClickTool(
           'Visual click failed before Patrol could confirm a physical click, so this attempt does NOT consume the visual physical-click budget. The same frameId may be retried if CURRENT URL/scroll/zoom/viewport are still unchanged.',
           clicked.error ?? clicked.text ?? 'Unknown browser visual click error',
           'Reuse this frameId freely while the CURRENT page geometry still matches it; capture a new patrol_observe(includeImage=true) only after navigation, scroll, zoom, viewport/layout changes, or when a new screenshot is actually useful.',
-          boundPreview
-            ? 'The click reused the exact visually marked point; capture a fresh CURRENT frame and mark a different point instead of nudging this preview token.'
+          ocrOwnedPoint
+            ? 'The click used fresh CURRENT screenshot OCR geometry. Re-run the same ocrText against a fresh CURRENT screenshot; do not switch to B#/A#, read_image paths, or coordinate nudging.'
+            : boundPreview
+              ? 'The click reused the exact visually marked point; capture a fresh CURRENT frame and mark a different point instead of nudging this preview token.'
             : hasPixelCandidate
               ? 'If this B# was wrong, capture a fresh focused Browser Pixel Action Map and choose a different B# whose red bbox/crosshair lies inside the intended target. Do not nudge viewport coordinates manually.'
             : hasCandidate
@@ -337,6 +399,7 @@ export function registerPatrolVisualClickTool(
 
       const explicitExpectedVisualText = typeof args.expectedVisualText === 'string' ? args.expectedVisualText.trim() : ''
       const effectiveExpectedVisualText = explicitExpectedVisualText
+        || ocrExpectedVisualText
         || (hasCandidate ? objectString(clicked.value, 'actionCandidateExpectedText') : undefined)
         || (hasCandidate ? objectString(clicked.value, 'targetText') : undefined)
         || (hasCandidate ? objectString(clicked.value, 'targetAriaLabel') : undefined)
@@ -528,13 +591,13 @@ export function registerPatrolVisualClickTool(
         expectedTitle: objectString(clicked.value, 'targetTitle'),
         expectedAriaLabel: objectString(clicked.value, 'targetAriaLabel'),
         targetHint: args.targetHint.trim(),
-        expectedVisualText: args.expectedVisualText?.trim(),
+        expectedVisualText: effectiveExpectedVisualText?.trim(),
         targetTextHint: objectString(clicked.value, 'targetText'),
         targetIdHint: objectString(clicked.value, 'targetId'),
         targetClassHint: objectString(clicked.value, 'targetClassName'),
       })
       const condition = optionalCondition(args.conditionSourceStepId, args.conditionExpectedText, args.conditionMode)
-      const targetNote = `视觉目标：${args.targetHint.trim()}${hasPixelCandidate ? `；像素视觉编号：${pixelCandidateId}` : hasCandidate ? `；视觉编号：${candidateId}` : ''}`
+      const targetNote = `视觉目标：${args.targetHint.trim()}${ocrOwnedPoint ? `；OCR视觉锚点：${boundPreview?.ocrMatchedText || boundPreview?.ocrText || ''}${boundPreview?.ocrRelation === 'close-right' ? '（右侧关闭）' : ''}` : hasPixelCandidate ? `；旧像素视觉编号：${pixelCandidateId}` : hasCandidate ? `；旧视觉编号：${candidateId}` : ''}`
       const providedNotes = [targetNote, args.notes?.trim()].filter(Boolean).join('\n')
       const step: ToolStep = {
         id: nextStepId(definition.steps),
@@ -564,17 +627,21 @@ export function registerPatrolVisualClickTool(
 
       return [
         `Executed and recorded ${step.id} (browser_visual_click) after CURRENT model-visible visual-state verification.`,
-        hasPixelCandidate
-          ? `Browser Pixel Action Map candidate ${pixelCandidateId} resolved from CURRENT screenshot pixels to xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; the B# bbox center was saved for replay and no model-provided free coordinate was used.`
-          : hasCandidate
-            ? `Visual action-map candidate ${candidateId} resolved by CURRENT browser geometry to xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; this exact center was saved for replay. The model selected the labeled box, not a free pixel coordinate.`
-            : `Visual point saved for replay: xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; model-requested=(${pointX.toFixed(4)}, ${pointY.toFixed(4)}); capture=${captureWidth ?? viewportWidth}x${captureHeight ?? viewportHeight} CSS px at (${captureClientLeft ?? 0}, ${captureClientTop ?? 0}).`,
+        ocrOwnedPoint
+          ? `Browser Windows OCR resolved ${JSON.stringify(boundPreview?.ocrMatchedText || boundPreview?.ocrText || '')} with relation=${boundPreview?.ocrRelation || 'center'} to xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; no model coordinate guess, B#, A#, or screenshot file read was used.`
+          : hasPixelCandidate
+            ? `Legacy Browser Pixel Action Map candidate ${pixelCandidateId} resolved to xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}.`
+            : hasCandidate
+              ? `Legacy visual action-map candidate ${candidateId} resolved to xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}.`
+              : `Visual point saved for replay: xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; model-requested=(${pointX.toFixed(4)}, ${pointY.toFixed(4)}); capture=${captureWidth ?? viewportWidth}x${captureHeight ?? viewportHeight} CSS px at (${captureClientLeft ?? 0}, ${captureClientTop ?? 0}).`,
         objectBoolean(clicked.value, 'visualAuthority') === true
-          ? (hasPixelCandidate
-              ? 'Visual grounding used the model-selected pure-pixel B# bbox center; DOM/Accessibility did not choose or relocate the live target before physical input.'
-              : hasCandidate
-                ? 'Visual grounding used the model-selected legacy action-map label; DOM/CDP contributed only the CURRENT interactive rectangle geometry and did not choose the business target.'
-                : 'TEST visual-grounding used the exact model-selected screenshot point; DOM/Shadow-DOM did not relocate it before physical input.')
+          ? (ocrOwnedPoint
+              ? 'Visual grounding used fresh screenshot OCR geometry. For close-right, DOM was consulted only by a no-input local safety probe around the OCR anchor before the trusted click; it did not search the page for a different business target.'
+              : hasPixelCandidate
+                ? 'Legacy B# visual grounding was used.'
+                : hasCandidate
+                  ? 'Legacy A# action-map grounding was used.'
+                  : 'TEST visual-grounding used the exact model-selected screenshot point; DOM/Shadow-DOM did not relocate it before physical input.')
           : objectBoolean(clicked.value, 'visualSnapped') === true
             ? `Replay coordinate was corrected against CURRENT learned evidence by ${objectNumber(clicked.value, 'snapDistance')?.toFixed(1) ?? '?'} CSS px.`
             : 'Replay used the recorded visual geometry without correction.',
@@ -637,25 +704,15 @@ async function verifyAutomaticStateChange(runner: PatrolRunner, exec: ToolRunCon
   }
   return { ok: false, attempts: AUTO_VERIFY_DELAYS_MS.length }
 }
-function testModePixelGroundingInstruction(targetHint: string | undefined): string {
-  const target = typeof targetHint === 'string' && targetHint.trim() ? targetHint.trim() : '<same target>'
-  return [
-    `TEST MODE precision visual click refused before physical input for ${JSON.stringify(target)}: this target requires Browser Pixel Grounding (B#).`,
-    'Do not use xRatio/yRatio, imageX/imageY, previewId, or legacy A# candidateId for this target.',
-    'Recovery: call a focused patrol_observe(includeImage=true, targetHint=<same target>, focusXRatio=<coarse center>, focusYRatio=<coarse center>, focusWidthRatio=0.18..0.32, focusHeightRatio=0.18..0.30, pixelActionMap=true, actionMap=false),',
-    'then visually choose the B# whose bbox/crosshair is inside the target and call patrol_visual_click_target(pixelCandidateId="B#", targetHint=<same target>, visualAuthority=true).',
-  ].join(' ')
-}
-
 function testModeLargeVisualControl(stepName: string | undefined, targetHint: string | undefined): boolean {
   const text = normalizePageText([stepName, targetHint].filter(Boolean).join(' '))
   if (!text) return false
   const explicitTinyOverride = /(?:[x×✕✖]|关闭|移除|删除|清除|三点|省略号|齿轮|小图标|图标)/i.test(text)
   if (explicitTinyOverride) return false
-  return /(?:搜索结果页)?(?:搜索框|搜索栏)|输入框|编辑框|文本框|地址栏|大输入区|大按钮|百度一下|登录按钮|确定按钮|确认按钮|提交按钮|发布按钮|发送按钮/i.test(text)
+  return /(?:搜索结果页)?(?:搜索框|搜索栏)|输入框|编辑框|文本框|地址栏|大输入区|空白输入区|无文字大控件/i.test(text)
 }
 
-function testModePrecisionTargetRequiresPixelGrounding(stepName: string | undefined, targetHint: string | undefined): boolean {
+function testModePrecisionTargetRequiresOcrGeometry(stepName: string | undefined, targetHint: string | undefined): boolean {
   const raw = [stepName, targetHint].filter(Boolean).join(' ')
   const text = normalizePageText(raw)
   if (!text) return false
