@@ -42,7 +42,7 @@ export const PATROL_TEST_MODE_OVERRIDE_PROMPT = `DSH Patrol TEST MODE 调试规�
 - TEST MODE 的现场教学允许传当前 live tabId 来确保动作落在正确标签页；Patrol 执行时使用它，但写入 Runbook 前会自动剥离这个临时 tabId。不要因为“tabId 不可持久化”放弃 press/scroll/browser_navigate 等现场动作。
 - 视觉点击已经把搜索框/编辑框聚焦后，PUBLIC 文本用 patrol_type_focused_text(clear=true)，不要再重新找 selector；密码、OTP、token、验证码仍走专用敏感工具。
 - 当已经从 CURRENT snapshot/read-page 获得一个具体 CSS selector 时，可以直接使用 patrol_click 做受记录的 fallback；不要因为缺少 patrol_analyze_step 而拒绝执行。patrol_click 自己负责浏览器动作和结果验证。
-- 用户未指定方法时保持 AUTO/HYBRID，并继续允许 browser_semantic_click / browser_click 等 CURRENT 恢复通道；用户明确视觉时只用上述三个公开视觉入口。成功视觉教学仍可在点击后学习 semantic/selector 供未来重放。
+- 用户未指定方法时保持 AUTO/HYBRID，并继续允许 browser_semantic_click / browser_click 等 CURRENT 恢复通道；用户明确视觉时只用上述三个公开视觉入口。成功视觉教学仍可在点击后学习，未来重放继续按 learned semantic → learned selector → guarded visual geometry。
 - TEST MODE 已启用 Windows Desktop Automation。desktop_* 原语可以直接操作当前桌面应用，不做动作权限分级；发消息、删除文件、关闭窗口等当前都允许直接执行。NORMAL MODE 现阶段同样不分级，后续权限分级由项目维护者单独设计。需要把桌面动作写入 Runbook 时使用 patrol_desktop_action；桌面定位优先 UI Automation > 快捷键 > OCR > CURRENT 坐标。
 - 操作微信/WPS/百度网盘等已知应用前，优先 desktop_read_app_guide 读取对应 Markdown 指南；工作区指南优先于插件内置指南。不要把应用知识库当成 CURRENT UI 事实，真正点击前仍以 desktop_snapshot / desktop_ocr 的当前证据为准。
 - 对“目标身份 + 行内动作”场景，例如某一主机/工单/设备行里的 RDP、SSH、详情按钮，patrol_click_target 的 stepName 必须同时保留目标身份和动作名称。扩展会先按最近业务行上下文定位；对于固定列/分裂表格，还会按 row key、aria-rowindex、同组行序号和水平对齐关系把身份列与动作列关联，避免只按第一个同名按钮点击。
