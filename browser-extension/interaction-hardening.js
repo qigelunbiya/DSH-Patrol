@@ -666,7 +666,9 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
         node.innerText,
         node.textContent,
       ].filter(Boolean).join(' '))
-      if (text && text.length <= 180
+      const ownerCore = normalize(text)
+      const closeOnly = /^(?:x|×|✕|✖|close|remove|delete|clear|dismiss|关闭|移除|删除|清除|取消)$/.test(ownerCore)
+      if (text && !closeOnly && ownerCore.length >= 2 && text.length <= 180
         && Number(rect.width) > 0 && Number(rect.height) > 0
         && Number(rect.width) <= 520 && Number(rect.height) <= 110) {
         return text
