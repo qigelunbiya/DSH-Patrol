@@ -98,7 +98,47 @@ export function registerPatrolVisualClickTool(
     },
     output: TEXT_OUTPUT,
     async execute(args, exec: ToolRunContext) {
-      const requestedPreviewId = typeof args.previewId === 'string' ? args.previewId.trim() : ''
+      const requestedOcrText = typeof args.ocrText === 'string' ? args.ocrText.trim() : ''
+      const requestedOcrRelation = args.ocrRelation === 'close-right' ? 'close-right' : 'center'
+      let ocrPreviewId = ''
+      if (requestedOcrText) {
+        assertSafePersistentText(requestedOcrText, 'ocrText')
+        if (args.previewId || args.imageX !== undefined || args.imageY !== undefined || args.xRatio !== undefined || args.yRatio !== undefined || args.pixelCandidateId || args.candidateId) {
+          throw new Error('ocrText is a complete browser visual grounding source; do not combine it with previewId, imageX/imageY, xRatio/yRatio, B#, or A#')
+        }
+        const resolved = await runner.dispatch('browser_resolve_ocr_visual_target', compactObject({
+          text: requestedOcrText,
+          match: args.ocrMatch === 'contains' ? 'contains' : 'exact',
+          index: Number.isInteger(args.ocrIndex) ? args.ocrIndex : undefined,
+          relation: requestedOcrRelation,
+          targetHint: args.targetHint,
+          tabId: args.tabId,
+        }), exec)
+        if (!resolved.ok) throw new Error(resolved.error ?? resolved.text ?? 'browser OCR visual target resolution failed')
+        const frameId = objectString(resolved.value, 'frameId')
+        const xRatio = objectNumber(resolved.value, 'xRatio')
+        const yRatio = objectNumber(resolved.value, 'yRatio')
+        if (!frameId || xRatio === undefined || yRatio === undefined) {
+          throw new Error('browser OCR visual target resolver returned incomplete frame geometry')
+        }
+        visualPreviewSequence += 1
+        ocrPreviewId = `browser-ocr-${Date.now().toString(36)}-${visualPreviewSequence.toString(36)}`
+        visualPreviews.set(ocrPreviewId, {
+          previewId: ocrPreviewId,
+          inspectionId: args.inspectionId,
+          targetHint: String(args.targetHint ?? '').trim(),
+          frameId,
+          xRatio,
+          yRatio,
+          createdAt: Date.now(),
+          source: 'ocr',
+          ocrText: requestedOcrText,
+          ocrMatchedText: objectString(resolved.value, 'matchedText'),
+          ocrRelation: requestedOcrRelation,
+        })
+        options.visualEvidence?.mark(frameId, args.inspectionId)
+      }
+      const requestedPreviewId = ocrPreviewId || (typeof args.previewId === 'string' ? args.previewId.trim() : '')
       const boundPreview = requestedPreviewId ? visualPreviews.get(requestedPreviewId) : undefined
       if (requestedPreviewId && !boundPreview) {
         throw new Error(`browser visual preview ${JSON.stringify(requestedPreviewId)} is unavailable or stale; mark the CURRENT target again before clicking`)
