@@ -3,7 +3,7 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { classifyAuthChallenge } from './challenge-tool.js'
 import { captchaModeAllowsImageCodeScreenshotOcr, currentCaptchaMode } from './captcha-mode.js'
-import { recognizeScreenshotText } from './screenshot-ocr.js'
+import { findScreenshotOcrTextMatches, recognizeScreenshotText } from './screenshot-ocr.js'
 
 const reqStr = { type: 'string', required: true }
 const reqInt = { type: 'integer', required: true }
@@ -16,6 +16,22 @@ const optStr = { type: 'string' }
 const optInt = { type: 'integer' }
 const optNum = { type: 'number' }
 const optBool = { type: 'boolean' }
+
+const OCR_LINE = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    text: reqStr,
+    confidence: optNum,
+    language: str,
+    x: reqNum,
+    y: reqNum,
+    width: reqNum,
+    height: reqNum,
+    centerX: reqNum,
+    centerY: reqNum,
+  },
+}
 
 const TAB = {
   type: 'object',
@@ -215,6 +231,149 @@ export function registerTools(ctx, bridge, config = {}) {
       },
     }),
     defineTool({
+      name: 'browser_resolve_ocr_visual_target',
+      description: 'Internal Patrol browser-vision primitive. Captures a fresh CURRENT browser screenshot, runs Windows system OCR with line bounding boxes, and resolves either the exact text center or a verified close/remove control immediately to the right of an OCR text anchor. It never clicks.',
+      parameters: {
+        text: reqStr,
+        match: { type: 'string', enum: ['exact', 'contains'] },
+        index: optInt,
+        relation: { type: 'string', enum: ['center', 'close-right'] },
+        targetHint: reqStr,
+        tabId: optInt,
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: reqBool,
+            frameId: reqStr,
+            imageX: reqNum,
+            imageY: reqNum,
+            imageWidth: reqNum,
+            imageHeight: reqNum,
+            xRatio: reqNum,
+            yRatio: reqNum,
+            relation: reqStr,
+            query: reqStr,
+            matchedText: reqStr,
+            matchCount: reqInt,
+            ocrStatus: reqStr,
+            ocrLine: OCR_LINE,
+          },
+        },
+        render: (_args, value) => [{ type: 'text', text: `OCR visual target resolved ${JSON.stringify(value.matchedText)} at image pixel (${Math.round(value.imageX)}, ${Math.round(value.imageY)}) via ${value.relation}; no click was sent.` }],
+      },
+      presentCall: args => generic('Resolve OCR visual target', { text: args.text, match: args.match, relation: args.relation }),
+      execute: async (args, exec) => {
+        const shot = requireOk(await run(bridge, exec, 'screenshot', {
+          tabId: args.tabId,
+          format: 'jpeg',
+          maxWidth: 1600,
+          quality: 90,
+          coordinateGuide: false,
+          actionMap: false,
+          pixelActionMap: false,
+        }, timeoutMs), 'OCR visual screenshot')
+        const frameId = typeof shot.visualFrameId === 'string' ? shot.visualFrameId : ''
+        const imageWidth = Number(shot.modelRasterWidth)
+        const imageHeight = Number(shot.modelRasterHeight)
+        if (!frameId || !Number.isFinite(imageWidth) || !Number.isFinite(imageHeight) || imageWidth <= 0 || imageHeight <= 0) {
+          throw new Error('OCR visual screenshot did not return a frame-bound raster')
+        }
+
+        const ocr = await inspectScreenshotOcr(bridge, exec, args.tabId, shot.ocrDataUrl ?? shot.dataUrl, timeoutMs)
+        if (ocr.status !== 'recognized' || !Array.isArray(ocr.lines) || ocr.lines.length === 0) {
+          throw new Error(`browser OCR visual target cannot run because CURRENT screenshot OCR status=${ocr.status}`)
+        }
+        const matches = findScreenshotOcrTextMatches(ocr.lines, args.text, args.match === 'contains' ? 'contains' : 'exact', false)
+        if (matches.length === 0) {
+          const sample = ocr.lines.slice(0, 24).map(line => line.text).filter(Boolean).join(' | ')
+          throw new Error(`CURRENT screenshot OCR did not find ${JSON.stringify(args.text)}; visible OCR sample=${JSON.stringify(sample.slice(0, 900))}`)
+        }
+        let matchIndex = args.index
+        if (matchIndex === undefined) {
+          if (matches.length !== 1) {
+            const sample = matches.slice(0, 10).map((line, index) => `#${index} ${JSON.stringify(line.text)} @ (${line.centerX.toFixed(3)},${line.centerY.toFixed(3)})`).join(' | ')
+            throw new Error(`CURRENT screenshot OCR target is ambiguous (${matches.length} matches): ${sample}. Supply index only after visually/OCR-distinguishing the intended occurrence.`)
+          }
+          matchIndex = 0
+        }
+        if (!Number.isInteger(matchIndex) || matchIndex < 0 || matchIndex >= matches.length) {
+          throw new Error(`OCR visual target index ${args.index} is out of range; matches=${matches.length}`)
+        }
+        const line = matches[matchIndex]
+        const relation = args.relation === 'close-right' ? 'close-right' : 'center'
+        let imageX = line.centerX * imageWidth
+        let imageY = line.centerY * imageHeight
+
+        if (relation === 'close-right') {
+          const right = (line.x + line.width) * imageWidth
+          const centerY = line.centerY * imageHeight
+          const lineHeight = Math.max(10, line.height * imageHeight)
+          const offsets = [...new Set([
+            Math.max(4, lineHeight * 0.28),
+            Math.max(7, lineHeight * 0.48),
+            Math.max(10, lineHeight * 0.72),
+            Math.max(14, lineHeight * 1.0),
+            Math.max(20, lineHeight * 1.4),
+            Math.max(28, lineHeight * 1.9),
+          ].map(value => Math.round(value)))]
+          const yOffsets = [0, -0.18, 0.18]
+          let resolved
+          const failures = []
+          for (const offset of offsets) {
+            for (const yFactor of yOffsets) {
+              const candidateX = Math.min(imageWidth - 2, right + offset)
+              const candidateY = Math.max(1, Math.min(imageHeight - 2, centerY + lineHeight * yFactor))
+              try {
+                const probe = requireOk(await run(bridge, exec, 'visualClick', {
+                  frameId,
+                  imageX: candidateX,
+                  imageY: candidateY,
+                  imageWidth,
+                  imageHeight,
+                  targetHint: args.targetHint,
+                  visualAuthority: true,
+                  pointerAction: 'probe',
+                  tabId: args.tabId,
+                }, timeoutMs), 'OCR anchored close probe')
+                if (probe?.targetTag || probe?.targetText || probe?.targetAriaLabel || probe?.targetClassName) {
+                  resolved = { imageX: candidateX, imageY: candidateY }
+                  break
+                }
+              } catch (error) {
+                failures.push(String(error?.message ?? error))
+              }
+            }
+            if (resolved) break
+          }
+          if (!resolved) {
+            throw new Error(`OCR found anchor ${JSON.stringify(line.text)} but no verified close/remove control was found immediately to its right before physical input. ${failures.slice(-2).join(' | ')}`)
+          }
+          imageX = resolved.imageX
+          imageY = resolved.imageY
+        }
+
+        return {
+          ok: true,
+          frameId,
+          imageX,
+          imageY,
+          imageWidth,
+          imageHeight,
+          xRatio: imageX / imageWidth,
+          yRatio: imageY / imageHeight,
+          relation,
+          query: args.text,
+          matchedText: line.text,
+          matchCount: matches.length,
+          ocrStatus: ocr.status,
+          ocrLine: line,
+        }
+      },
+    }),
+    defineTool({
       name: 'browser_visual_click',
       description: 'Internal Patrol primitive for vision-first browser teaching. Live teaching clicks the exact fresh screenshot point; successful hits learn semantic/DOM identity for replay. Replay tries learned semantic identity, then selector, then guarded URL/scroll/viewport geometry.',
       parameters: {
@@ -226,7 +385,7 @@ export function registerTools(ctx, bridge, config = {}) {
         targetHint: optStr, expectedVisualText: optStr, targetTextHint: optStr, targetIdHint: optStr, targetClassHint: optStr,
         learnedLocatorText: optStr, learnedLocatorRole: optStr, learnedLocatorTag: optStr,
         learnedSelectorQuality: optStr, learnedBindingSource: optStr, teachingControlMode: optStr, visualAuthority: optBool,
-        pointerAction: { type: 'string', enum: ['left-click', 'right-click', 'hover', 'mark'] }, tabId: optInt,
+        pointerAction: { type: 'string', enum: ['left-click', 'right-click', 'hover', 'mark', 'probe'] }, tabId: optInt,
       },
       output: {
         schema: {
@@ -438,6 +597,8 @@ export function registerTools(ctx, bridge, config = {}) {
               enum: ['recognized', 'empty', 'unsupported-platform', 'verification-suppressed', 'classification-unavailable', 'unavailable'],
             },
             ocrText: str,
+            ocrLineCount: optInt,
+            ocrLines: { type: 'array', items: OCR_LINE },
             verificationKind: str,
             verificationSubtype: str,
             verificationOcrAllowed: bool,
@@ -511,6 +672,8 @@ export function registerTools(ctx, bridge, config = {}) {
           bytes: value.bytes ?? 0,
           ocrStatus: ocr.status,
           ocrText: ocr.text,
+          ocrLineCount: Array.isArray(ocr.lines) ? ocr.lines.length : 0,
+          ocrLines: Array.isArray(ocr.lines) ? ocr.lines : undefined,
           verificationKind: ocr.verificationKind,
           verificationSubtype: ocr.verificationSubtype,
           verificationOcrAllowed: ocr.verificationOcrAllowed,
@@ -605,6 +768,8 @@ async function inspectScreenshotOcr(bridge, exec, tabId, dataUrl, timeoutMs) {
     return {
       status: result.status,
       ...(result.text ? { text: result.text } : {}),
+      ...(Array.isArray(result.lines) ? { lines: result.lines } : {}),
+      ...(Array.isArray(result.languagesTried) ? { languagesTried: result.languagesTried } : {}),
       ...(imageCodeOcrAllowed ? {
         verificationKind: classified.kind,
         verificationSubtype: classified.subtype,
