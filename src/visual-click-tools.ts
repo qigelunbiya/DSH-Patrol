@@ -118,10 +118,15 @@ export function registerPatrolVisualClickTool(
       const pointY = boundPreview ? boundPreview.yRatio : (typeof args.yRatio === 'number' ? args.yRatio : Number.NaN)
       const hasRatioPoint = Number.isFinite(pointX) && Number.isFinite(pointY)
         && pointX >= 0 && pointX <= 1 && pointY >= 0 && pointY <= 1
+      const requestedPointerAction = args.pointerAction ?? 'left-click'
+      const precisionPixelGroundingRequired = options.testMode === true
+        && requestedPointerAction === 'left-click'
+        && testModePrecisionTargetRequiresPixelGrounding(args.stepName, args.targetHint)
       if ([hasPixelCandidate, hasCandidate, hasImagePoint, hasRatioPoint || Boolean(boundPreview)].filter(Boolean).length > 1) {
         throw new Error('visual click requires exactly one coordinate source: pixelCandidateId=B# (preferred for focused small/text targets), imageX/imageY, candidateId=A#, xRatio/yRatio, or previewId')
       }
       if (!hasPixelCandidate && !hasCandidate && !hasImagePoint && !hasRatioPoint && !boundPreview) {
+        if (precisionPixelGroundingRequired) throw new Error(testModePixelGroundingInstruction(args.targetHint))
         throw new Error('visual click requires pixelCandidateId=B# from a CURRENT Browser Pixel Action Map, imageX/imageY, candidateId=A#, previewId, or legacy xRatio/yRatio')
       }
       const explicitFrameId = String(args.frameId ?? '').trim()
@@ -138,18 +143,10 @@ export function registerPatrolVisualClickTool(
       }
       assertSafePersistentText(args.targetHint, 'targetHint')
       if (args.expectedVisualText !== undefined) assertSafePersistentText(args.expectedVisualText, 'expectedVisualText')
-      const pointerAction = args.pointerAction ?? 'left-click'
+      const pointerAction = requestedPointerAction
       const diagnosticPointerAction = pointerAction !== 'left-click'
-      const requiresPixelGrounding = options.testMode === true
-        && !diagnosticPointerAction
-        && testModePrecisionTargetRequiresPixelGrounding(args.stepName, args.targetHint)
-      if (requiresPixelGrounding && !hasPixelCandidate) {
-        throw new Error([
-          'TEST MODE precision visual click refused before physical input: this target requires Browser Pixel Grounding (B#).',
-          'Do not use xRatio/yRatio, imageX/imageY, previewId, or legacy A# candidateId for this target.',
-          'Recovery: call patrol_observe(includeImage=true, targetHint=<same target>, focusXRatio=<coarse center>, focusYRatio=<coarse center>, focusWidthRatio=0.18..0.32, focusHeightRatio=0.18..0.30, pixelActionMap=true, actionMap=false),',
-          'then visually choose the B# whose bbox/crosshair is inside the target and call patrol_visual_click_target(pixelCandidateId="B#", targetHint=<same target>, visualAuthority=true).',
-        ].join(' '))
+      if (precisionPixelGroundingRequired && !hasPixelCandidate) {
+        throw new Error(testModePixelGroundingInstruction(args.targetHint))
       }
       if (!diagnosticPointerAction && !hasCandidate && navigationLikeBusinessAction(args.stepName, args.targetHint)
         && (typeof args.expectedVisualText !== 'string' || args.expectedVisualText.trim().length < 4)) {
@@ -614,6 +611,16 @@ async function verifyAutomaticStateChange(runner: PatrolRunner, exec: ToolRunCon
   }
   return { ok: false, attempts: AUTO_VERIFY_DELAYS_MS.length }
 }
+function testModePixelGroundingInstruction(targetHint: string | undefined): string {
+  const target = typeof targetHint === 'string' && targetHint.trim() ? targetHint.trim() : '<same target>'
+  return [
+    `TEST MODE precision visual click refused before physical input for ${JSON.stringify(target)}: this target requires Browser Pixel Grounding (B#).`,
+    'Do not use xRatio/yRatio, imageX/imageY, previewId, or legacy A# candidateId for this target.',
+    'Recovery: call patrol_observe(includeImage=true, targetHint=<same target>, focusXRatio=<coarse center>, focusYRatio=<coarse center>, focusWidthRatio=0.18..0.32, focusHeightRatio=0.18..0.30, pixelActionMap=true, actionMap=false),',
+    'then visually choose the B# whose bbox/crosshair is inside the target and call patrol_visual_click_target(pixelCandidateId="B#", targetHint=<same target>, visualAuthority=true).',
+  ].join(' ')
+}
+
 function testModePrecisionTargetRequiresPixelGrounding(stepName: string | undefined, targetHint: string | undefined): boolean {
   const raw = [stepName, targetHint].filter(Boolean).join(' ')
   const text = normalizePageText(raw)
