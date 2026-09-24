@@ -83,13 +83,14 @@ export function registerPatrolObservationTools(
 ): () => void {
   const observe = defineTool({
     name: 'patrol_observe',
-    description: 'Read-only CURRENT-page observation. Captures a screenshot for freshness/OCR and can attach that exact CURRENT image with includeImage=true whenever the model decides vision is useful. For ordinary browser visual clicking, pass a concrete targetHint together with includeImage=true: Patrol automatically builds a targeted browser Action Map so the model chooses A# while browser code owns the verified safe-point geometry. Explicit actionMap=true remains supported. There is no fixed screenshot-count limit; before a new visual attachment Patrol offloads older model-visible image blocks through Harness image/offload, trims oversized TEXT tool results separately, and keeps the raster DPR-aware/bounded for local-model stability. Does not record a Runbook step.',
+    description: 'Read-only CURRENT-page observation for browser vision. Primary grounding is now Browser Pixel Grounding: first inspect a raw CURRENT screenshot; for small/text/dense targets request a focused crop and pure-image pixelActionMap so Patrol labels visual components B1/B2/... using only screenshot pixels. The model chooses WHICH B#; browser code clicks that B# bbox center through the frame geometry. DOM Action Map A# is compatibility-only and explicit actionMap=true. Large obvious controls may still use direct imageX/imageY. There is no fixed screenshot-count limit; older model-visible images are offloaded before new attachments. Does not record a Runbook step.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       tabId: { type: 'integer' },
       includeImage: { type: 'boolean', description: 'Attach the CURRENT screenshot image to model context. Default false; use only when OCR/DOM evidence is insufficient.' },
-      actionMap: { type: 'boolean', description: 'Optional A1/A2/... overlay. It is now EXPLICIT opt-in only: actionMap=true enables candidate labels; omitted/false keeps the primary raw visual-coordinate path and returns a coordinate guide instead. actionMap=true requires targetHint.' },
-      targetHint: { type: 'string', description: 'Concrete CURRENT business target, e.g. “百度搜索栏”, “龙之信条2 百度百科结果”, “我的任务右侧的×” or “评论输入框”. targetHint no longer auto-enables Action Map; it remains business context while the primary browser visual path uses the attached screenshot pixels directly.' },
+      pixelActionMap: { type: 'boolean', description: 'Pure screenshot-pixel B1/B2/... overlay. Recommended for small controls, text links, menu items and close icons after narrowing with focusXRatio/focusYRatio. If a focused crop is requested and actionMap is not enabled, pixelActionMap defaults to true unless explicitly false. B# candidates are computed from image edges/components only, independent of DOM.' },
+      actionMap: { type: 'boolean', description: 'Legacy DOM/semantic A1/A2/... compatibility overlay. EXPLICIT opt-in only; actionMap=true requires targetHint and disables the pure-pixel B# map for that observation.' },
+      targetHint: { type: 'string', description: 'Concrete CURRENT business target, e.g. “百度搜索栏”, “龙之信条2 百度百科结果”, “7.发售版本” or “我的任务右侧的×”. It is context only; it does not choose DOM geometry. For small targets first use the raw screenshot to estimate a coarse focus center, then request a focused pixelActionMap and choose B#.' },
       focusXRatio: { type: 'number', description: 'Optional coarse X center (0..1) for a focused visual crop. Use after a full-frame visual estimate when the target is small or a calibration mark missed.' },
       focusYRatio: { type: 'number', description: 'Optional coarse Y center (0..1) for a focused visual crop. Requires includeImage=true and focusXRatio.' },
       focusWidthRatio: { type: 'number', description: 'Focused crop width as a fraction of the CURRENT visual viewport. Default 0.30; clamped to 0.12..0.72.' },
@@ -118,6 +119,9 @@ export function registerPatrolObservationTools(
           captureHeight: { type: 'number' },
           captureMode: { type: 'string' },
           coordinateGuide: { type: 'boolean' },
+          pixelActionMap: { type: 'boolean' },
+          pixelCandidateCount: { type: 'integer' },
+          pixelCandidateSummary: { type: 'string' },
           actionMap: { type: 'boolean' },
           actionMapTargeted: { type: 'boolean' },
           actionMapTargetHint: { type: 'string' },
@@ -171,6 +175,10 @@ export function registerPatrolObservationTools(
           `Fresh screenshot saved: ${value.path}`,
           ...(value.visualFrameId ? [`Visual click frame READY: ${value.visualFrameId}; viewport=${value.viewportWidth ?? '?'}x${value.viewportHeight ?? '?'}; capture=${value.captureWidth ?? value.viewportWidth ?? '?'}x${value.captureHeight ?? value.viewportHeight ?? '?'} at (${value.captureClientLeft ?? 0}, ${value.captureClientTop ?? 0}); scroll=(${value.scrollX ?? '?'}, ${value.scrollY ?? '?'})`] : []),
           `Evidence: ${hasImage ? 'MODEL-VISIBLE image attached + compact OCR/DOM' : 'compact OCR/DOM only'}`,
+          ...(hasImage && value.pixelActionMap === true ? [
+            `BROWSER PIXEL ACTION MAP READY: ${value.pixelCandidateCount ?? 0} pure-image candidate(s) are outlined B1/B2/... on this exact CURRENT raster. These B# boxes come only from screenshot pixels, not DOM/Accessibility. Visually choose the B# whose red box/crosshair lies INSIDE the intended target, then call patrol_visual_click_target(pixelCandidateId="B#", visualAuthority=true). Do not convert B# to xRatio/imageX manually.`,
+            ...(value.pixelCandidateSummary ? [`CURRENT B# pixel geometry (for diagnostics only; choose by image):\n${value.pixelCandidateSummary}`] : []),
+          ] : []),
           ...(hasImage && value.coordinateGuide === true ? [
             value.focusedVisual === true
               ? `FOCUSED RAW VISUAL FRAME: this attached crop is exactly ${value.modelRasterWidth ?? value.image?.width ?? '?'}x${value.modelRasterHeight ?? value.image?.height ?? '?'} model pixels and covers only the indicated CURRENT-page region. Identify the target center on THIS crop and call patrol_visual_click_target(imageX=<pixel>, imageY=<pixel>, imageWidth=${value.modelRasterWidth ?? value.image?.width ?? '?'}, imageHeight=${value.modelRasterHeight ?? value.image?.height ?? '?'}). Patrol maps crop pixels -> capture geometry -> viewport exactly once. The XY/1000 overlay is only a visual aid; do not manually convert to CSS coordinates.`
@@ -214,6 +222,7 @@ export function registerPatrolObservationTools(
         inspectionId: args.inspectionId,
         tabId: args.tabId,
         includeImage: args.includeImage === true,
+        pixelActionMap: args.pixelActionMap === true,
         actionMap: args.actionMap === true,
         ...(args.targetHint === undefined ? {} : { targetHint: args.targetHint }),
         ...(args.focusXRatio === undefined ? {} : { focusXRatio: args.focusXRatio }),
@@ -225,6 +234,8 @@ export function registerPatrolObservationTools(
         || args.focusWidthRatio !== undefined || args.focusHeightRatio !== undefined
       const requestedActionMapTargetHint = typeof args.targetHint === 'string' ? args.targetHint.trim() : ''
       const actionMapRequested = args.actionMap === true
+      const pixelActionMapRequested = args.pixelActionMap === true
+        || (focusRequested && args.pixelActionMap !== false && !actionMapRequested)
       if (args.actionMap === true && args.includeImage !== true) {
         throw new Error('visual action-map observation requires includeImage=true')
       }
@@ -260,7 +271,8 @@ export function registerPatrolObservationTools(
         ...(args.includeImage === true ? {
           maxWidth: VISUAL_SCREENSHOT_MAX_WIDTH,
           quality: VISUAL_SCREENSHOT_JPEG_QUALITY,
-          coordinateGuide: !actionMapRequested,
+          coordinateGuide: !actionMapRequested && !pixelActionMapRequested,
+          pixelActionMap: pixelActionMapRequested,
           actionMap: actionMapRequested,
           ...(actionMapRequested ? { actionMapTargetHint: requestedActionMapTargetHint } : {}),
           ...(focusRequested ? {
@@ -347,6 +359,9 @@ export function registerPatrolObservationTools(
       const captureHeight = objectNumber(shot.value, 'captureHeight')
       const captureMode = objectString(shot.value, 'captureMode')
       const coordinateGuide = objectBoolean(shot.value, 'coordinateGuide') === true
+      const pixelActionMap = objectBoolean(shot.value, 'pixelActionMap') === true
+      const pixelCandidateCount = objectNumber(shot.value, 'pixelCandidateCount')
+      const pixelCandidateSummary = objectString(shot.value, 'pixelCandidateSummary')
       const actionMap = objectBoolean(shot.value, 'actionMap') === true
       const actionMapTargeted = objectBoolean(shot.value, 'actionMapTargeted') === true
       const actionMapTargetHint = objectString(shot.value, 'actionMapTargetHint')
@@ -389,6 +404,9 @@ export function registerPatrolObservationTools(
         ...(captureHeight === undefined ? {} : { captureHeight }),
         ...(captureMode === undefined ? {} : { captureMode }),
         coordinateGuide,
+        pixelActionMap,
+        ...(pixelCandidateCount === undefined ? {} : { pixelCandidateCount }),
+        ...(pixelCandidateSummary === undefined ? {} : { pixelCandidateSummary }),
         actionMap,
         actionMapTargeted,
         actionMapTargetMiss,
