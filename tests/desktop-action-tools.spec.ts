@@ -124,61 +124,11 @@ describe('recordable desktop actions', () => {
     expect(args).not.toHaveProperty('processId')
   })
 
-  it('records focused visual teaching as stable full-window ratios instead of ephemeral region/image coordinates', async () => {
-    const { store, action, exec, dispatched } = await setup(async (tool, args) => {
-      expect(tool).toBe('desktop_click_focused_visual_point')
-      expect(args).toMatchObject({
-        processName: 'WeChat',
-        frameId: 'visual-current',
-        regionId: 'desktop-region-current',
-        imageX: 384,
-        imageY: 576,
-        imageWidth: 768,
-        imageHeight: 768,
-      })
-      return {
-        ok: true,
-        text: 'focused icon clicked',
-        value: {
-          ok: true,
-          xRatio: 0.045,
-          yRatio: 0.94,
-          coordinateMapping: 'focused-region-forced-click',
-        },
-      }
-    })
-
-    const output = await action.execute({
-      inspectionId: 'wechat-semantic-wait',
-      stepName: '点击左下角设置齿轮',
-      action: 'click-focused-visual-point',
-      processName: 'WeChat',
-      frameId: 'visual-current',
-      regionId: 'desktop-region-current',
-      imageX: 384,
-      imageY: 576,
-      imageWidth: 768,
-      imageHeight: 768,
-    }, exec)
-
-    expect(output).toContain('Executed and recorded step-001 (desktop_click_visual_point)')
-    expect(dispatched).toHaveLength(1)
-    const saved = await store.load('wechat-semantic-wait')
-    expect(saved.steps[0]).toMatchObject({
-      tool: 'desktop_click_visual_point',
-      arguments: {
-        processName: 'WeChat',
-        xRatio: 0.045,
-        yRatio: 0.94,
-      },
-    })
-    const args = saved.steps[0]?.kind === 'tool' ? saved.steps[0].arguments : {}
-    expect(args).not.toHaveProperty('frameId')
-    expect(args).not.toHaveProperty('regionId')
-    expect(args).not.toHaveProperty('imageX')
-    expect(args).not.toHaveProperty('imageY')
-    expect(args).not.toHaveProperty('imageWidth')
-    expect(args).not.toHaveProperty('imageHeight')
+  it('does not expose focused-image direct click as a replayable desktop action', async () => {
+    const desktop = await import('../src/desktop.js')
+    expect(desktop.SAFE_DESKTOP_TOOLS).not.toContain('desktop_click_focused_visual_point')
+    expect(desktop.REPLAYABLE_DESKTOP_TOOLS).not.toContain('desktop_click_focused_visual_point')
+    expect(desktop.DESKTOP_ACTIONS).not.toContain('click-focused-visual-point')
   })
 
   it('turns a successful Desktop Action Map candidate teaching click into learned-template replay', async () => {

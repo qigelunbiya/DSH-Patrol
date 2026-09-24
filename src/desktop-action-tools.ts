@@ -163,7 +163,7 @@ async function executeAndRecordDesktopAction(
 
   let replayTool = tool
   let replayArgs = effectiveStoredArgs
-  if (tool === 'desktop_click_visual_point' || tool === 'desktop_click_focused_visual_point') {
+  if (tool === 'desktop_click_visual_point') {
     const mappedX = objectNumber(dispatched.value, 'xRatio')
     const mappedY = objectNumber(dispatched.value, 'yRatio')
     if (mappedX !== undefined && mappedY !== undefined) {
@@ -271,14 +271,6 @@ function desktopArguments(action: DesktopAction, args: Record<string, unknown>, 
       add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
       add('button', args.button)
       if (!persisted) { add('frameId', args.frameId); add('actionMapId', args.actionMapId); add('candidateId', args.candidateId) }
-      break
-    case 'click-focused-visual-point':
-      add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)
-      add('button', args.button)
-      if (!persisted) {
-        add('frameId', args.frameId); add('regionId', args.regionId)
-        add('imageX', args.imageX); add('imageY', args.imageY); add('imageWidth', args.imageWidth); add('imageHeight', args.imageHeight)
-      }
       break
     case 'click-visual-template':
       add('processName', args.processName); add('title', args.title); add('titleContains', args.titleContains)

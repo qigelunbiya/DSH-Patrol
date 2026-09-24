@@ -147,11 +147,14 @@ export class WindowsDesktopDriver {
       jpegQuality: DESKTOP_MODEL_IMAGE_JPEG_QUALITY,
       upscale: false,
     }, exec)
+    const modelReadPath = String(modelImage?.path || modelPath)
+    await assertReadableGeneratedImage(modelReadPath, 'desktop model vision', exec?.signal)
     const shot = {
       ...rawShot,
       rawPath,
-      path: String(modelImage?.path || modelPath),
-      readImagePath: String(modelImage?.path || modelPath),
+      path: modelReadPath,
+      readImagePath: modelReadPath,
+      imageReady: true,
       readImageContract: READ_IMAGE_EXACT_PATH_CONTRACT,
       rawWidth: finiteNumber(rawShot.width, 0),
       rawHeight: finiteNumber(rawShot.height, 0),
@@ -256,13 +259,15 @@ export class WindowsDesktopDriver {
       cropHeightRatio: heightRatio,
       upscale: true,
     }, exec)
+    const regionReadPath = String(prepared?.path || regionPath)
+    await assertReadableGeneratedImage(regionReadPath, 'desktop focused region', exec?.signal)
     const crop = prepared?.crop ?? { xRatio, yRatio, widthRatio, heightRatio }
     const regionId = `desktop-region-${randomUUID()}`
     const region = {
       regionId,
       frameId,
       createdAt: Date.now(),
-      path: String(prepared?.path || regionPath),
+      path: regionReadPath,
       width: finiteNumber(prepared?.width, 0),
       height: finiteNumber(prepared?.height, 0),
       crop: {
@@ -286,12 +291,13 @@ export class WindowsDesktopDriver {
       regionId,
       path: region.path,
       readImagePath: region.path,
+      imageReady: true,
       readImageContract: READ_IMAGE_EXACT_PATH_CONTRACT,
       width: region.width,
       height: region.height,
       crop: region.crop,
-      coordinateMapping: 'focused-region-image-pixel-to-full-window-ratio',
-      clickContract: 'This frame is now FOCUSED-REGION LOCKED. Read this image, then call desktop_click_focused_visual_point with SAME frameId + regionId + imageX/imageY/imageWidth/imageHeight. Full-frame desktop_click_visual_point is rejected until a new desktop_screenshot.',
+      coordinateMapping: 'focused-region-observation-only',
+      clickContract: 'This focused region is OBSERVATION ONLY. Read it, then call desktop_visual_action_map with SAME frameId + regionId. Choose D# and click via desktop_click_visual_candidate. Direct focused-image x/y clicking is disabled.',
     }
   }
 
@@ -337,6 +343,8 @@ export class WindowsDesktopDriver {
       cropHeightRatio: crop.heightRatio,
       maxCandidates: Number.isInteger(args.maxCandidates) ? Math.max(3, Math.min(30, args.maxCandidates)) : 18,
     }, exec)
+    const mapReadPath = String(built?.path || path)
+    await assertReadableGeneratedImage(mapReadPath, 'desktop visual Action Map', exec?.signal)
     const candidates = normalizeDesktopVisualCandidates(built?.candidates)
     if (candidates.length === 0) {
       throw new Error('desktop visual Action Map found no stable visual candidates in this region; focus a tighter/different CURRENT region')
@@ -345,7 +353,7 @@ export class WindowsDesktopDriver {
       mapId,
       frameId,
       createdAt: Date.now(),
-      path: String(built?.path || path),
+      path: mapReadPath,
       crop,
       candidates,
     }
@@ -363,6 +371,7 @@ export class WindowsDesktopDriver {
       actionMapId: mapId,
       path: map.path,
       readImagePath: map.path,
+      imageReady: true,
       readImageContract: READ_IMAGE_EXACT_PATH_CONTRACT,
       crop,
       candidateCount: candidates.length,
@@ -430,54 +439,6 @@ export class WindowsDesktopDriver {
         templateSearchHeightRatio: Math.max(0.12, Math.min(0.32, candidate.heightRatio * 8)),
         templateMinScore: 0.76,
       } : {}),
-    }
-  }
-
-  async clickFocusedVisualPoint(args = {}, exec) {
-    const frameId = String(args.frameId ?? '').trim()
-    const regionId = String(args.regionId ?? '').trim()
-    if (!frameId || !regionId) throw new Error('desktop_click_focused_visual_point requires frameId and regionId')
-    const frame = this.visualFrames.get(frameId)
-    const region = this.visualRegions.get(regionId)
-    if (!frame || !region || region.frameId !== frameId) throw new Error('desktop focused visual region is unavailable or stale')
-    if (frame.focusedRegionId !== regionId) throw new Error('desktop frame is bound to a different focused region')
-    assertVisualFrameTarget(frame, args)
-    const imageX = Number(args.imageX)
-    const imageY = Number(args.imageY)
-    const imageWidth = Number(args.imageWidth)
-    const imageHeight = Number(args.imageHeight)
-    if (![imageX, imageY, imageWidth, imageHeight].every(Number.isFinite)
-      || imageWidth <= 1 || imageHeight <= 1
-      || imageX < 0 || imageX > imageWidth || imageY < 0 || imageY > imageHeight) {
-      throw new Error('desktop_click_focused_visual_point requires valid imageX/imageY/imageWidth/imageHeight from the focused image')
-    }
-    const localX = imageX / imageWidth
-    const localY = imageY / imageHeight
-    const xRatio = ratioValue(region.crop.xRatio + localX * region.crop.widthRatio, NaN, 'focused image X mapping')
-    const yRatio = ratioValue(region.crop.yRatio + localY * region.crop.heightRatio, NaN, 'focused image Y mapping')
-    const result = await this.run('click-visual-point', {
-      processName: frame.processName,
-      title: frame.title,
-      xRatio,
-      yRatio,
-      button: args.button === 'right' ? 'right' : 'left',
-      hwnd: frame.hwnd,
-      frameHwnd: frame.hwnd,
-      frameX: frame.rect.x,
-      frameY: frame.rect.y,
-      frameWidth: frame.rect.width,
-      frameHeight: frame.rect.height,
-    }, exec)
-    this.consumeVisualFrame(frameId)
-    return {
-      ...result,
-      frameId,
-      regionId,
-      xRatio,
-      yRatio,
-      coordinateMapping: 'focused-region-forced-click',
-      modelImagePoint: { x: imageX, y: imageY, width: imageWidth, height: imageHeight },
-      regionCrop: region.crop,
     }
   }
 
@@ -557,7 +518,7 @@ export class WindowsDesktopDriver {
     }
     assertVisualFrameTarget(frame, args)
     if (frame.focusedRegionId) {
-      throw new Error('desktop visual frame is focused-region locked; use desktop_click_focused_visual_point with the focused region image, or take a new desktop_screenshot')
+      throw new Error('desktop visual frame is focused-region constrained; build desktop_visual_action_map with the SAME frameId + regionId and click a D# candidate, or take a new desktop_screenshot')
     }
     if (frame.activeActionMapId) {
       throw new Error('desktop visual frame has an active Action Map; use desktop_click_visual_candidate with candidateId, or take a new desktop_screenshot')
@@ -1154,6 +1115,23 @@ function boundedInteger(value, fallback, min, max) {
   const numeric = Number(value)
   if (!Number.isInteger(numeric)) return fallback
   return Math.min(max, Math.max(min, numeric))
+}
+
+async function assertReadableGeneratedImage(path, label, signal) {
+  const target = String(path ?? '').trim()
+  if (!target) throw new Error(`${label} image path is empty`)
+  let lastError
+  for (const delay of [0, 30, 90]) {
+    if (delay > 0) await waitWithSignal(delay, signal)
+    try {
+      const bytes = await readFile(target)
+      if (bytes.length > 0) return target
+      lastError = new Error('file is empty')
+    } catch (error) {
+      lastError = error
+    }
+  }
+  throw new Error(`${label} image is not readable after generation: ${target}: ${errorMessage(lastError)}`)
 }
 
 async function waitWithSignal(milliseconds, signal) {

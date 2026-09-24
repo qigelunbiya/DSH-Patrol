@@ -155,7 +155,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_focus_visual_region',
-      description: 'Magnify a SMALL icon/control region from the SAME raw desktop_screenshot without taking another screenshot. Give a coarse centerXRatio/centerYRatio from the full-window image; Patrol crops the original full-resolution frame around that area, enlarges it into a bounded <=768px JPEG for read_image, and returns regionId. After reading the focused image, click with the SAME frameId + regionId + imageX/imageY/imageWidth/imageHeight from the focused image. The driver maps those local pixels back to the original full-window physical coordinates exactly. Use this for unlabeled icons such as a gear, three-dot menu, avatar badge, tiny close/send icons; do not use it for text that OCR can locate precisely. After this tool returns, call read_image with readImagePath verbatim; never guess or rebuild the focus-image filename.',
+      description: 'Magnify a SMALL icon/control region from the SAME raw desktop_screenshot without taking another screenshot. Give a coarse centerXRatio/centerYRatio from the full-window image; Patrol crops the original full-resolution frame around that area, enlarges it into a bounded <=768px JPEG for read_image, and returns regionId. This is an OBSERVATION/NARROWING tool only: after reading the focused image, call desktop_visual_action_map with the SAME frameId + regionId, then choose D# and click through desktop_click_visual_candidate. Direct focused-image coordinate clicking is intentionally disabled because it proved too error-prone in real application patrols. Use this for unlabeled icons such as a gear, three-dot menu, avatar badge, tiny close/send icons; do not use it for text that OCR can locate precisely. After this tool returns, call read_image with readImagePath verbatim only when imageReady=true; never guess or rebuild the focus-image filename.',
       parameters: {
         frameId: str,
         centerXRatio: reqNum,
@@ -204,24 +204,6 @@ export function apply(ctx, config = {}) {
       execute: async (args, exec) => await driver.clickVisualCandidate(compact(args), exec),
     }),
     defineTool({
-      name: 'desktop_click_focused_visual_point',
-      description: 'SECONDARY fallback after desktop_focus_visual_region. This is intentionally separate from desktop_click_visual_point: it REQUIRES frameId + regionId + imageX/imageY/imageWidth/imageHeight from the focused image and accepts no full-frame xRatio/yRatio. Patrol mathematically reverses the focused crop and resize, then clicks the original frame.',
-      parameters: {
-        frameId: reqStr,
-        regionId: reqStr,
-        imageX: reqNum,
-        imageY: reqNum,
-        imageWidth: reqNum,
-        imageHeight: reqNum,
-        button: { type: 'string', enum: ['left', 'right'] },
-        processName: str,
-        title: str,
-        titleContains: str,
-      },
-      output: jsonOutput('Focused desktop visual point clicked'),
-      execute: async (args, exec) => await driver.clickFocusedVisualPoint(compact(args), exec),
-    }),
-    defineTool({
       name: 'desktop_click_visual_template',
       description: 'Replay a learned icon click without model coordinate guessing. Capture the CURRENT full window, search near the learned expected location for templatePath, require a confidence threshold, then click the matched template bbox center. If matching is not confident the tool fails closed so teaching can rebuild an Action Map/template.',
       parameters: {
@@ -241,7 +223,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_click_visual_point',
-      description: 'Direct full-frame visual point fallback for ordinary/large targets only. If desktop_focus_visual_region or desktop_visual_action_map has been used on this frame, this tool is hard-rejected; use desktop_click_focused_visual_point or desktop_click_visual_candidate instead. Tiny unlabeled icons should prefer Desktop Action Map, not free x/y.',
+      description: 'Direct full-frame visual point fallback for ordinary/large targets only. If desktop_focus_visual_region has been used on this frame, this tool is hard-rejected; continue with desktop_visual_action_map(frameId, regionId) and desktop_click_visual_candidate. If an Action Map exists, use its D# candidate. Tiny unlabeled icons should prefer Desktop Action Map, not free x/y.',
       parameters: {
         xRatio: num,
         yRatio: num,
@@ -398,7 +380,7 @@ export function apply(ctx, config = {}) {
     }),
     defineTool({
       name: 'desktop_screenshot',
-      description: 'Capture the COMPLETE active application window as the authoritative geometry frame, but return a separate bounded model-facing JPEG (<=768x768, quality 65) at path to reduce local-Qwen CUDA/OOM pressure. rawPath preserves the original full-resolution PNG used for physical coordinate mapping. The bounded image is an aspect-preserving whole-window resize, so xRatio/yRatio and imageX/imageWidth remain valid for the original frame. For tiny unlabeled icons use desktop_focus_visual_region to crop from rawPath without taking another screenshot. After this tool returns, call read_image with readImagePath verbatim; never guess or rebuild the model-image filename from a timestamp or UUID-looking suffix.',
+      description: 'Capture the COMPLETE active application window as the authoritative geometry frame, but return a separate bounded model-facing JPEG (<=768x768, quality 65) at readImagePath to reduce local-Qwen CUDA/OOM pressure. rawPath preserves the original full-resolution PNG used for physical coordinate mapping. The bounded image is an aspect-preserving whole-window resize. The Node runtime verifies the generated JPEG is actually readable before exposing it. Call read_image only when imageReady=true and copy readImagePath verbatim; never guess or rebuild the model-image filename from a timestamp or UUID-looking suffix. For tiny unlabeled icons use desktop_focus_visual_region only to narrow the region, then build an Action Map.',
       parameters: {
         scope: { type: 'string', enum: ['active-window', 'screen'] },
         captureMethod: { type: 'string', enum: ['auto', 'print-window', 'screen'], description: 'Compatibility input. active-window visual screenshots always force geometry-faithful screen copy.' },

@@ -448,7 +448,10 @@ export function registerTools(ctx, bridge, config = {}) {
             actionMap: bool,
             actionMapTargeted: bool,
             actionMapTargetHint: str,
+            actionMapTargetMiss: bool,
+            actionMapStrictTargetMiss: bool,
             actionCandidateCount: optInt,
+            actionCandidateSummary: str,
             actionMapZoom: bool,
             actionMapZoomCount: optInt,
             actionMapZoomPath: str,
@@ -514,7 +517,10 @@ export function registerTools(ctx, bridge, config = {}) {
           actionMap: value.actionMap,
           actionMapTargeted: value.actionMapTargeted,
           actionMapTargetHint: value.actionMapTargetHint,
+          actionMapTargetMiss: value.actionMapTargetMiss,
+          actionMapStrictTargetMiss: value.actionMapStrictTargetMiss,
           actionCandidateCount: value.actionCandidateCount,
+          actionCandidateSummary: value.actionCandidateSummary,
           actionMapZoom: value.actionMapZoom,
           actionMapZoomCount: value.actionMapZoomCount,
           actionMapZoomPath,
@@ -643,6 +649,12 @@ function renderScreenshotResult(value) {
     lines.push(`CAPTCHA test mode: screenshot OCR was allowed and actually ran for the image-code challenge; OCR status=${value.ocrStatus}. Do not request manual CAPTCHA entry. If the automatic image-code solver exhausts its recognition paths, report that concrete failure and stop.`)
   } else {
     lines.push(`Built-in screenshot OCR status: ${value.ocrStatus}.`)
+  }
+  if (value.actionCandidateSummary) {
+    lines.push('Action Map candidate binding summary (CURRENT frame):', value.actionCandidateSummary)
+  }
+  if (value.actionMapStrictTargetMiss === true) {
+    lines.push('STRICT TARGET MISS: no safe Action Map candidate matched the requested explicit text/close target. Do not guess a nearby A# or free XY; refine/refresh the visual observation.')
   }
   return lines.join('\n')
 }

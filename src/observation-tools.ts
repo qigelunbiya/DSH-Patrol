@@ -121,7 +121,10 @@ export function registerPatrolObservationTools(
           actionMap: { type: 'boolean' },
           actionMapTargeted: { type: 'boolean' },
           actionMapTargetHint: { type: 'string' },
+          actionMapTargetMiss: { type: 'boolean' },
+          actionMapStrictTargetMiss: { type: 'boolean' },
           actionCandidateCount: { type: 'integer' },
+          actionCandidateSummary: { type: 'string' },
           actionMapZoom: { type: 'boolean' },
           actionMapZoomCount: { type: 'integer' },
           actionMapZoomPath: { type: 'string' },
@@ -173,10 +176,14 @@ export function registerPatrolObservationTools(
               ? `FOCUSED VISUAL FRAME: this image is a zoomed CURRENT-page crop centered near full-frame (${Number(value.focusCenterXRatio ?? 0).toFixed(3)}, ${Number(value.focusCenterYRatio ?? 0).toFixed(3)}), covering about ${Math.round(Number(value.focusWidthRatio ?? 0) * 100)}% x ${Math.round(Number(value.focusHeightRatio ?? 0) * 100)}% of the viewport. The attached crop itself has an XY/1000 overlay. For patrol_visual_click_target use the target position INSIDE THIS CROP: xRatio=X/1000, yRatio=Y/1000. Do NOT reuse the coarse full-frame ratio as the click ratio.`
               : `VISUAL COORDINATE GUIDE: the attached raster is ${value.modelRasterWidth ?? value.image?.width ?? '?'}x${value.modelRasterHeight ?? value.image?.height ?? '?'} px and contains an XY/1000 overlay. Read the target from that overlay: xRatio=X/1000, yRatio=Y/1000. Never infer coordinates from OS screen size, CSS viewport size, or the chat UI preview width.`,
           ] : []),
+          ...(hasImage && value.actionMapStrictTargetMiss === true ? [
+            `STRICT TARGET MISS for ${JSON.stringify(value.actionMapTargetHint || args.targetHint || '')}: no safe CURRENT Action Map candidate matched the explicit text/close target. Do NOT guess a nearby A# or free XY. Refresh/re-focus the CURRENT page and request the same concrete target again.`,
+          ] : []),
           ...(hasImage && value.actionMap === true ? [
             value.actionMapTargeted === true
               ? `TARGETED VISUAL ACTION MAP READY for ${JSON.stringify(value.actionMapTargetHint || args.targetHint || '')}: ${value.actionCandidateCount ?? 0} matching CURRENT control(s) are outlined with A1/A2/... labels. For structured rows such as “IP + RDP”, unrelated rows were removed before labels were assigned. Choose only among these labels; do not guess a global A# from an unfiltered page.`
               : `VISUAL ACTION MAP READY: ${value.actionCandidateCount ?? 0} CURRENT interactive control(s) are outlined with A1/A2/... labels. For small buttons/icons, visually choose the label covering the intended control and call patrol_visual_click_target with candidateId=that label. Do NOT estimate xRatio/yRatio when a correct action-map candidate exists.`,
+            ...(value.actionCandidateSummary ? [`CURRENT A# bindings from browser geometry:\n${value.actionCandidateSummary}`] : []),
             ...(hasActionMapZoom ? [
               `ACTION MAP TARGET ZOOM attached as a SECOND image: ${value.actionMapZoomCount ?? value.actionCandidateCount ?? 0} candidate crop(s) are magnified in A# cards. Use the zoom image to decide WHICH A# is the intended control; the green crosshair in each card is the exact browser safe point. NEVER derive xRatio/yRatio from the zoom sheet because its pixels are not page coordinates.`,
             ] : []),
@@ -344,7 +351,10 @@ export function registerPatrolObservationTools(
       const actionMap = objectBoolean(shot.value, 'actionMap') === true
       const actionMapTargeted = objectBoolean(shot.value, 'actionMapTargeted') === true
       const actionMapTargetHint = objectString(shot.value, 'actionMapTargetHint')
+      const actionMapTargetMiss = objectBoolean(shot.value, 'actionMapTargetMiss') === true
+      const actionMapStrictTargetMiss = objectBoolean(shot.value, 'actionMapStrictTargetMiss') === true
       const actionCandidateCount = objectNumber(shot.value, 'actionCandidateCount')
+      const actionCandidateSummary = objectString(shot.value, 'actionCandidateSummary')
       const actionMapZoom = objectBoolean(shot.value, 'actionMapZoom') === true
       const actionMapZoomCount = objectNumber(shot.value, 'actionMapZoomCount')
       const coordinateGridUnits = objectNumber(shot.value, 'coordinateGridUnits')
@@ -382,8 +392,11 @@ export function registerPatrolObservationTools(
         coordinateGuide,
         actionMap,
         actionMapTargeted,
+        actionMapTargetMiss,
+        actionMapStrictTargetMiss,
         ...(actionMapTargetHint === undefined ? {} : { actionMapTargetHint }),
         ...(actionCandidateCount === undefined ? {} : { actionCandidateCount }),
+        ...(actionCandidateSummary === undefined ? {} : { actionCandidateSummary }),
         actionMapZoom,
         ...(actionMapZoomCount === undefined ? {} : { actionMapZoomCount }),
         ...(actionMapZoomPath === undefined ? {} : { actionMapZoomPath }),

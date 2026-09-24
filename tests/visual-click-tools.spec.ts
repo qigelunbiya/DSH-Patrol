@@ -68,6 +68,72 @@ function draftDefinition(): InspectionDefinition {
 }
 
 describe('browser visual fallback click teaching', () => {
+  it('auto-binds candidate clicks to the latest model-visible frame when frameId is omitted', async () => {
+    const visualEvidence = createPatrolVisualEvidenceRegistry()
+    visualEvidence.mark('browser-visual-latest', 'visual-click')
+    const calls: Array<{ tool: string; args: JsonObject }> = []
+    const { tool, exec } = await setup(async (name, args) => {
+      calls.push({ tool: name, args })
+      if (name === 'browser_read_page') {
+        return { ok: true, text: 'video', value: { ok: true, url: 'https://www.bilibili.com/video/BV-test', title: 'video', text: 'video' } }
+      }
+      if (name === 'browser_snapshot') {
+        return { ok: true, text: 'snapshot', value: { ok: true, url: 'https://www.bilibili.com/video/BV-test', title: 'video', elements: [] } }
+      }
+      if (name === 'browser_visual_click') {
+        expect(args).toMatchObject({
+          frameId: 'browser-visual-latest',
+          candidateId: 'A2',
+          targetHint: '点赞按钮',
+          visualAuthority: true,
+        })
+        return {
+          ok: true,
+          text: 'clicked',
+          value: {
+            ok: true,
+            candidateId: 'A2',
+            xRatio: 0.2,
+            yRatio: 0.8,
+            requestedXRatio: 0.2,
+            requestedYRatio: 0.8,
+            targetTag: 'button',
+            targetRole: 'button',
+            targetText: '点赞',
+            targetStateChanged: true,
+            selectorHint: 'top-frame::button.like',
+            selectorReplaySafe: true,
+            selectorQuality: 'strong',
+            bindingActionable: true,
+            bindingSource: 'visual-action-map-post-click-learning',
+            visualAuthority: true,
+            urlIdentity: 'https://www.bilibili.com/video/BV-test',
+            viewportWidth: 1280,
+            viewportHeight: 720,
+            captureClientLeft: 0,
+            captureClientTop: 0,
+            captureWidth: 1280,
+            captureHeight: 720,
+            captureMode: 'capture-visible-tab-layout-viewport',
+            scrollX: 0,
+            scrollY: 0,
+          },
+        }
+      }
+      throw new Error(`unexpected tool ${name}`)
+    }, undefined, visualEvidence)
+
+    const result = await tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '给视频点赞',
+      targetHint: '点赞按钮',
+      candidateId: 'A2',
+    }, exec)
+
+    expect(result).toContain('candidate A2')
+    expect(calls.some(call => call.tool === 'browser_visual_click' && call.args.frameId === 'browser-visual-latest')).toBe(true)
+  })
+
   it('records a verified Bilibili-like visual hit as replayable selector-first geometry', async () => {
     const calls: Array<{ tool: string; args: JsonObject }> = []
     const { store, tool, exec } = await setup(async (name, args) => {
@@ -799,7 +865,7 @@ describe('browser visual fallback click teaching', () => {
       frameId: 'screenshot-2026-09-20T01-40-03.png',
       xRatio: 0.1,
       yRatio: 0.8,
-    }, exec)).rejects.toThrow(/visualFrameId.*Screenshot file names\/paths are not valid visual frames/i)
+    }, exec)).rejects.toThrow(/no CURRENT model-visible browser visual frame.*Do not copy screenshot file names\/paths into frameId/i)
     expect(calls).toEqual([])
   })
 

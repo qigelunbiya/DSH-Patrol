@@ -4,6 +4,7 @@ interface VisualEvidenceRecord {
 
 export interface PatrolVisualEvidenceRegistry {
   mark(frameId: string, inspectionId: string): void
+  latest(inspectionId: string): string | undefined
   consume(frameId: string, inspectionId: string): { ok: true } | { ok: false; reason: string }
   clearInspection(inspectionId: string): void
 }
@@ -12,10 +13,16 @@ export function createPatrolVisualEvidenceRegistry(
   _now: () => number = () => Date.now(),
 ): PatrolVisualEvidenceRegistry {
   const frames = new Map<string, VisualEvidenceRecord>()
+  const latestByInspection = new Map<string, string>()
 
   return {
     mark(frameId, inspectionId) {
       frames.set(frameId, { inspectionId })
+      latestByInspection.set(inspectionId, frameId)
+    },
+    latest(inspectionId) {
+      const frameId = latestByInspection.get(inspectionId)
+      return frameId && frames.has(frameId) ? frameId : undefined
     },
     consume(frameId, inspectionId) {
       const record = frames.get(frameId)
@@ -38,6 +45,7 @@ export function createPatrolVisualEvidenceRegistry(
       for (const [frameId, record] of frames) {
         if (record.inspectionId === inspectionId) frames.delete(frameId)
       }
+      latestByInspection.delete(inspectionId)
     },
   }
 }
