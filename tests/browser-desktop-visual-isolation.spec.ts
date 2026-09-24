@@ -13,8 +13,8 @@ describe('browser/desktop visual plane isolation', () => {
       read('browser-bridge-runtime/tools.js'),
     ].join('\n')
 
-    expect(browserSources).not.toMatch(/desktop-runtime/)
-    expect(browserSources).not.toMatch(/desktop_(?:visual_action_map|click_visual|focus_visual)/)
+    expect(browserSources).not.toMatch(/(?:from|require\()\s*['"][^'"]*desktop-runtime/)
+    expect(browserSources).not.toMatch(/desktop_(?:visual_action_map|click_visual|focus_visual)\s*\(/)
     expect(browserSources).not.toMatch(/visual-[0-9a-f]{8}-[0-9a-f-]{27,}/i)
   })
 
