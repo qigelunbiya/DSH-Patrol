@@ -38,6 +38,8 @@ describe('browser visual V# binding and startup regression', () => {
 
     expect(dev).toContain('pnpm install --frozen-lockfile --prefer-offline')
     expect(dev).toContain("import('tsx')")
+    expect(dev).toContain('Invoke-NativeChecked -FilePath node -Arguments @("-e",')
+    expect(dev).not.toContain('Invoke-NativeChecked node -e ')
     expect(dev.indexOf('pnpm install --frozen-lockfile --prefer-offline')).toBeLessThan(dev.indexOf('Invoke-NativeChecked pnpm dsh web'))
   })
 })
