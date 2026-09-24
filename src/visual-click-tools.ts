@@ -56,7 +56,7 @@ export function registerPatrolVisualClickTool(
   let visualPreviewSequence = 0
   const tool = defineTool({
     name: 'patrol_visual_click_target',
-    description: 'Primary browser visual click. Preferred live path is CURRENT screenshot raster -> model picks the target center -> pass imageX/imageY from that exact attached raster -> Patrol converts those pixels through the frame\'s stored raster/capture geometry exactly once -> Chrome debugger dispatches a trusted mouse click at that viewport point. Do not manually convert pixels to xRatio when imageX/imageY are available. candidateId remains an optional compatibility path for explicit Action Maps; xRatio/yRatio remain a legacy normalized fallback. frameId is normally omitted because Patrol auto-binds the latest model-visible patrol_observe(includeImage=true) frame. Live visual clicks fail closed if trusted debugger mouse input is unavailable; they never silently substitute element.click() or synthetic MouseEvents. Never use for image-code/CAPTCHA.',
+    description: 'Primary browser visual click. For small controls, text links, menu rows and close icons, prefer Browser Pixel Grounding: obtain a focused patrol_observe(..., pixelActionMap=true) raster, visually choose B#, then call pixelCandidateId=B#. B# geometry comes only from CURRENT screenshot pixels and Patrol clicks its bbox center through the frame mapping. Large obvious controls may use direct imageX/imageY. Legacy DOM Action Map uses candidateId=A# only when explicitly requested. xRatio/yRatio remain a compatibility fallback. frameId normally auto-binds to the latest model-visible frame. Live visual clicks require trusted Chrome debugger mouse input and never silently substitute element.click() or synthetic MouseEvents. Never use for image-code/CAPTCHA.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
@@ -68,7 +68,8 @@ export function registerPatrolVisualClickTool(
       imageHeight: { type: 'number', description: 'Optional validation copy of modelRasterHeight from CURRENT patrol_observe. If supplied and it does not match the bound frame, Patrol refuses the click.' },
       xRatio: { type: 'number', description: 'Legacy normalized screenshot X fallback. Prefer imageX/imageY because manual ratio conversion adds avoidable error for small controls.' },
       yRatio: { type: 'number', description: 'Legacy normalized screenshot Y fallback. Prefer imageX/imageY because manual ratio conversion adds avoidable error for small controls.' },
-      candidateId: { type: 'string', description: 'A visual A1/A2/... label chosen by the model from patrol_observe(includeImage=true, actionMap=true). When the candidate is visually clear, click it directly; Patrol binds the click to that candidate safe-point and fingerprint. Use mark only when the model itself is uncertain.' },
+      pixelCandidateId: { type: 'string', description: 'Preferred B1/B2/... label from a CURRENT Browser Pixel Action Map. B# is computed from screenshot pixels only; Patrol clicks the program-computed bbox center. Use this for focused small/text/dense targets instead of estimating raw coordinates.' },
+      candidateId: { type: 'string', description: 'Legacy A1/A2/... label from explicit patrol_observe(..., actionMap=true). A# comes from DOM/semantic candidate geometry and is compatibility-only for browser visual teaching.' },
       targetHint: { type: 'string', required: true, description: 'Concrete CURRENT business intent, e.g. 评论输入框/发布按钮/点赞按钮/完整视频标题. It labels post-click verification and learned DOM/semantic binding; it does not authorize or relocate the live screenshot coordinate.' },
       expectedVisualText: { type: 'string', description: 'Optional extra exact visible label/title from the attached CURRENT screenshot. Action Map candidate clicks automatically carry candidate-visible text/title/aria evidence; free-XY navigation/card/video clicks still require expectedVisualText so Patrol can verify the raw point and destination.' },
       visualAuthority: { type: 'boolean', description: 'Backward-compatible flag. Live patrol_visual_click_target teaching is coordinate-authoritative regardless of this value; replay may still use learned semantic/selector recovery.' },
@@ -105,6 +106,8 @@ export function registerPatrolVisualClickTool(
         throw new Error('browser visual preview is bound to a different business target; mark this target again instead of reusing another control preview')
       }
 
+      const pixelCandidateId = boundPreview ? '' : (typeof args.pixelCandidateId === 'string' ? args.pixelCandidateId.trim().toUpperCase() : '')
+      const hasPixelCandidate = /^B[1-9]\d*$/i.test(pixelCandidateId)
       const candidateId = boundPreview ? '' : (typeof args.candidateId === 'string' ? args.candidateId.trim().toUpperCase() : '')
       const hasCandidate = /^A[1-9]\d*$/i.test(candidateId)
       const imageX = boundPreview ? Number.NaN : (typeof args.imageX === 'number' ? args.imageX : Number.NaN)
@@ -114,11 +117,11 @@ export function registerPatrolVisualClickTool(
       const pointY = boundPreview ? boundPreview.yRatio : (typeof args.yRatio === 'number' ? args.yRatio : Number.NaN)
       const hasRatioPoint = Number.isFinite(pointX) && Number.isFinite(pointY)
         && pointX >= 0 && pointX <= 1 && pointY >= 0 && pointY <= 1
-      if ([hasCandidate, hasImagePoint, hasRatioPoint || Boolean(boundPreview)].filter(Boolean).length > 1) {
-        throw new Error('visual click requires exactly one coordinate source: imageX/imageY (preferred), candidateId, xRatio/yRatio, or previewId')
+      if ([hasPixelCandidate, hasCandidate, hasImagePoint, hasRatioPoint || Boolean(boundPreview)].filter(Boolean).length > 1) {
+        throw new Error('visual click requires exactly one coordinate source: pixelCandidateId=B# (preferred for focused small/text targets), imageX/imageY, candidateId=A#, xRatio/yRatio, or previewId')
       }
-      if (!hasCandidate && !hasImagePoint && !hasRatioPoint && !boundPreview) {
-        throw new Error('visual click requires imageX/imageY from the CURRENT model-visible raster (preferred), candidateId=A#, previewId, or legacy xRatio/yRatio')
+      if (!hasPixelCandidate && !hasCandidate && !hasImagePoint && !hasRatioPoint && !boundPreview) {
+        throw new Error('visual click requires pixelCandidateId=B# from a CURRENT Browser Pixel Action Map, imageX/imageY, candidateId=A#, previewId, or legacy xRatio/yRatio')
       }
       const explicitFrameId = String(args.frameId ?? '').trim()
       const frameId = boundPreview?.frameId
@@ -157,6 +160,7 @@ export function registerPatrolVisualClickTool(
         await store.load(args.inspectionId)
         const probed = await runner.dispatch('browser_visual_click', compactObject({
           frameId,
+          pixelCandidateId: hasPixelCandidate ? pixelCandidateId : undefined,
           candidateId: hasCandidate ? candidateId : undefined,
           imageX: hasImagePoint ? imageX : undefined,
           imageY: hasImagePoint ? imageY : undefined,
@@ -221,8 +225,10 @@ export function registerPatrolVisualClickTool(
           }
         }
         return [
-          hasCandidate
-            ? `Visual pointer diagnostic ${pointerAction} executed on vision-selected action-map candidate ${candidateId}; browser geometry supplied the exact control center.`
+          hasPixelCandidate
+            ? `Visual pointer diagnostic ${pointerAction} executed on Browser Pixel Action Map candidate ${pixelCandidateId}; screenshot-pixel geometry supplied the bbox center.`
+            : hasCandidate
+              ? `Visual pointer diagnostic ${pointerAction} executed on legacy DOM action-map candidate ${candidateId}; browser geometry supplied the exact control center.`
             : hasImagePoint
               ? `Visual pointer diagnostic ${pointerAction} executed from CURRENT model-raster pixel imageX=${imageX.toFixed(1)}, imageY=${imageY.toFixed(1)}; Patrol performed the raster-to-viewport mapping.`
               : `Visual pointer diagnostic ${pointerAction} executed at legacy normalized frame coordinate xRatio=${pointX.toFixed(4)}, yRatio=${pointY.toFixed(4)}.`,
@@ -241,6 +247,7 @@ export function registerPatrolVisualClickTool(
       const expectation = optionalExpectation(args.expectedText, args.expectationMode, args.caseSensitive)
       const navigationAction = navigationLikeBusinessAction(args.stepName, args.targetHint)
       const isVisualNavigation = navigationAction && (hasCandidate
+        || hasPixelCandidate
         || (typeof args.expectedVisualText === 'string' && args.expectedVisualText.trim().length >= 4))
       const tabBaseline = isVisualNavigation
         ? await captureBrowserTabBaseline(runner, exec)
@@ -255,6 +262,7 @@ export function registerPatrolVisualClickTool(
       const visualAuthority = true
       const clicked = await runner.dispatch('browser_visual_click', compactObject({
         frameId,
+        pixelCandidateId: hasPixelCandidate ? pixelCandidateId : undefined,
         candidateId: hasCandidate ? candidateId : undefined,
         imageX: hasImagePoint ? imageX : undefined,
         imageY: hasImagePoint ? imageY : undefined,
@@ -275,6 +283,8 @@ export function registerPatrolVisualClickTool(
           'Reuse this frameId freely while the CURRENT page geometry still matches it; capture a new patrol_observe(includeImage=true) only after navigation, scroll, zoom, viewport/layout changes, or when a new screenshot is actually useful.',
           boundPreview
             ? 'The click reused the exact visually marked point; capture a fresh CURRENT frame and mark a different point instead of nudging this preview token.'
+            : hasPixelCandidate
+              ? 'If this B# was wrong, capture a fresh focused Browser Pixel Action Map and choose a different B# whose red bbox/crosshair lies inside the intended target. Do not nudge viewport coordinates manually.'
             : hasCandidate
               ? 'If this Action Map candidate is wrong, capture a fresh CURRENT screenshot and use the direct imageX/imageY path instead of repeatedly guessing A# labels.'
               : hasImagePoint
