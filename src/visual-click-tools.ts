@@ -187,6 +187,9 @@ export function registerPatrolVisualClickTool(
           'Do not manually convert screenshot pixels to normalized ratios.',
         ].join(' '))
       }
+      if (liveTestClick && hasImagePoint && !largeVisualControl && !ocrOwnedPoint) {
+        throw new Error('TEST MODE direct imageX/imageY is reserved for large unlabeled input/search controls. Visible text targets must use ocrText; adjacent close/remove icons use ocrRelation="close-right". Do not recover with B#/A#/focused crops.')
+      }
       if (!hasPixelCandidate && !hasCandidate && !hasImagePoint && !hasRatioPoint && !boundPreview) {
         if (precisionOcrGroundingRequired) throw new Error('TEST MODE precision target requires screenshot OCR grounding: use ocrText=<CURRENT visible target text>. For a close/remove icon adjacent to visible text, use ocrRelation="close-right". Do not use B#/A# Action Maps or read_image screenshot paths.')
         if (liveTestClick && largeVisualControl) {
@@ -706,7 +709,7 @@ function testModeLargeVisualControl(stepName: string | undefined, targetHint: st
   if (!text) return false
   const explicitTinyOverride = /(?:[x×✕✖]|关闭|移除|删除|清除|三点|省略号|齿轮|小图标|图标)/i.test(text)
   if (explicitTinyOverride) return false
-  return /(?:搜索结果页)?(?:搜索框|搜索栏)|输入框|编辑框|文本框|地址栏|大输入区|大按钮|百度一下|登录按钮|确定按钮|确认按钮|提交按钮|发布按钮|发送按钮/i.test(text)
+  return /(?:搜索结果页)?(?:搜索框|搜索栏)|输入框|编辑框|文本框|地址栏|大输入区|空白输入区|无文字大控件/i.test(text)
 }
 
 function testModePrecisionTargetRequiresOcrGeometry(stepName: string | undefined, targetHint: string | undefined): boolean {
