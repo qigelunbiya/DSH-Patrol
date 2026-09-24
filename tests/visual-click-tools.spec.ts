@@ -800,8 +800,8 @@ describe('browser visual fallback click teaching', () => {
       candidateId: 'A4',
     }, exec)
 
-    expect(result).toContain('candidate A4')
-    expect(result).toContain('model selected the labeled box')
+    expect(result).toContain('Legacy visual action-map candidate A4')
+    expect(result).toContain('Legacy A# action-map grounding was used')
     const saved = await store.load('visual-click')
     expect(saved.steps).toHaveLength(1)
     expect((saved.steps[0] as any).arguments).toMatchObject({
@@ -1201,7 +1201,7 @@ describe('browser visual fallback click teaching', () => {
       frameId: 'browser-visual-current',
       xRatio: 0.3,
       yRatio: 0.35,
-    }, exec)).rejects.toThrow(/require[s]? expectedVisualText.*CURRENT model-visible screenshot/i)
+    }, exec)).rejects.toThrow(/visual navigation requires visible target text.*ocrText.*CURRENT screenshot OCR geometry/i)
     expect(calls).toEqual([])
   })
 
