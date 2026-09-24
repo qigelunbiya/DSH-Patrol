@@ -170,10 +170,13 @@ export function registerPatrolVisualClickTool(
       const ocrOwnedPoint = boundPreview?.source === 'ocr'
       const liveTestClick = options.testMode === true && requestedPointerAction === 'left-click'
       const largeVisualControl = testModeLargeVisualControl(args.stepName, args.targetHint)
-      const precisionPixelGroundingRequired = liveTestClick
-        && testModePrecisionTargetRequiresPixelGrounding(args.stepName, args.targetHint)
+      const precisionOcrGroundingRequired = liveTestClick
+        && testModePrecisionTargetRequiresOcrGeometry(args.stepName, args.targetHint)
       if ([hasPixelCandidate, hasCandidate, hasImagePoint, hasRatioPoint || Boolean(boundPreview)].filter(Boolean).length > 1) {
         throw new Error('visual click requires exactly one coordinate source: pixelCandidateId=B#, imageX/imageY, candidateId=A#, xRatio/yRatio, or previewId')
+      }
+      if (liveTestClick && !ocrOwnedPoint && (hasPixelCandidate || hasCandidate || Boolean(boundPreview))) {
+        throw new Error('TEST MODE legacy browser A#/B#/preview visual grounding is disabled for new teaching. Visible text must use ocrText; adjacent close/remove uses ocrRelation="close-right"; only a large unlabeled control may use CURRENT-raster imageX/imageY.')
       }
       if (liveTestClick && hasRatioPoint && !ocrOwnedPoint) {
         throw new Error([
@@ -185,7 +188,7 @@ export function registerPatrolVisualClickTool(
         ].join(' '))
       }
       if (!hasPixelCandidate && !hasCandidate && !hasImagePoint && !hasRatioPoint && !boundPreview) {
-        if (precisionPixelGroundingRequired) throw new Error('TEST MODE precision target requires screenshot OCR grounding: use ocrText=<CURRENT visible target text>. For a close/remove icon adjacent to visible text, use ocrRelation="close-right". Do not use B#/A# Action Maps or read_image screenshot paths.')
+        if (precisionOcrGroundingRequired) throw new Error('TEST MODE precision target requires screenshot OCR grounding: use ocrText=<CURRENT visible target text>. For a close/remove icon adjacent to visible text, use ocrRelation="close-right". Do not use B#/A# Action Maps or read_image screenshot paths.')
         if (liveTestClick && largeVisualControl) {
           throw new Error([
             'TEST MODE large-control visual click requires imageX/imageY from the exact CURRENT model-visible screenshot raster.',
@@ -217,7 +220,7 @@ export function registerPatrolVisualClickTool(
       if (args.expectedVisualText !== undefined) assertSafePersistentText(args.expectedVisualText, 'expectedVisualText')
       const pointerAction = requestedPointerAction
       const diagnosticPointerAction = pointerAction !== 'left-click'
-      if (precisionPixelGroundingRequired && !ocrOwnedPoint) {
+      if (precisionOcrGroundingRequired && !ocrOwnedPoint) {
         throw new Error('TEST MODE precision target requires browser screenshot OCR geometry. Use ocrText=<visible target text>; for a close/remove icon immediately beside that text use ocrRelation="close-right". Legacy B#/A# Action Maps are not accepted for new precision teaching.')
       }
       const ocrExpectedVisualText = ocrOwnedPoint && boundPreview?.ocrRelation === 'center'
@@ -698,16 +701,6 @@ async function verifyAutomaticStateChange(runner: PatrolRunner, exec: ToolRunCon
   }
   return { ok: false, attempts: AUTO_VERIFY_DELAYS_MS.length }
 }
-function testModePixelGroundingInstruction(targetHint: string | undefined): string {
-  const target = typeof targetHint === 'string' && targetHint.trim() ? targetHint.trim() : '<same target>'
-  return [
-    `TEST MODE precision visual click refused before physical input for ${JSON.stringify(target)}: this target requires Browser Pixel Grounding (B#).`,
-    'Do not use xRatio/yRatio, imageX/imageY, previewId, or legacy A# candidateId for this target.',
-    'Recovery: call a focused patrol_observe(includeImage=true, targetHint=<same target>, focusXRatio=<coarse center>, focusYRatio=<coarse center>, focusWidthRatio=0.18..0.32, focusHeightRatio=0.18..0.30, pixelActionMap=true, actionMap=false),',
-    'then visually choose the B# whose bbox/crosshair is inside the target and call patrol_visual_click_target(pixelCandidateId="B#", targetHint=<same target>, visualAuthority=true).',
-  ].join(' ')
-}
-
 function testModeLargeVisualControl(stepName: string | undefined, targetHint: string | undefined): boolean {
   const text = normalizePageText([stepName, targetHint].filter(Boolean).join(' '))
   if (!text) return false
@@ -716,7 +709,7 @@ function testModeLargeVisualControl(stepName: string | undefined, targetHint: st
   return /(?:搜索结果页)?(?:搜索框|搜索栏)|输入框|编辑框|文本框|地址栏|大输入区|大按钮|百度一下|登录按钮|确定按钮|确认按钮|提交按钮|发布按钮|发送按钮/i.test(text)
 }
 
-function testModePrecisionTargetRequiresPixelGrounding(stepName: string | undefined, targetHint: string | undefined): boolean {
+function testModePrecisionTargetRequiresOcrGeometry(stepName: string | undefined, targetHint: string | undefined): boolean {
   const raw = [stepName, targetHint].filter(Boolean).join(' ')
   const text = normalizePageText(raw)
   if (!text) return false
