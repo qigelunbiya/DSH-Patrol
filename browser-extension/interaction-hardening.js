@@ -297,7 +297,7 @@ async function interactionScreenshot(args) {
   }
 
   const after = await interactionViewportState(tabId)
-  const visualFrame = interactionRegisterVisualFrame(tabId, before, after, captureGeometry, actionCandidates)
+  const visualFrame = interactionRegisterVisualFrame(tabId, before, after, captureGeometry, actionCandidates, modelRasterWidth, modelRasterHeight)
 
   return {
     ok: true,
@@ -1386,7 +1386,7 @@ function interactionCurrentReplayCaptureGeometry(viewport, recordedMode = '', re
   }
 }
 
-function interactionRegisterVisualFrame(tabId, before, after, captureGeometry, actionCandidates = []) {
+function interactionRegisterVisualFrame(tabId, before, after, captureGeometry, actionCandidates = [], modelRasterWidth, modelRasterHeight) {
   if (!interactionSameViewport(before, after, 1)) return undefined
   const geometry = captureGeometry || interactionVisibleTabCaptureGeometry(before)
   if (!geometry
@@ -1416,6 +1416,8 @@ function interactionRegisterVisualFrame(tabId, before, after, captureGeometry, a
     captureWidth: Number(geometry.captureWidth),
     captureHeight: Number(geometry.captureHeight),
     captureMode: String(geometry.captureMode || 'unknown'),
+    modelRasterWidth: Number.isFinite(Number(modelRasterWidth)) ? Number(modelRasterWidth) : undefined,
+    modelRasterHeight: Number.isFinite(Number(modelRasterHeight)) ? Number(modelRasterHeight) : undefined,
     actionCandidates: Array.isArray(actionCandidates) ? actionCandidates.map(candidate => ({ ...candidate })) : [],
   }
   interactionVisualFrames.set(frameId, frame)
@@ -1432,6 +1434,8 @@ function interactionRegisterVisualFrame(tabId, before, after, captureGeometry, a
     captureWidth: frame.captureWidth,
     captureHeight: frame.captureHeight,
     captureMode: frame.captureMode,
+    ...(Number.isFinite(Number(frame.modelRasterWidth)) ? { modelRasterWidth: Number(frame.modelRasterWidth) } : {}),
+    ...(Number.isFinite(Number(frame.modelRasterHeight)) ? { modelRasterHeight: Number(frame.modelRasterHeight) } : {}),
   }
 }
 
@@ -1454,8 +1458,14 @@ async function interactionVisualClick(args) {
   interactionPruneVisualFrames()
   const frameId = typeof args.frameId === 'string' ? args.frameId.trim() : ''
   const requestedCandidateId = typeof args.candidateId === 'string' ? args.candidateId.trim().toUpperCase() : ''
+  const requestedImageX = Number(args.imageX)
+  const requestedImageY = Number(args.imageY)
+  const requestedImageWidth = Number(args.imageWidth)
+  const requestedImageHeight = Number(args.imageHeight)
+  const hasRequestedImagePoint = Number.isFinite(requestedImageX) && Number.isFinite(requestedImageY)
   let xRatio = Number(args.xRatio)
   let yRatio = Number(args.yRatio)
+  let coordinateSource = 'normalized-ratio'
   if (frameId) {
     const targetHint = typeof args.targetHint === 'string' ? args.targetHint.trim() : ''
     if (targetHint.length < 2) throw new Error('live visualClick requires targetHint as a business-intent label for post-click DOM/semantic learning and verification')
@@ -1463,6 +1473,28 @@ async function interactionVisualClick(args) {
     if (!frame) throw new Error('browser visual frame is unavailable; use a visualFrameId previously returned by patrol_observe(includeImage=true)')
     if (frame.tabId !== tabId) throw new Error('browser visual frame belongs to a different tab; capture a fresh visual observation')
     let selectedCandidate
+    if (requestedCandidateId && hasRequestedImagePoint) {
+      throw new Error('visualClick must use exactly one live coordinate source: candidateId OR imageX/imageY, not both')
+    }
+    if (hasRequestedImagePoint) {
+      const rasterWidth = Number(frame.modelRasterWidth)
+      const rasterHeight = Number(frame.modelRasterHeight)
+      if (!Number.isFinite(rasterWidth) || !Number.isFinite(rasterHeight) || rasterWidth <= 0 || rasterHeight <= 0) {
+        throw new Error('CURRENT visual frame does not contain model-raster dimensions; capture a fresh patrol_observe(includeImage=true, actionMap=false) before pixel clicking')
+      }
+      if (Number.isFinite(requestedImageWidth) && Math.abs(requestedImageWidth - rasterWidth) > 1) {
+        throw new Error(`imageWidth=${requestedImageWidth} does not match CURRENT model raster width=${rasterWidth}; refusing cross-frame coordinate reuse`)
+      }
+      if (Number.isFinite(requestedImageHeight) && Math.abs(requestedImageHeight - rasterHeight) > 1) {
+        throw new Error(`imageHeight=${requestedImageHeight} does not match CURRENT model raster height=${rasterHeight}; refusing cross-frame coordinate reuse`)
+      }
+      if (requestedImageX < 0 || requestedImageX > rasterWidth || requestedImageY < 0 || requestedImageY > rasterHeight) {
+        throw new Error(`imageX/imageY must lie inside CURRENT model raster ${rasterWidth}x${rasterHeight}`)
+      }
+      xRatio = requestedImageX / rasterWidth
+      yRatio = requestedImageY / rasterHeight
+      coordinateSource = 'model-raster-pixel'
+    }
     if (requestedCandidateId) {
       selectedCandidate = Array.isArray(frame.actionCandidates)
         ? frame.actionCandidates.find(candidate => String(candidate?.candidateId || '').toUpperCase() === requestedCandidateId)
@@ -1484,6 +1516,7 @@ async function interactionVisualClick(args) {
         : Number(selectedCandidate.centerY)
       xRatio = (selectedX - captureLeft) / captureWidth
       yRatio = (selectedY - captureTop) / captureHeight
+      coordinateSource = 'action-map-candidate'
     }
     if (!Number.isFinite(xRatio) || !Number.isFinite(yRatio)
       || xRatio < 0 || xRatio > 1 || yRatio < 0 || yRatio > 1) {
@@ -1544,6 +1577,13 @@ async function interactionVisualClick(args) {
       return interactionVisualClickResult({
         ...descriptor,
         ok: true,
+        coordinateSource,
+        ...(hasRequestedImagePoint ? {
+          requestedImageX,
+          requestedImageY,
+          modelRasterWidth: Number(frame.modelRasterWidth),
+          modelRasterHeight: Number(frame.modelRasterHeight),
+        } : {}),
         clickX: clientX,
         clickY: clientY,
         requestedClickX: clientX,
@@ -1571,6 +1611,15 @@ async function interactionVisualClick(args) {
       visualAuthority,
       expectedVisualText,
     )
+    if (clicked && typeof clicked === 'object') {
+      clicked.coordinateSource = coordinateSource
+      if (hasRequestedImagePoint) {
+        clicked.requestedImageX = requestedImageX
+        clicked.requestedImageY = requestedImageY
+        clicked.modelRasterWidth = Number(frame.modelRasterWidth)
+        clicked.modelRasterHeight = Number(frame.modelRasterHeight)
+      }
+    }
     if (requestedCandidateId && clicked && typeof clicked === 'object') {
       clicked.candidateId = requestedCandidateId
       clicked.actionCandidateKind = selectedCandidate?.activationKind || ''
@@ -2609,9 +2658,15 @@ async function interactionPerformVisualClick(tabId, xRatio, yRatio, viewport, ex
     }
   }
 
-  // Coordinate replay keeps strict publish/send DOM proof. Live visual teaching
-  // does not: the screenshot point owns the click and business-state verification
-  // after the click decides whether it is teachable.
+  // Live screenshot-bound visual teaching must be a real Chrome debugger mouse
+  // dispatch at the exact screenshot-derived viewport point. If trusted input is
+  // unavailable, fail closed rather than silently substituting element.click()
+  // or synthetic MouseEvents at a potentially different event target.
+  if (visualAuthority) {
+    throw new Error(nativeError || 'trusted Chrome debugger mouse input is unavailable for CURRENT visual click; refusing synthetic fallback')
+  }
+
+  // Coordinate replay keeps strict publish/send DOM proof.
   if (!visualAuthority && interactionWantsPublishTarget(targetHint)) {
     let fallbackProbe
     try {
@@ -2828,6 +2883,11 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
     ...(typeof clicked.className === 'string' && clicked.className ? { targetClassName: clicked.className } : {}),
     ...(Number.isFinite(Number(clicked.requestedClickX)) ? { requestedClickX: Number(clicked.requestedClickX) } : {}),
     ...(Number.isFinite(Number(clicked.requestedClickY)) ? { requestedClickY: Number(clicked.requestedClickY) } : {}),
+    ...(Number.isFinite(Number(clicked.requestedImageX)) ? { requestedImageX: Number(clicked.requestedImageX) } : {}),
+    ...(Number.isFinite(Number(clicked.requestedImageY)) ? { requestedImageY: Number(clicked.requestedImageY) } : {}),
+    ...(Number.isFinite(Number(clicked.modelRasterWidth)) ? { modelRasterWidth: Number(clicked.modelRasterWidth) } : Number.isFinite(Number(viewport.modelRasterWidth)) ? { modelRasterWidth: Number(viewport.modelRasterWidth) } : {}),
+    ...(Number.isFinite(Number(clicked.modelRasterHeight)) ? { modelRasterHeight: Number(clicked.modelRasterHeight) } : Number.isFinite(Number(viewport.modelRasterHeight)) ? { modelRasterHeight: Number(viewport.modelRasterHeight) } : {}),
+    ...(typeof clicked.coordinateSource === 'string' && clicked.coordinateSource ? { coordinateSource: clicked.coordinateSource } : {}),
     ...(Number.isFinite(Number(clicked.clickX)) ? { resolvedClickX: Number(clicked.clickX) } : {}),
     ...(Number.isFinite(Number(clicked.clickY)) ? { resolvedClickY: Number(clicked.clickY) } : {}),
     visualSnapped: clicked.visualSnapped === true,

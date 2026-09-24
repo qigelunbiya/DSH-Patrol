@@ -68,6 +68,84 @@ function draftDefinition(): InspectionDefinition {
 }
 
 describe('browser visual fallback click teaching', () => {
+  it('forwards CURRENT model-raster image pixels without model-side ratio conversion', async () => {
+    const visualEvidence = createPatrolVisualEvidenceRegistry()
+    visualEvidence.mark('browser-visual-pixel', 'visual-click')
+    const calls: Array<{ tool: string; args: JsonObject }> = []
+    const { store, tool, exec } = await setup(async (name, args) => {
+      calls.push({ tool: name, args })
+      if (name === 'browser_read_page') {
+        return { ok: true, text: '任务列表', value: { ok: true, url: 'http://example.test/tasks', title: '任务', text: '任务列表' } }
+      }
+      if (name === 'browser_snapshot') {
+        return { ok: true, text: 'snapshot', value: { ok: true, url: 'http://example.test/tasks', title: '任务', elements: [] } }
+      }
+      if (name === 'browser_visual_click') {
+        expect(args).toMatchObject({
+          frameId: 'browser-visual-pixel',
+          imageX: 742,
+          imageY: 112,
+          imageWidth: 1024,
+          imageHeight: 576,
+          targetHint: '我的任务右侧的×',
+          visualAuthority: true,
+        })
+        expect(args).not.toHaveProperty('xRatio')
+        expect(args).not.toHaveProperty('candidateId')
+        return {
+          ok: true,
+          text: 'clicked raw raster pixel',
+          value: {
+            ok: true,
+            xRatio: 742 / 1024,
+            yRatio: 112 / 576,
+            requestedXRatio: 742 / 1024,
+            requestedYRatio: 112 / 576,
+            requestedImageX: 742,
+            requestedImageY: 112,
+            modelRasterWidth: 1024,
+            modelRasterHeight: 576,
+            coordinateSource: 'model-raster-pixel',
+            targetTag: 'span',
+            targetText: '×',
+            targetStateChanged: true,
+            selectorHint: 'top-frame::.filter-chip .remove',
+            selectorReplaySafe: true,
+            selectorQuality: 'medium',
+            bindingActionable: true,
+            bindingSource: 'visual-hit-test-post-click-learning',
+            visualAuthority: true,
+            urlIdentity: 'http://example.test/tasks',
+            viewportWidth: 1280,
+            viewportHeight: 720,
+            captureClientLeft: 0,
+            captureClientTop: 0,
+            captureWidth: 1280,
+            captureHeight: 720,
+            captureMode: 'cdp-css-visual-viewport',
+            scrollX: 0,
+            scrollY: 0,
+          },
+        }
+      }
+      throw new Error(`unexpected tool ${name}`)
+    }, undefined, visualEvidence)
+
+    const result = await tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '关闭我的任务筛选',
+      targetHint: '我的任务右侧的×',
+      imageX: 742,
+      imageY: 112,
+      imageWidth: 1024,
+      imageHeight: 576,
+    }, exec)
+
+    expect(result).toContain('browser_visual_click')
+    expect(calls.some(call => call.tool === 'browser_visual_click' && call.args.imageX === 742)).toBe(true)
+    expect((await store.load('visual-click')).steps).toHaveLength(1)
+  })
+
   it('auto-binds candidate clicks to the latest model-visible frame when frameId is omitted', async () => {
     const visualEvidence = createPatrolVisualEvidenceRegistry()
     visualEvidence.mark('browser-visual-latest', 'visual-click')
@@ -481,7 +559,7 @@ describe('browser visual fallback click teaching', () => {
         pointerAction,
       }, exec)
 
-      expect(result).toContain('X=580, Y=520')
+      expect(result).toContain('legacy normalized frame coordinate xRatio=0.5800, yRatio=0.5200')
       if (pointerAction === 'mark') {
         expect(result).toMatch(/Visual preview token: browser-preview-/)
         expect(result).toContain('Do not recompute or restate coordinates')
@@ -752,7 +830,7 @@ describe('browser visual fallback click teaching', () => {
       frameId: 'browser-visual-current',
       xRatio: 0.3,
       yRatio: 0.35,
-    }, exec)).rejects.toThrow(/require expectedVisualText.*model-visible CURRENT screenshot/i)
+    }, exec)).rejects.toThrow(/require[s]? expectedVisualText.*CURRENT model-visible screenshot/i)
     expect(calls).toEqual([])
   })
 
@@ -870,17 +948,19 @@ describe('browser visual fallback click teaching', () => {
   })
 
   it('does not require the redundant mark-preview round trip before TEST MODE visual clicks', () => {
-    expect(visualToolSource).toContain('pointerAction=mark/previewId remains optional for diagnostics only')
+    expect(visualToolSource).toContain('pointerAction')
+    expect(visualToolSource).toContain('Optional diagnostic token returned by pointerAction=mark')
     expect(visualToolSource).not.toContain('preview-bound for accuracy in TEST MODE')
     expect(visualToolSource).not.toContain('A naked visual left-click is never dispatched in TEST MODE')
   })
 
-  it('makes Action Map candidates primary and keeps free XY as an uncovered-target fallback', () => {
-    expect(visualToolSource).toContain('prefer an A# from the CURRENT targeted Action Map')
-    expect(visualToolSource).toContain('Free XY is a fallback only')
-    expect(visualToolSource).toContain('Use free XY only when no CURRENT candidate covers the intended target')
-    expect(visualToolSource).toContain('If this free XY point is wrong')
-    expect(visualToolSource).toContain('capture a fresh targeted Action Map')
+  it('makes CURRENT raster pixels primary and keeps Action Map / ratios as compatibility paths', () => {
+    expect(visualToolSource).toContain('Preferred live path is CURRENT screenshot raster')
+    expect(visualToolSource).toContain('pass imageX/imageY from that exact attached raster')
+    expect(visualToolSource).toContain('Do not manually convert pixels to xRatio')
+    expect(visualToolSource).toContain('candidateId remains an optional compatibility path')
+    expect(visualToolSource).toContain('xRatio/yRatio remain a legacy normalized fallback')
+    expect(visualToolSource).toContain('trusted debugger mouse input is unavailable')
   })
 
   it('refuses CAPTCHA/image-code targets before any browser visual dispatch', async () => {

@@ -88,8 +88,8 @@ export function registerPatrolObservationTools(
       inspectionId: { type: 'string', required: true },
       tabId: { type: 'integer' },
       includeImage: { type: 'boolean', description: 'Attach the CURRENT screenshot image to model context. Default false; use only when OCR/DOM evidence is insufficient.' },
-      actionMap: { type: 'boolean', description: 'Overlay stable A1/A2/... boxes around CURRENT interactive controls. Explicit actionMap=true requires targetHint. When includeImage=true already carries a concrete targetHint, Patrol automatically enables this targeted Action Map even if actionMap is omitted.' },
-      targetHint: { type: 'string', description: 'Concrete CURRENT business target, e.g. “百度搜索栏”, “龙之信条2 百度百科结果”, “10.192.3.174 行的 RDP” or “评论输入框”. With includeImage=true it automatically requests a targeted Action Map; structured row targets are filtered by row identity + action before labels are rendered.' },
+      actionMap: { type: 'boolean', description: 'Optional A1/A2/... overlay. It is now EXPLICIT opt-in only: actionMap=true enables candidate labels; omitted/false keeps the primary raw visual-coordinate path and returns a coordinate guide instead. actionMap=true requires targetHint.' },
+      targetHint: { type: 'string', description: 'Concrete CURRENT business target, e.g. “百度搜索栏”, “龙之信条2 百度百科结果”, “我的任务右侧的×” or “评论输入框”. targetHint no longer auto-enables Action Map; it remains business context while the primary browser visual path uses the attached screenshot pixels directly.' },
       focusXRatio: { type: 'number', description: 'Optional coarse X center (0..1) for a focused visual crop. Use after a full-frame visual estimate when the target is small or a calibration mark missed.' },
       focusYRatio: { type: 'number', description: 'Optional coarse Y center (0..1) for a focused visual crop. Requires includeImage=true and focusXRatio.' },
       focusWidthRatio: { type: 'number', description: 'Focused crop width as a fraction of the CURRENT visual viewport. Default 0.30; clamped to 0.12..0.72.' },
@@ -173,16 +173,16 @@ export function registerPatrolObservationTools(
           `Evidence: ${hasImage ? 'MODEL-VISIBLE image attached + compact OCR/DOM' : 'compact OCR/DOM only'}`,
           ...(hasImage && value.coordinateGuide === true ? [
             value.focusedVisual === true
-              ? `FOCUSED VISUAL FRAME: this image is a zoomed CURRENT-page crop centered near full-frame (${Number(value.focusCenterXRatio ?? 0).toFixed(3)}, ${Number(value.focusCenterYRatio ?? 0).toFixed(3)}), covering about ${Math.round(Number(value.focusWidthRatio ?? 0) * 100)}% x ${Math.round(Number(value.focusHeightRatio ?? 0) * 100)}% of the viewport. The attached crop itself has an XY/1000 overlay. For patrol_visual_click_target use the target position INSIDE THIS CROP: xRatio=X/1000, yRatio=Y/1000. Do NOT reuse the coarse full-frame ratio as the click ratio.`
-              : `VISUAL COORDINATE GUIDE: the attached raster is ${value.modelRasterWidth ?? value.image?.width ?? '?'}x${value.modelRasterHeight ?? value.image?.height ?? '?'} px and contains an XY/1000 overlay. Read the target from that overlay: xRatio=X/1000, yRatio=Y/1000. Never infer coordinates from OS screen size, CSS viewport size, or the chat UI preview width.`,
+              ? `FOCUSED RAW VISUAL FRAME: this attached crop is exactly ${value.modelRasterWidth ?? value.image?.width ?? '?'}x${value.modelRasterHeight ?? value.image?.height ?? '?'} model pixels and covers only the indicated CURRENT-page region. Identify the target center on THIS crop and call patrol_visual_click_target(imageX=<pixel>, imageY=<pixel>, imageWidth=${value.modelRasterWidth ?? value.image?.width ?? '?'}, imageHeight=${value.modelRasterHeight ?? value.image?.height ?? '?'}). Patrol maps crop pixels -> capture geometry -> viewport exactly once. The XY/1000 overlay is only a visual aid; do not manually convert to CSS coordinates.`
+              : `RAW VISUAL CLICK FRAME: the attached CURRENT raster is exactly ${value.modelRasterWidth ?? value.image?.width ?? '?'}x${value.modelRasterHeight ?? value.image?.height ?? '?'} model pixels. For patrol_visual_click_target, prefer the target center as imageX/imageY on this exact raster and copy imageWidth/imageHeight for frame validation. Patrol owns the only raster->viewport conversion. Do not infer coordinates from OS screen size, CSS viewport size, devicePixelRatio, or chat preview size. The XY/1000 overlay is only a coarse visual aid.`,
           ] : []),
           ...(hasImage && value.actionMapStrictTargetMiss === true ? [
             `STRICT TARGET MISS for ${JSON.stringify(value.actionMapTargetHint || args.targetHint || '')}: no safe CURRENT Action Map candidate matched the explicit text/close target. Do NOT guess a nearby A# or free XY. Refresh/re-focus the CURRENT page and request the same concrete target again.`,
           ] : []),
           ...(hasImage && value.actionMap === true ? [
             value.actionMapTargeted === true
-              ? `TARGETED VISUAL ACTION MAP READY for ${JSON.stringify(value.actionMapTargetHint || args.targetHint || '')}: ${value.actionCandidateCount ?? 0} matching CURRENT control(s) are outlined with A1/A2/... labels. For structured rows such as “IP + RDP”, unrelated rows were removed before labels were assigned. Choose only among these labels; do not guess a global A# from an unfiltered page.`
-              : `VISUAL ACTION MAP READY: ${value.actionCandidateCount ?? 0} CURRENT interactive control(s) are outlined with A1/A2/... labels. For small buttons/icons, visually choose the label covering the intended control and call patrol_visual_click_target with candidateId=that label. Do NOT estimate xRatio/yRatio when a correct action-map candidate exists.`,
+              ? `EXPLICIT TARGETED ACTION MAP READY for ${JSON.stringify(value.actionMapTargetHint || args.targetHint || '')}: ${value.actionCandidateCount ?? 0} matching CURRENT control(s) are outlined with A1/A2/... labels. This is the optional compatibility path; for raw visual clicking prefer a fresh actionMap=false observation and imageX/imageY.`
+              : `EXPLICIT ACTION MAP READY: ${value.actionCandidateCount ?? 0} CURRENT interactive control(s) are outlined with A1/A2/... labels. Use candidateId only when you deliberately requested this compatibility mode.`,
             ...(value.actionCandidateSummary ? [`CURRENT A# bindings from browser geometry:\n${value.actionCandidateSummary}`] : []),
             ...(hasActionMapZoom ? [
               `ACTION MAP TARGET ZOOM attached as a SECOND image: ${value.actionMapZoomCount ?? value.actionCandidateCount ?? 0} candidate crop(s) are magnified in A# cards. Use the zoom image to decide WHICH A# is the intended control; the green crosshair in each card is the exact browser safe point. NEVER derive xRatio/yRatio from the zoom sheet because its pixels are not page coordinates.`,
@@ -225,7 +225,6 @@ export function registerPatrolObservationTools(
         || args.focusWidthRatio !== undefined || args.focusHeightRatio !== undefined
       const requestedActionMapTargetHint = typeof args.targetHint === 'string' ? args.targetHint.trim() : ''
       const actionMapRequested = args.actionMap === true
-        || (args.includeImage === true && requestedActionMapTargetHint.length >= 2)
       if (args.actionMap === true && args.includeImage !== true) {
         throw new Error('visual action-map observation requires includeImage=true')
       }

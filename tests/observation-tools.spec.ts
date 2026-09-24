@@ -112,7 +112,7 @@ describe('current-page observation evidence fallback', () => {
     expect(value.actionMapTargetHint).toBe('10.192.3.174 行的 RDP')
   })
 
-  it('automatically requests a targeted Action Map when visual observation has a concrete targetHint', async () => {
+  it('keeps raw pixel visual mode when targetHint is present unless Action Map is explicitly requested', async () => {
     const harness = setupObservationHarness({ readImage: 'success', captcha: false })
     const value = await harness.tool.execute({
       inspectionId: 'demo',
@@ -121,12 +121,13 @@ describe('current-page observation evidence fallback', () => {
     }, harness.exec)
 
     expect(harness.screenshotArgs.at(-1)).toMatchObject({
-      actionMap: true,
-      actionMapTargetHint: '百度搜索栏',
-      coordinateGuide: false,
+      actionMap: false,
+      coordinateGuide: true,
     })
-    expect(value.actionMap).toBe(true)
-    expect(value.actionMapTargeted).toBe(true)
+    expect(harness.screenshotArgs.at(-1)).not.toHaveProperty('actionMapTargetHint')
+    expect(value.actionMap).toBe(false)
+    expect(value.modelRasterWidth).toBe(1024)
+    expect(value.modelRasterHeight).toBe(576)
   })
 
   it('attaches a second magnified candidate sheet for small targeted Action Maps', async () => {
@@ -317,7 +318,13 @@ function setupObservationHarness(options: {
               actionMapZoomCount: 1,
               actionMapZoomPath: 'C:\\workspace\\action-map-zoom.jpg',
             } : {}),
-            ...(args.format === 'jpeg' && options.omitRasterBudget !== true ? { targetPixelWidth: 1024, compactVisual: true } : {}),
+            ...(args.format === 'jpeg' && options.omitRasterBudget !== true ? {
+              targetPixelWidth: 1024,
+              compactVisual: true,
+              modelRasterWidth: 1024,
+              modelRasterHeight: 576,
+              coordinateGuide: args.coordinateGuide === true,
+            } : {}),
           },
         }
       }
