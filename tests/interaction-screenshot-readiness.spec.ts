@@ -81,6 +81,8 @@ describe('Patrol screenshot tab readiness', () => {
 
   it('binds visual clicks to the exact CURRENT screenshot viewport and allows frame reuse while geometry is unchanged', async () => {
     let clickedArgs: any[] | undefined
+    let visualProbeCount = 0
+    const debuggerEvents: any[] = []
     const viewport = {
       urlIdentity: 'https://example.test/video/1',
       width: 1280,
@@ -98,6 +100,7 @@ describe('Patrol screenshot tab readiness', () => {
         }
         if (request.func?.name === 'interactionMainWorldVisualClick') {
           clickedArgs = request.args
+          visualProbeCount += 1
           return [{
             result: {
               ok: true,
@@ -109,8 +112,7 @@ describe('Patrol screenshot tab readiness', () => {
               ariaLabel: '点赞',
               id: 'like-button',
               className: 'video-like active',
-              targetStateChanged: true,
-              stateEvidence: 'clicked visual target DOM state changed',
+              stateSignature: visualProbeCount === 1 ? 'before' : 'after',
             },
           }]
         }
@@ -122,7 +124,15 @@ describe('Patrol screenshot tab readiness', () => {
       update: async (id: number) => ({ id, windowId: 2, status: 'complete', url: 'https://example.test/video/1' }),
       captureVisibleTab: async () => 'data:image/png;base64,AAAA',
     }
-    const sandbox = await loadInteraction({ chrome: { tabs, scripting } })
+    const chromeDebugger = {
+      attach: async () => {},
+      detach: async () => {},
+      sendCommand: async (_target: any, method: string, params: any) => {
+        debuggerEvents.push({ method, params })
+        return {}
+      },
+    }
+    const sandbox = await loadInteraction({ chrome: { tabs, scripting, debugger: chromeDebugger } })
 
     const shot = await sandbox.handleCommand('screenshot', { tabId: 7 })
     expect(shot.visualFrameId).toMatch(/^browser-visual-/)
@@ -147,7 +157,7 @@ describe('Patrol screenshot tab readiness', () => {
     })
     expect(clicked).toMatchObject({
       ok: true,
-      transport: 'bound-current-visual-frame+synthetic-main-world',
+      transport: 'bound-current-visual-frame+trusted-native-mouse',
       selectorHint: 'top-frame::.video-like',
       targetTag: 'div',
       targetRole: 'button',
@@ -158,6 +168,8 @@ describe('Patrol screenshot tab readiness', () => {
       targetClassName: 'video-like active',
       targetStateChanged: true,
     })
+    expect(debuggerEvents.filter(event => event.method === 'Input.dispatchMouseEvent')).toHaveLength(3)
+    expect(debuggerEvents.find(event => event.params?.type === 'mousePressed')?.params).toMatchObject({ x: 256, y: 576, button: 'left' })
     expect(clickedArgs?.[0]).toBeCloseTo(256)
     expect(clickedArgs?.[1]).toBeCloseTo(576)
     expect(clickedArgs?.[4]).toBe('点赞')
