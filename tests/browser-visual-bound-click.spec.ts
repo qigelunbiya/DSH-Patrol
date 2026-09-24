@@ -41,6 +41,7 @@ describe('browser visual V# binding and startup regression', () => {
     expect(dev).toContain("resolveFrom('packages/attachment/attachment-local', 'sharp')")
     expect(dev).toContain("resolveFrom('packages/subprocess/subprocess-local', 'koffi')")
     expect(dev).toContain('pnpm install --force --frozen-lockfile')
+    expect(dev).toContain('if ([string]$manifest.version -ne "0.1.1-rc.2")')
     expect(dev).toContain('if (Test-HarnessRuntimeDependencies -HarnessRootPath $HarnessRootPath)')
     expect(dev).not.toContain('pnpm install --frozen-lockfile --prefer-offline')
     expect(dev.indexOf('Repair-HarnessRuntimeDependencies -HarnessRootPath $HarnessRoot')).toBeLessThan(dev.indexOf('& (Join-Path $PSScriptRoot "install-local.ps1")'))
