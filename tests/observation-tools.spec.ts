@@ -130,7 +130,7 @@ describe('current-page observation evidence fallback', () => {
     expect(value.modelRasterHeight).toBe(576)
   })
 
-  it('automatically builds a pure-pixel B# map for focused small-target observations', async () => {
+  it('does not silently auto-enable legacy B# maps for focused observations', async () => {
     const harness = setupObservationHarness({ readImage: 'success', captcha: false })
     const value = await harness.tool.execute({
       inspectionId: 'demo',
@@ -143,14 +143,30 @@ describe('current-page observation evidence fallback', () => {
     }, harness.exec)
 
     expect(harness.screenshotArgs.at(-1)).toMatchObject({
-      pixelActionMap: true,
+      pixelActionMap: false,
       actionMap: false,
-      coordinateGuide: false,
+      coordinateGuide: true,
       focusXRatio: 0.72,
       focusYRatio: 0.16,
     })
+    expect(value.pixelActionMap).toBe(false)
+  })
+
+  it('keeps explicit legacy B# map available only when deliberately requested', async () => {
+    const harness = setupObservationHarness({ readImage: 'success', captcha: false })
+    const value = await harness.tool.execute({
+      inspectionId: 'demo',
+      includeImage: true,
+      targetHint: 'legacy diagnostic',
+      pixelActionMap: true,
+    }, harness.exec)
+
+    expect(harness.screenshotArgs.at(-1)).toMatchObject({
+      pixelActionMap: true,
+      actionMap: false,
+      coordinateGuide: false,
+    })
     expect(value.pixelActionMap).toBe(true)
-    expect(value.pixelCandidateCount).toBe(3)
     expect(value.pixelCandidateSummary).toContain('B1')
   })
 
