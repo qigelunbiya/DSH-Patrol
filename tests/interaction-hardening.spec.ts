@@ -37,6 +37,8 @@ describe('browser interaction hardening layer', () => {
     expect(source).toContain('candidateMatchesStructuredTarget')
     expect(source).toContain('rowContext')
     expect(source).toContain('localCandidateContext')
+    expect(source).toContain('microActionOwnerContext')
+    expect(source).toContain('ownerContext')
     expect(source).toContain('isMicroCloseAction')
     expect(source).toContain("microActionKind: microCloseAction ? 'close' : ''")
     expect(source).toContain("activationKind: microCloseAction")
@@ -46,6 +48,15 @@ describe('browser interaction hardening layer', () => {
     expect(source).toContain("rgba(0,255,110,0.96)")
     expect(source).toContain('interactionStructuredRowCandidateMismatch')
     expect(source).toContain('REFUSED before physical input')
+  })
+
+  it('fails closed for explicit text/close targets instead of falling back to an unfiltered A# map', () => {
+    expect(source).toContain('strongTextIntent')
+    expect(source).toContain('actionMapStrictTarget')
+    expect(source).toContain('actionMapStrictTargetMiss')
+    expect(source).toContain('actionCandidateSummary')
+    expect(source).toContain('textualMatches.length === 0')
+    expect(source).toContain('narrowed = []')
   })
 
   it('renders a separate magnified Action Map candidate sheet with exact safe-point crosses', () => {
