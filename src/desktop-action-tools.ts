@@ -163,7 +163,7 @@ async function executeAndRecordDesktopAction(
 
   let replayTool = tool
   let replayArgs = effectiveStoredArgs
-  if (tool === 'desktop_click_visual_point' || tool === 'desktop_click_focused_visual_point') {
+  if (tool === 'desktop_click_visual_point') {
     const mappedX = objectNumber(dispatched.value, 'xRatio')
     const mappedY = objectNumber(dispatched.value, 'yRatio')
     if (mappedX !== undefined && mappedY !== undefined) {
