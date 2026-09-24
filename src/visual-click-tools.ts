@@ -53,12 +53,71 @@ export function registerPatrolVisualClickTool(
     xRatio: number
     yRatio: number
     createdAt: number
-    source?: 'manual' | 'ocr'
+    source?: 'manual' | 'ocr' | 'action-map'
+    actionMapId?: string
+    visualCandidateId?: string
     ocrText?: string
     ocrMatchedText?: string
     ocrRelation?: 'center' | 'close-right'
   }>()
   let visualPreviewSequence = 0
+
+  const actionMapTool = defineTool({
+    name: 'patrol_browser_visual_action_map',
+    description: 'PRIMARY browser visual grounding for unlabeled controls. Mirrors the proven Desktop Action Map workflow but is a completely separate browser implementation: start from the SAME full CURRENT patrol_observe(includeImage=true) frame, give only a coarse target-region center, then Patrol builds a browser-local V1/V2/... Action Map from screenshot pixels. Read the returned map image, choose V#, and click with patrol_browser_click_visual_candidate. The final click uses the program-computed bbox center; never estimate final x/y. No desktop-runtime code is imported or modified.',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+      frameId: { type: 'string', description: 'Optional CURRENT browser visual frame. Normally omit; Patrol auto-binds the latest model-visible full browser frame for this inspection.' },
+      centerXRatio: { type: 'number', required: true, description: 'Coarse center of the target region on the full CURRENT screenshot, 0..1. This is only for cropping the map, never the final click.' },
+      centerYRatio: { type: 'number', required: true, description: 'Coarse center of the target region on the full CURRENT screenshot, 0..1.' },
+      widthRatio: { type: 'number', description: 'Coarse map-region width. Default 0.38; use about 0.28..0.50 for most controls.' },
+      heightRatio: { type: 'number', description: 'Coarse map-region height. Default 0.34; use about 0.24..0.46 for most controls.' },
+      maxCandidates: { type: 'integer', description: 'Maximum V# candidates. Default 18, bounded 3..30.' },
+      tabId: { type: 'integer' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec: ToolRunContext) {
+      await store.load(args.inspectionId)
+      const frameId = String(args.frameId ?? '').trim()
+        || options.visualEvidence?.latest(args.inspectionId)
+        || ''
+      if (!/^browser-visual-[a-z0-9-]+$/i.test(frameId)) {
+        throw new Error('patrol_browser_visual_action_map requires a model-visible full CURRENT browser frame from patrol_observe(includeImage=true)')
+      }
+      const centerXRatio = Number(args.centerXRatio)
+      const centerYRatio = Number(args.centerYRatio)
+      if (![centerXRatio, centerYRatio].every(Number.isFinite)
+        || centerXRatio < 0 || centerXRatio > 1 || centerYRatio < 0 || centerYRatio > 1) {
+        throw new Error('browser visual Action Map requires coarse centerXRatio/centerYRatio between 0 and 1')
+      }
+      const evidence = options.visualEvidence?.consume(frameId, args.inspectionId)
+      if (evidence?.ok === false) throw new Error(`browser visual Action Map refused: ${evidence.reason}`)
+      const built = await runner.dispatch('browser_visual_action_map', compactObject({
+        frameId,
+        centerXRatio,
+        centerYRatio,
+        widthRatio: typeof args.widthRatio === 'number' ? args.widthRatio : undefined,
+        heightRatio: typeof args.heightRatio === 'number' ? args.heightRatio : undefined,
+        maxCandidates: Number.isInteger(args.maxCandidates) ? args.maxCandidates : undefined,
+        tabId: args.tabId,
+      }), exec)
+      if (!built.ok) throw new Error(built.error ?? built.text ?? 'browser visual Action Map failed')
+      const actionMapId = objectString(built.value, 'actionMapId')
+      const path = objectString(built.value, 'path')
+      const candidateCount = objectNumber(built.value, 'candidateCount')
+      if (!actionMapId || !path || candidateCount === undefined || candidateCount < 1) {
+        throw new Error('browser visual Action Map returned incomplete map metadata')
+      }
+      return [
+        `Browser Action Map READY: frameId=${frameId}; actionMapId=${actionMapId}; candidates=${candidateCount}.`,
+        `Call read_image with this exact path: ${path}`,
+        'Choose the V# whose red bbox/green center is inside the intended control. Then call patrol_browser_click_visual_candidate with the SAME actionMapId and candidateId. Do not provide imageX/imageY/xRatio/yRatio.',
+        objectString(built.value, 'candidateSummary') ? `Candidate geometry (diagnostic only; choose visually from the map):\n${objectString(built.value, 'candidateSummary')}` : '',
+        'This Browser Action Map is browser-local and independent from Desktop/Application visual state.',
+      ].filter(Boolean).join('\n')
+    },
+  })
+
   const tool = defineTool({
     name: 'patrol_visual_click_target',
     description: 'Primary browser visual click. Browser TEST teaching now mirrors the proven Desktop strategy: visible TEXT targets use CURRENT screenshot Windows OCR geometry (ocrText) and Patrol clicks the OCR bounding-box center; an adjacent close/remove icon uses ocrRelation=close-right, anchored on OCR text with a no-input safety probe before trusted mouse input. Large unlabeled controls may use CURRENT-raster imageX/imageY. Do not use B#/A# Action Maps, read_image screenshot paths, or model-guessed xRatio/yRatio for new TEST teaching. Live visual clicks require trusted Chrome debugger mouse input. Never use for image-code/CAPTCHA.',
