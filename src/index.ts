@@ -91,7 +91,7 @@ export const inject = ['tools', 'userQuestions']
 const DEFAULT_STORAGE_PATH = resolve(process.cwd(), '.dsh-patrol')
 const DEFAULT_MAX_STEPS = 200
 const DEFAULT_REPORT_MAX_CHARS = 30_000
-const TEST_MODE_BUILD_MARKER = 'test-real-visual-grounding-v13'
+const TEST_MODE_BUILD_MARKER = 'test-browser-visual-surface-v14'
 const TEST_MODE_DIRECT_BROWSER_ALLOWED = new Set([
   'browser_status',
   'browser_list_tabs',
@@ -207,6 +207,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       visualEvidence,
       requirePreview: false,
       testMode: runtimePolicy.testMode,
+      // In TEST mode the model should only see the three non-overlapping
+      // browser visual tools. The large patrol_visual_click_target wrapper
+      // remains an internal engine for those tools and for old replay data.
+      registerCompatibilityTool: !runtimePolicy.testMode,
     }),
     'dsh-patrol: recordable screenshot-bound browser visual grounding',
   )
