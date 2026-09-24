@@ -206,6 +206,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       clickOutcomes,
       visualEvidence,
       requirePreview: false,
+      testMode: runtimePolicy.testMode,
     }),
     'dsh-patrol: recordable screenshot-bound browser visual grounding',
   )
