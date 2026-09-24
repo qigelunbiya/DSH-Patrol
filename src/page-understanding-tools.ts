@@ -57,7 +57,7 @@ export interface PageUnderstandingPlan {
 
 export const PATROL_PAGE_UNDERSTANDING_PROMPT = `DSH Patrol 页面理解与执行规划（NORMAL/TEST MODE 都必须遵守）：
 - taskChecklist 只描述业务动作；执行页面动作前，要根据 CURRENT DOM/iframe/modal/structured table/视觉页面判断真实前端结构，不要把用户文字直接翻译成 nth-of-type 后盲点。
-- 浏览器操作方法服从用户最近一条明确指令：未指定时按 CURRENT 证据选择；明确只用视觉时，只允许 patrol_browser_click_ocr_text 或 patrol_observe(includeImage=true) → patrol_browser_visual_action_map → read_image → patrol_browser_click_visual_candidate；明确禁止视觉时只走 DOM/semantic/selector。
+- 浏览器操作方法服从用户最近一条明确指令：用户未指定方法时按 CURRENT 证据选择，不规定固定优先级；明确只用视觉时，只允许 patrol_browser_click_ocr_text 或 patrol_observe(includeImage=true) → patrol_browser_visual_action_map → read_image → patrol_browser_click_visual_candidate；明确禁止视觉时不得 includeImage=true，只走 DOM/semantic/selector。
 - patrol_analyze_step 永远不写 Runbook。需要表格行身份、弹窗上下文、iframe 或同名目标消歧时，它会把“行身份 + 行内动作”绑定，例如“目标地址 + RDP”。不要把分析器给出的 selector 再扩写成更长的 nth-of-type，也不要在没有新证据时连续猜 selector。
 - “行身份 + 行内动作”目标默认用 patrol_click_target 的 CURRENT row-context resolver；若明确只用视觉，文字唯一时用 patrol_browser_click_ocr_text，文字重复时先用完整截图确定目标行粗区域，再用 V# Action Map。不得用 A#/B#/整页自由坐标猜行。
 - selector 只接受当前浏览器 querySelector 层支持的 CSS。严禁 jQuery/Playwright/XPath 方言：:contains(...)、:has-text(...)、text=...、//...、.//...、xpath=...。locatorText 已知时优先只传 locatorText 给 patrol_click_target；若 locatorText 已提供但 selector hint 是非法方言，运行时会丢弃这个可选 hint 而继续语义定位。
