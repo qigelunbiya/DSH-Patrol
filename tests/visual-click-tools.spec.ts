@@ -505,12 +505,14 @@ describe('browser visual fallback click teaching', () => {
       if (name === 'browser_visual_click') {
         expect(args).toMatchObject({
           frameId: 'browser-visual-vcandidate',
-          xRatio: 0.503,
-          yRatio: 0.588,
+          visualActionMapId: 'browser-vmap-test-2',
+          visualCandidateId: 'V2',
           targetHint: '百度搜索框',
           visualAuthority: true,
           pointerAction: 'left-click',
         })
+        expect(args).not.toHaveProperty('xRatio')
+        expect(args).not.toHaveProperty('yRatio')
         expect(args).not.toHaveProperty('imageX')
         expect(args).not.toHaveProperty('candidateId')
         expect(args).not.toHaveProperty('pixelCandidateId')
@@ -523,7 +525,9 @@ describe('browser visual fallback click teaching', () => {
             yRatio: 0.588,
             requestedXRatio: 0.503,
             requestedYRatio: 0.588,
-            coordinateSource: 'normalized-ratio',
+            visualActionMapId: 'browser-vmap-test-2',
+            visualCandidateId: 'V2',
+            coordinateSource: 'browser-visual-action-map-candidate',
             targetFocusedEditable: true,
             targetStateChanged: true,
             stateEvidence: 'search input focused',
@@ -565,7 +569,11 @@ describe('browser visual fallback click teaching', () => {
     expect(result).toContain('Browser Desktop-style Action Map resolved V2')
     expect(result).toContain('program-owned bbox center')
     expect(calls[0]?.tool).toBe('browser_resolve_visual_candidate')
-    expect(calls.some(call => call.tool === 'browser_visual_click' && call.args.xRatio === 0.503)).toBe(true)
+    expect(calls.some(call => call.tool === 'browser_visual_click'
+      && call.args.visualActionMapId === 'browser-vmap-test-2'
+      && call.args.visualCandidateId === 'V2'
+      && call.args.xRatio === undefined
+      && call.args.yRatio === undefined)).toBe(true)
     expect((await store.load('visual-click')).steps).toHaveLength(1)
   })
 
