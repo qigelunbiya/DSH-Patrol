@@ -68,6 +68,84 @@ function draftDefinition(): InspectionDefinition {
 }
 
 describe('browser visual fallback click teaching', () => {
+  it('forwards CURRENT model-raster image pixels without model-side ratio conversion', async () => {
+    const visualEvidence = createPatrolVisualEvidenceRegistry()
+    visualEvidence.mark('browser-visual-pixel', 'visual-click')
+    const calls: Array<{ tool: string; args: JsonObject }> = []
+    const { store, tool, exec } = await setup(async (name, args) => {
+      calls.push({ tool: name, args })
+      if (name === 'browser_read_page') {
+        return { ok: true, text: '任务列表', value: { ok: true, url: 'http://example.test/tasks', title: '任务', text: '任务列表' } }
+      }
+      if (name === 'browser_snapshot') {
+        return { ok: true, text: 'snapshot', value: { ok: true, url: 'http://example.test/tasks', title: '任务', elements: [] } }
+      }
+      if (name === 'browser_visual_click') {
+        expect(args).toMatchObject({
+          frameId: 'browser-visual-pixel',
+          imageX: 742,
+          imageY: 112,
+          imageWidth: 1024,
+          imageHeight: 576,
+          targetHint: '我的任务右侧的×',
+          visualAuthority: true,
+        })
+        expect(args).not.toHaveProperty('xRatio')
+        expect(args).not.toHaveProperty('candidateId')
+        return {
+          ok: true,
+          text: 'clicked raw raster pixel',
+          value: {
+            ok: true,
+            xRatio: 742 / 1024,
+            yRatio: 112 / 576,
+            requestedXRatio: 742 / 1024,
+            requestedYRatio: 112 / 576,
+            requestedImageX: 742,
+            requestedImageY: 112,
+            modelRasterWidth: 1024,
+            modelRasterHeight: 576,
+            coordinateSource: 'model-raster-pixel',
+            targetTag: 'span',
+            targetText: '×',
+            targetStateChanged: true,
+            selectorHint: 'top-frame::.filter-chip .remove',
+            selectorReplaySafe: true,
+            selectorQuality: 'medium',
+            bindingActionable: true,
+            bindingSource: 'visual-hit-test-post-click-learning',
+            visualAuthority: true,
+            urlIdentity: 'http://example.test/tasks',
+            viewportWidth: 1280,
+            viewportHeight: 720,
+            captureClientLeft: 0,
+            captureClientTop: 0,
+            captureWidth: 1280,
+            captureHeight: 720,
+            captureMode: 'cdp-css-visual-viewport',
+            scrollX: 0,
+            scrollY: 0,
+          },
+        }
+      }
+      throw new Error(`unexpected tool ${name}`)
+    }, undefined, visualEvidence)
+
+    const result = await tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '关闭我的任务筛选',
+      targetHint: '我的任务右侧的×',
+      imageX: 742,
+      imageY: 112,
+      imageWidth: 1024,
+      imageHeight: 576,
+    }, exec)
+
+    expect(result).toContain('browser_visual_click')
+    expect(calls.some(call => call.tool === 'browser_visual_click' && call.args.imageX === 742)).toBe(true)
+    expect((await store.load('visual-click')).steps).toHaveLength(1)
+  })
+
   it('auto-binds candidate clicks to the latest model-visible frame when frameId is omitted', async () => {
     const visualEvidence = createPatrolVisualEvidenceRegistry()
     visualEvidence.mark('browser-visual-latest', 'visual-click')
