@@ -110,18 +110,20 @@ describe('current Patrol behavior prompt', () => {
   })
 
 
-  it('uses raw model-raster pixels for primary visual teaching with post-click DOM learning', () => {
+  it('uses two-stage Browser Pixel Grounding for small targets with post-click DOM learning', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/视觉可直接执行、DOM\/语义负责学习和重放/)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/DOM 当成视觉点击的前置许可/)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/语义\/DOM 定位失败一次时.*可以切换 patrol_observe\(includeImage=true\).*patrol_visual_click_target/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/某一行身份 \+ 行内动作.*row-context resolver.*semantic replay/s)
-    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/actionMap=true, targetHint=完整行身份\+动作.*ACTION MAP TARGET ZOOM.*candidateId.*safe-point/s)
-    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/PRIMARY browser visual route.*actionMap=false.*modelRasterWidth\/modelRasterHeight.*imageX\/imageY/s)
-    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/model-raster pixel.*capture geometry.*viewport client point/s)
-    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/imageX\/modelRasterWidth.*imageY\/modelRasterHeight/s)
-    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/targetHint 不再自动开启 Action Map/)
-    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/Action Map candidate safe-point.*actionMap=true/)
-    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/trusted Chrome debugger mouse dispatch.*fail closed/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/两阶段 Pixel Grounding/)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/pixelActionMap=true/)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/B1\/B2\/\.\.\./)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_visual_click_target\(pixelCandidateId=B#/)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/B# 不依赖 DOM\/Accessibility/)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/B# bbox center/)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/大搜索框\/大按钮.*imageX\/imageY/)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/A#.*compatibility path/)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/Chrome debugger trusted mouse input/)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/element\.click\(\).*synthetic MouseEvent/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/targetHint.*事后验证\/学习标签.*不得在点击前要求 DOM 证明/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/learned semantic.*learned selector.*guarded visual coordinate/)
