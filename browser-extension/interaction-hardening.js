@@ -1643,8 +1643,8 @@ function interactionRegisterVisualFrame(tabId, before, after, captureGeometry, a
 function interactionNormalizeBrowserVisualActionMapCrop(args = {}) {
   const centerX = Number.isFinite(Number(args.centerXRatio)) ? Number(args.centerXRatio) : 0.5
   const centerY = Number.isFinite(Number(args.centerYRatio)) ? Number(args.centerYRatio) : 0.5
-  const requestedWidth = Number.isFinite(Number(args.widthRatio)) ? Number(args.widthRatio) : 0.38
-  const requestedHeight = Number.isFinite(Number(args.heightRatio)) ? Number(args.heightRatio) : 0.34
+  const requestedWidth = Number.isFinite(Number(args.widthRatio)) ? Number(args.widthRatio) : 0.46
+  const requestedHeight = Number.isFinite(Number(args.heightRatio)) ? Number(args.heightRatio) : 0.42
   const widthRatio = Math.max(0.12, Math.min(0.90, requestedWidth))
   const heightRatio = Math.max(0.12, Math.min(0.90, requestedHeight))
   return {
