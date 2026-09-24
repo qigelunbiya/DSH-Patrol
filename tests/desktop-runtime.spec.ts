@@ -848,7 +848,6 @@ describe('Desktop Automation runtime foundation', () => {
       'desktop_focus_visual_region',
       'desktop_visual_action_map',
       'desktop_click_visual_candidate',
-      'desktop_click_focused_visual_point',
       'desktop_click_visual_template',
       'desktop_click_visual_point',
       'desktop_click_coordinates',
