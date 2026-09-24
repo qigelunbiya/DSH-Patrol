@@ -887,30 +887,6 @@ async function verifyAutomaticStateChange(runner: PatrolRunner, exec: ToolRunCon
   }
   return { ok: false, attempts: AUTO_VERIFY_DELAYS_MS.length }
 }
-function testModeLargeVisualControl(stepName: string | undefined, targetHint: string | undefined): boolean {
-  const text = normalizePageText([stepName, targetHint].filter(Boolean).join(' '))
-  if (!text) return false
-  const explicitTinyOverride = /(?:[x×✕✖]|关闭|移除|删除|清除|三点|省略号|齿轮|小图标|图标)/i.test(text)
-  if (explicitTinyOverride) return false
-  return /(?:搜索结果页)?(?:搜索框|搜索栏)|输入框|编辑框|文本框|地址栏|大输入区|空白输入区|无文字大控件/i.test(text)
-}
-
-function testModePrecisionTargetRequiresOcrGeometry(stepName: string | undefined, targetHint: string | undefined): boolean {
-  const raw = [stepName, targetHint].filter(Boolean).join(' ')
-  const text = normalizePageText(raw)
-  if (!text) return false
-
-  const explicitTiny = /(?:[x×✕✖]|关闭|移除|删除|清除|三点|省略号|齿轮|小图标|图标)/i.test(text)
-  if (explicitTiny) return true
-  if (testModeLargeVisualControl(stepName, targetHint)) return false
-
-  const textDense = /(?:菜单项|下拉项|列表项|标签页|标签|tab|目录|章节|条目|标题|链接|搜索结果|百科|官网|发售版本|版本项)/i.test(text)
-    || /(?:第\s*\d+\s*(?:项|章|节|条)|\d+\s*[.．。、:：-]\s*[\p{L}\p{N}])/u.test(raw)
-  if (textDense) return true
-  if (navigationLikeBusinessAction(stepName, targetHint)) return true
-  return /(?:点击|打开|进入|选择).*(?:文字|文本|结果|项目|选项|入口)/i.test(text)
-}
-
 function navigationLikeBusinessAction(stepName: string | undefined, targetHint: string | undefined): boolean {
   const text = normalizePageText([stepName, targetHint].filter(Boolean).join(' '))
   if (!text || inPageControlHint(text)) return false
