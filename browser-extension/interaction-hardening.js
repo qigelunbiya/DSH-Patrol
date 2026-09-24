@@ -260,7 +260,7 @@ async function interactionScreenshot(args) {
   let actionMapZoomDataUrl
   let actionMapZoomCount = 0
   const actionMapTargetHint = typeof args.actionMapTargetHint === 'string' ? args.actionMapTargetHint.trim() : ''
-  const actionMapStrictTarget = /(?:关闭|移除|删除|清除|取消|目录|章节|搜索结果|百科|标题|条目|第\s*\d+|["“”'][^"“”']{2,}["“”'])/i.test(actionMapTargetHint)
+  const actionMapStrictTarget = /(?:关闭|移除|删除|清除|取消|目录|章节|搜索结果|百科|标题|条目|第\s*\d+|[×✕✖]|(?:^|[\s:_-])x(?:$|[\s:_-])|["“”'][^"“”']{2,}["“”'])/i.test(actionMapTargetHint)
     || /\d+\s*[.．。、:：-]\s*[\u3400-\u9fffA-Za-z]/.test(actionMapTargetHint)
   if (args.actionMap === true && format === 'jpeg') {
     actionCandidates = await interactionCollectVisualActionCandidates(tabId, captureGeometry, actionMapTargetHint)
