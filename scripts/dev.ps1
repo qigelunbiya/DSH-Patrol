@@ -49,7 +49,7 @@ try {
         throw "Harness pnpm-lock.yaml is missing: $harnessLock"
     }
     Invoke-NativeChecked pnpm install --frozen-lockfile --prefer-offline
-    Invoke-NativeChecked node -e "import('tsx').then(()=>console.log('Harness ESM dependency probe: OK')).catch(error=>{console.error(error);process.exit(1)})"
+    Invoke-NativeChecked -FilePath node -Arguments @("-e", "import('tsx').then(()=>console.log('Harness ESM dependency probe: OK')).catch(error=>{console.error(error);process.exit(1)})")
 } finally {
     Pop-Location
 }
