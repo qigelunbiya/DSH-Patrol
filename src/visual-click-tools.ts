@@ -120,18 +120,20 @@ export function registerPatrolVisualClickTool(
 
   const tool = defineTool({
     name: 'patrol_visual_click_target',
-    description: 'Primary browser visual click. Browser TEST teaching now mirrors the proven Desktop strategy: visible TEXT targets use CURRENT screenshot Windows OCR geometry (ocrText) and Patrol clicks the OCR bounding-box center; an adjacent close/remove icon uses ocrRelation=close-right, anchored on OCR text with a no-input safety probe before trusted mouse input. Large unlabeled controls may use CURRENT-raster imageX/imageY. Do not use B#/A# Action Maps, read_image screenshot paths, or model-guessed xRatio/yRatio for new TEST teaching. Live visual clicks require trusted Chrome debugger mouse input. Never use for image-code/CAPTCHA.',
+    description: 'Compatibility/recording engine for browser visual clicks. New TEST teaching must use the Desktop-style browser tools: visible text through patrol_browser_click_ocr_text; unlabeled controls through patrol_observe(includeImage=true) → patrol_browser_visual_action_map → read_image → patrol_browser_click_visual_candidate. The browser Action Map is a browser-local copy of the proven Desktop image-geometry algorithm and clicks program-owned V# bbox centers. Legacy A#/B#/manual imageX/imageY/xRatio paths are not part of new TEST teaching. Never use for image-code/CAPTCHA.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
       frameId: { type: 'string', description: 'Optional explicit browser visualFrameId. Normally omit it: Patrol automatically uses the latest model-visible patrol_observe(includeImage=true) frame for this inspection. Screenshot file names/paths are never valid frame IDs.' },
       previewId: { type: 'string', description: 'Legacy diagnostic token; do not use for new TEST teaching.' },
+      actionMapId: { type: 'string', description: 'Browser-local Desktop-style Action Map id returned by patrol_browser_visual_action_map.' },
+      visualCandidateId: { type: 'string', description: 'V1/V2/... candidate chosen from the browser Action Map image. Program geometry owns the final bbox-center click.' },
       ocrText: { type: 'string', description: 'Preferred for any visible browser text target. Patrol captures a fresh CURRENT screenshot, runs Windows OCR with bounding boxes, resolves this text, and clicks the OCR geometry. Examples: 百度一下, 龙之信条 2 - 百度百科, 7.发售版本, 我的任务.' },
       ocrMatch: { type: 'string', enum: ['exact', 'contains'], description: 'OCR text match mode. Prefer exact; contains is for harmless punctuation or extra-text variation.' },
       ocrIndex: { type: 'integer', description: 'Optional zero-based occurrence only when CURRENT OCR reports multiple visible matches and the intended occurrence is known.' },
       ocrRelation: { type: 'string', enum: ['center', 'close-right'], description: 'center clicks the OCR text bbox center. close-right anchors on ocrText and locates a verified close/remove control immediately to its right without a physical probe click; use for 我的任务右侧×.' },
-      imageX: { type: 'number', description: 'CURRENT screenshot pixel X only for a large UNLABELED control such as an empty search/input box. If the control has visible text, prefer ocrText.' },
-      imageY: { type: 'number', description: 'CURRENT screenshot pixel Y only for a large UNLABELED control. Visible text targets should use ocrText.' },
+      imageX: { type: 'number', description: 'Legacy compatibility only. New TEST browser visual teaching uses V# Action Map candidates or OCR text geometry.' },
+      imageY: { type: 'number', description: 'Legacy compatibility only. New TEST browser visual teaching uses V# Action Map candidates or OCR text geometry.' },
       imageWidth: { type: 'number', description: 'Optional validation copy of modelRasterWidth from CURRENT patrol_observe. If supplied and it does not match the bound frame, Patrol refuses the click.' },
       imageHeight: { type: 'number', description: 'Optional validation copy of modelRasterHeight from CURRENT patrol_observe. If supplied and it does not match the bound frame, Patrol refuses the click.' },
       xRatio: { type: 'number', description: 'Legacy compatibility only. New TEST teaching rejects model-guessed xRatio/yRatio.' },
