@@ -33,13 +33,28 @@ describe('browser visual V# binding and startup regression', () => {
     expect(extension).toContain("if (recordedMode === 'capture-visible-tab-visual-viewport')")
   })
 
-  it('repairs the Harness pnpm closure before pnpm dsh web can hit an ESM module-not-found failure', () => {
+  it('repairs a broken Harness runtime only after a native dependency probe fails', () => {
     const dev = read('scripts/dev.ps1')
 
-    expect(dev).toContain('pnpm install --frozen-lockfile --prefer-offline')
-    expect(dev).toContain("import('tsx')")
-    expect(dev).toContain('Invoke-NativeChecked -FilePath node -Arguments @("-e",')
-    expect(dev).not.toContain('Invoke-NativeChecked node -e ')
-    expect(dev.indexOf('pnpm install --frozen-lockfile --prefer-offline')).toBeLessThan(dev.indexOf('Invoke-NativeChecked pnpm dsh web'))
+    expect(dev).toContain('function Test-HarnessRuntimeDependencies')
+    expect(dev).toContain("['esbuild', () =>")
+    expect(dev).toContain("['sharp', () =>")
+    expect(dev).toContain("['koffi', () =>")
+    expect(dev).toContain('pnpm install --force --frozen-lockfile')
+    expect(dev).toContain('if (Test-HarnessRuntimeDependencies -HarnessRootPath $HarnessRootPath)')
+    expect(dev).not.toContain('pnpm install --frozen-lockfile --prefer-offline')
+    expect(dev.indexOf('Repair-HarnessRuntimeDependencies -HarnessRootPath $HarnessRoot')).toBeLessThan(dev.indexOf('& (Join-Path $PSScriptRoot "install-local.ps1")'))
+  })
+
+  it('restores only missing rc2 profile resolver links after a guarded Harness repair', () => {
+    const dev = read('scripts/dev.ps1')
+
+    expect(dev).toContain('function Restore-Rc2ProfileDependencyMirrors')
+    expect(dev).toContain('if ([string]$harnessManifest.version -ne "0.1.1-rc.2") { return }')
+    expect(dev).toContain('if ($null -ne $existingTarget)')
+    expect(dev).toContain('New-Item -ItemType $linkType -Path $target -Target $resolvedSource')
+    expect(dev).toContain('if ([string]::IsNullOrWhiteSpace($name) -or $name -eq "dsh-patrol-client-host") { continue }')
+    expect(dev.indexOf('Restore-Rc2ProfileDependencyMirrors -HarnessRootPath $HarnessRoot -ProfileName $Profile')).toBeGreaterThan(dev.indexOf('& (Join-Path $PSScriptRoot "install-local.ps1")'))
+    expect(dev.indexOf('Restore-Rc2ProfileDependencyMirrors -HarnessRootPath $HarnessRoot -ProfileName $Profile')).toBeLessThan(dev.indexOf('Invoke-NativeChecked pnpm dsh web'))
   })
 })
