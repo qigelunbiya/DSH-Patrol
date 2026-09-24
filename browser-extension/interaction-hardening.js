@@ -14,6 +14,11 @@ const INTERACTION_SCREENSHOT_READY_TIMEOUT_MS = 3000
 const INTERACTION_SCREENSHOT_READY_POLL_MS = 100
 const interactionVisualFrames = new Map()
 let interactionVisualFrameSequence = 0
+// Browser-only copy of the proven Desktop Action Map state machine.
+// It deliberately does NOT import/call desktop-runtime; the browser owns its
+// screenshot bytes, candidate maps and viewport mapping independently.
+const interactionBrowserVisualActionMaps = new Map()
+let interactionBrowserVisualActionMapSequence = 0
 const interactionPreviousSendDomCommand = sendDomCommand
 const interactionPreviousHandleCommand = handleCommand
 
@@ -64,6 +69,8 @@ sendDomCommand = async function interactionHardenedSendDomCommand(cmd, args = {}
 handleCommand = async function interactionHardenedHandleCommand(cmd, args = {}) {
   if (cmd === 'activateTab') return await interactionActivateTab(args)
   if (cmd === 'screenshot') return await interactionScreenshot(args)
+  if (cmd === 'browserVisualActionMap') return await interactionBrowserVisualActionMap(args)
+  if (cmd === 'browserResolveVisualCandidate') return await interactionBrowserResolveVisualCandidate(args)
   if (cmd === 'visualClick') return await interactionVisualClick(args)
   if (cmd === 'typeFocused') return await interactionTypeFocused(args)
   if (cmd === 'select') return await interactionSelect(args)
@@ -315,7 +322,7 @@ async function interactionScreenshot(args) {
   }
 
   const after = await interactionViewportState(tabId)
-  const visualFrame = interactionRegisterVisualFrame(tabId, before, after, captureGeometry, actionCandidates, pixelCandidates, modelRasterWidth, modelRasterHeight)
+  const visualFrame = interactionRegisterVisualFrame(tabId, before, after, captureGeometry, actionCandidates, pixelCandidates, modelRasterWidth, modelRasterHeight, ocrDataUrl)
 
   return {
     ok: true,
@@ -1577,7 +1584,7 @@ function interactionCurrentReplayCaptureGeometry(viewport, recordedMode = '', re
   }
 }
 
-function interactionRegisterVisualFrame(tabId, before, after, captureGeometry, actionCandidates = [], pixelCandidates = [], modelRasterWidth, modelRasterHeight) {
+function interactionRegisterVisualFrame(tabId, before, after, captureGeometry, actionCandidates = [], pixelCandidates = [], modelRasterWidth, modelRasterHeight, sourceDataUrl = '') {
   if (!interactionSameViewport(before, after, 1)) return undefined
   const geometry = captureGeometry || interactionVisibleTabCaptureGeometry(before)
   if (!geometry
@@ -1611,6 +1618,7 @@ function interactionRegisterVisualFrame(tabId, before, after, captureGeometry, a
     modelRasterHeight: Number.isFinite(Number(modelRasterHeight)) ? Number(modelRasterHeight) : undefined,
     actionCandidates: Array.isArray(actionCandidates) ? actionCandidates.map(candidate => ({ ...candidate })) : [],
     pixelCandidates: Array.isArray(pixelCandidates) ? pixelCandidates.map(candidate => ({ ...candidate })) : [],
+    sourceDataUrl: typeof sourceDataUrl === 'string' ? sourceDataUrl : '',
   }
   interactionVisualFrames.set(frameId, frame)
   return {
