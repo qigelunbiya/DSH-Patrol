@@ -59,10 +59,10 @@ export const PATROL_PAGE_UNDERSTANDING_PROMPT = `DSH Patrol 页面理解与执�
 - taskChecklist 只描述业务动作；执行页面动作前，要根据 CURRENT DOM/iframe/modal/structured table/视觉页面判断真实前端结构，不要把用户文字直接翻译成 nth-of-type 后盲点。
 - 浏览器操作方法首先服从用户最近一条明确指令：用户未指定方法时，DOM/semantic、CURRENT selector、浏览器视觉都是可选执行方法，不规定固定优先级，按 CURRENT 证据选择最可靠的方法；用户明确要求只用视觉时，业务动作必须来自 model-visible CURRENT screenshot，并给 patrol_visual_click_target 传 visualAuthority=true，禁止静默改用 DOM 点击；用户明确禁止视觉时，不得 includeImage=true、不得 patrol_visual_click_target，也不得猜截图坐标。patrol_analyze_step 是可选结构化证据工具，不是视觉调用的前置许可。
 - patrol_analyze_step 永远不写 Runbook。需要表格行身份、弹窗上下文、iframe 或同名目标消歧时，它会把“行身份 + 行内动作”绑定，例如“目标地址 + RDP”。不要把分析器给出的 selector 再扩写成更长的 nth-of-type，也不要在没有新证据时连续猜 selector。
-- 对“某一行身份 + 行内动作”的表格目标（例如“10.192.3.174 这一行的 RDP/SSH”），禁止在整页 XY/1000 上凭肉眼估自由坐标，也禁止从全页几十个 A# 中猜一个编号。用户未指定方法时必须直接用 patrol_click_target，stepName 同时保留行身份和动作（例如“点击 10.192.3.174 行的 RDP”）、locatorText 只写动作“RDP”；底层 row-context resolver 每次按 CURRENT 逻辑行重新解析，并把这类步骤保存为 semantic replay，不持久化脆弱 nth-of-type 行号。只有用户明确要求“只用视觉”时，才允许 patrol_visual_click_target(..., visualAuthority=true)：先 patrol_observe(includeImage=true, actionMap=true, targetHint="10.192.3.174 行的 RDP", focus...)；action map 会在编号前用 CURRENT 行身份+动作过滤掉其他行，并且点击前还会再次校验 candidate 的 logical-row context，错误 A# 会在物理点击前被拒绝。right-click/mark 诊断也遵守同一规则。
+- 对“某一行身份 + 行内动作”的表格目标（例如“10.192.3.174 这一行的 RDP/SSH”），用户未指定方法时仍优先 patrol_click_target，让 CURRENT row-context resolver 每次按逻辑行重定位并保存 semantic replay。用户明确要求“只用视觉”时，不再使用整页 XY、A# 或 B#：若行内动作文字本身可见，使用 patrol_visual_click_target(ocrText="RDP", ...) 让 CURRENT screenshot Windows OCR 给出文字 bbox；如果同页有多个 RDP，OCR 会明确报告歧义，必须先通过 CURRENT 可见行上下文/滚动使目标唯一，或仅在已经确定目标 occurrence 时传 ocrIndex，禁止任意点第一个。视觉-only 表格点击仍必须以截图/OCR 几何为 live 落点，DOM 只能事后验证/学习。
 - selector 只接受当前浏览器 querySelector 层支持的 CSS。严禁 jQuery/Playwright/XPath 方言：:contains(...)、:has-text(...)、text=...、//...、.//...、xpath=...。locatorText 已知时优先只传 locatorText 给 patrol_click_target；若 locatorText 已提供但 selector hint 是非法方言，运行时会丢弃这个可选 hint 而继续语义定位。
 - 一种方法失败不会锁死其他方法。DOM/semantic 未命中后可以切换视觉，视觉未命中后也可以回到 DOM/semantic；不要为了满足固定次数而重复 analyze/read/snapshot 或编造 CSS。页面规划器不再使用视觉点击次数、失败次数或物理点击预算做 HARD STOP；需要继续尝试时可以继续。已经有证据确认开关型业务点击成功后，模型应根据 CURRENT 状态主动避免再次点击把状态反向切回，而不是依赖次数锁死工具。
-- patrol_visual_click_target 只能使用 patrol_observe(includeImage=true) 真正附加到模型上下文的 CURRENT image；Browser visual plane 与 Desktop visual plane 必须彻底隔离。PRIMARY browser visual grounding 是两阶段 screenshot-only B#：先获取 actionMap=false,pixelActionMap=false 的整页 CURRENT raster 只做粗定位；对文字链接、菜单项、小图标、标签 x/×、密集列表等目标，再用 focusXRatio/focusYRatio 获取同页 focused crop，并启用 pixelActionMap=true（focused crop 在未显式关闭时会自动启用）。Browser 扩展只分析截图像素的灰度边缘、连通区域和 bbox，生成 B1/B2/...，模型只选择 WHICH B#，patrol_visual_click_target(pixelCandidateId=B#) 直接点击该 bbox center。DOM/Accessibility 不参与 B# 生成或点击前重定位，只能在点击后用于命中身份学习与结果验证。整块大控件允许 direct imageX/imageY；xRatio/yRatio 仅兼容。A# 是显式 actionMap=true 的 DOM compatibility path。frameId 正常由当前 inspection 最近 model-visible frame 自动绑定。导航/卡片/搜索结果/百科等 B# 或 raw-pixel 点击仍必须提供 CURRENT 截图里精确可见的 expectedVisualText 进行事后目的地核验。
+- 浏览器视觉 PRIMARY grounding 改为 screenshot OCR geometry，不再以 B#/A# 为新教学路径。任何有可见文字的目标直接 patrol_visual_click_target(ocrText="CURRENT 截图可见文字", ocrMatch="exact", targetHint=...)；工具内部抓 fresh CURRENT browser screenshot、运行 Windows OCR、多语言合并 bounding boxes，并点击唯一 OCR bbox center。文字右侧紧邻的 x/×/关闭图标使用 ocrText=<owner text> + ocrRelation="close-right"：只在 OCR 锚点右侧做 no-input close/remove safety probe，通过后才发 trusted mouse。只有没有可靠文字的大输入框/空搜索框等大控件才 patrol_observe(includeImage=true) 后使用 imageX/imageY。TEST live xRatio/yRatio 禁止。旧 pixelCandidateId=B#、candidateId=A#、focused crop/read_image 只作为历史兼容/诊断实现存在，不得作为新 TEST 教学恢复路线。Browser visual plane 与 Desktop visual plane 必须彻底隔离；浏览器可以复用 Desktop 的“文字 OCR bbox 精确几何”方法论，但不得 import/call desktop-runtime。
 - 视觉截图不设固定次数上限。模型可以在页面/滚动/布局变化后按需重新 patrol_observe(includeImage=true) 获取新的 CURRENT frame；每次新视觉附件前 Patrol 会通过 Harness image/offload 把旧工具图片移出模型可见输入，并单独裁剪过大的文本工具结果，同时保持 DPR-aware 的有界截图尺寸，避免旧图片堆积把本地 Qwen 推到 CUDA OOM / 503。不要无状态变化地机械重复同一张截图，但不得因为“已经看过两次”而阻止真正需要的新视觉观察。
 - 教学成功后的 browser_visual_click 会反向学习 visual hit 对应的 semantic locator / stable selector；重放顺序是 learned semantic → learned selector → guarded visual geometry。用户明确要求视觉专用的教学轮次可以纯视觉完成复杂 UI，但未来无人值守重放仍优先复用已学习到的稳定语义/DOM 身份。所有方法都必须以 CURRENT 业务状态验证为准，不能仅因为工具发出了 click 就宣称成功。
 - 不要为每个内部工具调用向用户重复“我再观察一下/我再试一下/让我换个选择器”。只有需要用户输入/确认、遇到不可恢复阻塞、或任务最终完成时才发自然语言说明。任何没有新工具结果或新页面证据支持的 selector 推测最多写一次。
@@ -147,14 +147,14 @@ function structuredRowFreePointIssue(args: Record<string, unknown>): string | un
   const identity = context.match(/\b\d{1,3}(?:\.\d{1,3}){3}\b/)?.[0]
   const action = context.match(/\b(RDP|SSH|VNC|SFTP|FTP|HTTPS?)\b/i)?.[1]?.toUpperCase()
   if (!identity || !action) return undefined
-  const candidateId = cleanString(args.candidateId)
+  const ocrText = cleanString(args.ocrText)
   const explicitVisualOnly = args.visualAuthority === true
-  if (candidateId && explicitVisualOnly) return undefined
+  if (ocrText && explicitVisualOnly && ocrText.toUpperCase().includes(action)) return undefined
   return [
     'DSH Patrol structured-row precision guard：本次视觉点击未执行。',
-    `目标同时包含行身份 ${identity} 和行内动作 ${action}。这种目标不能从整页自由坐标或未限定的 A# 中猜，因为相邻数据行可能具有相同的 ${action} 文本。`,
-    `用户未指定操作方法时，必须改用 patrol_click_target：stepName 保留“${identity} 行的 ${action}”，locatorText=${JSON.stringify(action)}；CURRENT row-context resolver 会绑定正确逻辑行，并保存 semantic replay，而不是 nth-of-type 行号。`,
-    `只有用户明确要求只用视觉时才允许候选点击：先 patrol_observe(includeImage=true, actionMap=true, targetHint=${JSON.stringify(`${identity} 行的 ${action}`)}, focus...)，再把过滤后的 A# 传给 patrol_visual_click_target，并显式 visualAuthority=true。错误行 candidate 会在物理输入前被拒绝。`,
+    `目标同时包含行身份 ${identity} 和行内动作 ${action}。不要从整页自由坐标、A# 或 B# 猜相邻行。`,
+    `用户未指定操作方法时，使用 patrol_click_target：stepName 保留“${identity} 行的 ${action}”，locatorText=${JSON.stringify(action)}，让 CURRENT row-context resolver 绑定正确逻辑行。`,
+    `若用户明确要求只用视觉，使用 patrol_visual_click_target(ocrText=${JSON.stringify(action)}, targetHint=${JSON.stringify(`${identity} 行的 ${action}`)}, visualAuthority=true)。CURRENT screenshot OCR 若发现多个 ${action} 会拒绝歧义；先通过可见行上下文/滚动消歧，不得改回 A#/B#/XY 猜点。`,
   ].join(' ')
 }
 
