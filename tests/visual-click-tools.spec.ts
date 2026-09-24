@@ -146,6 +146,79 @@ describe('browser visual fallback click teaching', () => {
     expect((await store.load('visual-click')).steps).toHaveLength(1)
   })
 
+  it('uses a Browser Pixel Action Map B# candidate without model-provided coordinates', async () => {
+    const visualEvidence = createPatrolVisualEvidenceRegistry()
+    visualEvidence.mark('browser-visual-bmap', 'visual-click')
+    const calls: Array<{ tool: string; args: JsonObject }> = []
+    const { store, tool, exec } = await setup(async (name, args) => {
+      calls.push({ tool: name, args })
+      if (name === 'browser_read_page') {
+        return { ok: true, text: '我的任务 开放任务', value: { ok: true, url: 'http://example.test/tasks', title: '任务', text: '我的任务 开放任务' } }
+      }
+      if (name === 'browser_snapshot') {
+        return { ok: true, text: 'snapshot', value: { ok: true, url: 'http://example.test/tasks', title: '任务', elements: [] } }
+      }
+      if (name === 'browser_visual_click') {
+        expect(args).toMatchObject({
+          frameId: 'browser-visual-bmap',
+          pixelCandidateId: 'B3',
+          targetHint: '我的任务右侧的×',
+          visualAuthority: true,
+          pointerAction: 'left-click',
+        })
+        expect(args).not.toHaveProperty('imageX')
+        expect(args).not.toHaveProperty('candidateId')
+        return {
+          ok: true,
+          text: 'clicked B3',
+          value: {
+            ok: true,
+            pixelCandidateId: 'B3',
+            pixelCandidateBBox: '700,70,18,18',
+            pixelCandidateCenterX: 709,
+            pixelCandidateCenterY: 79,
+            xRatio: 0.692,
+            yRatio: 0.137,
+            requestedXRatio: 0.692,
+            requestedYRatio: 0.137,
+            coordinateSource: 'pixel-action-map-candidate',
+            targetTag: 'span',
+            targetText: '×',
+            targetStateChanged: true,
+            selectorHint: 'top-frame::.filter-chip .remove',
+            selectorReplaySafe: true,
+            selectorQuality: 'medium',
+            bindingActionable: true,
+            bindingSource: 'visual-hit-test-post-click-learning',
+            visualAuthority: true,
+            urlIdentity: 'http://example.test/tasks',
+            viewportWidth: 1280,
+            viewportHeight: 720,
+            captureClientLeft: 0,
+            captureClientTop: 0,
+            captureWidth: 1280,
+            captureHeight: 720,
+            captureMode: 'cdp-focused-region',
+            scrollX: 0,
+            scrollY: 0,
+          },
+        }
+      }
+      throw new Error(`unexpected tool ${name}`)
+    }, undefined, visualEvidence)
+
+    const result = await tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '关闭我的任务筛选',
+      targetHint: '我的任务右侧的×',
+      pixelCandidateId: 'B3',
+    }, exec)
+
+    expect(result).toContain('browser_visual_click')
+    expect(calls.some(call => call.tool === 'browser_visual_click' && call.args.pixelCandidateId === 'B3')).toBe(true)
+    expect((await store.load('visual-click')).steps).toHaveLength(1)
+  })
+
   it('auto-binds candidate clicks to the latest model-visible frame when frameId is omitted', async () => {
     const visualEvidence = createPatrolVisualEvidenceRegistry()
     visualEvidence.mark('browser-visual-latest', 'visual-click')
@@ -954,13 +1027,13 @@ describe('browser visual fallback click teaching', () => {
     expect(visualToolSource).not.toContain('A naked visual left-click is never dispatched in TEST MODE')
   })
 
-  it('makes CURRENT raster pixels primary and keeps Action Map / ratios as compatibility paths', () => {
-    expect(visualToolSource).toContain('Preferred live path is CURRENT screenshot raster')
-    expect(visualToolSource).toContain('pass imageX/imageY from that exact attached raster')
-    expect(visualToolSource).toContain('Do not manually convert pixels to xRatio')
-    expect(visualToolSource).toContain('candidateId remains an optional compatibility path')
-    expect(visualToolSource).toContain('xRatio/yRatio remain a legacy normalized fallback')
-    expect(visualToolSource).toContain('trusted debugger mouse input is unavailable')
+  it('makes focused Browser Pixel Action Map B# the primary small-target strategy', () => {
+    expect(visualToolSource).toContain('Browser Pixel Grounding')
+    expect(visualToolSource).toContain('pixelCandidateId=B#')
+    expect(visualToolSource).toContain('B# geometry comes only from CURRENT screenshot pixels')
+    expect(visualToolSource).toContain('Large obvious controls may use direct imageX/imageY')
+    expect(visualToolSource).toContain('Legacy DOM Action Map uses candidateId=A#')
+    expect(visualToolSource).toContain('trusted Chrome debugger mouse input')
   })
 
   it('refuses CAPTCHA/image-code targets before any browser visual dispatch', async () => {

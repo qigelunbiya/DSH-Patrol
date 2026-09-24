@@ -257,6 +257,9 @@ async function interactionScreenshot(args) {
   const ocrDataUrl = dataUrl
   let actionCandidates = []
   let actionMap = false
+  let pixelActionMap = false
+  let pixelCandidates = []
+  let pixelCandidateSummary = ''
   let actionMapZoomDataUrl
   let actionMapZoomCount = 0
   const actionMapTargetHint = typeof args.actionMapTargetHint === 'string' ? args.actionMapTargetHint.trim() : ''
@@ -286,8 +289,23 @@ async function interactionScreenshot(args) {
     }
   }
 
+  if (args.pixelActionMap === true && args.actionMap !== true && format === 'jpeg') {
+    const built = await interactionBuildPixelActionMapInWorker(dataUrl, Math.max(82, quality))
+    if (!built?.dataUrl || !Array.isArray(built.candidates)) {
+      throw new Error('Patrol could not build the browser pixel Action Map')
+    }
+    dataUrl = built.dataUrl
+    modelRasterWidth = Number(built.width)
+    modelRasterHeight = Number(built.height)
+    pixelCandidates = built.candidates
+    pixelCandidateSummary = pixelCandidates.slice(0, 48).map(candidate =>
+      [candidate.candidateId, `bbox=${candidate.left},${candidate.top},${candidate.width},${candidate.height}`, `center=${candidate.centerX},${candidate.centerY}`].join(' | ')
+    ).join('\n')
+    pixelActionMap = true
+  }
+
   let coordinateGuide = false
-  if ((args.coordinateGuide === true || (args.actionMap === true && !actionMap)) && !actionMap && format === 'jpeg') {
+  if ((args.coordinateGuide === true || (args.actionMap === true && !actionMap)) && !actionMap && !pixelActionMap && format === 'jpeg') {
     const guided = await interactionOverlayCoordinateGuideInWorker(dataUrl, Math.max(78, quality))
     if (!guided?.dataUrl) throw new Error('Patrol could not render the visual coordinate guide')
     dataUrl = guided.dataUrl
@@ -297,7 +315,7 @@ async function interactionScreenshot(args) {
   }
 
   const after = await interactionViewportState(tabId)
-  const visualFrame = interactionRegisterVisualFrame(tabId, before, after, captureGeometry, actionCandidates, modelRasterWidth, modelRasterHeight)
+  const visualFrame = interactionRegisterVisualFrame(tabId, before, after, captureGeometry, actionCandidates, pixelCandidates, modelRasterWidth, modelRasterHeight)
 
   return {
     ok: true,
@@ -309,6 +327,10 @@ async function interactionScreenshot(args) {
     captureScale,
     coordinateGuide,
     actionMap,
+    pixelActionMap,
+    pixelCandidateCount: pixelCandidates.length,
+    ...(pixelCandidateSummary ? { pixelCandidateSummary } : {}),
+    ...(pixelActionMap ? { pixelCandidates } : {}),
     actionMapTargeted: args.actionMap === true && actionMapTargetHint.length > 0,
     actionMapTargetMiss: args.actionMap === true && actionMapTargetHint.length > 0 && actionCandidates.length === 0,
     actionMapStrictTargetMiss: args.actionMap === true && actionMapTargetHint.length > 0 && actionCandidates.length === 0 && actionMapStrictTarget,
@@ -1152,6 +1174,172 @@ async function interactionRenderActionCandidateZoomSheetInWorker(source, candida
   }
 }
 
+async function interactionBuildPixelActionMapInWorker(source, jpegQuality) {
+  if (typeof OffscreenCanvas !== 'function' || typeof createImageBitmap !== 'function') return undefined
+  if (typeof dataUrlToBlob !== 'function' || typeof blobToDataUrl !== 'function') return undefined
+  const bitmap = await createImageBitmap(dataUrlToBlob(source))
+  try {
+    const width = Number(bitmap.width || 0)
+    const height = Number(bitmap.height || 0)
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return undefined
+
+    const sourceCanvas = new OffscreenCanvas(width, height)
+    const sourceContext = sourceCanvas.getContext('2d', { alpha: false, willReadFrequently: true })
+    if (!sourceContext) return undefined
+    sourceContext.drawImage(bitmap, 0, 0, width, height)
+    const pixels = sourceContext.getImageData(0, 0, width, height).data
+    const gray = new Uint8Array(width * height)
+    for (let i = 0, p = 0; i < gray.length; i += 1, p += 4) {
+      gray[i] = (pixels[p] * 77 + pixels[p + 1] * 150 + pixels[p + 2] * 29) >> 8
+    }
+
+    const edge = new Uint8Array(width * height)
+    const threshold = 28
+    for (let y = 1; y < height - 1; y += 1) {
+      const row = y * width
+      for (let x = 1; x < width - 1; x += 1) {
+        const i = row + x
+        const g = gray[i]
+        const delta = Math.max(
+          Math.abs(g - gray[i - 1]),
+          Math.abs(g - gray[i + 1]),
+          Math.abs(g - gray[i - width]),
+          Math.abs(g - gray[i + width]),
+        )
+        if (delta >= threshold) edge[i] = 1
+      }
+    }
+
+    // One dilation pass joins anti-aliased strokes without merging nearby rows.
+    const expanded = edge.slice()
+    for (let y = 1; y < height - 1; y += 1) {
+      for (let x = 1; x < width - 1; x += 1) {
+        const i = y * width + x
+        if (!edge[i]) continue
+        expanded[i - 1] = 1; expanded[i + 1] = 1
+        expanded[i - width] = 1; expanded[i + width] = 1
+        expanded[i - width - 1] = 1; expanded[i - width + 1] = 1
+        expanded[i + width - 1] = 1; expanded[i + width + 1] = 1
+      }
+    }
+
+    const visited = new Uint8Array(width * height)
+    const raw = []
+    const queue = new Int32Array(width * height)
+    for (let y0 = 1; y0 < height - 1; y0 += 1) {
+      for (let x0 = 1; x0 < width - 1; x0 += 1) {
+        const seed = y0 * width + x0
+        if (!expanded[seed] || visited[seed]) continue
+        let head = 0, tail = 0
+        queue[tail++] = seed
+        visited[seed] = 1
+        let minX = x0, maxX = x0, minY = y0, maxY = y0, count = 0
+        while (head < tail) {
+          const i = queue[head++]
+          const y = Math.floor(i / width)
+          const x = i - y * width
+          count += 1
+          if (x < minX) minX = x
+          if (x > maxX) maxX = x
+          if (y < minY) minY = y
+          if (y > maxY) maxY = y
+          const neighbors = [i - 1, i + 1, i - width, i + width]
+          for (const ni of neighbors) {
+            if (ni < 0 || ni >= expanded.length || visited[ni] || !expanded[ni]) continue
+            const ny = Math.floor(ni / width)
+            const nx = ni - ny * width
+            if (nx <= 0 || nx >= width - 1 || ny <= 0 || ny >= height - 1) continue
+            visited[ni] = 1
+            queue[tail++] = ni
+          }
+        }
+
+        let bw = maxX - minX + 1
+        let bh = maxY - minY + 1
+        let area = bw * bh
+        if (count < 8 || bw < 3 || bh < 3) continue
+        if (bw > width * 0.56 || bh > height * 0.56 || area > width * height * 0.18) continue
+        const aspect = bw / Math.max(1, bh)
+        if (aspect < 0.05 || aspect > 14) continue
+
+        const pad = Math.max(2, Math.min(6, Math.round(Math.max(bw, bh) / 10)))
+        minX = Math.max(0, minX - pad)
+        minY = Math.max(0, minY - pad)
+        maxX = Math.min(width - 1, maxX + pad)
+        maxY = Math.min(height - 1, maxY + pad)
+        bw = maxX - minX + 1
+        bh = maxY - minY + 1
+        area = bw * bh
+        raw.push({
+          left: minX, top: minY, width: bw, height: bh,
+          centerX: minX + bw / 2, centerY: minY + bh / 2,
+          score: count / Math.sqrt(Math.max(1, area)),
+        })
+      }
+    }
+
+    raw.sort((a, b) => b.score - a.score || a.top - b.top || a.left - b.left)
+    const iou = (a, b) => {
+      const left = Math.max(a.left, b.left)
+      const top = Math.max(a.top, b.top)
+      const right = Math.min(a.left + a.width, b.left + b.width)
+      const bottom = Math.min(a.top + a.height, b.top + b.height)
+      if (right <= left || bottom <= top) return 0
+      const inter = (right - left) * (bottom - top)
+      const union = a.width * a.height + b.width * b.height - inter
+      return union > 0 ? inter / union : 0
+    }
+    const selected = []
+    for (const item of raw) {
+      if (selected.length >= 48) break
+      if (selected.some(existing => iou(item, existing) > 0.42)) continue
+      selected.push(item)
+    }
+    selected.sort((a, b) => a.top - b.top || a.left - b.left)
+    selected.forEach((item, index) => { item.candidateId = `B${index + 1}` })
+
+    const canvas = new OffscreenCanvas(width, height)
+    const context = canvas.getContext('2d', { alpha: false })
+    if (!context) return undefined
+    context.drawImage(bitmap, 0, 0, width, height)
+    const fontPx = Math.max(11, Math.min(18, Math.round(width / 72)))
+    context.font = `800 ${fontPx}px sans-serif`
+    context.textBaseline = 'top'
+    for (const candidate of selected) {
+      const { left, top, width: bw, height: bh, centerX, centerY, candidateId } = candidate
+      context.strokeStyle = 'rgba(255,45,45,0.96)'
+      context.lineWidth = Math.max(2, Math.round(width / 520))
+      context.strokeRect(left, top, bw, bh)
+      context.strokeStyle = 'rgba(0,255,110,0.98)'
+      context.lineWidth = Math.max(2, Math.round(width / 620))
+      context.beginPath(); context.moveTo(centerX - 6, centerY); context.lineTo(centerX + 6, centerY); context.stroke()
+      context.beginPath(); context.moveTo(centerX, centerY - 6); context.lineTo(centerX, centerY + 6); context.stroke()
+      const metrics = context.measureText(candidateId)
+      const labelW = Math.ceil(metrics.width) + 7
+      const labelH = fontPx + 5
+      const labelX = Math.max(0, Math.min(width - labelW, left))
+      const labelY = Math.max(0, Math.min(height - labelH, top - labelH))
+      context.fillStyle = 'rgba(255,230,0,0.96)'
+      context.fillRect(labelX, labelY, labelW, labelH)
+      context.fillStyle = '#101010'
+      context.fillText(candidateId, labelX + 3, labelY + 2)
+    }
+
+    const blob = await canvas.convertToBlob({
+      type: 'image/jpeg',
+      quality: Math.max(0.72, Math.min(0.96, Number(jpegQuality) / 100)),
+    })
+    return {
+      dataUrl: await blobToDataUrl(blob),
+      width,
+      height,
+      candidates: selected,
+    }
+  } finally {
+    if (typeof bitmap.close === 'function') bitmap.close()
+  }
+}
+
 async function interactionOverlayCoordinateGuideInWorker(source, jpegQuality) {
   if (typeof OffscreenCanvas !== 'function' || typeof createImageBitmap !== 'function') return undefined
   if (typeof dataUrlToBlob !== 'function' || typeof blobToDataUrl !== 'function') return undefined
@@ -1386,7 +1574,7 @@ function interactionCurrentReplayCaptureGeometry(viewport, recordedMode = '', re
   }
 }
 
-function interactionRegisterVisualFrame(tabId, before, after, captureGeometry, actionCandidates = [], modelRasterWidth, modelRasterHeight) {
+function interactionRegisterVisualFrame(tabId, before, after, captureGeometry, actionCandidates = [], pixelCandidates = [], modelRasterWidth, modelRasterHeight) {
   if (!interactionSameViewport(before, after, 1)) return undefined
   const geometry = captureGeometry || interactionVisibleTabCaptureGeometry(before)
   if (!geometry
@@ -1419,6 +1607,7 @@ function interactionRegisterVisualFrame(tabId, before, after, captureGeometry, a
     modelRasterWidth: Number.isFinite(Number(modelRasterWidth)) ? Number(modelRasterWidth) : undefined,
     modelRasterHeight: Number.isFinite(Number(modelRasterHeight)) ? Number(modelRasterHeight) : undefined,
     actionCandidates: Array.isArray(actionCandidates) ? actionCandidates.map(candidate => ({ ...candidate })) : [],
+    pixelCandidates: Array.isArray(pixelCandidates) ? pixelCandidates.map(candidate => ({ ...candidate })) : [],
   }
   interactionVisualFrames.set(frameId, frame)
   return {
@@ -1458,6 +1647,7 @@ async function interactionVisualClick(args) {
   interactionPruneVisualFrames()
   const frameId = typeof args.frameId === 'string' ? args.frameId.trim() : ''
   const requestedCandidateId = typeof args.candidateId === 'string' ? args.candidateId.trim().toUpperCase() : ''
+  const requestedPixelCandidateId = typeof args.pixelCandidateId === 'string' ? args.pixelCandidateId.trim().toUpperCase() : ''
   const requestedImageX = Number(args.imageX)
   const requestedImageY = Number(args.imageY)
   const requestedImageWidth = Number(args.imageWidth)
@@ -1473,8 +1663,10 @@ async function interactionVisualClick(args) {
     if (!frame) throw new Error('browser visual frame is unavailable; use a visualFrameId previously returned by patrol_observe(includeImage=true)')
     if (frame.tabId !== tabId) throw new Error('browser visual frame belongs to a different tab; capture a fresh visual observation')
     let selectedCandidate
-    if (requestedCandidateId && hasRequestedImagePoint) {
-      throw new Error('visualClick must use exactly one live coordinate source: candidateId OR imageX/imageY, not both')
+    let selectedPixelCandidate
+    const liveCoordinateSourceCount = [Boolean(requestedCandidateId), Boolean(requestedPixelCandidateId), hasRequestedImagePoint, Number.isFinite(xRatio) && Number.isFinite(yRatio)].filter(Boolean).length
+    if (liveCoordinateSourceCount > 1) {
+      throw new Error('visualClick must use exactly one live coordinate source: pixelCandidateId OR candidateId OR imageX/imageY OR xRatio/yRatio')
     }
     if (hasRequestedImagePoint) {
       const rasterWidth = Number(frame.modelRasterWidth)
@@ -1494,6 +1686,22 @@ async function interactionVisualClick(args) {
       xRatio = requestedImageX / rasterWidth
       yRatio = requestedImageY / rasterHeight
       coordinateSource = 'model-raster-pixel'
+    }
+    if (requestedPixelCandidateId) {
+      selectedPixelCandidate = Array.isArray(frame.pixelCandidates)
+        ? frame.pixelCandidates.find(candidate => String(candidate?.candidateId || '').toUpperCase() === requestedPixelCandidateId)
+        : undefined
+      if (!selectedPixelCandidate) {
+        throw new Error(`browser pixel candidate ${requestedPixelCandidateId} is unavailable on this frame; capture a fresh patrol_observe(includeImage=true, pixelActionMap=true, focusXRatio=..., focusYRatio=...)`)
+      }
+      const rasterWidth = Number(frame.modelRasterWidth)
+      const rasterHeight = Number(frame.modelRasterHeight)
+      if (!Number.isFinite(rasterWidth) || !Number.isFinite(rasterHeight) || rasterWidth <= 0 || rasterHeight <= 0) {
+        throw new Error('CURRENT visual frame has no model-raster dimensions for pixel candidate mapping')
+      }
+      xRatio = Number(selectedPixelCandidate.centerX) / rasterWidth
+      yRatio = Number(selectedPixelCandidate.centerY) / rasterHeight
+      coordinateSource = 'pixel-action-map-candidate'
     }
     if (requestedCandidateId) {
       selectedCandidate = Array.isArray(frame.actionCandidates)
@@ -1520,7 +1728,7 @@ async function interactionVisualClick(args) {
     }
     if (!Number.isFinite(xRatio) || !Number.isFinite(yRatio)
       || xRatio < 0 || xRatio > 1 || yRatio < 0 || yRatio > 1) {
-      throw new Error('visualClick requires either candidateId from an action-map frame or xRatio/yRatio between 0 and 1')
+      throw new Error('visualClick requires pixelCandidateId=B# from a browser pixel map, candidateId=A# from a DOM Action Map, imageX/imageY, or xRatio/yRatio between 0 and 1')
     }
     const current = await interactionViewportState(tabId)
     if (!interactionSameViewport(frame, current, 2)) {
@@ -1593,6 +1801,7 @@ async function interactionVisualClick(args) {
         visualAuthority: true,
         pointerAction,
         ...(requestedCandidateId ? { candidateId: requestedCandidateId } : {}),
+        ...(requestedPixelCandidateId ? { pixelCandidateId: requestedPixelCandidateId } : {}),
         targetStateChanged: false,
         stateEvidence: `visual pointer diagnostic ${pointerAction} executed at the exact screenshot coordinate`,
         inputTransport: 'chrome-debugger',
@@ -1620,6 +1829,12 @@ async function interactionVisualClick(args) {
         clicked.modelRasterHeight = Number(frame.modelRasterHeight)
       }
     }
+    if (requestedPixelCandidateId && clicked && typeof clicked === 'object') {
+      clicked.pixelCandidateId = requestedPixelCandidateId
+      clicked.pixelCandidateBBox = `${selectedPixelCandidate.left},${selectedPixelCandidate.top},${selectedPixelCandidate.width},${selectedPixelCandidate.height}`
+      clicked.pixelCandidateCenterX = Number(selectedPixelCandidate.centerX)
+      clicked.pixelCandidateCenterY = Number(selectedPixelCandidate.centerY)
+    }
     if (requestedCandidateId && clicked && typeof clicked === 'object') {
       clicked.candidateId = requestedCandidateId
       clicked.actionCandidateKind = selectedCandidate?.activationKind || ''
@@ -1633,7 +1848,7 @@ async function interactionVisualClick(args) {
         selectedCandidate?.title ? `title=${selectedCandidate.title}` : '',
       ].filter(Boolean).join('; ')
     }
-    return interactionVisualClickResult(clicked, frame, xRatio, yRatio, requestedCandidateId ? 'bound-action-map-candidate' : 'bound-current-visual-frame')
+    return interactionVisualClickResult(clicked, frame, xRatio, yRatio, requestedPixelCandidateId ? 'bound-pixel-action-map-candidate' : requestedCandidateId ? 'bound-action-map-candidate' : 'bound-current-visual-frame')
   }
 
   if (!Number.isFinite(xRatio) || !Number.isFinite(yRatio)
@@ -2903,6 +3118,10 @@ function interactionVisualClickResult(clicked, viewport, xRatio, yRatio, transpo
     cdpPiercedAction: clicked.cdpPiercedAction === true,
     physicalClickUncertain: clicked.physicalClickUncertain === true,
     ...(typeof clicked.pointerAction === 'string' ? { pointerAction: clicked.pointerAction } : {}),
+    ...(typeof clicked.pixelCandidateId === 'string' ? { pixelCandidateId: clicked.pixelCandidateId } : {}),
+    ...(typeof clicked.pixelCandidateBBox === 'string' ? { pixelCandidateBBox: clicked.pixelCandidateBBox } : {}),
+    ...(Number.isFinite(Number(clicked.pixelCandidateCenterX)) ? { pixelCandidateCenterX: Number(clicked.pixelCandidateCenterX) } : {}),
+    ...(Number.isFinite(Number(clicked.pixelCandidateCenterY)) ? { pixelCandidateCenterY: Number(clicked.pixelCandidateCenterY) } : {}),
     ...(typeof clicked.candidateId === 'string' ? { candidateId: clicked.candidateId } : {}),
     ...(typeof clicked.actionCandidateKind === 'string' && clicked.actionCandidateKind ? { actionCandidateKind: clicked.actionCandidateKind } : {}),
     ...(typeof clicked.actionCandidateHref === 'string' && clicked.actionCandidateHref ? { actionCandidateHref: clicked.actionCandidateHref } : {}),

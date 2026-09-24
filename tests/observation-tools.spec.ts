@@ -130,6 +130,30 @@ describe('current-page observation evidence fallback', () => {
     expect(value.modelRasterHeight).toBe(576)
   })
 
+  it('automatically builds a pure-pixel B# map for focused small-target observations', async () => {
+    const harness = setupObservationHarness({ readImage: 'success', captcha: false })
+    const value = await harness.tool.execute({
+      inspectionId: 'demo',
+      includeImage: true,
+      targetHint: '我的任务右侧的×',
+      focusXRatio: 0.72,
+      focusYRatio: 0.16,
+      focusWidthRatio: 0.24,
+      focusHeightRatio: 0.22,
+    }, harness.exec)
+
+    expect(harness.screenshotArgs.at(-1)).toMatchObject({
+      pixelActionMap: true,
+      actionMap: false,
+      coordinateGuide: false,
+      focusXRatio: 0.72,
+      focusYRatio: 0.16,
+    })
+    expect(value.pixelActionMap).toBe(true)
+    expect(value.pixelCandidateCount).toBe(3)
+    expect(value.pixelCandidateSummary).toContain('B1')
+  })
+
   it('attaches a second magnified candidate sheet for small targeted Action Maps', async () => {
     const harness = setupObservationHarness({ readImage: 'success', captcha: false, actionMapZoom: true })
     const value = await harness.tool.execute({
@@ -309,6 +333,11 @@ function setupObservationHarness(options: {
             captureMode: 'cdp-css-visual-viewport',
             scrollX: 0,
             scrollY: 0,
+            pixelActionMap: args.pixelActionMap === true,
+            ...(args.pixelActionMap === true ? {
+              pixelCandidateCount: 3,
+              pixelCandidateSummary: 'B1 | bbox=10,10,12,12 | center=16,16\nB2 | bbox=40,10,18,18 | center=49,19\nB3 | bbox=70,10,14,14 | center=77,17',
+            } : {}),
             actionMap: args.actionMap === true,
             actionMapTargeted: args.actionMap === true && typeof args.actionMapTargetHint === 'string' && args.actionMapTargetHint.length > 0,
             ...(typeof args.actionMapTargetHint === 'string' ? { actionMapTargetHint: args.actionMapTargetHint } : {}),

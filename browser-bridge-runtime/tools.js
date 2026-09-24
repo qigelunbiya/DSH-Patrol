@@ -219,7 +219,7 @@ export function registerTools(ctx, bridge, config = {}) {
       description: 'Internal Patrol primitive for vision-first browser teaching. Live teaching clicks the exact fresh screenshot point; successful hits learn semantic/DOM identity for replay. Replay tries learned semantic identity, then selector, then guarded URL/scroll/viewport geometry.',
       parameters: {
         xRatio: optNum, yRatio: optNum, imageX: optNum, imageY: optNum, imageWidth: optNum, imageHeight: optNum,
-        frameId: optStr, candidateId: optStr, selectorHint: optStr, urlIdentity: optStr,
+        frameId: optStr, candidateId: optStr, pixelCandidateId: optStr, selectorHint: optStr, urlIdentity: optStr,
         scrollX: optNum, scrollY: optNum, viewportWidth: optNum, viewportHeight: optNum, viewportScale: optNum,
         captureClientLeft: optNum, captureClientTop: optNum, captureWidth: optNum, captureHeight: optNum, captureMode: optStr,
         expectedTag: optStr, expectedRole: optStr, expectedTitle: optStr, expectedAriaLabel: optStr,
@@ -241,19 +241,20 @@ export function registerTools(ctx, bridge, config = {}) {
             requestedImageX: optNum, requestedImageY: optNum, modelRasterWidth: optNum, modelRasterHeight: optNum, coordinateSource: str,
             visualSnapped: bool, snapDistance: optNum, selectorReplaySafe: bool, selectorQuality: str, bindingActionable: bool, bindingSource: str, visualAuthority: bool,
             cdpPiercedTarget: bool, cdpPiercedActivator: bool, cdpPiercedFollowupEditor: bool, postVisualEditorFocus: bool, cdpPiercedAction: bool, unexpectedNavigation: bool, physicalClickUncertain: bool,
-            pointerAction: str, candidateId: str,
+            pointerAction: str, candidateId: str, pixelCandidateId: str, pixelCandidateBBox: str,
+            pixelCandidateCenterX: optNum, pixelCandidateCenterY: optNum,
             actionCandidateKind: str, actionCandidateHref: str, actionCandidateSafePoint: str, actionCandidateExpectedText: str, actionCandidateFingerprint: str,
             openedTabId: int, openedTabUrl: str,
           },
         },
         render: (_args, value) => [{ type: 'text', text: `Visual browser click executed at (${Number(value.xRatio).toFixed(4)}, ${Number(value.yRatio).toFixed(4)}) via ${value.transport || 'visual'}${value.selectorHint ? `; reusable selector=${value.selectorHint}` : ''}.` }],
       },
-      presentCall: args => generic('Visual browser click', { candidateId: args.candidateId, imageX: args.imageX, imageY: args.imageY, xRatio: args.xRatio, yRatio: args.yRatio, frameId: args.frameId, selectorHint: args.selectorHint }),
+      presentCall: args => generic('Visual browser click', { pixelCandidateId: args.pixelCandidateId, candidateId: args.candidateId, imageX: args.imageX, imageY: args.imageY, xRatio: args.xRatio, yRatio: args.yRatio, frameId: args.frameId, selectorHint: args.selectorHint }),
       execute: async (args, exec) => {
         const value = requireOk(await run(bridge, exec, 'visualClick', clean({
           xRatio: args.xRatio, yRatio: args.yRatio,
           imageX: args.imageX, imageY: args.imageY, imageWidth: args.imageWidth, imageHeight: args.imageHeight,
-          frameId: args.frameId, candidateId: args.candidateId, selectorHint: args.selectorHint,
+          frameId: args.frameId, candidateId: args.candidateId, pixelCandidateId: args.pixelCandidateId, selectorHint: args.selectorHint,
           urlIdentity: args.urlIdentity, scrollX: args.scrollX, scrollY: args.scrollY,
           viewportWidth: args.viewportWidth, viewportHeight: args.viewportHeight, viewportScale: args.viewportScale,
           captureClientLeft: args.captureClientLeft, captureClientTop: args.captureClientTop,
@@ -282,6 +283,10 @@ export function registerTools(ctx, bridge, config = {}) {
           requestedImageX: value.requestedImageX, requestedImageY: value.requestedImageY,
           modelRasterWidth: value.modelRasterWidth, modelRasterHeight: value.modelRasterHeight,
           coordinateSource: value.coordinateSource,
+          pixelCandidateId: value.pixelCandidateId,
+          pixelCandidateBBox: value.pixelCandidateBBox,
+          pixelCandidateCenterX: value.pixelCandidateCenterX,
+          pixelCandidateCenterY: value.pixelCandidateCenterY,
           visualSnapped: value.visualSnapped, snapDistance: value.snapDistance,
           selectorReplaySafe: value.selectorReplaySafe, selectorQuality: value.selectorQuality,
           bindingActionable: value.bindingActionable, bindingSource: value.bindingSource, visualAuthority: value.visualAuthority,
@@ -411,6 +416,7 @@ export function registerTools(ctx, bridge, config = {}) {
         maxWidth: optInt,
         quality: optInt,
         coordinateGuide: optBool,
+        pixelActionMap: optBool,
         actionMap: optBool,
         actionMapTargetHint: optStr,
         focusXRatio: optNum,
@@ -452,6 +458,9 @@ export function registerTools(ctx, bridge, config = {}) {
             targetPixelWidth: optNum,
             captureDevicePixelRatio: optNum,
             coordinateGuide: bool,
+            pixelActionMap: bool,
+            pixelCandidateCount: optInt,
+            pixelCandidateSummary: str,
             actionMap: bool,
             actionMapTargeted: bool,
             actionMapTargetHint: str,
@@ -482,6 +491,7 @@ export function registerTools(ctx, bridge, config = {}) {
           maxWidth: args.maxWidth,
           quality: args.quality,
           coordinateGuide: args.coordinateGuide,
+          pixelActionMap: args.pixelActionMap,
           actionMap: args.actionMap,
           actionMapTargetHint: args.actionMapTargetHint,
           focusXRatio: args.focusXRatio,
@@ -521,6 +531,9 @@ export function registerTools(ctx, bridge, config = {}) {
           targetPixelWidth: value.targetPixelWidth,
           captureDevicePixelRatio: value.captureDevicePixelRatio,
           coordinateGuide: value.coordinateGuide,
+          pixelActionMap: value.pixelActionMap,
+          pixelCandidateCount: value.pixelCandidateCount,
+          pixelCandidateSummary: value.pixelCandidateSummary,
           actionMap: value.actionMap,
           actionMapTargeted: value.actionMapTargeted,
           actionMapTargetHint: value.actionMapTargetHint,
@@ -657,8 +670,11 @@ function renderScreenshotResult(value) {
   } else {
     lines.push(`Built-in screenshot OCR status: ${value.ocrStatus}.`)
   }
+  if (value.pixelCandidateSummary) {
+    lines.push('Browser Pixel Action Map candidates (CURRENT raster; B# is pure-image geometry, not DOM):', value.pixelCandidateSummary)
+  }
   if (value.actionCandidateSummary) {
-    lines.push('Action Map candidate binding summary (CURRENT frame):', value.actionCandidateSummary)
+    lines.push('DOM Action Map candidate binding summary (CURRENT frame):', value.actionCandidateSummary)
   }
   if (value.actionMapStrictTargetMiss === true) {
     lines.push('STRICT TARGET MISS: no safe Action Map candidate matched the requested explicit text/close target. Do not guess a nearby A# or free XY; refine/refresh the visual observation.')
