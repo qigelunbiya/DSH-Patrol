@@ -257,6 +257,7 @@ describe('browser visual fallback click teaching', () => {
             targetTag: 'input',
             targetRole: 'textbox',
             targetText: '',
+            targetAriaLabel: '搜索',
             selectorHint: '#kw',
             selectorReplaySafe: true,
             selectorQuality: 'strong',
@@ -1173,7 +1174,7 @@ describe('browser visual fallback click teaching', () => {
     expect(visualToolSource).toContain('Browser Pixel Grounding')
     expect(visualToolSource).toContain('pixelCandidateId=B#')
     expect(visualToolSource).toContain('B# geometry comes only from CURRENT screenshot pixels')
-    expect(visualToolSource).toContain('Large obvious controls may use direct imageX/imageY')
+    expect(visualToolSource).toContain('Large obvious controls such as wide search/input boxes and large buttons may still use direct imageX/imageY')
     expect(visualToolSource).toContain('Legacy DOM Action Map uses candidateId=A#')
     expect(visualToolSource).toContain('trusted Chrome debugger mouse input')
   })
