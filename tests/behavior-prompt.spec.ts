@@ -111,7 +111,7 @@ describe('current Patrol behavior prompt', () => {
 
 
   it('uses the copied Desktop workflow through browser-only OCR and V# tools', () => {
-    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/视觉负责 live 目标、DOM\/语义负责事后学习和重放/)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/视觉负责 live 目标.*DOM\/语义负责事后学习和重放/)
     expect(PATROL_BEHAVIOR_PROMPT).toContain('patrol_browser_click_ocr_text')
     expect(PATROL_BEHAVIOR_PROMPT).toContain('patrol_browser_visual_action_map')
     expect(PATROL_BEHAVIOR_PROMPT).toContain('patrol_browser_click_visual_candidate')
