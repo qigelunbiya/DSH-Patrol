@@ -750,7 +750,98 @@ export function registerPatrolVisualClickTool(
       ].filter(Boolean).join('\n')
     },
   })
-  return ctx.tools.register(tool)
+
+  const browserOcrTextTool = defineTool({
+    name: 'patrol_browser_click_ocr_text',
+    description: 'Browser counterpart of desktop_click_ocr_text. For a CURRENT visible text control/link/button/menu/chapter, capture a fresh browser screenshot internally, use Windows OCR line geometry, and click the OCR bbox center with trusted Chrome mouse input. This is the simple PRIMARY browser visual path for text; no selector, A#/B#, imageX/imageY, or model coordinate guess is required.',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+      stepName: { type: 'string', required: true },
+      text: { type: 'string', required: true },
+      match: { type: 'string', enum: ['exact', 'contains'] },
+      index: { type: 'integer' },
+      targetHint: { type: 'string', description: 'Optional business label. Defaults to the visible OCR text.' },
+      tabId: { type: 'integer' },
+      expectedText: { type: 'string' },
+      expectationMode: { type: 'string', enum: ['contains', 'not-contains'] },
+      caseSensitive: { type: 'boolean' },
+      conditionSourceStepId: { type: 'string' },
+      conditionExpectedText: { type: 'string' },
+      conditionMode: { type: 'string', enum: ['contains', 'not-contains'] },
+      notes: { type: 'string' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec: ToolRunContext) {
+      return await (tool as any).execute({
+        inspectionId: args.inspectionId,
+        stepName: args.stepName,
+        ocrText: args.text,
+        ocrMatch: args.match ?? 'exact',
+        ...(Number.isInteger(args.index) ? { ocrIndex: args.index } : {}),
+        targetHint: typeof args.targetHint === 'string' && args.targetHint.trim() ? args.targetHint.trim() : args.text,
+        visualAuthority: true,
+        tabId: args.tabId,
+        expectedText: args.expectedText,
+        expectationMode: args.expectationMode,
+        caseSensitive: args.caseSensitive,
+        conditionSourceStepId: args.conditionSourceStepId,
+        conditionExpectedText: args.conditionExpectedText,
+        conditionMode: args.conditionMode,
+        notes: args.notes,
+      }, exec)
+    },
+  })
+
+  const browserVisualCandidateTool = defineTool({
+    name: 'patrol_browser_click_visual_candidate',
+    description: 'Browser counterpart of desktop_click_visual_candidate. Click exactly one V# selected from patrol_browser_visual_action_map. Supply only the SAME frameId + actionMapId + candidateId; Patrol resolves the program-computed bbox center, validates CURRENT page geometry, sends trusted Chrome mouse input, verifies the business result, and records the reusable browser_visual_click step. Never supply x/y.',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+      stepName: { type: 'string', required: true },
+      frameId: { type: 'string', required: true },
+      actionMapId: { type: 'string', required: true },
+      candidateId: { type: 'string', required: true },
+      targetHint: { type: 'string', description: 'Optional business label. Defaults to stepName.' },
+      expectedVisualText: { type: 'string', description: 'For navigation/card/link targets, copy the exact visible target text when one exists so the destination can be verified.' },
+      tabId: { type: 'integer' },
+      expectedText: { type: 'string' },
+      expectationMode: { type: 'string', enum: ['contains', 'not-contains'] },
+      caseSensitive: { type: 'boolean' },
+      conditionSourceStepId: { type: 'string' },
+      conditionExpectedText: { type: 'string' },
+      conditionMode: { type: 'string', enum: ['contains', 'not-contains'] },
+      notes: { type: 'string' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec: ToolRunContext) {
+      return await (tool as any).execute({
+        inspectionId: args.inspectionId,
+        stepName: args.stepName,
+        frameId: args.frameId,
+        actionMapId: args.actionMapId,
+        visualCandidateId: args.candidateId,
+        targetHint: typeof args.targetHint === 'string' && args.targetHint.trim() ? args.targetHint.trim() : args.stepName,
+        expectedVisualText: args.expectedVisualText,
+        visualAuthority: true,
+        tabId: args.tabId,
+        expectedText: args.expectedText,
+        expectationMode: args.expectationMode,
+        caseSensitive: args.caseSensitive,
+        conditionSourceStepId: args.conditionSourceStepId,
+        conditionExpectedText: args.conditionExpectedText,
+        conditionMode: args.conditionMode,
+        notes: args.notes,
+      }, exec)
+    },
+  })
+
+  const disposers = [
+    ctx.tools.register(actionMapTool),
+    ctx.tools.register(browserOcrTextTool),
+    ctx.tools.register(browserVisualCandidateTool),
+    ctx.tools.register(tool),
+  ]
+  return () => { for (const dispose of disposers) dispose() }
 }
 
 async function capturePageState(runner: PatrolRunner, exec: ToolRunContext, tabId: number | undefined): Promise<PageState | undefined> {
