@@ -1194,7 +1194,7 @@ describe('browser visual fallback click teaching', () => {
     expect(visualToolSource).toContain('pixelCandidateId=B#')
     expect(visualToolSource).toContain('B# geometry comes only from CURRENT screenshot pixels')
     expect(visualToolSource).toContain('large obvious controls such as wide search/input boxes and large buttons use CURRENT-raster imageX/imageY')
-    expect(visualToolSource).toContain('DOM A# candidateId are rejected before physical input')
+    expect(visualToolSource).toContain('Precision targets also reject legacy DOM A# candidateId and previewId before physical input')
     expect(visualToolSource).toContain('Live xRatio/yRatio guessing is disabled in TEST MODE')
     expect(visualToolSource).toContain('targetRole')
     expect(visualToolSource).toContain('targetTag')
