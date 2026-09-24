@@ -559,7 +559,7 @@ describe('browser visual fallback click teaching', () => {
         pointerAction,
       }, exec)
 
-      expect(result).toContain('X=580, Y=520')
+      expect(result).toContain('legacy normalized frame coordinate xRatio=0.5800, yRatio=0.5200')
       if (pointerAction === 'mark') {
         expect(result).toMatch(/Visual preview token: browser-preview-/)
         expect(result).toContain('Do not recompute or restate coordinates')
@@ -830,7 +830,7 @@ describe('browser visual fallback click teaching', () => {
       frameId: 'browser-visual-current',
       xRatio: 0.3,
       yRatio: 0.35,
-    }, exec)).rejects.toThrow(/require expectedVisualText.*model-visible CURRENT screenshot/i)
+    }, exec)).rejects.toThrow(/require expectedVisualText.*CURRENT model-visible screenshot/i)
     expect(calls).toEqual([])
   })
 
@@ -948,17 +948,19 @@ describe('browser visual fallback click teaching', () => {
   })
 
   it('does not require the redundant mark-preview round trip before TEST MODE visual clicks', () => {
-    expect(visualToolSource).toContain('pointerAction=mark/previewId remains optional for diagnostics only')
+    expect(visualToolSource).toContain('pointerAction')
+    expect(visualToolSource).toContain('Optional diagnostic token returned by pointerAction=mark')
     expect(visualToolSource).not.toContain('preview-bound for accuracy in TEST MODE')
     expect(visualToolSource).not.toContain('A naked visual left-click is never dispatched in TEST MODE')
   })
 
-  it('makes Action Map candidates primary and keeps free XY as an uncovered-target fallback', () => {
-    expect(visualToolSource).toContain('prefer an A# from the CURRENT targeted Action Map')
-    expect(visualToolSource).toContain('Free XY is a fallback only')
-    expect(visualToolSource).toContain('Use free XY only when no CURRENT candidate covers the intended target')
-    expect(visualToolSource).toContain('If this free XY point is wrong')
-    expect(visualToolSource).toContain('capture a fresh targeted Action Map')
+  it('makes CURRENT raster pixels primary and keeps Action Map / ratios as compatibility paths', () => {
+    expect(visualToolSource).toContain('Preferred live path is CURRENT screenshot raster')
+    expect(visualToolSource).toContain('pass imageX/imageY from that exact attached raster')
+    expect(visualToolSource).toContain('Do not manually convert pixels to xRatio')
+    expect(visualToolSource).toContain('candidateId remains an optional compatibility path')
+    expect(visualToolSource).toContain('xRatio/yRatio remain a legacy normalized fallback')
+    expect(visualToolSource).toContain('trusted debugger mouse input is unavailable')
   })
 
   it('refuses CAPTCHA/image-code targets before any browser visual dispatch', async () => {
