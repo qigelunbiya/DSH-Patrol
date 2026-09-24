@@ -228,6 +228,26 @@ describe('browser visual fallback click teaching', () => {
     expect(calls).toEqual([])
   })
 
+  it('rejects normalized xRatio/yRatio even for a large TEST MODE control and directs the model to CURRENT raster pixels', async () => {
+    const calls: string[] = []
+    const visualEvidence = createPatrolVisualEvidenceRegistry()
+    visualEvidence.mark('browser-visual-large-ratio', 'visual-click')
+    const { tool, exec } = await setup(async (name) => {
+      calls.push(name)
+      throw new Error(`unexpected tool ${name}`)
+    }, undefined, visualEvidence, false, true)
+
+    await expect(tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '点击百度搜索结果页搜索框',
+      targetHint: '百度搜索结果页搜索框',
+      xRatio: 0.42,
+      yRatio: 0.10,
+    }, exec)).rejects.toThrow(/live xRatio\/yRatio visual clicking is disabled.*large control.*imageX\/imageY.*Do not manually convert/i)
+
+    expect(calls).toEqual([])
+  })
+
   it('allows large obvious controls to keep direct image-pixel clicking in TEST MODE', async () => {
     const visualEvidence = createPatrolVisualEvidenceRegistry()
     visualEvidence.mark('browser-visual-search', 'visual-click')
@@ -241,7 +261,7 @@ describe('browser visual fallback click teaching', () => {
           frameId: 'browser-visual-search',
           imageX: 512,
           imageY: 300,
-          targetHint: '百度搜索框',
+          targetHint: '百度搜索结果页搜索框',
           visualAuthority: true,
         })
         return {
@@ -257,7 +277,6 @@ describe('browser visual fallback click teaching', () => {
             targetTag: 'input',
             targetRole: 'textbox',
             targetText: '',
-            targetAriaLabel: '搜索',
             selectorHint: '#kw',
             selectorReplaySafe: true,
             selectorQuality: 'strong',
@@ -277,8 +296,8 @@ describe('browser visual fallback click teaching', () => {
 
     const result = await tool.execute({
       inspectionId: 'visual-click',
-      stepName: '点击百度搜索框',
-      targetHint: '百度搜索框',
+      stepName: '点击百度搜索结果页搜索框',
+      targetHint: '百度搜索结果页搜索框',
       imageX: 512,
       imageY: 300,
       imageWidth: 1024,
@@ -1176,6 +1195,9 @@ describe('browser visual fallback click teaching', () => {
     expect(visualToolSource).toContain('B# geometry comes only from CURRENT screenshot pixels')
     expect(visualToolSource).toContain('Large obvious controls such as wide search/input boxes and large buttons may still use direct imageX/imageY')
     expect(visualToolSource).toContain('DOM A# candidateId are rejected before physical input')
+    expect(visualToolSource).toContain('Live xRatio/yRatio guessing is disabled in TEST MODE')
+    expect(visualToolSource).toContain('targetRole')
+    expect(visualToolSource).toContain('targetTag')
     expect(visualToolSource).toContain('trusted Chrome debugger mouse input')
   })
 
