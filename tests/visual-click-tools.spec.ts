@@ -830,7 +830,7 @@ describe('browser visual fallback click teaching', () => {
       frameId: 'browser-visual-current',
       xRatio: 0.3,
       yRatio: 0.35,
-    }, exec)).rejects.toThrow(/requires expectedVisualText.*CURRENT model-visible screenshot/i)
+    }, exec)).rejects.toThrow(/require[s]? expectedVisualText.*CURRENT model-visible screenshot/i)
     expect(calls).toEqual([])
   })
 
