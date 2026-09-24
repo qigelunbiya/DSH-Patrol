@@ -56,11 +56,11 @@ export function registerPatrolVisualClickTool(
   let visualPreviewSequence = 0
   const tool = defineTool({
     name: 'patrol_visual_click_target',
-    description: 'Direct screenshot-bound browser teaching click. For ordinary visible browser controls, links, inputs and small icons, prefer an A# from the CURRENT targeted Action Map: the model chooses WHICH candidate and Patrol clicks that candidate\'s program-verified safe point. Free XY is a fallback only when the CURRENT Action Map has no candidate covering a canvas/custom-drawn/special target. pointerAction=mark/previewId remains optional for diagnostics only and is never required before a normal click. Navigation candidates carry their own CURRENT visible text/title/aria evidence, so the model does not need to manually retype expectedVisualText for an A# click. After the physical click, Patrol verifies the business result and learns reusable DOM/semantic identity for replay. Never use for image-code/CAPTCHA.',
+    description: 'Direct screenshot-bound browser teaching click. For ordinary visible browser controls, links, inputs and small icons, prefer an A# from the CURRENT targeted Action Map: the model chooses WHICH candidate and Patrol clicks that candidate\'s program-verified safe point. frameId is normally omitted: Patrol automatically binds the latest model-visible patrol_observe(includeImage=true) frame for this inspection, eliminating manual frame-id copy errors. Free XY is a fallback only when the CURRENT Action Map has no candidate covering a canvas/custom-drawn/special target. pointerAction=mark/previewId remains optional for diagnostics only. Navigation candidates carry their own CURRENT visible text/title/aria evidence. After the physical click, Patrol verifies the business result and learns reusable DOM/semantic identity for replay. Never use for image-code/CAPTCHA.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
-      frameId: { type: 'string', description: 'visualFrameId returned by patrol_observe(includeImage=true). Optional when previewId is supplied.' },
+      frameId: { type: 'string', description: 'Optional explicit browser visualFrameId. Normally omit it: Patrol automatically uses the latest model-visible patrol_observe(includeImage=true) frame for this inspection. Screenshot file names/paths are never valid frame IDs.' },
       previewId: { type: 'string', description: 'Optional diagnostic token returned by pointerAction=mark. Normal visual clicks do not require it.' },
       xRatio: { type: 'number', description: 'Normalized screenshot coordinate for free-point visual clicks. Optional when candidateId or previewId is supplied.' },
       yRatio: { type: 'number', description: 'Normalized screenshot coordinate for free-point visual clicks. Optional when candidateId or previewId is supplied.' },
@@ -110,9 +110,13 @@ export function registerPatrolVisualClickTool(
       if (!hasCandidate && !hasPoint) {
         throw new Error('visual click requires previewId from a verified mark, candidateId=A# from a VISUAL ACTION MAP, or xRatio/yRatio between 0 and 1')
       }
-      const frameId = boundPreview?.frameId || String(args.frameId ?? '').trim()
+      const explicitFrameId = String(args.frameId ?? '').trim()
+      const frameId = boundPreview?.frameId
+        || explicitFrameId
+        || options.visualEvidence?.latest(args.inspectionId)
+        || ''
       if (!/^browser-visual-[a-z0-9-]+$/i.test(frameId)) {
-        throw new Error('frameId must be a visualFrameId returned by patrol_observe(includeImage=true), or previewId must bind one. Screenshot file names/paths are not valid visual frames.')
+        throw new Error('no CURRENT model-visible browser visual frame is available. Run patrol_observe(includeImage=true,targetHint=...) first. Do not copy screenshot file names/paths into frameId.')
       }
       assertSafePersistentText(args.stepName, 'stepName')
       if (typeof args.targetHint !== 'string' || args.targetHint.trim().length < 2) {
