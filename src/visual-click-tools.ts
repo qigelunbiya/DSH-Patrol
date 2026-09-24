@@ -57,7 +57,7 @@ export function registerPatrolVisualClickTool(
   let visualPreviewSequence = 0
   const tool = defineTool({
     name: 'patrol_visual_click_target',
-    description: 'Primary browser visual click. In TEST MODE, precision targets (text links/results, chapter/menu/tab items, close x/×, small icons and other dense small targets) are HARD-GATED to Browser Pixel Grounding: obtain a focused patrol_observe(..., pixelActionMap=true) raster, visually choose B#, then call pixelCandidateId=B#. For those targets, direct imageX/imageY, legacy xRatio/yRatio and DOM A# candidateId are rejected before physical input. Large obvious controls such as wide search/input boxes and large buttons may still use direct imageX/imageY. B# geometry comes only from CURRENT screenshot pixels and Patrol clicks its bbox center through the frame mapping. frameId normally auto-binds to the latest model-visible frame. Live visual clicks require trusted Chrome debugger mouse input and never silently substitute element.click() or synthetic MouseEvents. Never use for image-code/CAPTCHA.',
+    description: 'Primary browser visual click. TEST MODE has two live grounding paths: large obvious controls such as wide search/input boxes and large buttons use CURRENT-raster imageX/imageY; precision targets such as text links/results, chapters/menu/tab items, close x/× and small icons use focused Browser Pixel Grounding and pixelCandidateId=B#. Live xRatio/yRatio guessing is disabled in TEST MODE. Precision targets also reject legacy DOM A# candidateId and previewId before physical input. B# geometry comes only from CURRENT screenshot pixels and Patrol clicks its bbox center through the bound frame mapping. Live visual clicks require trusted Chrome debugger mouse input and never silently substitute element.click() or synthetic MouseEvents. Never use for image-code/CAPTCHA.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
@@ -67,8 +67,8 @@ export function registerPatrolVisualClickTool(
       imageY: { type: 'number', description: 'CURRENT screenshot pixel Y for large obvious controls only. In TEST MODE, precision targets reject direct imageX/imageY and require pixelCandidateId=B#.' },
       imageWidth: { type: 'number', description: 'Optional validation copy of modelRasterWidth from CURRENT patrol_observe. If supplied and it does not match the bound frame, Patrol refuses the click.' },
       imageHeight: { type: 'number', description: 'Optional validation copy of modelRasterHeight from CURRENT patrol_observe. If supplied and it does not match the bound frame, Patrol refuses the click.' },
-      xRatio: { type: 'number', description: 'Legacy normalized screenshot X fallback. In TEST MODE it is rejected for precision targets; use a focused pixelActionMap and pixelCandidateId=B# instead.' },
-      yRatio: { type: 'number', description: 'Legacy normalized screenshot Y fallback. In TEST MODE it is rejected for precision targets; use a focused pixelActionMap and pixelCandidateId=B# instead.' },
+      xRatio: { type: 'number', description: 'Legacy normalized screenshot X fallback for compatibility/replay diagnostics. TEST MODE live left-click teaching rejects xRatio/yRatio entirely; use imageX/imageY for large controls or pixelCandidateId=B# for precision targets.' },
+      yRatio: { type: 'number', description: 'Legacy normalized screenshot Y fallback for compatibility/replay diagnostics. TEST MODE live left-click teaching rejects xRatio/yRatio entirely.' },
       pixelCandidateId: { type: 'string', description: 'Preferred B1/B2/... label from a CURRENT Browser Pixel Action Map. B# is computed from screenshot pixels only; Patrol clicks the program-computed bbox center. Use this for focused small/text/dense targets instead of estimating raw coordinates.' },
       candidateId: { type: 'string', description: 'Legacy A1/A2/... label from explicit patrol_observe(..., actionMap=true). In TEST MODE, precision targets are not allowed to use A#; they must use pure-pixel B# grounding.' },
       targetHint: { type: 'string', required: true, description: 'Concrete CURRENT business intent, e.g. 评论输入框/发布按钮/点赞按钮/完整视频标题. It labels post-click verification and learned DOM/semantic binding; it does not authorize or relocate the live screenshot coordinate.' },
@@ -119,14 +119,37 @@ export function registerPatrolVisualClickTool(
       const hasRatioPoint = Number.isFinite(pointX) && Number.isFinite(pointY)
         && pointX >= 0 && pointX <= 1 && pointY >= 0 && pointY <= 1
       const requestedPointerAction = args.pointerAction ?? 'left-click'
-      const precisionPixelGroundingRequired = options.testMode === true
-        && requestedPointerAction === 'left-click'
+      const liveTestClick = options.testMode === true && requestedPointerAction === 'left-click'
+      const largeVisualControl = testModeLargeVisualControl(args.stepName, args.targetHint)
+      const precisionPixelGroundingRequired = liveTestClick
         && testModePrecisionTargetRequiresPixelGrounding(args.stepName, args.targetHint)
       if ([hasPixelCandidate, hasCandidate, hasImagePoint, hasRatioPoint || Boolean(boundPreview)].filter(Boolean).length > 1) {
-        throw new Error('visual click requires exactly one coordinate source: pixelCandidateId=B# (preferred for focused small/text targets), imageX/imageY, candidateId=A#, xRatio/yRatio, or previewId')
+        throw new Error('visual click requires exactly one coordinate source: pixelCandidateId=B#, imageX/imageY, candidateId=A#, xRatio/yRatio, or previewId')
+      }
+      if (liveTestClick && hasRatioPoint) {
+        throw new Error([
+          'TEST MODE live xRatio/yRatio visual clicking is disabled before physical input because normalized guessing caused repeated browser misclicks.',
+          largeVisualControl
+            ? 'For this large control, use imageX/imageY from the exact CURRENT model-visible raster returned by patrol_observe(includeImage=true).'
+            : 'Use a focused patrol_observe(..., pixelActionMap=true) and click pixelCandidateId="B#" for a precision target.',
+          'Do not manually convert screenshot pixels to normalized ratios.',
+        ].join(' '))
       }
       if (!hasPixelCandidate && !hasCandidate && !hasImagePoint && !hasRatioPoint && !boundPreview) {
         if (precisionPixelGroundingRequired) throw new Error(testModePixelGroundingInstruction(args.targetHint))
+        if (liveTestClick && largeVisualControl) {
+          throw new Error([
+            'TEST MODE large-control visual click requires imageX/imageY from the exact CURRENT model-visible screenshot raster.',
+            'Use patrol_observe(includeImage=true, actionMap=false, pixelActionMap=false, targetHint=<same target>) and provide the target center as imageX/imageY; do not use xRatio/yRatio.',
+          ].join(' '))
+        }
+        if (liveTestClick) {
+          throw new Error([
+            'TEST MODE visual click has no live grounding source yet.',
+            'Use imageX/imageY only for a clearly large control; otherwise use a focused patrol_observe(..., pixelActionMap=true) and pixelCandidateId="B#".',
+            'xRatio/yRatio is not accepted for live TEST clicking.',
+          ].join(' '))
+        }
         throw new Error('visual click requires pixelCandidateId=B# from a CURRENT Browser Pixel Action Map, imageX/imageY, candidateId=A#, previewId, or legacy xRatio/yRatio')
       }
       const explicitFrameId = String(args.frameId ?? '').trim()
@@ -561,6 +584,9 @@ export function registerPatrolVisualClickTool(
             ? `No trustworthy semantic label was learned; replay tries discovered selector ${JSON.stringify(selectorHint)} before guarded visual geometry.`
             : 'No trustworthy DOM binding was available; replay keeps guarded normalized visual geometry as fallback.',
         `Verification: ${verificationMethod}, ${verificationEvidence}, attempts=${verificationAttempts}.`,
+        objectBoolean(clicked.value, 'targetFocusedEditable') === true
+          ? 'The visual click verified focus on an editable control. For PUBLIC text, prefer patrol_type_focused_text(clear=true) so typing follows the visually selected focus instead of re-resolving another selector.'
+          : '',
         clicked.text,
       ].filter(Boolean).join('\n')
     },
@@ -621,21 +647,28 @@ function testModePixelGroundingInstruction(targetHint: string | undefined): stri
   ].join(' ')
 }
 
+function testModeLargeVisualControl(stepName: string | undefined, targetHint: string | undefined): boolean {
+  const text = normalizePageText([stepName, targetHint].filter(Boolean).join(' '))
+  if (!text) return false
+  const explicitTinyOverride = /(?:[x×✕✖]|关闭|移除|删除|清除|三点|省略号|齿轮|小图标|图标)/i.test(text)
+  if (explicitTinyOverride) return false
+  return /(?:搜索结果页)?(?:搜索框|搜索栏)|输入框|编辑框|文本框|地址栏|大输入区|大按钮|百度一下|登录按钮|确定按钮|确认按钮|提交按钮|发布按钮|发送按钮/i.test(text)
+}
+
 function testModePrecisionTargetRequiresPixelGrounding(stepName: string | undefined, targetHint: string | undefined): boolean {
   const raw = [stepName, targetHint].filter(Boolean).join(' ')
   const text = normalizePageText(raw)
   if (!text) return false
 
-  // Large controls have enough visual margin for a direct screenshot-pixel click.
-  // Keep this allow-list intentionally narrow; anything text-dense or tiny falls
-  // through to B# grounding below.
-  const clearlyLargeControl = /(?:搜索框|搜索栏|输入框|编辑框|文本框|地址栏|大输入区|大按钮|百度一下|登录按钮|确定按钮|确认按钮|提交按钮|发布按钮|发送按钮)/i.test(text)
-  const tinyOrDenseMarker = /(?:[x×✕✖]|关闭|移除|删除|清除|取消|三点|省略号|齿轮|小图标|图标|菜单项|下拉项|列表项|标签页|标签|tab|目录|章节|条目|标题|链接|搜索结果|百科|官网|发售版本|版本项)/i.test(text)
-    || /(?:第\s*\d+\s*(?:项|章|节|条)|\d+\s*[.．。、:：-]\s*[\p{L}\p{N}])/u.test(raw)
+  const explicitTiny = /(?:[x×✕✖]|关闭|移除|删除|清除|三点|省略号|齿轮|小图标|图标)/i.test(text)
+  if (explicitTiny) return true
+  if (testModeLargeVisualControl(stepName, targetHint)) return false
 
-  if (tinyOrDenseMarker) return true
+  const textDense = /(?:菜单项|下拉项|列表项|标签页|标签|tab|目录|章节|条目|标题|链接|搜索结果|百科|官网|发售版本|版本项)/i.test(text)
+    || /(?:第\s*\d+\s*(?:项|章|节|条)|\d+\s*[.．。、:：-]\s*[\p{L}\p{N}])/u.test(raw)
+  if (textDense) return true
   if (navigationLikeBusinessAction(stepName, targetHint)) return true
-  return !clearlyLargeControl && /(?:点击|打开|进入|选择).*(?:文字|文本|结果|项目|选项|入口)/i.test(text)
+  return /(?:点击|打开|进入|选择).*(?:文字|文本|结果|项目|选项|入口)/i.test(text)
 }
 
 function navigationLikeBusinessAction(stepName: string | undefined, targetHint: string | undefined): boolean {
@@ -653,7 +686,7 @@ function visualTextContains(haystack: string, needle: string): boolean {
 
 function inPageControlHint(targetHint: string | undefined): boolean {
   const hint = normalizePageText(targetHint ?? '')
-  return /点赞|投币|收藏|评论|回复|输入框|编辑框|发布|发表|发送|提交|like|favorite|comment|reply|post|send|submit/.test(hint)
+  return /点赞|投币|收藏|评论|回复|搜索框|搜索栏|输入框|编辑框|文本框|地址栏|按钮|发布|发表|发送|提交|like|favorite|comment|reply|search\s*(?:box|bar|input|button)|textbox|input|button|post|send|submit/.test(hint)
 }
 
 function stateChangeEvidence(before: PageState, after: PageState): string | undefined {
@@ -688,6 +721,8 @@ function visualTargetMismatch(targetHint: string | undefined, value: unknown): s
   }
   const haystack = normalizePageText([
     objectString(value, 'selectorHint') ?? '',
+    objectString(value, 'targetTag') ?? '',
+    objectString(value, 'targetRole') ?? '',
     objectString(value, 'targetText') ?? '',
     objectString(value, 'targetTitle') ?? '',
     objectString(value, 'targetAriaLabel') ?? '',

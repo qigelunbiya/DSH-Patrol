@@ -262,6 +262,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       `visualCaptchaFallback=${runtimePolicy.testMode ? 'enabled' : 'disabled'}`,
       'browserStrategy=user-directed(default=hybrid)',
       `precisionVisualGate=${runtimePolicy.testMode ? 'test-bsharp-required' : 'normal-policy'}`,
+      `liveVisualRatio=${runtimePolicy.testMode ? 'disabled' : 'compatibility'}`,
       'desktopAutomation=windows-uia+keyboard+ocr+coordinates',
       'desktopPermissions=unrestricted',
       `build=${TEST_MODE_BUILD_MARKER}`,

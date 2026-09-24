@@ -374,12 +374,15 @@ function interactionNormalizeVisualFocusRegion(viewport, args = {}) {
 
   const requestedWidthRatio = Number(args.focusWidthRatio)
   const requestedHeightRatio = Number(args.focusHeightRatio)
+  const pixelGrounding = args.pixelActionMap === true && args.actionMap !== true
+  const minimumWidthRatio = pixelGrounding ? 0.34 : 0.12
+  const minimumHeightRatio = pixelGrounding ? 0.30 : 0.12
   const widthRatio = Number.isFinite(requestedWidthRatio)
-    ? Math.max(0.12, Math.min(0.72, requestedWidthRatio))
-    : 0.30
+    ? Math.max(minimumWidthRatio, Math.min(0.72, requestedWidthRatio))
+    : (pixelGrounding ? 0.40 : 0.30)
   const heightRatio = Number.isFinite(requestedHeightRatio)
-    ? Math.max(0.12, Math.min(0.72, requestedHeightRatio))
-    : 0.34
+    ? Math.max(minimumHeightRatio, Math.min(0.72, requestedHeightRatio))
+    : (pixelGrounding ? 0.34 : 0.34)
 
   const width = Math.max(120, Math.min(viewportWidth, viewportWidth * widthRatio))
   const height = Math.max(100, Math.min(viewportHeight, viewportHeight * heightRatio))

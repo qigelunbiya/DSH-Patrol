@@ -59,6 +59,13 @@ describe('browser interaction hardening layer', () => {
     expect(source).toContain('narrowed = []')
   })
 
+  it('expands focused B# crops so coarse model centers do not crop precision targets out', () => {
+    expect(source).toContain('const pixelGrounding = args.pixelActionMap === true && args.actionMap !== true')
+    expect(source).toContain('const minimumWidthRatio = pixelGrounding ? 0.34 : 0.12')
+    expect(source).toContain('const minimumHeightRatio = pixelGrounding ? 0.30 : 0.12')
+    expect(source).toContain("(pixelGrounding ? 0.40 : 0.30)")
+  })
+
   it('builds browser B# candidates from screenshot pixels without desktop or DOM geometry', () => {
     expect(source).toContain('interactionBuildPixelActionMapInWorker')
     expect(source).toContain("item.candidateId = `B${index + 1}`")

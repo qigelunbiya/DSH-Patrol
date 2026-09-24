@@ -93,8 +93,8 @@ export function registerPatrolObservationTools(
       targetHint: { type: 'string', description: 'Concrete CURRENT business target, e.g. “百度搜索栏”, “龙之信条2 百度百科结果”, “7.发售版本” or “我的任务右侧的×”. It is context only; it does not choose DOM geometry. For small targets first use the raw screenshot to estimate a coarse focus center, then request a focused pixelActionMap and choose B#.' },
       focusXRatio: { type: 'number', description: 'Optional coarse X center (0..1) for a focused visual crop. Use after a full-frame visual estimate when the target is small or a calibration mark missed.' },
       focusYRatio: { type: 'number', description: 'Optional coarse Y center (0..1) for a focused visual crop. Requires includeImage=true and focusXRatio.' },
-      focusWidthRatio: { type: 'number', description: 'Focused crop width as a fraction of the CURRENT visual viewport. Default 0.30; clamped to 0.12..0.72.' },
-      focusHeightRatio: { type: 'number', description: 'Focused crop height as a fraction of the CURRENT visual viewport. Default 0.34; clamped to 0.12..0.72.' },
+      focusWidthRatio: { type: 'number', description: 'Focused crop width as a fraction of the CURRENT visual viewport. For Browser Pixel Grounding prefer 0.34..0.48 so a coarse model estimate does not crop the target out; runtime also expands pixelActionMap crops to a safe minimum. Clamped to 0.12..0.72.' },
+      focusHeightRatio: { type: 'number', description: 'Focused crop height as a fraction of the CURRENT visual viewport. For Browser Pixel Grounding prefer 0.30..0.42; runtime expands pixelActionMap crops to a safe minimum. Clamped to 0.12..0.72.' },
     },
     output: {
       schema: {
