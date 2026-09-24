@@ -254,7 +254,7 @@ export function registerPatrolVisualClickTool(
           xRatio: hasRatioPoint || boundPreview ? pointX : undefined,
           yRatio: hasRatioPoint || boundPreview ? pointY : undefined,
           targetHint: args.targetHint,
-          expectedVisualText: args.expectedVisualText,
+          expectedVisualText: args.expectedVisualText ?? ocrExpectedVisualText,
           visualAuthority: true,
           pointerAction,
           tabId: args.tabId,
@@ -333,6 +333,7 @@ export function registerPatrolVisualClickTool(
       const navigationAction = navigationLikeBusinessAction(args.stepName, args.targetHint)
       const isVisualNavigation = navigationAction && (hasCandidate
         || hasPixelCandidate
+        || Boolean(ocrExpectedVisualText)
         || (typeof args.expectedVisualText === 'string' && args.expectedVisualText.trim().length >= 4))
       const tabBaseline = isVisualNavigation
         ? await captureBrowserTabBaseline(runner, exec)
@@ -356,7 +357,7 @@ export function registerPatrolVisualClickTool(
         xRatio: hasRatioPoint || boundPreview ? pointX : undefined,
         yRatio: hasRatioPoint || boundPreview ? pointY : undefined,
         targetHint: args.targetHint,
-        expectedVisualText: args.expectedVisualText,
+        expectedVisualText: args.expectedVisualText ?? ocrExpectedVisualText,
         visualAuthority,
         pointerAction: 'left-click',
         tabId: args.tabId,
@@ -366,8 +367,10 @@ export function registerPatrolVisualClickTool(
           'Visual click failed before Patrol could confirm a physical click, so this attempt does NOT consume the visual physical-click budget. The same frameId may be retried if CURRENT URL/scroll/zoom/viewport are still unchanged.',
           clicked.error ?? clicked.text ?? 'Unknown browser visual click error',
           'Reuse this frameId freely while the CURRENT page geometry still matches it; capture a new patrol_observe(includeImage=true) only after navigation, scroll, zoom, viewport/layout changes, or when a new screenshot is actually useful.',
-          boundPreview
-            ? 'The click reused the exact visually marked point; capture a fresh CURRENT frame and mark a different point instead of nudging this preview token.'
+          ocrOwnedPoint
+            ? 'The click used fresh CURRENT screenshot OCR geometry. Re-run the same ocrText against a fresh CURRENT screenshot; do not switch to B#/A#, read_image paths, or coordinate nudging.'
+            : boundPreview
+              ? 'The click reused the exact visually marked point; capture a fresh CURRENT frame and mark a different point instead of nudging this preview token.'
             : hasPixelCandidate
               ? 'If this B# was wrong, capture a fresh focused Browser Pixel Action Map and choose a different B# whose red bbox/crosshair lies inside the intended target. Do not nudge viewport coordinates manually.'
             : hasCandidate
@@ -390,6 +393,7 @@ export function registerPatrolVisualClickTool(
 
       const explicitExpectedVisualText = typeof args.expectedVisualText === 'string' ? args.expectedVisualText.trim() : ''
       const effectiveExpectedVisualText = explicitExpectedVisualText
+        || ocrExpectedVisualText
         || (hasCandidate ? objectString(clicked.value, 'actionCandidateExpectedText') : undefined)
         || (hasCandidate ? objectString(clicked.value, 'targetText') : undefined)
         || (hasCandidate ? objectString(clicked.value, 'targetAriaLabel') : undefined)
