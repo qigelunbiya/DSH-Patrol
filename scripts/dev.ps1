@@ -83,6 +83,16 @@ console.log('Harness runtime dependency probe: OK')
 function Repair-HarnessRuntimeDependencies {
     param([Parameter(Mandatory = $true)][string]$HarnessRootPath)
 
+    $manifestPath = Join-Path $HarnessRootPath "package.json"
+    if (-not (Test-Path -LiteralPath $manifestPath)) {
+        throw "Harness package.json is missing: $manifestPath"
+    }
+    $manifest = [System.IO.File]::ReadAllText($manifestPath) | ConvertFrom-Json
+    if ([string]$manifest.version -ne "0.1.1-rc.2") {
+        Write-Host "Harness version $($manifest.version) is not rc2; skipping the rc2-specific runtime repair." -ForegroundColor DarkGray
+        return
+    }
+
     if (Test-HarnessRuntimeDependencies -HarnessRootPath $HarnessRootPath) {
         return
     }
