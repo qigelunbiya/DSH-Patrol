@@ -11,6 +11,23 @@ describe('Patrol model-visible visual evidence registry', () => {
     expect(registry.consume('browser-visual-current', 'demo')).toEqual({ ok: true })
   })
 
+  it('tracks the latest model-visible frame per inspection for automatic click binding', () => {
+    const registry = createPatrolVisualEvidenceRegistry()
+    expect(registry.latest('demo')).toBeUndefined()
+
+    registry.mark('browser-visual-first', 'demo')
+    expect(registry.latest('demo')).toBe('browser-visual-first')
+
+    registry.mark('browser-visual-other', 'other')
+    registry.mark('browser-visual-second', 'demo')
+    expect(registry.latest('demo')).toBe('browser-visual-second')
+    expect(registry.latest('other')).toBe('browser-visual-other')
+
+    registry.clearInspection('demo')
+    expect(registry.latest('demo')).toBeUndefined()
+    expect(registry.latest('other')).toBe('browser-visual-other')
+  })
+
   it('rejects frames from another inspection but does not expire model-visible evidence by time', () => {
     let now = 1000
     const registry = createPatrolVisualEvidenceRegistry(() => now)
