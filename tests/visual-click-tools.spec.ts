@@ -147,6 +147,25 @@ describe('browser visual fallback click teaching', () => {
     expect((await store.load('visual-click')).steps).toHaveLength(1)
   })
 
+  it('gives only the B# recovery path when a TEST MODE precision target has no coordinate source yet', async () => {
+    const calls: string[] = []
+    const visualEvidence = createPatrolVisualEvidenceRegistry()
+    visualEvidence.mark('browser-visual-nosource', 'visual-click')
+    const { tool, exec } = await setup(async (name) => {
+      calls.push(name)
+      throw new Error(`unexpected tool ${name}`)
+    }, undefined, visualEvidence, false, true)
+
+    await expect(tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '点击龙之信条2百度百科搜索结果',
+      targetHint: '龙之信条 2 - 百度百科 搜索结果链接',
+      expectedVisualText: '龙之信条 2 - 百度百科',
+    }, exec)).rejects.toThrow(/requires Browser Pixel Grounding.*Do not use xRatio\/yRatio, imageX\/imageY, previewId, or legacy A# candidateId.*pixelActionMap=true.*pixelCandidateId="B#"/i)
+
+    expect(calls).toEqual([])
+  })
+
   it('hard-rejects TEST MODE ratio clicks for precision text/navigation targets before any browser dispatch', async () => {
     const calls: string[] = []
     const visualEvidence = createPatrolVisualEvidenceRegistry()
@@ -328,7 +347,7 @@ describe('browser visual fallback click teaching', () => {
         }
       }
       throw new Error(`unexpected tool ${name}`)
-    }, undefined, visualEvidence)
+    }, undefined, visualEvidence, false, true)
 
     const result = await tool.execute({
       inspectionId: 'visual-click',
