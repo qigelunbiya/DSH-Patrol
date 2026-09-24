@@ -585,13 +585,13 @@ export function registerPatrolVisualClickTool(
         expectedTitle: objectString(clicked.value, 'targetTitle'),
         expectedAriaLabel: objectString(clicked.value, 'targetAriaLabel'),
         targetHint: args.targetHint.trim(),
-        expectedVisualText: args.expectedVisualText?.trim(),
+        expectedVisualText: effectiveExpectedVisualText?.trim(),
         targetTextHint: objectString(clicked.value, 'targetText'),
         targetIdHint: objectString(clicked.value, 'targetId'),
         targetClassHint: objectString(clicked.value, 'targetClassName'),
       })
       const condition = optionalCondition(args.conditionSourceStepId, args.conditionExpectedText, args.conditionMode)
-      const targetNote = `视觉目标：${args.targetHint.trim()}${hasPixelCandidate ? `；像素视觉编号：${pixelCandidateId}` : hasCandidate ? `；视觉编号：${candidateId}` : ''}`
+      const targetNote = `视觉目标：${args.targetHint.trim()}${ocrOwnedPoint ? `；OCR视觉锚点：${boundPreview?.ocrMatchedText || boundPreview?.ocrText || ''}${boundPreview?.ocrRelation === 'close-right' ? '（右侧关闭）' : ''}` : hasPixelCandidate ? `；旧像素视觉编号：${pixelCandidateId}` : hasCandidate ? `；旧视觉编号：${candidateId}` : ''}`
       const providedNotes = [targetNote, args.notes?.trim()].filter(Boolean).join('\n')
       const step: ToolStep = {
         id: nextStepId(definition.steps),
@@ -621,17 +621,21 @@ export function registerPatrolVisualClickTool(
 
       return [
         `Executed and recorded ${step.id} (browser_visual_click) after CURRENT model-visible visual-state verification.`,
-        hasPixelCandidate
-          ? `Browser Pixel Action Map candidate ${pixelCandidateId} resolved from CURRENT screenshot pixels to xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; the B# bbox center was saved for replay and no model-provided free coordinate was used.`
-          : hasCandidate
-            ? `Visual action-map candidate ${candidateId} resolved by CURRENT browser geometry to xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; this exact center was saved for replay. The model selected the labeled box, not a free pixel coordinate.`
-            : `Visual point saved for replay: xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; model-requested=(${pointX.toFixed(4)}, ${pointY.toFixed(4)}); capture=${captureWidth ?? viewportWidth}x${captureHeight ?? viewportHeight} CSS px at (${captureClientLeft ?? 0}, ${captureClientTop ?? 0}).`,
+        ocrOwnedPoint
+          ? `Browser Windows OCR resolved ${JSON.stringify(boundPreview?.ocrMatchedText || boundPreview?.ocrText || '')} with relation=${boundPreview?.ocrRelation || 'center'} to xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; no model coordinate guess, B#, A#, or screenshot file read was used.`
+          : hasPixelCandidate
+            ? `Legacy Browser Pixel Action Map candidate ${pixelCandidateId} resolved to xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}.`
+            : hasCandidate
+              ? `Legacy visual action-map candidate ${candidateId} resolved to xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}.`
+              : `Visual point saved for replay: xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; model-requested=(${pointX.toFixed(4)}, ${pointY.toFixed(4)}); capture=${captureWidth ?? viewportWidth}x${captureHeight ?? viewportHeight} CSS px at (${captureClientLeft ?? 0}, ${captureClientTop ?? 0}).`,
         objectBoolean(clicked.value, 'visualAuthority') === true
-          ? (hasPixelCandidate
-              ? 'Visual grounding used the model-selected pure-pixel B# bbox center; DOM/Accessibility did not choose or relocate the live target before physical input.'
-              : hasCandidate
-                ? 'Visual grounding used the model-selected legacy action-map label; DOM/CDP contributed only the CURRENT interactive rectangle geometry and did not choose the business target.'
-                : 'TEST visual-grounding used the exact model-selected screenshot point; DOM/Shadow-DOM did not relocate it before physical input.')
+          ? (ocrOwnedPoint
+              ? 'Visual grounding used fresh screenshot OCR geometry. For close-right, DOM was consulted only by a no-input local safety probe around the OCR anchor before the trusted click; it did not search the page for a different business target.'
+              : hasPixelCandidate
+                ? 'Legacy B# visual grounding was used.'
+                : hasCandidate
+                  ? 'Legacy A# action-map grounding was used.'
+                  : 'TEST visual-grounding used the exact model-selected screenshot point; DOM/Shadow-DOM did not relocate it before physical input.')
           : objectBoolean(clicked.value, 'visualSnapped') === true
             ? `Replay coordinate was corrected against CURRENT learned evidence by ${objectNumber(clicked.value, 'snapDistance')?.toFixed(1) ?? '?'} CSS px.`
             : 'Replay used the recorded visual geometry without correction.',
