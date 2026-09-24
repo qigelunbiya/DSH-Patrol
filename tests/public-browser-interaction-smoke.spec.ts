@@ -25,7 +25,7 @@ async function localTestSite() {
       return
     }
     if (request.url === '/visual') {
-      response.end('<!doctype html><button id="target" style="position:fixed;left:432px;top:311px;width:56px;height:28px" oncontextmenu="this.dataset.context=\'yes\';event.preventDefault()">发布</button>')
+      response.end('<!doctype html><button id="target" style="position:fixed;left:432px;top:311px;width:56px;height:28px" onclick="this.dataset.clicked=\'yes\'" oncontextmenu="this.dataset.context=\'yes\';event.preventDefault()">发布</button>')
       return
     }
     if (request.url === '/row-actions') {
@@ -147,6 +147,32 @@ describe('public real-browser Patrol interaction smoke', () => {
       const visualShot = await harness.command('screenshot', { format: 'jpeg', maxWidth: 1024, quality: 68, coordinateGuide: true })
       const xRatio = 460 / 1280
       const yRatio = 325 / 800
+      expect(visualShot.modelRasterWidth).toBeGreaterThan(0)
+      expect(visualShot.modelRasterHeight).toBeGreaterThan(0)
+      const imageX = ((460 - Number(visualShot.captureClientLeft || 0)) / Number(visualShot.captureWidth)) * Number(visualShot.modelRasterWidth)
+      const imageY = ((325 - Number(visualShot.captureClientTop || 0)) / Number(visualShot.captureHeight)) * Number(visualShot.modelRasterHeight)
+      const rawPixelClicked = await harness.command('visualClick', {
+        frameId: visualShot.visualFrameId,
+        imageX,
+        imageY,
+        imageWidth: visualShot.modelRasterWidth,
+        imageHeight: visualShot.modelRasterHeight,
+        targetHint: '发布按钮',
+        visualAuthority: true,
+      })
+      expect(rawPixelClicked).toMatchObject({
+        ok: true,
+        coordinateSource: 'model-raster-pixel',
+        requestedImageX: expect.any(Number),
+        requestedImageY: expect.any(Number),
+        modelRasterWidth: visualShot.modelRasterWidth,
+        modelRasterHeight: visualShot.modelRasterHeight,
+        visualSnapped: false,
+      })
+      expect(rawPixelClicked.resolvedClickX).toBeCloseTo(460, 1)
+      expect(rawPixelClicked.resolvedClickY).toBeCloseTo(325, 1)
+      expect(await harness.page.$eval('#target', element => element.dataset.clicked)).toBe('yes')
+
       const marked = await harness.command('visualClick', {
         frameId: visualShot.visualFrameId,
         xRatio,
