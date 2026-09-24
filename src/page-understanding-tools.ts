@@ -71,7 +71,7 @@ export const PATROL_PAGE_UNDERSTANDING_PROMPT = `DSH Patrol 页面理解与执�
 - 图片字符验证码不走通用页面点击规划器。TEST MODE 必须先调用 patrol_solve_current_image_code，让 browser_detect_auth_challenge 走 Windows OCR/本地 OCR；只有明确 testModeFallback=true / strategy=model-visual-test 并拿到一次性 fallbackToken 时才允许 browser_capture_image_code_visual。没有 fallbackToken 时禁止模型视觉验证码。NORMAL/无人值守重放继续使用动态本地 solver。OTP/TOTP 继续走专用工具。`
 
 /** Always-on in NORMAL and TEST MODE: syntax/resource safety without method-order policy. */
-function createStrategyNeutralPlanningGuard(outcomes: PatrolClickOutcomeTracker) {
+function createStrategyNeutralPlanningGuard(outcomes: PatrolClickOutcomeTracker, testMode = false) {
   const states = new Map<string, PlanningGuardState>()
   return (execution: any): string | undefined => {
     const name = String(execution?.name ?? '')
@@ -106,6 +106,13 @@ function createStrategyNeutralPlanningGuard(outcomes: PatrolClickOutcomeTracker)
     }
 
     if (name === 'patrol_observe' && args.includeImage === true) {
+      if (testMode && (args.pixelActionMap === true || args.actionMap === true)) {
+        return [
+          'DSH Patrol TEST 视觉策略保护：旧 A#/B# Action Map 不再用于新的浏览器视觉教学。',
+          '若目标有可见文字，直接调用 patrol_visual_click_target(ocrText=<CURRENT 可见文字>)；文字右侧的关闭/移除使用 ocrRelation="close-right"。',
+          '只有无可靠文字的大输入框/空搜索框才使用普通 includeImage=true 截图 + imageX/imageY。',
+        ].join(' ')
+      }
       // No fixed screenshot-count ceiling. Local-Qwen stability is handled by
       // bounded raster size plus proactive pruning of older Patrol tool/image
       // payloads before the next visual attachment.
@@ -133,11 +140,11 @@ function createStrategyNeutralPlanningGuard(outcomes: PatrolClickOutcomeTracker)
 }
 
 export function createPatrolTestModePlanningGuard(outcomes: PatrolClickOutcomeTracker = createPatrolClickOutcomeTracker()) {
-  return createStrategyNeutralPlanningGuard(outcomes)
+  return createStrategyNeutralPlanningGuard(outcomes, true)
 }
 
 export function createPatrolPlanningGuard(outcomes: PatrolClickOutcomeTracker = createPatrolClickOutcomeTracker()) {
-  return createStrategyNeutralPlanningGuard(outcomes)
+  return createStrategyNeutralPlanningGuard(outcomes, false)
 }
 
 function structuredRowFreePointIssue(args: Record<string, unknown>): string | undefined {
