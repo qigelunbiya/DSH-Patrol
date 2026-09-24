@@ -316,8 +316,9 @@ async function interactionScreenshot(args) {
     ...(args.actionMap === true ? {
       actionCandidateCount: actionCandidates.length,
       actionCandidateSummary: actionCandidates.slice(0, 16).map(candidate => {
-        const label = compact(candidate.text || candidate.ariaLabel || candidate.title || candidate.ownerContext || candidate.actionText || '').slice(0, 96)
-        const owner = compact(candidate.ownerContext || '').slice(0, 96)
+        const summaryText = value => String(value ?? '').replace(/\s+/g, ' ').trim()
+        const label = summaryText(candidate.text || candidate.ariaLabel || candidate.title || candidate.ownerContext || candidate.actionText || '').slice(0, 96)
+        const owner = summaryText(candidate.ownerContext || '').slice(0, 96)
         return [candidate.candidateId, candidate.activationKind, label ? `text=${label}` : '', owner && owner !== label ? `owner=${owner}` : ''].filter(Boolean).join(' | ')
       }).join('\n'),
     } : {}),
