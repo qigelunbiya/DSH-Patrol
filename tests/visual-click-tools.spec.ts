@@ -337,7 +337,7 @@ describe('browser visual fallback click teaching', () => {
     expect((await store.load('visual-click')).steps).toHaveLength(1)
   })
 
-  it('gives only the OCR recovery path when a TEST MODE precision target has no coordinate source yet', async () => {
+  it('directs TEST MODE no-source clicks to OCR text or the new V# Action Map workflow', async () => {
     const calls: string[] = []
     const visualEvidence = createPatrolVisualEvidenceRegistry()
     visualEvidence.mark('browser-visual-nosource', 'visual-click')
@@ -350,171 +350,243 @@ describe('browser visual fallback click teaching', () => {
       inspectionId: 'visual-click',
       stepName: '点击龙之信条2百度百科搜索结果',
       targetHint: '龙之信条 2 - 百度百科 搜索结果链接',
-      expectedVisualText: '龙之信条 2 - 百度百科',
-    }, exec)).rejects.toThrow(/requires screenshot OCR grounding.*ocrText=.*close-right.*Do not use B#\/A# Action Maps or read_image/i)
+    }, exec)).rejects.toThrow(/needs either OCR text geometry or a V# from patrol_browser_visual_action_map/i)
 
     expect(calls).toEqual([])
   })
 
-  it('hard-rejects TEST MODE ratio clicks for precision text/navigation targets before any browser dispatch', async () => {
-    const calls: string[] = []
+  it('hard-rejects all old free-coordinate/A#/B# TEST grounding before browser dispatch', async () => {
     const visualEvidence = createPatrolVisualEvidenceRegistry()
-    visualEvidence.mark('browser-visual-precision', 'visual-click')
-    const { tool, exec } = await setup(async (name) => {
-      calls.push(name)
-      throw new Error(`unexpected tool ${name}`)
-    }, undefined, visualEvidence, false, true)
+    visualEvidence.mark('browser-visual-old', 'visual-click')
+    for (const legacyArgs of [
+      { xRatio: 0.25, yRatio: 0.15 },
+      { imageX: 512, imageY: 300, imageWidth: 1024, imageHeight: 600 },
+      { candidateId: 'A7' },
+      { pixelCandidateId: 'B3' },
+    ]) {
+      const calls: string[] = []
+      const { tool, exec } = await setup(async (name) => {
+        calls.push(name)
+        throw new Error(`unexpected tool ${name}`)
+      }, undefined, visualEvidence, false, true)
 
-    await expect(tool.execute({
-      inspectionId: 'visual-click',
-      stepName: '点击龙之信条2百度百科搜索结果',
-      targetHint: '龙之信条 2 - 百度百科 搜索结果链接',
-      expectedVisualText: '龙之信条 2 - 百度百科',
-      xRatio: 0.25,
-      yRatio: 0.15,
-    }, exec)).rejects.toThrow(/TEST MODE live xRatio\/yRatio visual clicking is disabled.*visible text use ocrText.*close-right/i)
-
-    expect(calls).toEqual([])
+      await expect(tool.execute({
+        inspectionId: 'visual-click',
+        stepName: '视觉点击目标',
+        targetHint: '百度搜索框',
+        ...legacyArgs,
+      }, exec)).rejects.toThrow(/old browser visual grounding is disabled.*patrol_browser_click_ocr_text.*patrol_browser_visual_action_map.*patrol_browser_click_visual_candidate/i)
+      expect(calls).toEqual([])
+    }
   })
 
-  it('hard-rejects TEST MODE image pixels for tiny close targets before physical input', async () => {
-    const calls: string[] = []
+  it('builds a browser-local Desktop-style V# Action Map from the latest model-visible full frame', async () => {
     const visualEvidence = createPatrolVisualEvidenceRegistry()
-    visualEvidence.mark('browser-visual-close', 'visual-click')
-    const { tool, exec } = await setup(async (name) => {
-      calls.push(name)
-      throw new Error(`unexpected tool ${name}`)
-    }, undefined, visualEvidence, false, true)
-
-    await expect(tool.execute({
-      inspectionId: 'visual-click',
-      stepName: '关闭我的任务筛选',
-      targetHint: '我的任务右侧的×',
-      imageX: 742,
-      imageY: 112,
-      imageWidth: 1024,
-      imageHeight: 576,
-    }, exec)).rejects.toThrow(/direct imageX\/imageY is reserved for large unlabeled.*Visible text targets must use ocrText.*close-right/i)
-
-    expect(calls).toEqual([])
-  })
-
-  it('hard-rejects legacy A# for TEST MODE precision chapter targets', async () => {
-    const calls: string[] = []
-    const visualEvidence = createPatrolVisualEvidenceRegistry()
-    visualEvidence.mark('browser-visual-chapter', 'visual-click')
-    const { tool, exec } = await setup(async (name) => {
-      calls.push(name)
-      throw new Error(`unexpected tool ${name}`)
-    }, undefined, visualEvidence, false, true)
-
-    await expect(tool.execute({
-      inspectionId: 'visual-click',
-      stepName: '点击7.发售版本',
-      targetHint: '7.发售版本 章节',
-      candidateId: 'A7',
-    }, exec)).rejects.toThrow(/legacy browser A#\/B#\/preview visual grounding is disabled.*Visible text must use ocrText/i)
-
-    expect(calls).toEqual([])
-  })
-
-  it('rejects normalized xRatio/yRatio even for a large TEST MODE control and directs the model to CURRENT raster pixels', async () => {
-    const calls: string[] = []
-    const visualEvidence = createPatrolVisualEvidenceRegistry()
-    visualEvidence.mark('browser-visual-large-ratio', 'visual-click')
-    const { tool, exec } = await setup(async (name) => {
-      calls.push(name)
-      throw new Error(`unexpected tool ${name}`)
-    }, undefined, visualEvidence, false, true)
-
-    await expect(tool.execute({
-      inspectionId: 'visual-click',
-      stepName: '点击百度搜索结果页搜索框',
-      targetHint: '百度搜索结果页搜索框',
-      xRatio: 0.42,
-      yRatio: 0.10,
-    }, exec)).rejects.toThrow(/live xRatio\/yRatio visual clicking is disabled.*large control.*imageX\/imageY.*Do not manually convert/i)
-
-    expect(calls).toEqual([])
-  })
-
-  it('allows large obvious controls to keep direct image-pixel clicking in TEST MODE', async () => {
-    const visualEvidence = createPatrolVisualEvidenceRegistry()
-    visualEvidence.mark('browser-visual-search', 'visual-click')
-    let dispatched = false
-    const { tool, exec } = await setup(async (name, args) => {
-      if (name === 'browser_read_page') return { ok: true, text: '百度', value: { ok: true, url: 'https://www.baidu.com/', title: '百度一下', text: '百度' } }
-      if (name === 'browser_snapshot') return { ok: true, text: 'snapshot', value: { ok: true, url: 'https://www.baidu.com/', title: '百度一下', elements: [] } }
-      if (name === 'browser_visual_click') {
-        dispatched = true
+    visualEvidence.mark('browser-visual-vmap', 'visual-click')
+    const calls: Array<{ tool: string; args: JsonObject }> = []
+    const { definitions, exec } = await setup(async (name, args) => {
+      calls.push({ tool: name, args })
+      if (name === 'browser_visual_action_map') {
         expect(args).toMatchObject({
-          frameId: 'browser-visual-search',
-          imageX: 512,
-          imageY: 300,
-          targetHint: '百度搜索结果页搜索框',
-          visualAuthority: true,
+          frameId: 'browser-visual-vmap',
+          centerXRatio: 0.50,
+          centerYRatio: 0.58,
         })
         return {
           ok: true,
-          text: 'focused search box',
+          text: 'map built',
           value: {
             ok: true,
-            xRatio: 0.5, yRatio: 0.5,
-            requestedXRatio: 0.5, requestedYRatio: 0.5,
-            coordinateSource: 'model-raster-pixel',
-            targetFocusedEditable: true,
-            targetStateChanged: true,
-            targetTag: 'input',
-            targetRole: 'textbox',
-            targetText: '',
-            selectorHint: '#kw',
-            selectorReplaySafe: true,
-            selectorQuality: 'strong',
-            bindingActionable: true,
-            bindingSource: 'visual-hit-test-post-click-learning',
-            visualAuthority: true,
-            urlIdentity: 'https://www.baidu.com/',
-            viewportWidth: 1024, viewportHeight: 600,
-            captureClientLeft: 0, captureClientTop: 0, captureWidth: 1024, captureHeight: 600,
-            captureMode: 'cdp-css-visual-viewport',
-            scrollX: 0, scrollY: 0,
+            frameId: 'browser-visual-vmap',
+            actionMapId: 'browser-vmap-test-1',
+            path: 'C:\\workspace\\browser-vmap-test-1.jpg',
+            width: 900,
+            height: 420,
+            candidateCount: 4,
+            candidateSummary: 'V1 | bboxRatio=0.20,0.50,0.30,0.08 | centerRatio=0.35,0.54',
+            method: 'browser-local-desktop-style-action-map',
           },
         }
       }
       throw new Error(`unexpected tool ${name}`)
     }, undefined, visualEvidence, false, true)
 
-    const result = await tool.execute({
+    const mapTool = definitions.find(item => item.name === 'patrol_browser_visual_action_map')
+    expect(mapTool).toBeTruthy()
+    const result = await mapTool.execute({
       inspectionId: 'visual-click',
-      stepName: '点击百度搜索结果页搜索框',
-      targetHint: '百度搜索结果页搜索框',
-      imageX: 512,
-      imageY: 300,
-      imageWidth: 1024,
-      imageHeight: 600,
+      centerXRatio: 0.50,
+      centerYRatio: 0.58,
     }, exec)
 
-    expect(dispatched).toBe(true)
-    expect(result).toContain('browser_visual_click')
+    expect(result).toContain('Browser Action Map READY')
+    expect(result).toContain('browser-vmap-test-1')
+    expect(result).toContain('read_image')
+    expect(result).toContain('V#')
+    expect(result).toContain('C:\\workspace\\browser-vmap-test-1.jpg')
+    expect(calls.map(call => call.tool)).toEqual(['browser_visual_action_map'])
   })
 
-  it('rejects legacy B# candidates in TEST MODE and directs new teaching to OCR geometry', async () => {
-    const calls: string[] = []
+  it('clicks a selected V# using only program-owned bbox-center geometry and records the verified step', async () => {
     const visualEvidence = createPatrolVisualEvidenceRegistry()
-    visualEvidence.mark('browser-visual-bmap', 'visual-click')
-    const { tool, exec } = await setup(async (name) => {
-      calls.push(name)
+    visualEvidence.mark('browser-visual-vcandidate', 'visual-click')
+    const calls: Array<{ tool: string; args: JsonObject }> = []
+    const { store, definitions, exec } = await setup(async (name, args) => {
+      calls.push({ tool: name, args })
+      if (name === 'browser_resolve_visual_candidate') {
+        expect(args).toMatchObject({
+          frameId: 'browser-visual-vcandidate',
+          actionMapId: 'browser-vmap-test-2',
+          candidateId: 'V2',
+        })
+        return {
+          ok: true,
+          text: 'resolved V2',
+          value: {
+            ok: true,
+            frameId: 'browser-visual-vcandidate',
+            actionMapId: 'browser-vmap-test-2',
+            candidateId: 'V2',
+            xRatio: 0.503,
+            yRatio: 0.588,
+            coordinateMapping: 'browser-desktop-style-action-map-bbox-center',
+            method: 'browser-local-desktop-style-action-map',
+          },
+        }
+      }
+      if (name === 'browser_read_page') {
+        return { ok: true, text: '百度', value: { ok: true, url: 'https://www.baidu.com/', title: '百度一下', text: '百度' } }
+      }
+      if (name === 'browser_snapshot') {
+        return { ok: true, text: 'snapshot', value: { ok: true, url: 'https://www.baidu.com/', title: '百度一下', elements: [] } }
+      }
+      if (name === 'browser_visual_click') {
+        expect(args).toMatchObject({
+          frameId: 'browser-visual-vcandidate',
+          xRatio: 0.503,
+          yRatio: 0.588,
+          targetHint: '百度搜索框',
+          visualAuthority: true,
+          pointerAction: 'left-click',
+        })
+        expect(args).not.toHaveProperty('imageX')
+        expect(args).not.toHaveProperty('candidateId')
+        expect(args).not.toHaveProperty('pixelCandidateId')
+        return {
+          ok: true,
+          text: 'clicked V2 bbox center',
+          value: {
+            ok: true,
+            xRatio: 0.503,
+            yRatio: 0.588,
+            requestedXRatio: 0.503,
+            requestedYRatio: 0.588,
+            coordinateSource: 'normalized-ratio',
+            targetFocusedEditable: true,
+            targetStateChanged: true,
+            stateEvidence: 'search input focused',
+            targetTag: 'input',
+            targetRole: 'textbox',
+            selectorHint: 'top-frame::#kw',
+            selectorReplaySafe: true,
+            selectorQuality: 'strong',
+            bindingActionable: true,
+            bindingSource: 'visual-hit-test-post-click-learning',
+            visualAuthority: true,
+            urlIdentity: 'https://www.baidu.com/',
+            viewportWidth: 1024,
+            viewportHeight: 600,
+            captureClientLeft: 0,
+            captureClientTop: 0,
+            captureWidth: 1024,
+            captureHeight: 600,
+            captureMode: 'capture-visible-tab-layout-viewport',
+            scrollX: 0,
+            scrollY: 0,
+          },
+        }
+      }
       throw new Error(`unexpected tool ${name}`)
     }, undefined, visualEvidence, false, true)
 
-    await expect(tool.execute({
+    const clickTool = definitions.find(item => item.name === 'patrol_browser_click_visual_candidate')
+    expect(clickTool).toBeTruthy()
+    const result = await clickTool.execute({
       inspectionId: 'visual-click',
-      stepName: '关闭我的任务筛选',
-      targetHint: '我的任务右侧的×',
-      pixelCandidateId: 'B3',
-    }, exec)).rejects.toThrow(/legacy browser A#\/B#\/preview visual grounding is disabled.*ocrText.*close-right/i)
+      stepName: '点击百度搜索框',
+      frameId: 'browser-visual-vcandidate',
+      actionMapId: 'browser-vmap-test-2',
+      candidateId: 'V2',
+      targetHint: '百度搜索框',
+    }, exec)
 
-    expect(calls).toEqual([])
+    expect(result).toContain('Browser Desktop-style Action Map resolved V2')
+    expect(result).toContain('program-owned bbox center')
+    expect(calls[0]?.tool).toBe('browser_resolve_visual_candidate')
+    expect(calls.some(call => call.tool === 'browser_visual_click' && call.args.xRatio === 0.503)).toBe(true)
+    expect((await store.load('visual-click')).steps).toHaveLength(1)
+  })
+
+  it('exposes a simple browser OCR text click wrapper matching the Desktop text-click workflow', async () => {
+    const calls: Array<{ tool: string; args: JsonObject }> = []
+    const { definitions, exec } = await setup(async (name, args) => {
+      calls.push({ tool: name, args })
+      if (name === 'browser_resolve_ocr_visual_target') {
+        return {
+          ok: true,
+          text: 'resolved',
+          value: {
+            ok: true,
+            frameId: 'browser-visual-ocr-wrapper',
+            xRatio: 0.72,
+            yRatio: 0.38,
+            matchedText: '百度一下',
+          },
+        }
+      }
+      if (name === 'browser_read_page') {
+        return { ok: true, text: '百度', value: { ok: true, url: 'https://www.baidu.com/', title: '百度一下', text: '百度' } }
+      }
+      if (name === 'browser_snapshot') {
+        return { ok: true, text: 'snapshot', value: { ok: true, url: 'https://www.baidu.com/', title: '百度一下', elements: [] } }
+      }
+      if (name === 'browser_visual_click') {
+        return {
+          ok: true,
+          text: 'clicked OCR',
+          value: {
+            ok: true,
+            xRatio: 0.72, yRatio: 0.38,
+            requestedXRatio: 0.72, requestedYRatio: 0.38,
+            targetStateChanged: true,
+            stateEvidence: 'button activated',
+            targetTag: 'input',
+            targetRole: 'button',
+            targetText: '百度一下',
+            selectorReplaySafe: false,
+            bindingActionable: false,
+            visualAuthority: true,
+            urlIdentity: 'https://www.baidu.com/',
+            viewportWidth: 1024, viewportHeight: 600,
+            captureClientLeft: 0, captureClientTop: 0, captureWidth: 1024, captureHeight: 600,
+            captureMode: 'capture-visible-tab-layout-viewport',
+            scrollX: 0, scrollY: 0,
+          },
+        }
+      }
+      throw new Error(`unexpected tool ${name}`)
+    }, undefined, createPatrolVisualEvidenceRegistry(), false, true)
+
+    const ocrTool = definitions.find(item => item.name === 'patrol_browser_click_ocr_text')
+    expect(ocrTool).toBeTruthy()
+    const result = await ocrTool.execute({
+      inspectionId: 'visual-click',
+      stepName: '点击百度一下',
+      text: '百度一下',
+    }, exec)
+
+    expect(result).toContain('Browser Windows OCR resolved "百度一下"')
+    expect(calls[0]).toMatchObject({ tool: 'browser_resolve_ocr_visual_target', args: { text: '百度一下' } })
   })
 
   it('auto-binds candidate clicks to the latest model-visible frame when frameId is omitted', async () => {
@@ -1325,16 +1397,15 @@ describe('browser visual fallback click teaching', () => {
     expect(visualToolSource).not.toContain('A naked visual left-click is never dispatched in TEST MODE')
   })
 
-  it('makes Windows OCR bbox geometry the primary TEST path for visible browser text', () => {
-    expect(visualToolSource).toContain('visible TEXT targets use CURRENT screenshot Windows OCR geometry')
-    expect(visualToolSource).toContain('ocrText')
-    expect(visualToolSource).toContain('ocrRelation=close-right')
-    expect(visualToolSource).toContain('Do not use B#/A# Action Maps')
-    expect(visualToolSource).toContain('Legacy browser Pixel Action Map compatibility only')
-    expect(visualToolSource).toContain('Legacy DOM Action Map compatibility only')
-    expect(visualToolSource).toContain('TEST MODE legacy browser A#/B#/preview visual grounding is disabled')
-    expect(visualToolSource).toContain('targetRole')
-    expect(visualToolSource).toContain('targetTag')
+  it('makes the browser-local Desktop-style V# workflow the primary TEST visual path', () => {
+    expect(visualToolSource).toContain('patrol_browser_visual_action_map')
+    expect(visualToolSource).toContain('patrol_browser_click_visual_candidate')
+    expect(visualToolSource).toContain('patrol_browser_click_ocr_text')
+    expect(visualToolSource).toContain('V1/V2/...')
+    expect(visualToolSource).toContain('program-computed bbox center')
+    expect(visualToolSource).toContain('browser-local copy of the proven Desktop')
+    expect(visualToolSource).toContain('TEST MODE old browser visual grounding is disabled')
+    expect(visualToolSource).toContain('Do not use A#, B#, previewId, imageX/imageY, or xRatio/yRatio')
     expect(visualToolSource).toContain('trusted Chrome debugger mouse input')
   })
 
