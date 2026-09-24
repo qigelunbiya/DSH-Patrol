@@ -312,6 +312,8 @@ export function registerTools(ctx, bridge, config = {}) {
           const centerY = line.centerY * imageHeight
           const lineHeight = Math.max(10, line.height * imageHeight)
           const offsets = [...new Set([
+            -Math.max(4, lineHeight * 0.25),
+            -Math.max(7, lineHeight * 0.50),
             Math.max(4, lineHeight * 0.28),
             Math.max(7, lineHeight * 0.48),
             Math.max(10, lineHeight * 0.72),
@@ -324,7 +326,7 @@ export function registerTools(ctx, bridge, config = {}) {
           const failures = []
           for (const offset of offsets) {
             for (const yFactor of yOffsets) {
-              const candidateX = Math.min(imageWidth - 2, right + offset)
+              const candidateX = Math.max(1, Math.min(imageWidth - 2, right + offset))
               const candidateY = Math.max(1, Math.min(imageHeight - 2, centerY + lineHeight * yFactor))
               try {
                 const probe = requireOk(await run(bridge, exec, 'visualClick', {
