@@ -616,7 +616,7 @@ function testModePixelGroundingInstruction(targetHint: string | undefined): stri
   return [
     `TEST MODE precision visual click refused before physical input for ${JSON.stringify(target)}: this target requires Browser Pixel Grounding (B#).`,
     'Do not use xRatio/yRatio, imageX/imageY, previewId, or legacy A# candidateId for this target.',
-    'Recovery: call patrol_observe(includeImage=true, targetHint=<same target>, focusXRatio=<coarse center>, focusYRatio=<coarse center>, focusWidthRatio=0.18..0.32, focusHeightRatio=0.18..0.30, pixelActionMap=true, actionMap=false),',
+    'Recovery: call a focused patrol_observe(includeImage=true, targetHint=<same target>, focusXRatio=<coarse center>, focusYRatio=<coarse center>, focusWidthRatio=0.18..0.32, focusHeightRatio=0.18..0.30, pixelActionMap=true, actionMap=false),',
     'then visually choose the B# whose bbox/crosshair is inside the target and call patrol_visual_click_target(pixelCandidateId="B#", targetHint=<same target>, visualAuthority=true).',
   ].join(' ')
 }
