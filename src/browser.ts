@@ -13,6 +13,13 @@ export const SAFE_BROWSER_TOOLS = [
   'browser_detect_auth_challenge',
   'browser_refresh_image_code',
   'browser_click',
+  // Internal Browser visual primitives used only inside authorized patrol_*
+  // composites. They must be safe for PatrolRunner.dispatch, but remain
+  // non-replayable and are still blocked from direct model browser_* calls by
+  // browserGuard / TEST_MODE_DIRECT_BROWSER_ALLOWED.
+  'browser_resolve_ocr_visual_target',
+  'browser_visual_action_map',
+  'browser_resolve_visual_candidate',
   'browser_visual_click',
   'browser_semantic_click',
   'browser_select',
