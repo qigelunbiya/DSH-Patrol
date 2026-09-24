@@ -47,7 +47,7 @@ async function setup(
     rootCallId: 'root',
     signal: new AbortController().signal,
   } as unknown as ToolRunContext
-  return { store, tool, exec }
+  return { store, tool, definitions, exec }
 }
 
 function draftDefinition(): InspectionDefinition {
