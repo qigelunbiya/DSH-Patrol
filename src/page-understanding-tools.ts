@@ -109,8 +109,8 @@ function createStrategyNeutralPlanningGuard(outcomes: PatrolClickOutcomeTracker,
       if (testMode && (args.pixelActionMap === true || args.actionMap === true)) {
         return [
           'DSH Patrol TEST 视觉策略保护：旧 A#/B# Action Map 不再用于新的浏览器视觉教学。',
-          '若目标有可见文字，直接调用 patrol_visual_click_target(ocrText=<CURRENT 可见文字>)；文字右侧的关闭/移除使用 ocrRelation="close-right"。',
-          '只有无可靠文字的大输入框/空搜索框才使用普通 includeImage=true 截图 + imageX/imageY。',
+          '可见文字直接使用 patrol_browser_click_ocr_text。',
+          '无文字控件先普通 patrol_observe(includeImage=true) 获取 clean full CURRENT frame，再 patrol_browser_visual_action_map → read_image → patrol_browser_click_visual_candidate(V#)。',
         ].join(' ')
       }
       // No fixed screenshot-count ceiling. Local-Qwen stability is handled by
@@ -161,14 +161,11 @@ function structuredRowFreePointIssue(args: Record<string, unknown>): string | un
   const identity = context.match(/\b\d{1,3}(?:\.\d{1,3}){3}\b/)?.[0]
   const action = context.match(/\b(RDP|SSH|VNC|SFTP|FTP|HTTPS?)\b/i)?.[1]?.toUpperCase()
   if (!identity || !action) return undefined
-  const ocrText = cleanString(args.ocrText)
-  const explicitVisualOnly = args.visualAuthority === true
-  if (ocrText && explicitVisualOnly && ocrText.toUpperCase().includes(action)) return undefined
   return [
-    'DSH Patrol structured-row precision guard：本次视觉点击未执行。',
+    'DSH Patrol structured-row precision guard：本次旧视觉点击未执行。',
     `目标同时包含行身份 ${identity} 和行内动作 ${action}。不要从整页自由坐标、A# 或 B# 猜相邻行。`,
     `用户未指定操作方法时，使用 patrol_click_target：stepName 保留“${identity} 行的 ${action}”，locatorText=${JSON.stringify(action)}，让 CURRENT row-context resolver 绑定正确逻辑行。`,
-    `若用户明确要求只用视觉，使用 patrol_visual_click_target(ocrText=${JSON.stringify(action)}, targetHint=${JSON.stringify(`${identity} 行的 ${action}`)}, visualAuthority=true)。CURRENT screenshot OCR 若发现多个 ${action} 会拒绝歧义；先通过可见行上下文/滚动消歧，不得改回 A#/B#/XY 猜点。`,
+    `若用户明确要求只用视觉：若 CURRENT 截图里 ${action} 唯一可见，使用 patrol_browser_click_ocr_text(text=${JSON.stringify(action)})；若存在多个同名动作，则先用 full CURRENT screenshot 判断目标行粗区域，再 patrol_browser_visual_action_map → read_image → patrol_browser_click_visual_candidate(V#)。不得回到 A#/B#/XY。`,
   ].join(' ')
 }
 
