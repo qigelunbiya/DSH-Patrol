@@ -865,7 +865,7 @@ describe('browser visual fallback click teaching', () => {
       frameId: 'screenshot-2026-09-20T01-40-03.png',
       xRatio: 0.1,
       yRatio: 0.8,
-    }, exec)).rejects.toThrow(/visualFrameId.*Screenshot file names\/paths are not valid visual frames/i)
+    }, exec)).rejects.toThrow(/no CURRENT model-visible browser visual frame.*Do not copy screenshot file names\/paths into frameId/i)
     expect(calls).toEqual([])
   })
 
