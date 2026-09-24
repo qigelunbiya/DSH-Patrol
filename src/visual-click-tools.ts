@@ -344,14 +344,16 @@ export function registerPatrolVisualClickTool(
         await store.load(args.inspectionId)
         const probed = await runner.dispatch('browser_visual_click', compactObject({
           frameId,
+          visualActionMapId: actionMapOwnedPoint ? boundPreview?.actionMapId : undefined,
+          visualCandidateId: actionMapOwnedPoint ? boundPreview?.visualCandidateId : undefined,
           pixelCandidateId: hasPixelCandidate ? pixelCandidateId : undefined,
           candidateId: hasCandidate ? candidateId : undefined,
           imageX: hasImagePoint ? imageX : undefined,
           imageY: hasImagePoint ? imageY : undefined,
           imageWidth: hasImagePoint && typeof args.imageWidth === 'number' ? args.imageWidth : undefined,
           imageHeight: hasImagePoint && typeof args.imageHeight === 'number' ? args.imageHeight : undefined,
-          xRatio: hasRatioPoint || boundPreview ? pointX : undefined,
-          yRatio: hasRatioPoint || boundPreview ? pointY : undefined,
+          xRatio: actionMapOwnedPoint ? undefined : hasRatioPoint || boundPreview ? pointX : undefined,
+          yRatio: actionMapOwnedPoint ? undefined : hasRatioPoint || boundPreview ? pointY : undefined,
           targetHint: args.targetHint,
           expectedVisualText: args.expectedVisualText ?? ocrExpectedVisualText,
           visualAuthority: true,
@@ -409,8 +411,10 @@ export function registerPatrolVisualClickTool(
           }
         }
         return [
-          hasPixelCandidate
-            ? `Visual pointer diagnostic ${pointerAction} executed on Browser Pixel Action Map candidate ${pixelCandidateId}; screenshot-pixel geometry supplied the bbox center.`
+          actionMapOwnedPoint
+            ? `Visual pointer diagnostic ${pointerAction} executed on bound browser Action Map candidate ${boundPreview?.visualCandidateId}; the SAME frame/map/V# identity was revalidated inside the browser extension before trusted input.`
+            : hasPixelCandidate
+              ? `Visual pointer diagnostic ${pointerAction} executed on Browser Pixel Action Map candidate ${pixelCandidateId}; screenshot-pixel geometry supplied the bbox center.`
             : hasCandidate
               ? `Visual pointer diagnostic ${pointerAction} executed on legacy DOM action-map candidate ${candidateId}; browser geometry supplied the exact control center.`
             : hasImagePoint
@@ -430,7 +434,8 @@ export function registerPatrolVisualClickTool(
       const definition = await loadEditable(store, args.inspectionId, options.maxSteps)
       const expectation = optionalExpectation(args.expectedText, args.expectationMode, args.caseSensitive)
       const navigationAction = navigationLikeBusinessAction(args.stepName, args.targetHint)
-      const isVisualNavigation = navigationAction && (hasCandidate
+      const isVisualNavigation = navigationAction && (actionMapOwnedPoint
+        || hasCandidate
         || hasPixelCandidate
         || Boolean(ocrExpectedVisualText)
         || (typeof args.expectedVisualText === 'string' && args.expectedVisualText.trim().length >= 4))
@@ -447,14 +452,16 @@ export function registerPatrolVisualClickTool(
       const visualAuthority = true
       const clicked = await runner.dispatch('browser_visual_click', compactObject({
         frameId,
+        visualActionMapId: actionMapOwnedPoint ? boundPreview?.actionMapId : undefined,
+        visualCandidateId: actionMapOwnedPoint ? boundPreview?.visualCandidateId : undefined,
         pixelCandidateId: hasPixelCandidate ? pixelCandidateId : undefined,
         candidateId: hasCandidate ? candidateId : undefined,
         imageX: hasImagePoint ? imageX : undefined,
         imageY: hasImagePoint ? imageY : undefined,
         imageWidth: hasImagePoint && typeof args.imageWidth === 'number' ? args.imageWidth : undefined,
         imageHeight: hasImagePoint && typeof args.imageHeight === 'number' ? args.imageHeight : undefined,
-        xRatio: hasRatioPoint || boundPreview ? pointX : undefined,
-        yRatio: hasRatioPoint || boundPreview ? pointY : undefined,
+        xRatio: actionMapOwnedPoint ? undefined : hasRatioPoint || boundPreview ? pointX : undefined,
+        yRatio: actionMapOwnedPoint ? undefined : hasRatioPoint || boundPreview ? pointY : undefined,
         targetHint: args.targetHint,
         expectedVisualText: args.expectedVisualText ?? ocrExpectedVisualText,
         visualAuthority,
