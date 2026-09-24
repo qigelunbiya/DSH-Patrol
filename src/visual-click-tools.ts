@@ -686,7 +686,7 @@ function visualTextContains(haystack: string, needle: string): boolean {
 
 function inPageControlHint(targetHint: string | undefined): boolean {
   const hint = normalizePageText(targetHint ?? '')
-  return /点赞|投币|收藏|评论|回复|输入框|编辑框|发布|发表|发送|提交|like|favorite|comment|reply|post|send|submit/.test(hint)
+  return /点赞|投币|收藏|评论|回复|搜索框|搜索栏|输入框|编辑框|文本框|地址栏|按钮|发布|发表|发送|提交|like|favorite|comment|reply|search\s*(?:box|bar|input|button)|textbox|input|button|post|send|submit/.test(hint)
 }
 
 function stateChangeEvidence(before: PageState, after: PageState): string | undefined {
