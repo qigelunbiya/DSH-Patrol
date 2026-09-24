@@ -167,6 +167,7 @@ export function registerPatrolVisualClickTool(
       const hasRatioPoint = Number.isFinite(pointX) && Number.isFinite(pointY)
         && pointX >= 0 && pointX <= 1 && pointY >= 0 && pointY <= 1
       const requestedPointerAction = args.pointerAction ?? 'left-click'
+      const ocrOwnedPoint = boundPreview?.source === 'ocr'
       const liveTestClick = options.testMode === true && requestedPointerAction === 'left-click'
       const largeVisualControl = testModeLargeVisualControl(args.stepName, args.targetHint)
       const precisionPixelGroundingRequired = liveTestClick
@@ -174,17 +175,17 @@ export function registerPatrolVisualClickTool(
       if ([hasPixelCandidate, hasCandidate, hasImagePoint, hasRatioPoint || Boolean(boundPreview)].filter(Boolean).length > 1) {
         throw new Error('visual click requires exactly one coordinate source: pixelCandidateId=B#, imageX/imageY, candidateId=A#, xRatio/yRatio, or previewId')
       }
-      if (liveTestClick && hasRatioPoint) {
+      if (liveTestClick && hasRatioPoint && !ocrOwnedPoint) {
         throw new Error([
           'TEST MODE live xRatio/yRatio visual clicking is disabled before physical input because normalized guessing caused repeated browser misclicks.',
           largeVisualControl
             ? 'For this large control, use imageX/imageY from the exact CURRENT model-visible raster returned by patrol_observe(includeImage=true).'
-            : 'Use a focused patrol_observe(..., pixelActionMap=true) and click pixelCandidateId="B#" for a precision target.',
+            : 'For visible text use ocrText=<CURRENT visible text>. For a close/remove icon next to visible text use ocrRelation="close-right".',
           'Do not manually convert screenshot pixels to normalized ratios.',
         ].join(' '))
       }
       if (!hasPixelCandidate && !hasCandidate && !hasImagePoint && !hasRatioPoint && !boundPreview) {
-        if (precisionPixelGroundingRequired) throw new Error(testModePixelGroundingInstruction(args.targetHint))
+        if (precisionPixelGroundingRequired) throw new Error('TEST MODE precision target requires screenshot OCR grounding: use ocrText=<CURRENT visible target text>. For a close/remove icon adjacent to visible text, use ocrRelation="close-right". Do not use B#/A# Action Maps or read_image screenshot paths.')
         if (liveTestClick && largeVisualControl) {
           throw new Error([
             'TEST MODE large-control visual click requires imageX/imageY from the exact CURRENT model-visible screenshot raster.',
@@ -194,7 +195,7 @@ export function registerPatrolVisualClickTool(
         if (liveTestClick) {
           throw new Error([
             'TEST MODE visual click has no live grounding source yet.',
-            'Use imageX/imageY only for a clearly large control; otherwise use a focused patrol_observe(..., pixelActionMap=true) and pixelCandidateId="B#".',
+            'Use imageX/imageY only for a clearly large UNLABELED control; visible text targets use ocrText and adjacent close/remove uses ocrRelation="close-right".',
             'xRatio/yRatio is not accepted for live TEST clicking.',
           ].join(' '))
         }
@@ -216,12 +217,16 @@ export function registerPatrolVisualClickTool(
       if (args.expectedVisualText !== undefined) assertSafePersistentText(args.expectedVisualText, 'expectedVisualText')
       const pointerAction = requestedPointerAction
       const diagnosticPointerAction = pointerAction !== 'left-click'
-      if (precisionPixelGroundingRequired && !hasPixelCandidate) {
-        throw new Error(testModePixelGroundingInstruction(args.targetHint))
+      if (precisionPixelGroundingRequired && !ocrOwnedPoint) {
+        throw new Error('TEST MODE precision target requires browser screenshot OCR geometry. Use ocrText=<visible target text>; for a close/remove icon immediately beside that text use ocrRelation="close-right". Legacy B#/A# Action Maps are not accepted for new precision teaching.')
       }
+      const ocrExpectedVisualText = ocrOwnedPoint && boundPreview?.ocrRelation === 'center'
+        ? boundPreview.ocrMatchedText || boundPreview.ocrText
+        : undefined
       if (!diagnosticPointerAction && !hasCandidate && navigationLikeBusinessAction(args.stepName, args.targetHint)
-        && (typeof args.expectedVisualText !== 'string' || args.expectedVisualText.trim().length < 4)) {
-        throw new Error('direct screenshot-coordinate navigation/card clicks require expectedVisualText copied from the CURRENT model-visible screenshot so Patrol can verify the destination')
+        && (typeof args.expectedVisualText !== 'string' || args.expectedVisualText.trim().length < 4)
+        && !ocrExpectedVisualText) {
+        throw new Error('visual navigation requires visible target text. Prefer ocrText so Patrol can use CURRENT screenshot OCR geometry and verify the destination.')
       }
       if (args.expectedText !== undefined) assertSafePersistentText(args.expectedText, 'expectedText')
       if (args.conditionExpectedText !== undefined) assertSafePersistentText(args.conditionExpectedText, 'conditionExpectedText')
