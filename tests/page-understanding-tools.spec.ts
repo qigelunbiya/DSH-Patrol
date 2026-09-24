@@ -129,7 +129,7 @@ describe('Patrol page understanding planner', () => {
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/不再使用视觉点击次数、失败次数或物理点击预算做 HARD STOP/)
   })
 
-  it('refuses coarse free-point vision for a row-identified RDP target but allows action-map candidates', () => {
+  it('refuses coarse/A# row vision and allows explicit OCR text geometry for visual-only structured rows', () => {
     const guard = createPatrolPlanningGuard(createPatrolClickOutcomeTracker())
     const blocked = guard({
       name: 'patrol_visual_click_target',
@@ -144,7 +144,7 @@ describe('Patrol page understanding planner', () => {
     })
     expect(blocked).toMatch(/structured-row precision guard/)
     expect(blocked).toMatch(/patrol_click_target/)
-    expect(blocked).toMatch(/actionMap=true/)
+    expect(blocked).toMatch(/ocrText="RDP"/)
 
     expect(guard({
       name: 'patrol_visual_click_target',
@@ -152,10 +152,10 @@ describe('Patrol page understanding planner', () => {
         inspectionId: 'rdp-row',
         stepName: '点击 10.192.3.174 这一行的 RDP',
         targetHint: '10.192.3.174 行的 RDP',
-        frameId: 'browser-visual-current',
         candidateId: 'A7',
+        visualAuthority: true,
       },
-    })).toMatch(/用户未指定操作方法时.*patrol_click_target/)
+    })).toMatch(/不得改回 A#\/B#\/XY/)
 
     expect(guard({
       name: 'patrol_visual_click_target',
@@ -163,11 +163,33 @@ describe('Patrol page understanding planner', () => {
         inspectionId: 'rdp-row',
         stepName: '点击 10.192.3.174 这一行的 RDP',
         targetHint: '10.192.3.174 行的 RDP',
-        frameId: 'browser-visual-current',
-        candidateId: 'A1',
+        ocrText: 'RDP',
         visualAuthority: true,
       },
     })).toBeUndefined()
+  })
+
+  it('blocks legacy A#/B# visual observations in TEST planning before they waste model turns', () => {
+    const guard = createPatrolTestModePlanningGuard(createPatrolClickOutcomeTracker())
+    expect(guard({
+      name: 'patrol_observe',
+      arguments: {
+        inspectionId: 'ocr-first',
+        includeImage: true,
+        pixelActionMap: true,
+        targetHint: '7.发售版本',
+      },
+    })).toMatch(/旧 A#\/B# Action Map.*ocrText.*close-right/)
+
+    expect(guard({
+      name: 'patrol_observe',
+      arguments: {
+        inspectionId: 'ocr-first',
+        includeImage: true,
+        actionMap: true,
+        targetHint: '百度百科结果',
+      },
+    })).toMatch(/旧 A#\/B# Action Map/)
   })
 
   it('binds a row identity to the action selector instead of clicking an ambiguous RDP label', () => {
