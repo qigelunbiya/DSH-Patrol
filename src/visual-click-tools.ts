@@ -159,6 +159,50 @@ export function registerPatrolVisualClickTool(
     },
     output: TEXT_OUTPUT,
     async execute(args, exec: ToolRunContext) {
+      const requestedActionMapId = typeof args.actionMapId === 'string' ? args.actionMapId.trim() : ''
+      const requestedVisualCandidateId = typeof args.visualCandidateId === 'string' ? args.visualCandidateId.trim().toUpperCase() : ''
+      let actionMapPreviewId = ''
+      if (requestedActionMapId || requestedVisualCandidateId) {
+        if (!requestedActionMapId || !/^V[1-9]\d*$/i.test(requestedVisualCandidateId)) {
+          throw new Error('Desktop-style browser visual candidate click requires BOTH actionMapId and visualCandidateId=V#')
+        }
+        if (args.previewId || args.ocrText || args.imageX !== undefined || args.imageY !== undefined || args.xRatio !== undefined || args.yRatio !== undefined || args.pixelCandidateId || args.candidateId) {
+          throw new Error('V# Action Map candidate is a complete browser visual grounding source; do not combine it with OCR, A#/B#, previewId, or free coordinates')
+        }
+        const explicitFrameId = String(args.frameId ?? '').trim()
+        if (!/^browser-visual-[a-z0-9-]+$/i.test(explicitFrameId)) {
+          throw new Error('V# Action Map candidate click requires the SAME frameId returned by patrol_browser_visual_action_map')
+        }
+        const resolved = await runner.dispatch('browser_resolve_visual_candidate', {
+          frameId: explicitFrameId,
+          actionMapId: requestedActionMapId,
+          candidateId: requestedVisualCandidateId,
+          tabId: args.tabId,
+        }, exec)
+        if (!resolved.ok) throw new Error(resolved.error ?? resolved.text ?? 'browser visual Action Map candidate resolution failed')
+        const frameId = objectString(resolved.value, 'frameId')
+        const xRatio = objectNumber(resolved.value, 'xRatio')
+        const yRatio = objectNumber(resolved.value, 'yRatio')
+        if (!frameId || xRatio === undefined || yRatio === undefined) {
+          throw new Error('browser visual Action Map candidate resolver returned incomplete program-owned geometry')
+        }
+        visualPreviewSequence += 1
+        actionMapPreviewId = `browser-vcandidate-${Date.now().toString(36)}-${visualPreviewSequence.toString(36)}`
+        visualPreviews.set(actionMapPreviewId, {
+          previewId: actionMapPreviewId,
+          inspectionId: args.inspectionId,
+          targetHint: String(args.targetHint ?? '').trim(),
+          frameId,
+          xRatio,
+          yRatio,
+          createdAt: Date.now(),
+          source: 'action-map',
+          actionMapId: requestedActionMapId,
+          visualCandidateId: requestedVisualCandidateId,
+        })
+        options.visualEvidence?.mark(frameId, args.inspectionId)
+      }
+
       const requestedOcrText = typeof args.ocrText === 'string' ? args.ocrText.trim() : ''
       const requestedOcrRelation = args.ocrRelation === 'close-right' ? 'close-right' : 'center'
       let ocrPreviewId = ''
@@ -199,7 +243,7 @@ export function registerPatrolVisualClickTool(
         })
         options.visualEvidence?.mark(frameId, args.inspectionId)
       }
-      const requestedPreviewId = ocrPreviewId || (typeof args.previewId === 'string' ? args.previewId.trim() : '')
+      const requestedPreviewId = actionMapPreviewId || ocrPreviewId || (typeof args.previewId === 'string' ? args.previewId.trim() : '')
       const boundPreview = requestedPreviewId ? visualPreviews.get(requestedPreviewId) : undefined
       if (requestedPreviewId && !boundPreview) {
         throw new Error(`browser visual preview ${JSON.stringify(requestedPreviewId)} is unavailable or stale; mark the CURRENT target again before clicking`)
