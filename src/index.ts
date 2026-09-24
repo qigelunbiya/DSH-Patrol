@@ -206,6 +206,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       clickOutcomes,
       visualEvidence,
       requirePreview: false,
+      testMode: runtimePolicy.testMode,
     }),
     'dsh-patrol: recordable screenshot-bound browser visual grounding',
   )
@@ -260,6 +261,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       `strictPrompts=${runtimePolicy.injectStrictWorkflowPrompt ? 'enabled' : 'disabled'}`,
       `visualCaptchaFallback=${runtimePolicy.testMode ? 'enabled' : 'disabled'}`,
       'browserStrategy=user-directed(default=hybrid)',
+      `precisionVisualGate=${runtimePolicy.testMode ? 'test-bsharp-required' : 'normal-policy'}`,
       'desktopAutomation=windows-uia+keyboard+ocr+coordinates',
       'desktopPermissions=unrestricted',
       `build=${TEST_MODE_BUILD_MARKER}`,
