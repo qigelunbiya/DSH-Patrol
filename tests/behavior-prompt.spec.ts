@@ -110,20 +110,22 @@ describe('current Patrol behavior prompt', () => {
   })
 
 
-  it('uses vision-first teaching with post-click DOM learning and Desktop-style exact visual ratios', () => {
+  it('uses raw model-raster pixels for primary visual teaching with post-click DOM learning', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/视觉可直接执行、DOM\/语义负责学习和重放/)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/DOM 当成视觉点击的前置许可/)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/语义\/DOM 定位失败一次时.*可以切换 patrol_observe\(includeImage=true\).*patrol_visual_click_target/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/某一行身份 \+ 行内动作.*row-context resolver.*semantic replay/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/actionMap=true, targetHint=完整行身份\+动作.*ACTION MAP TARGET ZOOM.*candidateId.*safe-point/s)
-    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/Action Map candidateId 或自由 XY 已经视觉明确时直接执行物理左键.*不要.*mark.*previewId/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/PRIMARY browser visual route.*actionMap=false.*modelRasterWidth\/modelRasterHeight.*imageX\/imageY/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/model-raster pixel.*capture geometry.*viewport client point/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/imageX\/modelRasterWidth.*imageY\/modelRasterHeight/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/targetHint 不再自动开启 Action Map/)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/Action Map candidate safe-point.*actionMap=true/)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/trusted Chrome debugger mouse dispatch.*fail closed/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/element\.click\(\).*synthetic MouseEvent/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/targetHint.*事后验证\/学习标签.*不得在点击前要求 DOM 证明/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/learned semantic.*learned selector.*guarded visual coordinate/)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/Desktop Automation.*frame-bound/)
-    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/xRatio=centerX\/imageWidth/)
-    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/yRatio=centerY\/imageHeight/)
-    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/targeted Action Map 的 candidate safe-point/)
-    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/Action Map 无候选的 free-XY fallback/)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/视觉截图没有固定次数上限/)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/附加新图前主动裁剪历史大型工具\/图片结果/)
     expect(PATROL_BEHAVIOR_PROMPT).not.toMatch(/页面点击必须优先使用 patrol_click_target/)
