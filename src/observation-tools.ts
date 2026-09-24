@@ -88,7 +88,7 @@ export function registerPatrolObservationTools(
       inspectionId: { type: 'string', required: true },
       tabId: { type: 'integer' },
       includeImage: { type: 'boolean', description: 'Attach one CLEAN full CURRENT browser screenshot. Use it to visually find a coarse region for patrol_browser_visual_action_map; do not derive the final click coordinate yourself.' },
-      pixelActionMap: { type: 'boolean', description: 'LEGACY compatibility diagnostic only. Do not use B# for new TEST teaching; visible text uses patrol_visual_click_target(ocrText=...), adjacent close/remove uses ocrRelation=close-right.' },
+      pixelActionMap: { type: 'boolean', description: 'LEGACY compatibility diagnostic only. Do not use B# for new TEST teaching; visible text uses patrol_browser_click_ocr_text and unlabeled controls use the separate V# browser Action Map workflow.' },
       actionMap: { type: 'boolean', description: 'LEGACY DOM A# compatibility diagnostic only. Do not use for new TEST visual teaching.' },
       targetHint: { type: 'string', description: 'Concrete CURRENT business target for observation context. Visible text clicks should normally use patrol_browser_click_ocr_text; unlabeled targets use this screenshot as the coarse-region source for patrol_browser_visual_action_map.' },
       focusXRatio: { type: 'number', description: 'Optional coarse X center (0..1) for a focused visual crop. Use after a full-frame visual estimate when the target is small or a calibration mark missed.' },
@@ -176,7 +176,7 @@ export function registerPatrolObservationTools(
           ...(value.visualFrameId ? [`Visual click frame READY: ${value.visualFrameId}; viewport=${value.viewportWidth ?? '?'}x${value.viewportHeight ?? '?'}; capture=${value.captureWidth ?? value.viewportWidth ?? '?'}x${value.captureHeight ?? value.viewportHeight ?? '?'} at (${value.captureClientLeft ?? 0}, ${value.captureClientTop ?? 0}); scroll=(${value.scrollX ?? '?'}, ${value.scrollY ?? '?'})`] : []),
           `Evidence: ${hasImage ? 'MODEL-VISIBLE image attached + compact OCR/DOM' : 'compact OCR/DOM only'}`,
           ...(hasImage && value.pixelActionMap === true ? [
-            `LEGACY BROWSER PIXEL ACTION MAP: ${value.pixelCandidateCount ?? 0} B# candidate(s) are present. New TEST teaching must not use B#; visible text uses patrol_visual_click_target(ocrText=...), and adjacent x/× uses ocrRelation="close-right". Use this map only for historical compatibility diagnostics.`,
+            `LEGACY BROWSER PIXEL ACTION MAP: ${value.pixelCandidateCount ?? 0} B# candidate(s) are present. New TEST teaching must not use B#; use patrol_browser_click_ocr_text for visible text or the separate V# browser Action Map workflow for unlabeled controls.`,
             ...(value.pixelCandidateSummary ? [`CURRENT B# pixel geometry (for diagnostics only; choose by image):\n${value.pixelCandidateSummary}`] : []),
           ] : []),
           ...(hasImage && value.focusedVisual !== true ? [
