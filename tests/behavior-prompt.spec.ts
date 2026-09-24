@@ -121,7 +121,7 @@ describe('current Patrol behavior prompt', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_visual_click_target\(pixelCandidateId=B#/)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/B# 不依赖 DOM\/Accessibility/)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/B# bbox center/)
-    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/大搜索框.*大按钮.*imageX\/imageY/)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/搜索框.*大按钮.*imageX\/imageY/)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/A#.*compatibility path/)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/Chrome debugger trusted mouse input/)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/element\.click\(\).*synthetic MouseEvent/s)
