@@ -25,19 +25,21 @@ function Test-HarnessRuntimeDependencies {
     param([Parameter(Mandatory = $true)][string]$HarnessRootPath)
 
     $probe = @'
+const path = require('node:path')
 const failures = []
+const resolveFrom = (relativeDir, name) => require.resolve(name, { paths: [path.join(process.cwd(), relativeDir)] })
 const checks = [
   ['tsx', () => require.resolve('tsx')],
   ['esbuild', () => {
-    const esbuild = require('esbuild')
+    const esbuild = require(resolveFrom('packages/llm/llm-pi-ai', 'esbuild'))
     esbuild.transformSync('const __dsh_patrol_probe = 1')
   }],
   ['sharp', () => {
-    const sharp = require('sharp')
+    const sharp = require(resolveFrom('packages/attachment/attachment-local', 'sharp'))
     if (!sharp || !sharp.versions || !sharp.versions.sharp) throw new Error('sharp native runtime unavailable')
   }],
   ['koffi', () => {
-    require('koffi')
+    require(resolveFrom('packages/subprocess/subprocess-local', 'koffi'))
   }],
 ]
 for (const [name, check] of checks) {
@@ -56,8 +58,14 @@ console.log('Harness runtime dependency probe: OK')
 
     Push-Location $HarnessRootPath
     try {
-        $probeOutput = (& node -e $probe 2>&1 | Out-String).Trim()
-        $ok = $LASTEXITCODE -eq 0
+        $previousErrorActionPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $probeOutput = (& node -e $probe 2>&1 | Out-String).Trim()
+            $ok = $LASTEXITCODE -eq 0
+        } finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
         if ($ok) {
             Write-Host $probeOutput -ForegroundColor Green
         } else {
