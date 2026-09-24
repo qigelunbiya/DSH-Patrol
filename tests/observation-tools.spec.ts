@@ -112,7 +112,7 @@ describe('current-page observation evidence fallback', () => {
     expect(value.actionMapTargetHint).toBe('10.192.3.174 行的 RDP')
   })
 
-  it('keeps raw pixel visual mode when targetHint is present unless Action Map is explicitly requested', async () => {
+  it('returns a clean full CURRENT browser screenshot for coarse V# region selection', async () => {
     const harness = setupObservationHarness({ readImage: 'success', captcha: false })
     const value = await harness.tool.execute({
       inspectionId: 'demo',
@@ -122,7 +122,7 @@ describe('current-page observation evidence fallback', () => {
 
     expect(harness.screenshotArgs.at(-1)).toMatchObject({
       actionMap: false,
-      coordinateGuide: true,
+      coordinateGuide: false,
     })
     expect(harness.screenshotArgs.at(-1)).not.toHaveProperty('actionMapTargetHint')
     expect(value.actionMap).toBe(false)
@@ -145,7 +145,7 @@ describe('current-page observation evidence fallback', () => {
     expect(harness.screenshotArgs.at(-1)).toMatchObject({
       pixelActionMap: false,
       actionMap: false,
-      coordinateGuide: true,
+      coordinateGuide: false,
       focusXRatio: 0.72,
       focusYRatio: 0.16,
     })
