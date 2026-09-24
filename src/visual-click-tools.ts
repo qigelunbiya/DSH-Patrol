@@ -108,7 +108,7 @@ export function registerPatrolVisualClickTool(
         }
         const resolved = await runner.dispatch('browser_resolve_ocr_visual_target', compactObject({
           text: requestedOcrText,
-          match: args.ocrMatch === 'contains' ? 'contains' : 'exact',
+          match: args.ocrMatch === 'contains' || (args.ocrMatch === undefined && requestedOcrRelation === 'close-right') ? 'contains' : 'exact',
           index: Number.isInteger(args.ocrIndex) ? args.ocrIndex : undefined,
           relation: requestedOcrRelation,
           targetHint: args.targetHint,
