@@ -1765,9 +1765,49 @@ async function interactionVisualClick(args) {
           .find(value => value.length >= 2) || ''
       : ''
     const expectedVisualText = explicitExpectedVisualText || candidateExpectedVisualText
-    const pointerAction = ['left-click', 'right-click', 'hover', 'mark'].includes(String(args.pointerAction || ''))
+    const pointerAction = ['left-click', 'right-click', 'hover', 'mark', 'probe'].includes(String(args.pointerAction || ''))
       ? String(args.pointerAction)
       : 'left-click'
+    if (pointerAction === 'probe') {
+      const captureLeft = Number(frame.captureClientLeft || 0)
+      const captureTop = Number(frame.captureClientTop || 0)
+      const captureWidth = Number(frame.captureWidth || frame.width || 0)
+      const captureHeight = Number(frame.captureHeight || frame.height || 0)
+      const clientX = captureLeft + Math.max(1, Math.min(captureWidth - 1, captureWidth * xRatio))
+      const clientY = captureTop + Math.max(1, Math.min(captureHeight - 1, captureHeight * yRatio))
+      const probeResults = await chrome.scripting.executeScript({
+        target: { tabId, frameIds: [0] },
+        world: 'MAIN',
+        func: interactionMainWorldVisualClick,
+        args: [clientX, clientY, expectedTag, expectedRole, expectedTitle, expectedAriaLabel, true, targetHint, visualAuthority, expectedVisualText],
+      })
+      const probe = Array.isArray(probeResults) ? probeResults[0]?.result : undefined
+      if (!probe || typeof probe !== 'object' || probe.ok === false) {
+        throw new Error(probe?.error || 'visual probe returned no safe CURRENT target')
+      }
+      return interactionVisualClickResult({
+        ...probe,
+        ok: true,
+        coordinateSource,
+        ...(hasRequestedImagePoint ? {
+          requestedImageX,
+          requestedImageY,
+          modelRasterWidth: Number(frame.modelRasterWidth),
+          modelRasterHeight: Number(frame.modelRasterHeight),
+        } : {}),
+        clickX: clientX,
+        clickY: clientY,
+        requestedClickX: clientX,
+        requestedClickY: clientY,
+        visualSnapped: false,
+        snapDistance: 0,
+        visualAuthority: true,
+        pointerAction: 'probe',
+        targetStateChanged: false,
+        stateEvidence: 'visual safety probe verified the screenshot-derived point without physical input',
+        inputTransport: 'probe-only',
+      }, frame, xRatio, yRatio, 'bound-current-visual-frame')
+    }
     if (pointerAction !== 'left-click') {
       const captureLeft = Number(frame.captureClientLeft || 0)
       const captureTop = Number(frame.captureClientTop || 0)
