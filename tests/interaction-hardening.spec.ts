@@ -73,6 +73,21 @@ describe('browser interaction hardening layer', () => {
     expect(source).toContain('visual close/remove preflight rejected this point before physical input')
   })
 
+  it('ports the proven Desktop image-component algorithm into an isolated browser V# Action Map', () => {
+    expect(source).toContain('interactionBrowserVisualActionMaps')
+    expect(source).toContain('interactionBuildDesktopStyleBrowserActionMapInWorker')
+    expect(source).toContain('const threshold = 30')
+    expect(source).toContain('for (let pass = 0; pass < 2; pass += 1)')
+    expect(source).toContain('iou(item, existing) > 0.42')
+    expect(source).toContain("item.candidateId = 'V' + (index + 1)")
+    expect(source).toContain('browserWideThinRescue')
+    expect(source).toContain("method: 'browser-local-desktop-style-action-map'")
+    expect(source).toContain("coordinateMapping: 'browser-desktop-style-action-map-bbox-center'")
+    expect(source).toContain("if (cmd === 'browserVisualActionMap')")
+    expect(source).toContain("if (cmd === 'browserResolveVisualCandidate')")
+    expect(source).not.toMatch(/from ['"].*desktop-runtime/)
+  })
+
   it('builds browser B# candidates from screenshot pixels without desktop or DOM geometry', () => {
     expect(source).toContain('interactionBuildPixelActionMapInWorker')
     expect(source).toContain("item.candidateId = `B${index + 1}`")
