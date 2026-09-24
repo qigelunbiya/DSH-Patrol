@@ -234,8 +234,9 @@ export function registerPatrolObservationTools(
         || args.focusWidthRatio !== undefined || args.focusHeightRatio !== undefined
       const requestedActionMapTargetHint = typeof args.targetHint === 'string' ? args.targetHint.trim() : ''
       const actionMapRequested = args.actionMap === true
-      const pixelActionMapRequested = args.pixelActionMap === true
-        || (focusRequested && args.pixelActionMap !== false && !actionMapRequested)
+      // A focused crop must never silently turn into the old B# workflow.
+      // Legacy B# is available only when explicitly requested.
+      const pixelActionMapRequested = args.pixelActionMap === true && !actionMapRequested
       if (args.actionMap === true && args.includeImage !== true) {
         throw new Error('visual action-map observation requires includeImage=true')
       }
