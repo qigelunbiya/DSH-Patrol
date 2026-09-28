@@ -28,10 +28,11 @@ function Test-HarnessRuntimeDependencies {
 const path = require('node:path')
 const failures = []
 const resolveFrom = (relativeDir, name) => require.resolve(name, { paths: [path.join(process.cwd(), relativeDir)] })
+const resolvePnpmHoisted = (name) => require.resolve(name, { paths: [path.join(process.cwd(), 'node_modules/.pnpm/node_modules')] })
 const checks = [
   ['tsx', () => require.resolve('tsx')],
   ['esbuild', () => {
-    const esbuild = require(resolveFrom('packages/llm/llm-pi-ai', 'esbuild'))
+    const esbuild = require(resolvePnpmHoisted('esbuild'))
     esbuild.transformSync('const __dsh_patrol_probe = 1')
   }],
   ['sharp', () => {
@@ -97,6 +98,10 @@ function Repair-HarnessRuntimeDependencies {
         return
     }
 
+    if (Test-HarnessNodeModulesPlatformMismatch -HarnessRootPath $HarnessRootPath) {
+        Reset-HarnessNodeModules -HarnessRootPath $HarnessRootPath
+    }
+
     Write-Warning "Harness native/runtime dependencies are incomplete. Running one guarded forced reinstall of the Harness lockfile."
     Write-Warning "This repair runs only after the runtime probe fails; normal Patrol launches never reinstall the Harness workspace."
 
@@ -109,6 +114,65 @@ function Repair-HarnessRuntimeDependencies {
 
     if (-not (Test-HarnessRuntimeDependencies -HarnessRootPath $HarnessRootPath)) {
         throw "Harness runtime dependencies are still invalid after the guarded repair. Refusing to start pnpm dsh web."
+    }
+}
+
+function Test-HarnessNodeModulesPlatformMismatch {
+    param([Parameter(Mandatory = $true)][string]$HarnessRootPath)
+
+    if ($env:OS -ne "Windows_NT") {
+        return $false
+    }
+
+    $nodeModulesPath = Join-Path $HarnessRootPath "node_modules"
+    $virtualStorePath = Join-Path $nodeModulesPath ".pnpm"
+    if (-not (Test-Path -LiteralPath $virtualStorePath)) {
+        return $false
+    }
+
+    $modulesManifestPath = Join-Path $nodeModulesPath ".modules.yaml"
+    $modulesManifest = ""
+    if (Test-Path -LiteralPath $modulesManifestPath) {
+        $modulesManifest = [System.IO.File]::ReadAllText($modulesManifestPath)
+    }
+
+    $hasWslStore = $modulesManifest -match '(?m)^\s*storeDir:\s*/mnt/'
+    $hasLinuxNativePackages = $false
+    foreach ($pattern in @("@esbuild+linux-*", "@img+sharp-linux-*", "@koromix+koffi-linux-*")) {
+        if ($null -ne (Get-ChildItem -LiteralPath $virtualStorePath -Directory -Filter $pattern -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+            $hasLinuxNativePackages = $true
+            break
+        }
+    }
+
+    $hasWindowsNativePackages = $true
+    foreach ($pattern in @("@esbuild+win32-x64@*", "@img+sharp-win32-x64@*", "@koromix+koffi-win32-x64@*")) {
+        if ($null -eq (Get-ChildItem -LiteralPath $virtualStorePath -Directory -Filter $pattern -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+            $hasWindowsNativePackages = $false
+            break
+        }
+    }
+
+    if (($hasWslStore -or $hasLinuxNativePackages) -and -not $hasWindowsNativePackages) {
+        Write-Warning "Harness node_modules was installed for a non-Windows platform. It will be rebuilt for Windows."
+        return $true
+    }
+
+    return $false
+}
+
+function Reset-HarnessNodeModules {
+    param([Parameter(Mandatory = $true)][string]$HarnessRootPath)
+
+    $resolvedHarnessRoot = [System.IO.Path]::GetFullPath($HarnessRootPath)
+    $nodeModulesPath = [System.IO.Path]::GetFullPath((Join-Path $resolvedHarnessRoot "node_modules"))
+    if (-not $nodeModulesPath.StartsWith($resolvedHarnessRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove node_modules outside the Harness checkout: $nodeModulesPath"
+    }
+
+    if (Test-Path -LiteralPath $nodeModulesPath) {
+        Write-Warning "Removing stale Harness node_modules: $nodeModulesPath"
+        Remove-Item -LiteralPath $nodeModulesPath -Recurse -Force
     }
 }
 
