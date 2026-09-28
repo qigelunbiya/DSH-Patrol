@@ -55,9 +55,9 @@ describe('current Patrol behavior prompt', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_insert_.*持久化失败.*禁止退化/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/禁止用 patrol_rewrite_flow_path 代替纯新增\/参数修改/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/保存图尚未匹配用户要求时调用 patrol_validate/s)
-    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/任务清单是给人看的业务说明.*Runbook 流程图是给执行器看的/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/任务清单是给人看的用户业务合同.*Runbook 流程图是给执行器看的/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_update_task_checklist/s)
-    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/不得只改流程图后留下过期任务清单/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/修 Runbook 去满足清单/s)\n    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/scopeChangeConfirmed=true/s)\n    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/禁止为了让 patrol_finalize_flow.*缩小清单/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/patrol_task_checklist.*核对/s)
   })
 
