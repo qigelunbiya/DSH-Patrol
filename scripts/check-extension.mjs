@@ -13,7 +13,7 @@ if (String(manifest.content_security_policy?.extension_pages ?? '').includes('un
 if (manifest.content_scripts?.some(item => item.all_frames === true)) throw new Error('Patrol extension content scripts must not run in every frame')
 if (!manifest.content_scripts?.some(item => Array.isArray(item.js) && item.js.includes('captcha-demo-content.js'))) throw new Error('owned-site captcha demo content bridge is missing from the extension manifest')
 
-for (const file of ['background.js', 'content.js', 'captcha-demo-content.js', 'popup.js', 'options.js']) {
+for (const file of ['background-entry.js', 'background.js', 'interaction-hardening.js', 'runtime-readiness-hardening.js', 'content.js', 'captcha-demo-content.js', 'popup.js', 'options.js']) {
   checkSyntax(join(extensionRoot, file), file)
 }
 for (const file of ['index.js', 'bridge.js', 'managed-browser.js', 'tools.js', 'count-tool.js', 'login-state-tool.js', 'challenge-tool.js', 'image-code.js', 'captcha-mode.js', 'captcha-demo.js', 'screenshot-ocr.js', 'tools-plugin.js', 'ws.js']) {
