@@ -239,6 +239,77 @@ describe('editable Patrol runbooks', () => {
       && step.arguments.timeoutMs === 3000)).toBe(true)
   })
 
+  it('refuses to remove the only step covering an existing user business requirement', async () => {
+    const { store, tool, exec } = await setup()
+    const now = '2026-09-28T00:00:00.000Z'
+    const definition: InspectionDefinition = {
+      schemaVersion: '0.2',
+      id: 'protected-business-edit',
+      name: 'Protected business edit',
+      description: 'test',
+      status: 'draft',
+      target: { type: 'browser', url: 'https://example.test' },
+      expectedResult: 'done',
+      artifacts: [],
+      auth: { mode: 'none' },
+      schedule: null,
+      steps: [
+        { id: 'step-001', kind: 'tool', name: '访问首页', tool: 'browser_navigate', arguments: { url: 'https://example.test' }, taskHint: '访问首页', recordedAt: now },
+        { id: 'step-002', kind: 'tool', name: '点击工作台', tool: 'browser_click', arguments: { selector: '#workbench' }, taskHint: '点击工作台', recordedAt: now },
+        { id: 'step-003', kind: 'tool', name: '临时等待', tool: 'browser_wait', arguments: { timeoutMs: 500 }, recordedAt: now },
+      ],
+      metadata: {
+        createdAt: now,
+        updatedAt: now,
+        taskChecklist: ['访问首页', '点击工作台'],
+      },
+    }
+    await store.create(definition)
+
+    await expect(tool('patrol_remove_steps').execute({
+      inspectionId: 'protected-business-edit',
+      stepIds: ['step-002'],
+    }, exec)).rejects.toThrow(/protected task checklist item|business coverage/i)
+
+    const saved = await store.load('protected-business-edit')
+    expect(saved.steps.map(step => step.id)).toEqual(['step-001', 'step-002', 'step-003'])
+  })
+
+  it('refuses to move business steps into an order that no longer satisfies the ordered checklist', async () => {
+    const { store, tool, exec } = await setup()
+    const now = '2026-09-28T00:00:00.000Z'
+    const definition: InspectionDefinition = {
+      schemaVersion: '0.2',
+      id: 'protected-order-edit',
+      name: 'Protected order edit',
+      description: 'test',
+      status: 'draft',
+      target: { type: 'browser', url: 'https://example.test' },
+      expectedResult: 'done',
+      artifacts: [],
+      auth: { mode: 'none' },
+      schedule: null,
+      steps: [
+        { id: 'step-001', kind: 'tool', name: '访问首页', tool: 'browser_navigate', arguments: { url: 'https://example.test' }, taskHint: '访问首页', recordedAt: now },
+        { id: 'step-002', kind: 'tool', name: '点击工作台', tool: 'browser_click', arguments: { selector: '#workbench' }, taskHint: '点击工作台', recordedAt: now },
+      ],
+      metadata: {
+        createdAt: now,
+        updatedAt: now,
+        taskChecklist: ['访问首页', '点击工作台'],
+      },
+    }
+    await store.create(definition)
+
+    await expect(tool('patrol_move_step').execute({
+      inspectionId: 'protected-order-edit',
+      stepId: 'step-002',
+      beforeStepId: 'step-001',
+    }, exec)).rejects.toThrow(/protected task checklist item|business coverage/i)
+
+    expect((await store.load('protected-order-edit')).steps.map(step => step.id)).toEqual(['step-001', 'step-002'])
+  })
+
   it('reconciles missing successful teaching steps in one non-destructive edit without touching the current page', async () => {
     const { store, tool, exec, dispatchCalls } = await setup()
     const now = '2026-09-28T00:00:00.000Z'

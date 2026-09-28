@@ -63,6 +63,20 @@ describe('task checklist step binding', () => {
     ])
   })
 
+  it('semantically binds Enter search and visual search-button click to different checklist items', () => {
+    const press = step('step-001', '执行搜索', 'browser_press', { key: 'Enter' })
+    const button = step('step-002', '点击 Google 搜索按钮', 'browser_visual_click', {
+      targetHint: 'Google 搜索按钮',
+      learnedLocatorText: 'Google 搜索',
+    })
+    const value = definition([press, button], ['执行搜索', '点击搜索按钮执行搜索'])
+
+    bindChecklistTasks(value)
+
+    expect((value.steps[0] as ToolStep).taskHint).toBe('执行搜索')
+    expect((value.steps[1] as ToolStep).taskHint).toBe('点击搜索按钮执行搜索')
+  })
+
   it('binds browser scroll steps to explicit scroll/slide checklist items', () => {
     const scroll = step('step-001', '向下滑动查找伶仃洋', 'browser_scroll', {
       direction: 'down',

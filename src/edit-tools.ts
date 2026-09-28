@@ -8,6 +8,7 @@ import {
   normalizeSemanticLocator,
   type BrowserAction,
 } from './browser.js'
+import { alignChecklistSteps, checklistActionForText } from './flow-task-alignment.js'
 import { summarizeReport } from './report.js'
 import {
   assertSafeCheckpointPrompt,
@@ -819,6 +820,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       const missing = stepIds.filter(stepId => !known.has(stepId))
       if (missing.length > 0) throw new Error(`cannot remove unknown step(s): ${missing.join(', ')}`)
 
+      const beforeSteps = definition.steps.slice()
       const removing = new Set(stepIds)
       const dependents = definition.steps.filter(step => !removing.has(step.id)
         && step.when !== undefined
@@ -833,6 +835,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
 
       definition.steps = definition.steps.filter(step => !removing.has(step.id))
       assertConditionOrder(definition)
+      assertPreservesChecklistCoverage(definition, beforeSteps, definition.steps, 'remove')
       markEdited(definition)
       await persistRunbookEdit(store, definition)
       return `Removed obsolete step(s) ${stepIds.join(', ')} in place. Surviving step ids were preserved; ${definition.steps.length} step(s) remain. Full patrol_validate is required.`
@@ -861,6 +864,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       const anchorId = before ?? after!
       if (stepId === anchorId) throw new Error('stepId and anchor step id must be different')
 
+      const beforeSteps = definition.steps.slice()
       const movingIndex = definition.steps.findIndex(step => step.id === stepId)
       if (movingIndex < 0) throw new Error(`step ${stepId} not found`)
       if (!definition.steps.some(step => step.id === anchorId)) throw new Error(`anchor step ${anchorId} not found`)
@@ -871,6 +875,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       const insertIndex = before !== undefined ? anchorIndex : anchorIndex + 1
       definition.steps.splice(insertIndex, 0, moving)
       assertConditionOrder(definition)
+      assertPreservesChecklistCoverage(definition, beforeSteps, definition.steps, 'move')
       markEdited(definition)
       await persistRunbookEdit(store, definition)
       return `Moved ${stepId} ${before !== undefined ? `before ${before}` : `after ${after}`}. The correction is now located inside the intended flow instead of being left at the tail. Full patrol_validate is required.`
@@ -1030,6 +1035,36 @@ function nextStepId(definition: InspectionDefinition): string {
     if (match !== null) max = Math.max(max, Number.parseInt(match[1] ?? '0', 10))
   }
   return `step-${String(max + 1).padStart(3, '0')}`
+}
+
+function assertPreservesChecklistCoverage(
+  definition: InspectionDefinition,
+  before: readonly InspectionDefinition['steps'][number][],
+  after: readonly InspectionDefinition['steps'][number][],
+  action: 'remove' | 'move',
+): void {
+  const checklist = definition.metadata.taskChecklist ?? []
+  if (checklist.length === 0) return
+
+  const beforeAlignment = alignChecklistSteps(checklist, before)
+  const afterAlignment = alignChecklistSteps(checklist, after)
+  const beforeCovered = new Set(
+    beforeAlignment.matches
+      .map(match => match.checklistIndex)
+      .filter(index => checklistActionForText(checklist[index] ?? '') !== 'other'),
+  )
+  const afterCovered = new Set(afterAlignment.matches.map(match => match.checklistIndex))
+  const lost = [...beforeCovered]
+    .filter(index => !afterCovered.has(index))
+    .map(index => checklist[index]!)
+
+  if (lost.length > 0) {
+    throw new Error([
+      `patrol_${action}_step(s) would remove or reorder user-required business coverage`,
+      `protected task checklist item(s): ${lost.join('；')}`,
+      'The Runbook was NOT changed. Remove/move only true retry/probe steps, or change the business checklist only when the CURRENT user explicitly changes scope.',
+    ].join(' '))
+  }
 }
 
 function assertConditionOrder(definition: InspectionDefinition): void {

@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { selectSuccessfulTeachingPath } from './flow-optimizer.js'
+import { resolveSuccessfulTraceStepIds } from './successful-teaching-trace.js'
 import { PatrolStore } from './store.js'
 import type { InspectionDefinition, RunReport } from './types.js'
 import { assertInspectionId } from './validation.js'
@@ -62,14 +63,14 @@ export function registerPatrolFlowTools(ctx: Context, store: PatrolStore): () =>
 
   const finalizeFlow = defineTool({
     name: 'patrol_finalize_flow',
-    description: 'Reduce a conversationally taught DRAFT to the successful reusable path before confirmation. Pass ONLY step ids that actually contributed to the final successful patrol; exclude wrong branches, exploratory clicks, retries, probes, stale inputs, and diagnostics. Required condition dependencies and final requested artifacts are restored automatically.',
+    description: 'Reduce a conversationally taught DRAFT to the successful reusable path before confirmation. Pass ONLY step ids that actually contributed to the final successful patrol; current Runbook ids and historical successfulTeachingTrace ids are both accepted and resolved deterministically. Exclude wrong branches, exploratory clicks, retries, probes, stale inputs, and diagnostics. Required condition dependencies and final requested artifacts are restored automatically.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       successfulStepIds: {
         type: 'array',
         required: true,
         items: { type: 'string' },
-        description: 'Ordered step ids from the current DRAFT that form the final successful reusable route.',
+        description: 'Ordered step ids from the current DRAFT or successfulTeachingTrace that form the final successful reusable route.',
       },
     },
     output: TEXT_OUTPUT,
@@ -80,7 +81,8 @@ export function registerPatrolFlowTools(ctx: Context, store: PatrolStore): () =>
       if (!Array.isArray(args.successfulStepIds) || args.successfulStepIds.length === 0) {
         throw new Error('successfulStepIds must contain the reusable successful path')
       }
-      const result = selectSuccessfulTeachingPath(definition, args.successfulStepIds)
+      const resolvedStepIds = resolveSuccessfulTraceStepIds(definition, args.successfulStepIds)
+      const result = selectSuccessfulTeachingPath(definition, resolvedStepIds)
       definition.metadata.updatedAt = new Date().toISOString()
       await store.save(definition)
       return [
@@ -93,14 +95,14 @@ export function registerPatrolFlowTools(ctx: Context, store: PatrolStore): () =>
 
   const rewriteFlowPath = defineTool({
     name: 'patrol_rewrite_flow_path',
-    description: 'Rewrite an existing DRAFT flow to the ordered reusable path when the user corrects or cleans the generated flow. Use this instead of appending browser actions after feedback like "missed the confirm button", "that step is wrong", or "clean these retries". Pass the ordered step ids that should remain in the final template; exploratory tail retries and superseded wrong attempts are removed.',
+    description: 'Rewrite an existing DRAFT flow to the ordered reusable path when the user corrects or cleans the generated flow. Use this instead of appending browser actions after feedback like "missed the confirm button", "that step is wrong", or "clean these retries". Current Runbook ids and historical successfulTeachingTrace ids are accepted and resolved deterministically. Never shrink the task checklist to make this rewrite pass; repair the Runbook to satisfy the user business contract.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       keptStepIds: {
         type: 'array',
         required: true,
         items: { type: 'string' },
-        description: 'Ordered step ids from the current DRAFT that should remain in the corrected reusable flow.',
+        description: 'Ordered step ids from the current DRAFT or successfulTeachingTrace that should remain in the corrected reusable flow.',
       },
       reason: {
         type: 'string',
@@ -116,7 +118,8 @@ export function registerPatrolFlowTools(ctx: Context, store: PatrolStore): () =>
       if (!Array.isArray(args.keptStepIds) || args.keptStepIds.length === 0) {
         throw new Error('keptStepIds must contain the corrected reusable path')
       }
-      const result = selectSuccessfulTeachingPath(definition, args.keptStepIds)
+      const resolvedStepIds = resolveSuccessfulTraceStepIds(definition, args.keptStepIds)
+      const result = selectSuccessfulTeachingPath(definition, resolvedStepIds)
       definition.metadata.updatedAt = new Date().toISOString()
       await persistRunbookEdit(store, definition)
       return [

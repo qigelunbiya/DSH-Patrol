@@ -52,6 +52,20 @@ export function registerPatrolDashboardManagementRoutes(ctx, basePath, config = 
         const definition = await loadDefinition(storageRoot, inspectionId)
         assertWorkspace(definition, workspace)
         const result = compactDashboardFlow(definition)
+        if (result.blocked === true) {
+          return sendJson(res, 409, {
+            ok: false,
+            blocked: true,
+            inspectionId,
+            originalSteps: result.originalSteps,
+            finalSteps: result.finalSteps,
+            removedSteps: 0,
+            error: [
+              '清理已取消：候选清理会删除或破坏用户任务清单中已经存在的业务步骤，因此原 Runbook 未写回。',
+              ...(Array.isArray(result.warnings) ? result.warnings : []),
+            ].join('\n'),
+          })
+        }
         definition.metadata = { ...(definition.metadata || {}), updatedAt: new Date().toISOString() }
         const persisted = await persistDefinition(storageRoot, definition)
         return sendJson(res, 200, {

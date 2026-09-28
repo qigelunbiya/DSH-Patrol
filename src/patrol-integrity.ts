@@ -20,6 +20,9 @@ export const PATROL_INTEGRITY_PROMPT = `DSH Patrol 可复用流程完整性规�
 - 必需业务步骤遇到扩展能力缺失、页面加载、iframe 重建或 selector 失效且尚未发生物理点击时，先取得新的 CURRENT 证据并走受控恢复，不得把工具调用次数误算成业务失败。若物理点击已发生但结果未验证，必须先确认 CURRENT 状态，且最多允许一次恢复点击；两次仍未验证就停止，避免重复提交或其他副作用。禁止跳过失败步骤制造“完成”的流程。
 - DRAFT 教学轨迹可以包含诊断探针，但最终 Runbook 只能保留与任务清单一一对应且已验证成功的路线。失败点击、猜 URL、回退/重进、重复 wait/read/snapshot、诊断 probe、被后续修正覆盖的输入都属于教学轨迹，不属于最终可复用流程。
 - 完成用户目标后必须使用 patrol_finalize_flow 只选择真正成功的 step id，再确认流程；没有完成任务清单中的全部必需项时不得确认 READY。清理按钮只能清理轨迹，不能把一个缺少关键业务动作的残缺 Flow 变成可用 Flow。
+- taskChecklist 是用户业务合同，不是为了让生成的流程通过校验而可自由改写的计数器。优化、清理、finalize、rewrite、validate 失败时，必须修 Runbook 去满足现有清单；禁止删除、改名、重排清单项来迁就残缺流程。patrol_update_task_checklist 的 scopeChangeConfirmed=true 只能在 CURRENT 用户明确改变、删除、改名或重排业务要求时使用；“流程图不完整/想优化/清除试错”本身不构成业务范围变更。
+- 如果 patrol_click_target / patrol_visual_click_target 明确表示“物理点击已执行但 NOT recorded”，该业务项在 Runbook 中仍视为未沉淀完成。若紧接着的 CURRENT observe/read 明确证明用户要求的业务结果已经发生，不得直接跳到后续任务并在最后声称流程完整；必须在证据还新鲜时立即修复这一个记录缺口：优先 patrol_reconcile_successful_steps；若成功轨迹没有该动作但已有 replay-safe selector/locator 证据，则用结构编辑/单步重教补入正确位置；若没有足够可重放证据，就明确保持该 checklist 项缺失并只重教这一项。不得通过缩小 taskChecklist 掩盖记录缺口，也不得重复整个流程。
+- patrol_finalize_flow / patrol_rewrite_flow_path / Dashboard 清除试错都必须以“逐项语义覆盖 taskChecklist”为完整性标准，而不只是比较导航/点击/输入数量。两个任意点击不能替代两个不同的用户业务点击；第二个站点导航、用户明确要求的 reload/scroll 也不能因为看起来像恢复动作就被自动删除。
 - 页面发生跳转/iframe 重建不允许让触发跳转的动作丢失。Patrol 应对页面变化做有界验证并保留已验证的因果点击。
 - 不要直接调用会改变页面的 browser_*。browser_click 等是 DSH Patrol 内部执行 primitive；patrol_* 复合工具会在内部调用它们并负责唯一目标解析、验证、记录和重放。`
 

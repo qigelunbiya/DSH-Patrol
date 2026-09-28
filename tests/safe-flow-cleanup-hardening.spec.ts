@@ -46,6 +46,52 @@ describe('dashboard draft cleanup hardening', () => {
     expect(result.flowHealth).toEqual(definition.metadata.flowHealth)
   })
 
+  it('preserves checklist-required Google -> Odoo navigation, scroll, reload, visual clicks, and final filter removal', () => {
+    const definition = {
+      status: 'draft',
+      target: { url: 'https://www.google.com/' },
+      artifacts: ['screenshot', 'page-text'],
+      metadata: {
+        taskChecklist: [
+          '访问 Google 首页',
+          '点击搜索栏',
+          '输入中山市',
+          '执行搜索',
+          '点击搜索按钮执行搜索',
+          '向下滑动页面',
+          '点击伶仃洋链接',
+          '截图',
+          '访问任务管理系统',
+          '刷新页面',
+          '点击我的任务旁边的 x 关闭按钮',
+        ],
+      },
+      steps: [
+        step('step-001', 'browser_navigate', { name: '访问 Google 首页', arguments: { action: 'navigate', url: 'https://www.google.com/' }, taskHint: '访问 Google 首页' }),
+        step('step-002', 'browser_visual_click', { name: '点击搜索栏', arguments: { targetHint: 'Google 搜索输入框' }, taskHint: '点击搜索栏', teaching: { status: 'verified', method: 'state-change' } }),
+        step('step-003', 'browser_type', { name: '输入中山市', arguments: { selector: '#q', text: '中山市' }, taskHint: '输入中山市' }),
+        step('step-004', 'browser_press', { name: '执行搜索', arguments: { key: 'Enter' }, taskHint: '执行搜索' }),
+        step('step-005', 'browser_visual_click', { name: '点击 Google 搜索按钮', arguments: { targetHint: 'Google 搜索按钮' }, taskHint: '点击搜索按钮执行搜索', teaching: { status: 'verified', method: 'state-change' } }),
+        step('step-006', 'browser_scroll', { name: '向下滑动页面', arguments: { direction: 'down', amount: 500 }, taskHint: '向下滑动页面' }),
+        step('step-007', 'browser_screenshot', { name: '截取伶仃洋页面截图', artifact: 'screenshot', taskHint: '截图' }),
+        step('step-008', 'browser_navigate', { name: '访问任务管理系统', arguments: { action: 'navigate', url: 'http://10.192.1.121:8069/web#action=400' }, taskHint: '访问任务管理系统' }),
+        step('step-009', 'browser_read_page', { name: '读取页面内容', artifact: 'page-text' }),
+        step('step-010', 'browser_navigate', { name: '刷新页面', arguments: { action: 'reload' }, taskHint: '刷新页面' }),
+        step('step-011', 'browser_click', { name: '点击我的任务旁边的 x 关闭按钮', arguments: { selector: 'button[aria-label="Remove"]' }, taskHint: '点击我的任务旁边的 x 关闭按钮' }),
+      ],
+    }
+
+    const result = compactDashboardFlow(definition)
+
+    expect(definition.steps.some(item => item.name === '向下滑动页面')).toBe(true)
+    expect(definition.steps.some(item => item.name === '访问任务管理系统')).toBe(true)
+    expect(definition.steps.some(item => item.name === '刷新页面')).toBe(true)
+    expect(definition.steps.some(item => item.name === '点击我的任务旁边的 x 关闭按钮')).toBe(true)
+    expect(definition.steps.filter(item => item.tool === 'browser_visual_click')).toHaveLength(2)
+    expect(result.flowHealth?.warnings.join('\n')).toMatch(/点击伶仃洋链接/)
+    expect(result.flowHealth?.warnings.join('\n')).not.toMatch(/导航步骤.*仅有 1 个/)
+  })
+
   it('preserves an explicitly user-noted revisit and selector-scoped scroll', () => {
     const definition = {
       status: 'draft',
