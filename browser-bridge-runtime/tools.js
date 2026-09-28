@@ -115,6 +115,7 @@ export function registerTools(ctx, bridge, config = {}) {
               properties: {
                 name: str,
                 version: str,
+                runtimeBuild: str,
                 capabilities: { type: 'array', items: { type: 'string' } },
               },
             },
@@ -921,12 +922,19 @@ function renderBrowserStatus(value) {
   const visualClick = capabilities.includes('visualClick')
     ? 'visualClick=yes'
     : 'visualClick=MISSING'
+  const visualActionMap = capabilities.includes('visualActionMapV1')
+    ? 'visualActionMap=yes'
+    : 'visualActionMap=MISSING'
+  const runtimeBuild = typeof extension.runtimeBuild === 'string' && extension.runtimeBuild
+    ? `runtimeBuild=${extension.runtimeBuild}`
+    : 'runtimeBuild=UNKNOWN'
   const warnings = []
   if (imageCode !== 'captureImageCode=yes') warnings.push('runtime/extension capability mismatch: restart Harness before CAPTCHA visual capture')
   if (semanticClick !== 'semanticClick=yes') warnings.push('atomic semantic transport unavailable; patrol_click_target will use its verified unique-selector fallback')
   if (visualClick !== 'visualClick=yes') warnings.push('browser visual-click fallback unavailable; restart Harness after updating the Patrol extension')
+  if (visualActionMap !== 'visualActionMap=yes') warnings.push('browser V# Action Map unavailable; Patrol should refresh the managed extension before visual teaching')
   const suffix = warnings.length > 0 ? `; ${warnings.join('; ')}` : ''
-  return `${base} ${imageCode}; ${semanticClick}; ${visualClick}; capabilities=[${capabilities.join(', ')}]${suffix}.`
+  return `${base} ${runtimeBuild}; ${imageCode}; ${semanticClick}; ${visualClick}; ${visualActionMap}; capabilities=[${capabilities.join(', ')}]${suffix}.`
 }
 
 function renderScreenshotResult(value) {

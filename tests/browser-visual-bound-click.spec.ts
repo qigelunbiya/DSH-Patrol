@@ -22,6 +22,21 @@ describe('browser visual V# binding and startup regression', () => {
     expect(extension).toContain("'bound-browser-visual-action-map-candidate'")
   })
 
+  it('refuses to trust a visual capability flag unless the live worker can route the Action Map command', () => {
+    const background = read('browser-extension/background.js')
+    const entry = read('browser-extension/background-entry.js')
+    const managed = read('browser-bridge-runtime/stable-managed-browser-controller.js')
+
+    expect(entry).toContain("importScripts('interaction-hardening.js')")
+    expect(background).toContain("case 'runtimeInfo':")
+    expect(background).toContain("typeof interactionBrowserVisualActionMap === 'function'")
+    expect(background).toContain('capabilities: reportedCapabilities()')
+    expect(managed).toContain("bridge.request('runtimeInfo'")
+    expect(managed).toContain('visualActionMapReady !== true')
+    expect(managed).toContain("bridge.resetConnection?.('Refreshing stale Patrol browser extension runtime')")
+    expect(managed).toContain('browserVisualActionMap is still unavailable')
+  })
+
   it('maps new captureVisibleTab frames through the visual viewport while preserving legacy replay geometry', () => {
     const extension = read('browser-extension/interaction-hardening.js')
 

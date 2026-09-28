@@ -46,6 +46,21 @@ function bridgeFixture() {
           extension: state.extension,
         }
       },
+      async request(cmd: string) {
+        if (cmd !== 'runtimeInfo') throw new Error(`unsupported test bridge command: ${cmd}`)
+        if (state.runtimeInfoError) throw new Error(String(state.runtimeInfoError))
+        return {
+          ok: true,
+          runtimeBuild: state.runtimeBuild || 'test-runtime',
+          visualActionMapReady: state.visualActionMapReady !== false,
+        }
+      },
+      resetConnection() {
+        state.connected = false
+        state.origin = null
+        state.extension = null
+        return true
+      },
     },
   }
 }
@@ -97,6 +112,89 @@ describe('stable managed Patrol browser controller', () => {
     await expect(controller.ensureStarted()).rejects.toThrow(/browser was deliberately kept open/i)
     expect(launches).toBe(1)
     expect(closes).toBe(0)
+
+    await controller.dispose()
+    expect(closes).toBe(1)
+  })
+
+  it('refreshes a lying stale worker that advertises visualActionMapV1 but cannot route browserVisualActionMap', async () => {
+    const paths = fixture('dsh-patrol-stale-visual-route-refresh-')
+    const { bridge, state } = bridgeFixture()
+    const extensionId = 'abcdefghijklmnopabcdefghijklmnop'
+    let installed = true
+    let refreshes = 0
+    let closes = 0
+    state.visualActionMapReady = false
+    const fullCapabilities = [
+      'captureImageCode',
+      'semanticClick',
+      'visualClick',
+      'trustedVisualClick',
+      'trustedFocusedType',
+      'trustedSemanticClick',
+      'clickOpenedTabAdoption',
+      'compactVisualCapture',
+      'boundedVisualCaptureV2',
+      'reusableVisualFramesV1',
+      'visualCoordinateGuideV1',
+      'visualPointerProbeV1',
+      'focusedVisualRegionV1',
+      'visualActionMapV1',
+      'verifiedVisualActionPointV1',
+    ]
+    const worker = {
+      async evaluate() {
+        state.connected = true
+        state.origin = `chrome-extension://${extensionId}`
+        state.extension = {
+          name: 'dsh-patrol-browser-extension',
+          version: refreshes > 0 ? '0.3.14' : '0.3.13',
+          capabilities: fullCapabilities,
+        }
+        if (refreshes > 0) {
+          state.visualActionMapReady = true
+          state.runtimeBuild = '2026-09-28-visual-action-map-runtime-v2'
+        }
+      },
+    }
+    const extension = {
+      name: 'DSH Patrol Browser Bridge',
+      version: '0.3.13',
+      path: paths.extensionPath,
+      workers: async () => [worker],
+    }
+    const browser: any = {
+      connected: true,
+      on() {},
+      process: () => ({ pid: 9110 }),
+      version: async () => 'Chrome/150.0.0.0',
+      pages: async () => [],
+      extensions: async () => installed ? new Map([[extensionId, extension]]) : new Map(),
+      uninstallExtension: async () => { installed = false },
+      installExtension: async () => { installed = true; refreshes += 1; return extensionId },
+      close: async () => { closes += 1; browser.connected = false },
+    }
+
+    const controller = createManagedBrowserController({
+      bridge,
+      extensionPath: paths.extensionPath,
+      profilePath: paths.profilePath,
+      statePath: paths.statePath,
+      browserExecutable: process.execPath,
+      bridgeUrlHint: () => 'ws://127.0.0.1:3080/patrol-browser-bridge',
+      launchBrowser: async () => browser,
+      logger: { info() {}, warn() {} },
+      startTimeoutMs: 200,
+      connectTimeoutMs: 200,
+    })
+
+    await expect(controller.ensureStarted()).resolves.toMatchObject({
+      connected: true,
+      runtimeHealthy: true,
+    })
+    expect(refreshes).toBe(1)
+    expect(closes).toBe(0)
+    expect(state.visualActionMapReady).toBe(true)
 
     await controller.dispose()
     expect(closes).toBe(1)

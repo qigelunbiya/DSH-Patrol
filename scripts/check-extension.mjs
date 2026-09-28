@@ -13,7 +13,7 @@ if (String(manifest.content_security_policy?.extension_pages ?? '').includes('un
 if (manifest.content_scripts?.some(item => item.all_frames === true)) throw new Error('Patrol extension content scripts must not run in every frame')
 if (!manifest.content_scripts?.some(item => Array.isArray(item.js) && item.js.includes('captcha-demo-content.js'))) throw new Error('owned-site captcha demo content bridge is missing from the extension manifest')
 
-for (const file of ['background.js', 'content.js', 'captcha-demo-content.js', 'popup.js', 'options.js']) {
+for (const file of ['background-entry.js', 'background.js', 'interaction-hardening.js', 'runtime-readiness-hardening.js', 'content.js', 'captcha-demo-content.js', 'popup.js', 'options.js']) {
   checkSyntax(join(extensionRoot, file), file)
 }
 for (const file of ['index.js', 'bridge.js', 'managed-browser.js', 'tools.js', 'count-tool.js', 'login-state-tool.js', 'challenge-tool.js', 'image-code.js', 'captcha-mode.js', 'captcha-demo.js', 'screenshot-ocr.js', 'tools-plugin.js', 'ws.js']) {
@@ -128,6 +128,10 @@ if (!preset.includes('storagePath: .dsh-patrol')) throw new Error('Patrol preset
 const hostPatch = readFileSync(join(projectRoot, 'cordis.patch.yml'), 'utf8')
 if (!hostPatch.includes("name: 'dsh-patrol/browser-bridge-host'")) throw new Error('DSH Patrol host patch must load the browser transport')
 
+const backgroundEntry = readFileSync(join(extensionRoot, 'background-entry.js'), 'utf8')
+if (!backgroundEntry.includes("importScripts('interaction-hardening.js')")) throw new Error('browser background entry must load interaction-hardening before runtime readiness layers')
+if (backgroundEntry.indexOf("importScripts('interaction-hardening.js')") > backgroundEntry.indexOf("importScripts('runtime-readiness-hardening.js')")) throw new Error('interaction-hardening must load before runtime-readiness-hardening')
+
 const background = readFileSync(join(extensionRoot, 'background.js'), 'utf8')
 if (!background.includes('value.ok === false')) throw new Error('extension must convert in-band DOM failures into bridge failures')
 if (!background.includes("case 'count':")) throw new Error('extension background must route count to the DOM bridge')
@@ -136,6 +140,9 @@ if (!background.includes("type: 'dsh-patrol:captcha-demo'")) throw new Error('ca
 if (!background.includes('documentKey: target.documentKey')) throw new Error('captcha demo capture must preserve page instance identity')
 if (!background.includes('challengeKey: target.challengeKey')) throw new Error('captcha demo capture must preserve challenge instance identity')
 if (!background.includes('target.imageRect, target.viewport, 0') || !background.includes('target.backgroundRect, target.viewport, 0')) throw new Error('captcha demo solver crops must not add coordinate-shifting padding')
+if (!background.includes("case 'runtimeInfo':")) throw new Error('browser extension must expose runtimeInfo for live visual-route health checks')
+if (!background.includes('visualActionMapReady')) throw new Error('runtimeInfo must verify that browserVisualActionMap routing actually loaded')
+if (!background.includes('reportedCapabilities()')) throw new Error('extension hello must derive visual capabilities from the loaded runtime instead of blindly advertising them')
 
 console.log('browser extension/runtime and host/agent plane checks passed')
 
