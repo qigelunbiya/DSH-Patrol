@@ -66,11 +66,8 @@ export function alignChecklistSteps(
       }
 
       const score = semanticChecklistMatchScore(steps[j - 1]!, checklist[i - 1]!)
-      if (score >= MIN_REQUIREMENT_SCORE) {
-        // Requirement coverage dominates, then prefer the later successful
-        // attempt over an earlier retry. Semantic relevance remains a gate,
-        // but minor wording differences must not keep stale retries alive.
-        const matchValue = dp[i - 1]![j - 1]! + 100000 + score * 10 + j * 300
+      if (score >= MIN_SEMANTIC_SCORE) {
+        const matchValue = dp[i - 1]![j - 1]! + 100000 + score * 10 + j
         if (matchValue >= best) {
           best = matchValue
           selected = 'match'
@@ -164,8 +161,11 @@ export function alignChecklistRequirements(
       const requirement = requirements[i - 1]!
       const step = steps[j - 1]!
       const score = semanticChecklistRequirementScore(step, requirement.item, requirement.action)
-      if (score >= MIN_SEMANTIC_SCORE) {
-        const matchValue = dp[i - 1]![j - 1]! + 100000 + score * 10 + j
+      if (score >= MIN_REQUIREMENT_SCORE) {
+        // Requirement coverage dominates, then prefer the later successful
+        // attempt over an earlier retry. Semantic relevance remains a gate,
+        // but minor wording differences must not keep stale retries alive.
+        const matchValue = dp[i - 1]![j - 1]! + 100000 + score * 10 + j * 300
         if (matchValue >= best) {
           best = matchValue
           selected = 'match'
