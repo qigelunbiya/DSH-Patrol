@@ -196,7 +196,29 @@ export function semanticChecklistMatchScore(step: InspectionStep, checklistItem:
   for (const token of itemTokens) {
     if (stepTokens.has(token)) score += Math.min(10, token.length)
   }
+
+  const itemConcepts = businessConcepts(item)
+  const stepConcepts = businessConcepts(candidates.join(' '))
+  for (const concept of itemConcepts) {
+    if (stepConcepts.has(concept)) score += 18
+  }
   return score
+}
+
+function businessConcepts(value: string): Set<string> {
+  const text = normalizeSemanticText(value)
+  const concepts = new Set<string>()
+  const add = (name: string, pattern: RegExp) => {
+    if (pattern.test(text)) concepts.add(name)
+  }
+  add('entry', /(入口|登录页|登陆页|loginpage|signinpage|首页入口)/i)
+  add('account', /(用户名|用户账号|账号|账户|帐号|username|useraccount|account)/i)
+  add('secret', /(密码|口令|password|passcode)/i)
+  add('submit-login', /(登录|登陆|提交|login|signin|submit)/i)
+  add('search-field', /(搜索栏|搜索框|搜索输入框|searchbox|searchfield)/i)
+  add('search-submit', /(执行搜索|搜索按钮|googlesearch|submitsearch)/i)
+  add('close-filter', /(关闭.*(?:任务|筛选|过滤)|移除.*(?:任务|筛选|过滤)|remove.*(?:filter|task)|close.*(?:filter|task))/i)
+  return concepts
 }
 
 function stringArg(step: ToolStep, key: string): string {
