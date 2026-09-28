@@ -103,18 +103,40 @@ export function bindChecklistTasksSemantically(definition: InspectionDefinition)
   if (checklist.length === 0 || definition.steps.length === 0) return
 
   const alignment = alignChecklistSteps(checklist, definition.steps)
-  const taskByStep = new Map<number, string>()
-  for (const match of alignment.matches) {
-    taskByStep.set(match.stepIndex, checklist[match.checklistIndex]!)
-  }
+  const matchByStep = new Map(alignment.matches.map(match => [match.stepIndex, match] as const))
 
   definition.steps = definition.steps.map((step, index) => {
     if (step.kind !== 'tool') return step
-    const task = taskByStep.get(index)
-    if (task === undefined) return step
-    if (step.taskHint === task) return step
+    const match = matchByStep.get(index)
+    if (match === undefined) return step
+    const task = checklist[match.checklistIndex]!
+
+    if (step.taskHint !== undefined) {
+      if (normalizeSemanticText(step.taskHint) === normalizeSemanticText(task)) return step
+
+      // Preserve a human/custom hint unless it clearly points at a DIFFERENT
+      // persisted checklist item. This repairs old ordinal misbindings such as
+      // Enter-search carrying "点击搜索按钮执行搜索", while keeping explicit
+      // annotations such as "人工确认过的账号输入工序".
+      const hintedChecklistIndex = checklistIndexForExistingHint(checklist, step.taskHint)
+      if (hintedChecklistIndex < 0 || hintedChecklistIndex === match.checklistIndex) return step
+    }
+
     return { ...step, taskHint: task }
   })
+}
+
+function checklistIndexForExistingHint(checklist: readonly string[], hint: string): number {
+  const normalizedHint = normalizeSemanticText(hint)
+  if (!normalizedHint) return -1
+  for (let index = 0; index < checklist.length; index += 1) {
+    const item = normalizeSemanticText(checklist[index])
+    if (!item) continue
+    if (item === normalizedHint) return index
+    const min = Math.min(item.length, normalizedHint.length)
+    if (min >= 6 && (item.includes(normalizedHint) || normalizedHint.includes(item))) return index
+  }
+  return -1
 }
 
 export function stepMatchesChecklistItem(step: InspectionStep, item: string): boolean {
