@@ -167,7 +167,31 @@ function selectChecklistTrace(
   checklist: readonly string[],
 ): InspectionStep[] {
   const alignment = alignChecklistRequirements(checklist, trace)
+
+  // Historical traces may predate taskHint/semantic binding improvements. Only
+  // collapse retries when the persisted checklist can fully explain the trace;
+  // otherwise preserve the old conservative reconciliation behavior instead
+  // of dropping potentially required route/condition steps.
+  if (alignment.missing.some(item => item.action !== 'other')) return [...trace]
+
   const selectedIndexes = new Set(alignment.matches.map(match => match.stepIndex))
+
+  // Keep condition dependencies even if they are not themselves checklist
+  // actions, then restore them in original trace order.
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const index of [...selectedIndexes]) {
+      const sourceId = trace[index]?.when?.sourceStepId
+      if (sourceId === undefined) continue
+      const sourceIndex = trace.findIndex(step => step.id === sourceId)
+      if (sourceIndex >= 0 && !selectedIndexes.has(sourceIndex)) {
+        selectedIndexes.add(sourceIndex)
+        changed = true
+      }
+    }
+  }
+
   return trace.filter((_step, index) => selectedIndexes.has(index))
 }
 
