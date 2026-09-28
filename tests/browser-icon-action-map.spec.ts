@@ -13,7 +13,7 @@ describe('browser Action Map compact icon controls', () => {
     expect(source).toContain('(pointerAction || parentPointerAction)')
     expect(source).toContain('width <= 72 && height <= 72')
     expect(source).toContain('width * height <= 4_096')
-    expect(source).toContain("?'icon-control'".replace('?', ''))
+    expect(source).toContain("'icon-control'")
     expect(source).toContain('hasStrongActionDescendant(element)')
   })
 
