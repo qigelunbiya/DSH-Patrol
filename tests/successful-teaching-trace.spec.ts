@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   captureSuccessfulTeachingTrace,
+  resolveSuccessfulTraceStepIds,
   restoreMissingSuccessfulTeachingSteps,
 } from '../src/successful-teaching-trace.ts'
 import type { InspectionDefinition, InspectionStep, ToolStep } from '../src/types.ts'
@@ -106,6 +107,24 @@ describe('successful teaching trace', () => {
     expect(restored.restored).toBe(2)
     expect(value.steps).toHaveLength(2)
     expect(value.steps[1]?.when?.sourceStepId).toBe(value.steps[0]?.id)
+  })
+
+  it('resolves a historical successfulTeachingTrace id to the equivalent current Runbook id', () => {
+    const traceClick = step('step-003', '点击目标', 'browser_click', { selector: '#go' }, 3)
+    const currentClick = { ...traceClick, id: 'step-012' }
+    const value = definition([currentClick])
+    value.metadata.successfulTeachingTrace = [traceClick]
+
+    expect(resolveSuccessfulTraceStepIds(value, ['step-003'])).toEqual(['step-012'])
+  })
+
+  it('fails clearly when a historical trace id has not been reconciled into the current Runbook', () => {
+    const traceClick = step('step-003', '点击目标', 'browser_click', { selector: '#go' }, 3)
+    const value = definition([])
+    value.metadata.successfulTeachingTrace = [traceClick]
+
+    expect(() => resolveSuccessfulTraceStepIds(value, ['step-003']))
+      .toThrow(/patrol_reconcile_successful_steps/)
   })
 
   it('is idempotent after the missing successful steps have been restored once', () => {
