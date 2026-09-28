@@ -24,6 +24,7 @@ export interface ChecklistRequirementAlignment {
 }
 
 const MIN_SEMANTIC_SCORE = 30
+const MIN_REQUIREMENT_SCORE = 28
 const GENERIC_TOKENS = new Set([
   '访问', '导航', '打开', '点击', '点开', '进入', '选择', '执行', '查看', '读取', '整理',
   '输入', '填写', '填入', '截图', '页面', '内容', '信息', '当前', '目标', '等待', '加载',
@@ -65,8 +66,11 @@ export function alignChecklistSteps(
       }
 
       const score = semanticChecklistMatchScore(steps[j - 1]!, checklist[i - 1]!)
-      if (score >= MIN_SEMANTIC_SCORE) {
-        const matchValue = dp[i - 1]![j - 1]! + 100000 + score * 10 + j
+      if (score >= MIN_REQUIREMENT_SCORE) {
+        // Requirement coverage dominates, then prefer the later successful
+        // attempt over an earlier retry. Semantic relevance remains a gate,
+        // but minor wording differences must not keep stale retries alive.
+        const matchValue = dp[i - 1]![j - 1]! + 100000 + score * 10 + j * 300
         if (matchValue >= best) {
           best = matchValue
           selected = 'match'
