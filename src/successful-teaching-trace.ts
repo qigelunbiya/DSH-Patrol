@@ -1,3 +1,4 @@
+import { alignChecklistRequirements } from './flow-task-alignment.js'
 import type { InspectionDefinition, InspectionStep, ToolStep } from './types.js'
 
 const TRACE_LIMIT = 512
@@ -60,7 +61,11 @@ export function captureSuccessfulTeachingTrace(
 export function restoreMissingSuccessfulTeachingSteps(
   definition: InspectionDefinition,
 ): SuccessfulTraceRestoreResult {
-  const trace = definition.metadata.successfulTeachingTrace ?? []
+  const rawTrace = definition.metadata.successfulTeachingTrace ?? []
+  const checklist = definition.metadata.taskChecklist ?? []
+  const trace = checklist.length === 0
+    ? rawTrace
+    : selectChecklistTrace(rawTrace, checklist)
   if (trace.length === 0) {
     return {
       traceSteps: 0,
@@ -155,6 +160,15 @@ export function restoreMissingSuccessfulTeachingSteps(
     restoredStepIds,
     warnings,
   }
+}
+
+function selectChecklistTrace(
+  trace: readonly InspectionStep[],
+  checklist: readonly string[],
+): InspectionStep[] {
+  const alignment = alignChecklistRequirements(checklist, trace)
+  const selectedIndexes = new Set(alignment.matches.map(match => match.stepIndex))
+  return trace.filter((_step, index) => selectedIndexes.has(index))
 }
 
 export function resolveSuccessfulTraceStepIds(
