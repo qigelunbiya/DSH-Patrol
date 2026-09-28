@@ -157,6 +157,53 @@ export function restoreMissingSuccessfulTeachingSteps(
   }
 }
 
+export function resolveSuccessfulTraceStepIds(
+  definition: InspectionDefinition,
+  requestedIds: readonly string[],
+): string[] {
+  const currentById = new Map(definition.steps.map(step => [step.id, step] as const))
+  const trace = definition.metadata.successfulTeachingTrace ?? []
+  const resolved: string[] = []
+  const usedCurrent = new Set<string>()
+
+  for (const rawId of requestedIds) {
+    const requestedId = String(rawId ?? '').trim()
+    if (!requestedId) throw new Error('successful path contains an empty step id')
+
+    const direct = currentById.get(requestedId)
+    if (direct !== undefined && !usedCurrent.has(direct.id)) {
+      resolved.push(direct.id)
+      usedCurrent.add(direct.id)
+      continue
+    }
+
+    const traceCandidates = trace.filter(step => step.id === requestedId)
+    if (traceCandidates.length === 0) {
+      throw new Error(`successful path references unknown step ${requestedId}; it is absent from both the current Runbook and successfulTeachingTrace`)
+    }
+
+    const currentMatches = definition.steps.filter(current =>
+      !usedCurrent.has(current.id)
+      && traceCandidates.some(traceStep => equivalentReplayStep(current, traceStep)),
+    )
+    if (currentMatches.length === 0) {
+      throw new Error(
+        `successful trace step ${requestedId} exists but no equivalent CURRENT Runbook step was found; call patrol_reconcile_successful_steps before finalizing/rewriting`,
+      )
+    }
+    if (currentMatches.length > 1) {
+      throw new Error(
+        `successful trace step ${requestedId} maps ambiguously to CURRENT steps: ${currentMatches.map(step => step.id).join(', ')}`,
+      )
+    }
+
+    resolved.push(currentMatches[0]!.id)
+    usedCurrent.add(currentMatches[0]!.id)
+  }
+
+  return resolved
+}
+
 export function isSuccessfulTeachingStep(step: InspectionStep): boolean {
   if (step.kind === 'checkpoint') return true
   if (step.teaching?.status === 'unverified') return false
