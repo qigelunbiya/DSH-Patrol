@@ -37,9 +37,11 @@ describe('browser visual V# binding and startup regression', () => {
     const dev = read('scripts/dev.ps1')
 
     expect(dev).toContain('function Test-HarnessRuntimeDependencies')
-    expect(dev).toContain("resolveFrom('packages/llm/llm-pi-ai', 'esbuild')")
+    expect(dev).toContain("resolvePnpmHoisted('esbuild')")
     expect(dev).toContain("resolveFrom('packages/attachment/attachment-local', 'sharp')")
     expect(dev).toContain("resolveFrom('packages/subprocess/subprocess-local', 'koffi')")
+    expect(dev).toContain('function Test-HarnessNodeModulesPlatformMismatch')
+    expect(dev).toContain('Reset-HarnessNodeModules -HarnessRootPath $HarnessRootPath')
     expect(dev).toContain('pnpm install --force --frozen-lockfile')
     expect(dev).toContain('if ([string]$manifest.version -ne "0.1.1-rc.2")')
     expect(dev).toContain('if (Test-HarnessRuntimeDependencies -HarnessRootPath $HarnessRootPath)')
