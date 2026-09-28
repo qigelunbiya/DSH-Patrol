@@ -406,6 +406,7 @@ function businessTokens(value: string): Set<string> {
 
 function isTypingTool(tool: string): boolean {
   return tool === 'browser_type'
+    || tool === 'browser_type_focused'
     || tool === 'browser_type_credential'
     || tool === 'browser_type_transient_ref'
     || tool === 'browser_type_totp_profile'
