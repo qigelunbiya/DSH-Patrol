@@ -91,7 +91,7 @@ export const inject = ['tools', 'userQuestions']
 const DEFAULT_STORAGE_PATH = resolve(process.cwd(), '.dsh-patrol')
 const DEFAULT_MAX_STEPS = 200
 const DEFAULT_REPORT_MAX_CHARS = 30_000
-const TEST_MODE_BUILD_MARKER = 'test-browser-visual-surface-v14'
+const TEST_MODE_BUILD_MARKER = 'test-compact-first-turn-v15'
 const TEST_MODE_DIRECT_BROWSER_ALLOWED = new Set([
   'browser_status',
   'browser_list_tabs',
@@ -271,6 +271,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       `liveVisualRatio=${runtimePolicy.testMode ? 'disabled' : 'compatibility'}`,
       'desktopAutomation=windows-uia+keyboard+ocr+coordinates',
       'desktopPermissions=unrestricted',
+      `promptProfile=${runtimePolicy.injectExtendedDomainPrompts ? 'extended' : 'compact-core'}`,
       `build=${TEST_MODE_BUILD_MARKER}`,
     ].join('; '),
   })
@@ -328,11 +329,16 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       text: PATROL_LANGUAGE_PROMPT,
     }), 'dsh-patrol: always-on user language contract')
 
-    ctx.effect(() => systemPrompt.section({
-      name: 'agent:dsh-patrol-flow-reference-replay',
-      order: 1000,
-      text: PATROL_FLOW_REFERENCE_PROMPT,
-    }), 'dsh-patrol: deterministic flow reference and existing-flow replay prompt')
+    // TEST mode keeps the same registered tools but intentionally avoids
+    // loading every domain-specific prompt into the first model turn. The
+    // compact TEST override below retains the cross-domain safety/usage rules.
+    if (runtimePolicy.injectExtendedDomainPrompts) {
+      ctx.effect(() => systemPrompt.section({
+        name: 'agent:dsh-patrol-flow-reference-replay',
+        order: 1000,
+        text: PATROL_FLOW_REFERENCE_PROMPT,
+      }), 'dsh-patrol: deterministic flow reference and existing-flow replay prompt')
+    }
 
     // The page-understanding contract includes the selector-loop budget and
     // anti-repetition rules. It applies in TEST MODE too; TEST still keeps its
@@ -351,36 +357,38 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       }), 'dsh-patrol: agent workflow prompt')
     }
 
-    ctx.effect(() => systemPrompt.section({
-      name: 'agent:dsh-patrol-excel',
-      order: 131,
-      text: PATROL_EXCEL_PROMPT,
-    }), 'dsh-patrol: adaptive Excel workflow prompt')
-    ctx.effect(() => systemPrompt.section({
-      name: 'agent:dsh-patrol-excel-v5',
-      order: 132,
-      text: PATROL_EXCEL_V5_PROMPT,
-    }), 'dsh-patrol: OpenXML Excel v5 bridge prompt')
-    ctx.effect(() => systemPrompt.section({
-      name: 'agent:dsh-patrol-session',
-      order: 133,
-      text: PATROL_SESSION_PROMPT,
-    }), 'dsh-patrol: authenticated-session reuse prompt')
-    ctx.effect(() => systemPrompt.section({
-      name: 'agent:dsh-patrol-transient-input',
-      order: 134,
-      text: PATROL_TRANSIENT_INPUT_PROMPT,
-    }), 'dsh-patrol: transient sensitive-input workflow prompt')
-    ctx.effect(() => systemPrompt.section({
-      name: 'agent:dsh-patrol-totp',
-      order: 134.5,
-      text: PATROL_TOTP_PROMPT,
-    }), 'dsh-patrol: configured TOTP profile workflow prompt')
-    ctx.effect(() => systemPrompt.section({
-      name: 'agent:dsh-patrol-desktop',
-      order: 134.7,
-      text: PATROL_DESKTOP_PROMPT,
-    }), 'dsh-patrol: Windows desktop automation prompt')
+    if (runtimePolicy.injectExtendedDomainPrompts) {
+      ctx.effect(() => systemPrompt.section({
+        name: 'agent:dsh-patrol-excel',
+        order: 131,
+        text: PATROL_EXCEL_PROMPT,
+      }), 'dsh-patrol: adaptive Excel workflow prompt')
+      ctx.effect(() => systemPrompt.section({
+        name: 'agent:dsh-patrol-excel-v5',
+        order: 132,
+        text: PATROL_EXCEL_V5_PROMPT,
+      }), 'dsh-patrol: OpenXML Excel v5 bridge prompt')
+      ctx.effect(() => systemPrompt.section({
+        name: 'agent:dsh-patrol-session',
+        order: 133,
+        text: PATROL_SESSION_PROMPT,
+      }), 'dsh-patrol: authenticated-session reuse prompt')
+      ctx.effect(() => systemPrompt.section({
+        name: 'agent:dsh-patrol-transient-input',
+        order: 134,
+        text: PATROL_TRANSIENT_INPUT_PROMPT,
+      }), 'dsh-patrol: transient sensitive-input workflow prompt')
+      ctx.effect(() => systemPrompt.section({
+        name: 'agent:dsh-patrol-totp',
+        order: 134.5,
+        text: PATROL_TOTP_PROMPT,
+      }), 'dsh-patrol: configured TOTP profile workflow prompt')
+      ctx.effect(() => systemPrompt.section({
+        name: 'agent:dsh-patrol-desktop',
+        order: 134.7,
+        text: PATROL_DESKTOP_PROMPT,
+      }), 'dsh-patrol: Windows desktop automation prompt')
+    }
 
     if (runtimePolicy.injectStrictRecoveryPrompt) {
       ctx.effect(() => systemPrompt.section({
@@ -424,5 +432,5 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
   const guardMode = runtimePolicy.testMode ? 'test-operational-click-fallbacks' : 'normal-strict'
   const plannerMode = runtimePolicy.testMode ? 'advisory' : 'strict'
-  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; guard-mode=${guardMode}; build=${TEST_MODE_BUILD_MARKER}; scheduler=enabled; credential helper=optional; transient sensitive replay=enabled; encrypted TOTP profile replay=enabled; semantic click resolver=enabled; browser visual grounding=enabled; page-understanding-planner=${plannerMode}; native select=enabled; task-checklist=required; secret-safe creation=enabled; flat action tools=enabled; OpenXML Excel v5 tools=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled; desktop automation=enabled; desktop permissions=unrestricted`)
+  ctx.logger.info(`dsh-patrol ready; internal state=${resolved.storagePath}; user outputs=session workspace; guard-mode=${guardMode}; build=${TEST_MODE_BUILD_MARKER}; scheduler=enabled; credential helper=optional; transient sensitive replay=enabled; encrypted TOTP profile replay=enabled; semantic click resolver=enabled; browser visual grounding=enabled; page-understanding-planner=${plannerMode}; prompt-profile=${runtimePolicy.injectExtendedDomainPrompts ? 'extended' : 'compact-core'}; native select=enabled; task-checklist=required; secret-safe creation=enabled; flat action tools=enabled; OpenXML Excel v5 tools=enabled; targeted failure recovery=enabled; editable runbooks=enabled; persistent-session reuse=enabled; exact browser allowlist enabled; desktop automation=enabled; desktop permissions=unrestricted`)
 }
