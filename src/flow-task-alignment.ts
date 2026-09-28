@@ -38,7 +38,7 @@ const ACTION_PATTERNS: Array<{ action: Exclude<ChecklistAction, 'other'>; patter
   { action: 'screenshot', pattern: /(截图|screenshot|capture)/i },
   { action: 'type', pattern: /(输入|填写|填入|type|enter|fill|clipboard)/i },
   { action: 'read', pattern: /(读取|整理|查看.*(?:信息|列表|内容)|识别|ocr|read|summar|inspect.*(?:list|content|info))/i },
-  { action: 'wait', pattern: /(等待|等到|直到|直至|滚动|滑动|向上滑|向下滑|wait(?:\s+(?:for|until))?|scroll)/i },
+  { action: 'wait', pattern: /(等待|等到|直到|直至|滚动|滑动|上滑|下滑|向上滑|向下滑|wait(?:\s+(?:for|until))?|scroll)/i },
   { action: 'navigate', pattern: /(访问|导航|刷新|重载|重新加载|navigate|visit|go to|refresh|reload)/i },
   { action: 'click', pattern: /(点击|点开|进入|选择|发送|关闭|删除|粘贴|执行搜索|打开.*(?:入口|菜单|工单|详情)|click|select|send|close|delete|paste|search)/i },
 ]
