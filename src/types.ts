@@ -138,6 +138,13 @@ export interface InspectionDefinition {
     taskChecklist?: string[]
     /** Dashboard cleanup/finalization health result for user-visible diagnosis. */
     flowHealth?: FlowHealth
+    /**
+     * Append-only snapshot of successful live-teaching actions. Structural
+     * Runbook edits do not write this trace. It exists so a later repair can
+     * restore a successfully executed step that was accidentally omitted from
+     * the visible Runbook without guessing selectors, coordinates, or step ids.
+     */
+    successfulTeachingTrace?: InspectionStep[]
   }
 }
 
