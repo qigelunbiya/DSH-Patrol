@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 const source = readFileSync(join(process.cwd(), 'browser-bridge-runtime', 'dashboard-management-client.js'), 'utf8')
 const dashboardSource = readFileSync(join(process.cwd(), 'browser-bridge-runtime', 'dashboard-client.js'), 'utf8')
+const managementRouteSource = readFileSync(join(process.cwd(), 'browser-bridge-runtime', 'dashboard-management.js'), 'utf8')
 
 describe('dashboard flow-management client', () => {
   it('keeps MutationObserver patches idempotent and yields to the event loop', () => {
@@ -16,6 +17,17 @@ describe('dashboard flow-management client', () => {
     expect(source).toContain('猜 URL/试错轮次')
     expect(source).toContain('patrol_finalize_flow')
     expect(source).toContain('真正成功路径')
+  })
+
+  it('explains checklist-safe cleanup and refuses to persist a blocked destructive cleanup', () => {
+    expect(source).toContain('任务清单项丢失')
+    expect(source).toContain('原 Runbook 不写回')
+    expect(managementRouteSource).toContain('if (result.blocked === true)')
+    expect(managementRouteSource).toContain('候选清理会删除或破坏用户任务清单')
+    const blockedIndex = managementRouteSource.indexOf('if (result.blocked === true)')
+    const persistIndex = managementRouteSource.indexOf('const persisted = await persistDefinition', blockedIndex)
+    expect(blockedIndex).toBeGreaterThanOrEqual(0)
+    expect(persistIndex).toBeGreaterThan(blockedIndex)
   })
 
   it('can inspect and copy the exact stored flow JSON', () => {
