@@ -59,46 +59,6 @@ describe('browser interaction hardening layer', () => {
     expect(source).toContain('narrowed = []')
   })
 
-  it('expands focused B# crops so coarse model centers do not crop precision targets out', () => {
-    expect(source).toContain('const pixelGrounding = args.pixelActionMap === true && args.actionMap !== true')
-    expect(source).toContain('const minimumWidthRatio = pixelGrounding ? 0.34 : 0.12')
-    expect(source).toContain('const minimumHeightRatio = pixelGrounding ? 0.30 : 0.12')
-    expect(source).toContain("(pixelGrounding ? 0.40 : 0.30)")
-  })
-
-  it('supports a no-input browser visual probe for OCR-anchored close controls', () => {
-    expect(source).toContain("['left-click', 'right-click', 'hover', 'mark', 'probe']")
-    expect(source).toContain("if (pointerAction === 'probe')")
-    expect(source).toContain("stateEvidence: 'visual safety probe verified the screenshot-derived point without physical input'")
-    expect(source).toContain('visual close/remove preflight rejected this point before physical input')
-  })
-
-  it('ports the proven Desktop image-component algorithm into an isolated browser V# Action Map', () => {
-    expect(source).toContain('interactionBrowserVisualActionMaps')
-    expect(source).toContain('interactionBuildDesktopStyleBrowserActionMapInWorker')
-    expect(source).toContain('const threshold = 30')
-    expect(source).toContain('for (let pass = 0; pass < 2; pass += 1)')
-    expect(source).toContain('iou(item, existing) > 0.42')
-    expect(source).toContain("item.candidateId = 'V' + (index + 1)")
-    expect(source).toContain('browserWideThinRescue')
-    expect(source).toContain("method: 'browser-local-desktop-style-action-map'")
-    expect(source).toContain("coordinateMapping: 'browser-desktop-style-action-map-bbox-center'")
-    expect(source).toContain("if (cmd === 'browserVisualActionMap')")
-    expect(source).toContain("if (cmd === 'browserResolveVisualCandidate')")
-    expect(source).not.toMatch(/from ['"].*desktop-runtime/)
-  })
-
-  it('builds browser B# candidates from screenshot pixels without desktop or DOM geometry', () => {
-    expect(source).toContain('interactionBuildPixelActionMapInWorker')
-    expect(source).toContain("item.candidateId = `B${index + 1}`")
-    expect(source).toContain("coordinateSource = 'pixel-action-map-candidate'")
-    expect(source).toContain('frame.pixelCandidates')
-    expect(source).toContain('selectedPixelCandidate.centerX')
-    expect(source).toContain('selectedPixelCandidate.centerY')
-    expect(source).toContain('pixelActionMap')
-    expect(source).not.toContain('PatrolDesktopVision')
-  })
-
   it('renders a separate magnified Action Map candidate sheet with exact safe-point crosses', () => {
     expect(source).toContain('interactionRenderActionCandidateZoomSheetInWorker')
     expect(source).toContain('PATROL TARGET ZOOM')

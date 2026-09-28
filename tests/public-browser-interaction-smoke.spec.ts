@@ -25,7 +25,7 @@ async function localTestSite() {
       return
     }
     if (request.url === '/visual') {
-      response.end('<!doctype html><button id="target" style="position:fixed;left:432px;top:311px;width:56px;height:28px" onclick="this.dataset.clicked=\'yes\'" oncontextmenu="this.dataset.context=\'yes\';event.preventDefault()">发布</button>')
+      response.end('<!doctype html><button id="target" style="position:fixed;left:432px;top:311px;width:56px;height:28px" oncontextmenu="this.dataset.context=\'yes\';event.preventDefault()">发布</button>')
       return
     }
     if (request.url === '/row-actions') {
@@ -119,7 +119,7 @@ describe('public real-browser Patrol interaction smoke', () => {
     const site = await localTestSite()
     const harness = await extensionHarness()
     try {
-      expect(harness.manifest.version).toBe('0.3.14')
+      expect(harness.manifest.version).toBe('0.3.13')
       await harness.page.goto(`${site.root}/add_remove_elements/`, { waitUntil: 'domcontentloaded', timeout: 20000 })
 
       const boundedShot = await harness.command('screenshot', { format: 'jpeg', maxWidth: 1024, quality: 68, coordinateGuide: true })
@@ -147,79 +147,6 @@ describe('public real-browser Patrol interaction smoke', () => {
       const visualShot = await harness.command('screenshot', { format: 'jpeg', maxWidth: 1024, quality: 68, coordinateGuide: true })
       const xRatio = 460 / 1280
       const yRatio = 325 / 800
-      expect(visualShot.modelRasterWidth).toBeGreaterThan(0)
-      expect(visualShot.modelRasterHeight).toBeGreaterThan(0)
-      const imageX = ((460 - Number(visualShot.captureClientLeft || 0)) / Number(visualShot.captureWidth)) * Number(visualShot.modelRasterWidth)
-      const imageY = ((325 - Number(visualShot.captureClientTop || 0)) / Number(visualShot.captureHeight)) * Number(visualShot.modelRasterHeight)
-      const rawPixelClicked = await harness.command('visualClick', {
-        frameId: visualShot.visualFrameId,
-        imageX,
-        imageY,
-        imageWidth: visualShot.modelRasterWidth,
-        imageHeight: visualShot.modelRasterHeight,
-        targetHint: '发布按钮',
-        visualAuthority: true,
-      })
-      expect(rawPixelClicked).toMatchObject({
-        ok: true,
-        coordinateSource: 'model-raster-pixel',
-        requestedImageX: expect.any(Number),
-        requestedImageY: expect.any(Number),
-        modelRasterWidth: visualShot.modelRasterWidth,
-        modelRasterHeight: visualShot.modelRasterHeight,
-        visualSnapped: false,
-      })
-      expect(rawPixelClicked.resolvedClickX).toBeCloseTo(460, 1)
-      expect(rawPixelClicked.resolvedClickY).toBeCloseTo(325, 1)
-      expect(await harness.page.$eval('#target', element => element.dataset.clicked)).toBe('yes')
-
-      // Browser Pixel Grounding: the model would only choose WHICH B#.
-      // Candidate geometry comes from the focused CURRENT screenshot pixels,
-      // then the runtime maps the B# bbox center back to the viewport.
-      await harness.page.$eval('#target', element => { delete element.dataset.clicked })
-      const pixelShot = await harness.command('screenshot', {
-        format: 'jpeg',
-        maxWidth: 1024,
-        quality: 82,
-        pixelActionMap: true,
-        focusXRatio: 460 / 1280,
-        focusYRatio: 325 / 800,
-        focusWidthRatio: 0.22,
-        focusHeightRatio: 0.24,
-      })
-      expect(pixelShot).toMatchObject({
-        focusedVisual: true,
-        captureMode: 'cdp-focused-region',
-        pixelActionMap: true,
-        actionMap: false,
-      })
-      expect(pixelShot.pixelCandidateCount).toBeGreaterThan(0)
-      expect(Array.isArray(pixelShot.pixelCandidates)).toBe(true)
-      const expectedPixelX = ((460 - Number(pixelShot.captureClientLeft)) / Number(pixelShot.captureWidth)) * Number(pixelShot.modelRasterWidth)
-      const expectedPixelY = ((325 - Number(pixelShot.captureClientTop)) / Number(pixelShot.captureHeight)) * Number(pixelShot.modelRasterHeight)
-      const pixelCandidate = [...pixelShot.pixelCandidates].sort((left, right) => {
-        const dl = Math.hypot(Number(left.centerX) - expectedPixelX, Number(left.centerY) - expectedPixelY)
-        const dr = Math.hypot(Number(right.centerX) - expectedPixelX, Number(right.centerY) - expectedPixelY)
-        return dl - dr
-      })[0]
-      expect(pixelCandidate?.candidateId).toMatch(/^B\d+$/)
-
-      const pixelClicked = await harness.command('visualClick', {
-        frameId: pixelShot.visualFrameId,
-        pixelCandidateId: pixelCandidate.candidateId,
-        targetHint: '发布按钮',
-        visualAuthority: true,
-      })
-      expect(pixelClicked).toMatchObject({
-        ok: true,
-        coordinateSource: 'pixel-action-map-candidate',
-        pixelCandidateId: pixelCandidate.candidateId,
-        visualSnapped: false,
-      })
-      expect(pixelClicked.pixelCandidateCenterX).toBeCloseTo(Number(pixelCandidate.centerX), 3)
-      expect(pixelClicked.pixelCandidateCenterY).toBeCloseTo(Number(pixelCandidate.centerY), 3)
-      expect(await harness.page.$eval('#target', element => element.dataset.clicked)).toBe('yes')
-
       const marked = await harness.command('visualClick', {
         frameId: visualShot.visualFrameId,
         xRatio,

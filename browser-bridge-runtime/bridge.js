@@ -143,9 +143,6 @@ export class BrowserBridge {
       this.extensionInfo = {
         name: String(message.name ?? 'unknown'),
         version: String(message.version ?? '?'),
-        ...(typeof message.runtimeBuild === 'string' && message.runtimeBuild.trim()
-          ? { runtimeBuild: message.runtimeBuild.trim().slice(0, 120) }
-          : {}),
         ...(capabilities.length > 0 ? { capabilities } : {}),
       }
       this.client?.send(JSON.stringify({ type: 'welcome', protocol: 1, server: 'dsh-patrol-browser-bridge', version: '0.2.0' }))

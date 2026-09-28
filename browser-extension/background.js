@@ -3,8 +3,6 @@ const DEFAULTS = {
   autoConnect: true,
 }
 
-const BROWSER_RUNTIME_BUILD = '2026-09-28-visual-action-map-runtime-v2'
-
 const PAGE_BRIDGE_RETRY_MS = [0, 120, 280, 650]
 const EXTENSION_CAPABILITIES = Object.freeze([
   'captureImageCode',
@@ -55,8 +53,7 @@ async function connect(force = false) {
         type: 'hello',
         name: 'dsh-patrol-browser-extension',
         version: typeof manifest?.version === 'string' ? manifest.version : '?',
-        runtimeBuild: BROWSER_RUNTIME_BUILD,
-        capabilities: reportedCapabilities(),
+        capabilities: [...EXTENSION_CAPABILITIES],
       })
     }
     ws.onmessage = event => onMessage(ws, event.data)
@@ -119,8 +116,6 @@ async function handleCommand(cmd, args) {
       await chrome.tabs.remove(args.tabId)
       return { tabId: args.tabId, url: typeof existing?.url === 'string' ? existing.url : '' }
     }
-    case 'runtimeInfo':
-      return browserRuntimeInfo()
     case 'navigate':
       return await navigate(args)
     case 'screenshot':
@@ -146,37 +141,6 @@ async function handleCommand(cmd, args) {
     default:
       throw new Error(`unsupported browser command: ${cmd}`)
   }
-}
-
-function browserRuntimeInfo() {
-  const visualActionMapReady = typeof interactionBrowserVisualActionMap === 'function'
-    && typeof interactionBrowserResolveVisualCandidate === 'function'
-    && typeof interactionVisualClick === 'function'
-  return {
-    ok: true,
-    runtimeBuild: BROWSER_RUNTIME_BUILD,
-    visualActionMapReady,
-    visualClickReady: typeof interactionVisualClick === 'function',
-    resolveVisualCandidateReady: typeof interactionBrowserResolveVisualCandidate === 'function',
-  }
-}
-
-function reportedCapabilities() {
-  const capabilities = [...EXTENSION_CAPABILITIES]
-  const runtime = browserRuntimeInfo()
-  if (!runtime.visualActionMapReady) {
-    for (const capability of ['visualActionMapV1', 'verifiedVisualActionPointV1']) {
-      const index = capabilities.indexOf(capability)
-      if (index >= 0) capabilities.splice(index, 1)
-    }
-  }
-  if (!runtime.visualClickReady) {
-    for (const capability of ['visualClick', 'trustedVisualClick', 'visualPointerProbeV1']) {
-      const index = capabilities.indexOf(capability)
-      if (index >= 0) capabilities.splice(index, 1)
-    }
-  }
-  return capabilities
 }
 
 async function navigate(args) {

@@ -9,24 +9,8 @@ describe('TEST MODE operational click fallbacks', () => {
     expect(source).toContain('createPatrolTestModePlanningGuard(clickOutcomes)')
     expect(source).toContain('strategy counters')
     expect(source).toContain("build=${TEST_MODE_BUILD_MARKER}")
-    expect(source).toContain("test-compact-first-turn-v15")
+    expect(source).toContain("test-real-visual-grounding-v13")
     expect(source).toContain("browserStrategy=user-directed(default=hybrid)")
-  })
-
-  it('keeps heavy domain prompt sections out of the TEST first turn without unregistering runtimes', () => {
-    const source = readFileSync(join(process.cwd(), 'src', 'index.ts'), 'utf8')
-    const policy = readFileSync(join(process.cwd(), 'src', 'test-mode.ts'), 'utf8')
-
-    expect(policy).toContain('injectExtendedDomainPrompts: !testMode')
-    expect(source).toContain('if (runtimePolicy.injectExtendedDomainPrompts)')
-    expect(source).toContain("name: 'agent:dsh-patrol-excel'")
-    expect(source).toContain("name: 'agent:dsh-patrol-session'")
-    expect(source).toContain("name: 'agent:dsh-patrol-desktop'")
-    expect(source).toContain("promptProfile=${runtimePolicy.injectExtendedDomainPrompts ? 'extended' : 'compact-core'}")
-    expect(source).toContain('registerPatrolExcelToolsV5')
-    expect(source).toContain('registerPatrolDesktopActionTools')
-    expect(source).toContain('registerPatrolTransientInputTools')
-    expect(source).toContain('registerPatrolTotpTools')
   })
 
   it('allows non-secret low-level interaction fallbacks in TEST MODE', () => {

@@ -34,14 +34,6 @@ export interface PatrolVisualClickOptions {
   clickOutcomes?: PatrolClickOutcomeTracker
   visualEvidence?: PatrolVisualEvidenceRegistry
   requirePreview?: boolean
-  testMode?: boolean
-  /**
-   * Keep the large legacy visual-click wrapper available to the model.
-   * TEST mode deliberately hides it: OCR/V# wrappers still call the same
-   * internal engine, while the model sees a much smaller, non-overlapping
-   * tool surface. Stored Runbooks replay browser_visual_click directly.
-   */
-  registerCompatibilityTool?: boolean
 }
 
 export function registerPatrolVisualClickTool(
@@ -60,93 +52,19 @@ export function registerPatrolVisualClickTool(
     xRatio: number
     yRatio: number
     createdAt: number
-    source?: 'manual' | 'ocr' | 'action-map'
-    actionMapId?: string
-    visualCandidateId?: string
-    ocrText?: string
-    ocrMatchedText?: string
-    ocrRelation?: 'center' | 'close-right'
   }>()
   let visualPreviewSequence = 0
-
-  const actionMapTool = defineTool({
-    name: 'patrol_browser_visual_action_map',
-    description: 'PRIMARY browser visual grounding for unlabeled controls. Mirrors the proven Desktop Action Map workflow but is a completely separate browser implementation: start from the SAME full CURRENT patrol_observe(includeImage=true) frame, give only a coarse target-region center, then Patrol builds a browser-local V1/V2/... Action Map from screenshot pixels. Read the returned map image, choose V#, and click with patrol_browser_click_visual_candidate. The final click uses the program-computed bbox center; never estimate final x/y. No desktop-runtime code is imported or modified.',
-    parameters: {
-      inspectionId: { type: 'string', required: true },
-      frameId: { type: 'string', description: 'Optional CURRENT browser visual frame. Normally omit; Patrol auto-binds the latest model-visible full browser frame for this inspection.' },
-      centerXRatio: { type: 'number', required: true, description: 'Coarse center of the target region on the full CURRENT screenshot, 0..1. This is only for cropping the map, never the final click.' },
-      centerYRatio: { type: 'number', required: true, description: 'Coarse center of the target region on the full CURRENT screenshot, 0..1.' },
-      widthRatio: { type: 'number', description: 'Coarse map-region width. Default 0.46; use about 0.36..0.60 for most controls.' },
-      heightRatio: { type: 'number', description: 'Coarse map-region height. Default 0.42; use about 0.32..0.54 for most controls.' },
-      maxCandidates: { type: 'integer', description: 'Maximum V# candidates. Default 18, bounded 3..30.' },
-      tabId: { type: 'integer' },
-    },
-    output: TEXT_OUTPUT,
-    async execute(args, exec: ToolRunContext) {
-      await store.load(args.inspectionId)
-      const frameId = String(args.frameId ?? '').trim()
-        || options.visualEvidence?.latest(args.inspectionId)
-        || ''
-      if (!/^browser-visual-[a-z0-9-]+$/i.test(frameId)) {
-        throw new Error('patrol_browser_visual_action_map requires a model-visible full CURRENT browser frame from patrol_observe(includeImage=true)')
-      }
-      const centerXRatio = Number(args.centerXRatio)
-      const centerYRatio = Number(args.centerYRatio)
-      if (![centerXRatio, centerYRatio].every(Number.isFinite)
-        || centerXRatio < 0 || centerXRatio > 1 || centerYRatio < 0 || centerYRatio > 1) {
-        throw new Error('browser visual Action Map requires coarse centerXRatio/centerYRatio between 0 and 1')
-      }
-      const evidence = options.visualEvidence?.consume(frameId, args.inspectionId)
-      if (evidence?.ok === false) throw new Error(`browser visual Action Map refused: ${evidence.reason}`)
-      const built = await runner.dispatch('browser_visual_action_map', compactObject({
-        frameId,
-        centerXRatio,
-        centerYRatio,
-        widthRatio: typeof args.widthRatio === 'number' ? args.widthRatio : undefined,
-        heightRatio: typeof args.heightRatio === 'number' ? args.heightRatio : undefined,
-        maxCandidates: Number.isInteger(args.maxCandidates) ? args.maxCandidates : undefined,
-        tabId: args.tabId,
-      }), exec)
-      if (!built.ok) throw new Error(built.error ?? built.text ?? 'browser visual Action Map failed')
-      const actionMapId = objectString(built.value, 'actionMapId')
-      const path = objectString(built.value, 'path')
-      const candidateCount = objectNumber(built.value, 'candidateCount')
-      if (!actionMapId || !path || candidateCount === undefined || candidateCount < 1) {
-        throw new Error('browser visual Action Map returned incomplete map metadata')
-      }
-      return [
-        `Browser Action Map READY: frameId=${frameId}; actionMapId=${actionMapId}; candidates=${candidateCount}.`,
-        `Call read_image with this exact path: ${path}`,
-        'Choose the V# whose red bbox/green center is inside the intended control. Then call patrol_browser_click_visual_candidate with the SAME actionMapId and candidateId. Do not provide imageX/imageY/xRatio/yRatio.',
-        objectString(built.value, 'candidateSummary') ? `Candidate geometry (diagnostic only; choose visually from the map):\n${objectString(built.value, 'candidateSummary')}` : '',
-        'This Browser Action Map is browser-local and independent from Desktop/Application visual state.',
-      ].filter(Boolean).join('\n')
-    },
-  })
-
   const tool = defineTool({
     name: 'patrol_visual_click_target',
-    description: 'Compatibility/recording engine for browser visual clicks. New TEST teaching must use the Desktop-style browser tools: visible text through patrol_browser_click_ocr_text; unlabeled controls through patrol_observe(includeImage=true) → patrol_browser_visual_action_map → read_image → patrol_browser_click_visual_candidate. The browser Action Map is a browser-local copy of the proven Desktop image-geometry algorithm and clicks program-owned V# bbox centers. Legacy A#/B#/manual imageX/imageY/xRatio paths are not part of new TEST teaching. Never use for image-code/CAPTCHA.',
+    description: 'Direct screenshot-bound browser teaching click. For ordinary visible browser controls, links, inputs and small icons, prefer an A# from the CURRENT targeted Action Map: the model chooses WHICH candidate and Patrol clicks that candidate\'s program-verified safe point. frameId is normally omitted: Patrol automatically binds the latest model-visible patrol_observe(includeImage=true) frame for this inspection, eliminating manual frame-id copy errors. Free XY is a fallback only when the CURRENT Action Map has no candidate covering a canvas/custom-drawn/special target. pointerAction=mark/previewId remains optional for diagnostics only. Navigation candidates carry their own CURRENT visible text/title/aria evidence. After the physical click, Patrol verifies the business result and learns reusable DOM/semantic identity for replay. Never use for image-code/CAPTCHA.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       stepName: { type: 'string', required: true },
       frameId: { type: 'string', description: 'Optional explicit browser visualFrameId. Normally omit it: Patrol automatically uses the latest model-visible patrol_observe(includeImage=true) frame for this inspection. Screenshot file names/paths are never valid frame IDs.' },
-      previewId: { type: 'string', description: 'Legacy diagnostic token; do not use for new TEST teaching.' },
-      actionMapId: { type: 'string', description: 'Browser-local Desktop-style Action Map id returned by patrol_browser_visual_action_map.' },
-      visualCandidateId: { type: 'string', description: 'V1/V2/... candidate chosen from the browser Action Map image. Program geometry owns the final bbox-center click.' },
-      ocrText: { type: 'string', description: 'Preferred for any visible browser text target. Patrol captures a fresh CURRENT screenshot, runs Windows OCR with bounding boxes, resolves this text, and clicks the OCR geometry. Examples: 百度一下, 龙之信条 2 - 百度百科, 7.发售版本, 我的任务.' },
-      ocrMatch: { type: 'string', enum: ['exact', 'contains'], description: 'OCR text match mode. Prefer exact; contains is for harmless punctuation or extra-text variation.' },
-      ocrIndex: { type: 'integer', description: 'Optional zero-based occurrence only when CURRENT OCR reports multiple visible matches and the intended occurrence is known.' },
-      ocrRelation: { type: 'string', enum: ['center', 'close-right'], description: 'center clicks the OCR text bbox center. close-right anchors on ocrText and locates a verified close/remove control immediately to its right without a physical probe click; use for 我的任务右侧×.' },
-      imageX: { type: 'number', description: 'Legacy compatibility only. New TEST browser visual teaching uses V# Action Map candidates or OCR text geometry.' },
-      imageY: { type: 'number', description: 'Legacy compatibility only. New TEST browser visual teaching uses V# Action Map candidates or OCR text geometry.' },
-      imageWidth: { type: 'number', description: 'Optional validation copy of modelRasterWidth from CURRENT patrol_observe. If supplied and it does not match the bound frame, Patrol refuses the click.' },
-      imageHeight: { type: 'number', description: 'Optional validation copy of modelRasterHeight from CURRENT patrol_observe. If supplied and it does not match the bound frame, Patrol refuses the click.' },
-      xRatio: { type: 'number', description: 'Legacy compatibility only. New TEST teaching rejects model-guessed xRatio/yRatio.' },
-      yRatio: { type: 'number', description: 'Legacy compatibility only. New TEST teaching rejects model-guessed xRatio/yRatio.' },
-      pixelCandidateId: { type: 'string', description: 'Legacy browser Pixel Action Map compatibility only. Do not use for new TEST teaching; visible text uses ocrText.' },
-      candidateId: { type: 'string', description: 'Legacy DOM Action Map compatibility only. Do not use for new TEST teaching.' },
+      previewId: { type: 'string', description: 'Optional diagnostic token returned by pointerAction=mark. Normal visual clicks do not require it.' },
+      xRatio: { type: 'number', description: 'Normalized screenshot coordinate for free-point visual clicks. Optional when candidateId or previewId is supplied.' },
+      yRatio: { type: 'number', description: 'Normalized screenshot coordinate for free-point visual clicks. Optional when candidateId or previewId is supplied.' },
+      candidateId: { type: 'string', description: 'A visual A1/A2/... label chosen by the model from patrol_observe(includeImage=true, actionMap=true). When the candidate is visually clear, click it directly; Patrol binds the click to that candidate safe-point and fingerprint. Use mark only when the model itself is uncertain.' },
       targetHint: { type: 'string', required: true, description: 'Concrete CURRENT business intent, e.g. 评论输入框/发布按钮/点赞按钮/完整视频标题. It labels post-click verification and learned DOM/semantic binding; it does not authorize or relocate the live screenshot coordinate.' },
       expectedVisualText: { type: 'string', description: 'Optional extra exact visible label/title from the attached CURRENT screenshot. Action Map candidate clicks automatically carry candidate-visible text/title/aria evidence; free-XY navigation/card/video clicks still require expectedVisualText so Patrol can verify the raw point and destination.' },
       visualAuthority: { type: 'boolean', description: 'Backward-compatible flag. Live patrol_visual_click_target teaching is coordinate-authoritative regardless of this value; replay may still use learned semantic/selector recovery.' },
@@ -166,91 +84,7 @@ export function registerPatrolVisualClickTool(
     },
     output: TEXT_OUTPUT,
     async execute(args, exec: ToolRunContext) {
-      const requestedActionMapId = typeof args.actionMapId === 'string' ? args.actionMapId.trim() : ''
-      const requestedVisualCandidateId = typeof args.visualCandidateId === 'string' ? args.visualCandidateId.trim().toUpperCase() : ''
-      let actionMapPreviewId = ''
-      if (requestedActionMapId || requestedVisualCandidateId) {
-        if (!requestedActionMapId || !/^V[1-9]\d*$/i.test(requestedVisualCandidateId)) {
-          throw new Error('Desktop-style browser visual candidate click requires BOTH actionMapId and visualCandidateId=V#')
-        }
-        if (args.previewId || args.ocrText || args.imageX !== undefined || args.imageY !== undefined || args.xRatio !== undefined || args.yRatio !== undefined || args.pixelCandidateId || args.candidateId) {
-          throw new Error('V# Action Map candidate is a complete browser visual grounding source; do not combine it with OCR, A#/B#, previewId, or free coordinates')
-        }
-        const explicitFrameId = String(args.frameId ?? '').trim()
-        if (!/^browser-visual-[a-z0-9-]+$/i.test(explicitFrameId)) {
-          throw new Error('V# Action Map candidate click requires the SAME frameId returned by patrol_browser_visual_action_map')
-        }
-        const resolved = await runner.dispatch('browser_resolve_visual_candidate', compactObject({
-          frameId: explicitFrameId,
-          actionMapId: requestedActionMapId,
-          candidateId: requestedVisualCandidateId,
-          tabId: args.tabId,
-        }), exec)
-        if (!resolved.ok) throw new Error(resolved.error ?? resolved.text ?? 'browser visual Action Map candidate resolution failed')
-        const frameId = objectString(resolved.value, 'frameId')
-        const xRatio = objectNumber(resolved.value, 'xRatio')
-        const yRatio = objectNumber(resolved.value, 'yRatio')
-        if (!frameId || xRatio === undefined || yRatio === undefined) {
-          throw new Error('browser visual Action Map candidate resolver returned incomplete program-owned geometry')
-        }
-        visualPreviewSequence += 1
-        actionMapPreviewId = `browser-vcandidate-${Date.now().toString(36)}-${visualPreviewSequence.toString(36)}`
-        visualPreviews.set(actionMapPreviewId, {
-          previewId: actionMapPreviewId,
-          inspectionId: args.inspectionId,
-          targetHint: String(args.targetHint ?? '').trim(),
-          frameId,
-          xRatio,
-          yRatio,
-          createdAt: Date.now(),
-          source: 'action-map',
-          actionMapId: requestedActionMapId,
-          visualCandidateId: requestedVisualCandidateId,
-        })
-        options.visualEvidence?.mark(frameId, args.inspectionId)
-      }
-
-      const requestedOcrText = typeof args.ocrText === 'string' ? args.ocrText.trim() : ''
-      const requestedOcrRelation = args.ocrRelation === 'close-right' ? 'close-right' : 'center'
-      let ocrPreviewId = ''
-      if (requestedOcrText) {
-        assertSafePersistentText(requestedOcrText, 'ocrText')
-        if (args.previewId || args.imageX !== undefined || args.imageY !== undefined || args.xRatio !== undefined || args.yRatio !== undefined || args.pixelCandidateId || args.candidateId) {
-          throw new Error('ocrText is a complete browser visual grounding source; do not combine it with previewId, imageX/imageY, xRatio/yRatio, B#, or A#')
-        }
-        const resolved = await runner.dispatch('browser_resolve_ocr_visual_target', compactObject({
-          text: requestedOcrText,
-          match: args.ocrMatch === 'contains' || (args.ocrMatch === undefined && requestedOcrRelation === 'close-right') ? 'contains' : 'exact',
-          index: Number.isInteger(args.ocrIndex) ? args.ocrIndex : undefined,
-          relation: requestedOcrRelation,
-          targetHint: args.targetHint,
-          tabId: args.tabId,
-        }), exec)
-        if (!resolved.ok) throw new Error(resolved.error ?? resolved.text ?? 'browser OCR visual target resolution failed')
-        const frameId = objectString(resolved.value, 'frameId')
-        const xRatio = objectNumber(resolved.value, 'xRatio')
-        const yRatio = objectNumber(resolved.value, 'yRatio')
-        if (!frameId || xRatio === undefined || yRatio === undefined) {
-          throw new Error('browser OCR visual target resolver returned incomplete frame geometry')
-        }
-        visualPreviewSequence += 1
-        ocrPreviewId = `browser-ocr-${Date.now().toString(36)}-${visualPreviewSequence.toString(36)}`
-        visualPreviews.set(ocrPreviewId, {
-          previewId: ocrPreviewId,
-          inspectionId: args.inspectionId,
-          targetHint: String(args.targetHint ?? '').trim(),
-          frameId,
-          xRatio,
-          yRatio,
-          createdAt: Date.now(),
-          source: 'ocr',
-          ocrText: requestedOcrText,
-          ...(objectString(resolved.value, 'matchedText') ? { ocrMatchedText: objectString(resolved.value, 'matchedText')! } : {}),
-          ocrRelation: requestedOcrRelation,
-        })
-        options.visualEvidence?.mark(frameId, args.inspectionId)
-      }
-      const requestedPreviewId = actionMapPreviewId || ocrPreviewId || (typeof args.previewId === 'string' ? args.previewId.trim() : '')
+      const requestedPreviewId = typeof args.previewId === 'string' ? args.previewId.trim() : ''
       const boundPreview = requestedPreviewId ? visualPreviews.get(requestedPreviewId) : undefined
       if (requestedPreviewId && !boundPreview) {
         throw new Error(`browser visual preview ${JSON.stringify(requestedPreviewId)} is unavailable or stale; mark the CURRENT target again before clicking`)
@@ -267,38 +101,14 @@ export function registerPatrolVisualClickTool(
         throw new Error('browser visual preview is bound to a different business target; mark this target again instead of reusing another control preview')
       }
 
-      const pixelCandidateId = boundPreview ? '' : (typeof args.pixelCandidateId === 'string' ? args.pixelCandidateId.trim().toUpperCase() : '')
-      const hasPixelCandidate = /^B[1-9]\d*$/i.test(pixelCandidateId)
       const candidateId = boundPreview ? '' : (typeof args.candidateId === 'string' ? args.candidateId.trim().toUpperCase() : '')
       const hasCandidate = /^A[1-9]\d*$/i.test(candidateId)
-      const imageX = boundPreview ? Number.NaN : (typeof args.imageX === 'number' ? args.imageX : Number.NaN)
-      const imageY = boundPreview ? Number.NaN : (typeof args.imageY === 'number' ? args.imageY : Number.NaN)
-      const hasImagePoint = Number.isFinite(imageX) && Number.isFinite(imageY) && imageX >= 0 && imageY >= 0
       const pointX = boundPreview ? boundPreview.xRatio : (typeof args.xRatio === 'number' ? args.xRatio : Number.NaN)
       const pointY = boundPreview ? boundPreview.yRatio : (typeof args.yRatio === 'number' ? args.yRatio : Number.NaN)
-      const hasRatioPoint = Number.isFinite(pointX) && Number.isFinite(pointY)
+      const hasPoint = Number.isFinite(pointX) && Number.isFinite(pointY)
         && pointX >= 0 && pointX <= 1 && pointY >= 0 && pointY <= 1
-      const requestedPointerAction = args.pointerAction ?? 'left-click'
-      const ocrOwnedPoint = boundPreview?.source === 'ocr'
-      const actionMapOwnedPoint = boundPreview?.source === 'action-map'
-      const programOwnedPoint = ocrOwnedPoint || actionMapOwnedPoint
-      const liveTestClick = options.testMode === true && requestedPointerAction === 'left-click'
-      if ([hasPixelCandidate, hasCandidate, hasImagePoint, hasRatioPoint || Boolean(boundPreview)].filter(Boolean).length > 1) {
-        throw new Error('visual click requires exactly one coordinate source')
-      }
-      if (liveTestClick && !programOwnedPoint && (hasPixelCandidate || hasCandidate || hasImagePoint || hasRatioPoint || Boolean(boundPreview))) {
-        throw new Error([
-          'TEST MODE old browser visual grounding is disabled before physical input.',
-          'Visible text: use patrol_browser_click_ocr_text.',
-          'Unlabeled control/icon/search box: patrol_observe(includeImage=true) → patrol_browser_visual_action_map → read_image → patrol_browser_click_visual_candidate(V#).',
-          'Do not use A#, B#, previewId, imageX/imageY, or xRatio/yRatio for new browser TEST teaching.',
-        ].join(' '))
-      }
-      if (!hasPixelCandidate && !hasCandidate && !hasImagePoint && !hasRatioPoint && !boundPreview) {
-        if (liveTestClick) {
-          throw new Error('TEST MODE browser visual click needs either OCR text geometry or a V# from patrol_browser_visual_action_map; free coordinates and old A#/B# paths are disabled')
-        }
-        throw new Error('visual click requires a browser visual grounding source')
+      if (!hasCandidate && !hasPoint) {
+        throw new Error('visual click requires previewId from a verified mark, candidateId=A# from a VISUAL ACTION MAP, or xRatio/yRatio between 0 and 1')
       }
       const explicitFrameId = String(args.frameId ?? '').trim()
       const frameId = boundPreview?.frameId
@@ -314,18 +124,11 @@ export function registerPatrolVisualClickTool(
       }
       assertSafePersistentText(args.targetHint, 'targetHint')
       if (args.expectedVisualText !== undefined) assertSafePersistentText(args.expectedVisualText, 'expectedVisualText')
-      const pointerAction = requestedPointerAction
+      const pointerAction = args.pointerAction ?? 'left-click'
       const diagnosticPointerAction = pointerAction !== 'left-click'
-      if (liveTestClick && !programOwnedPoint) {
-        throw new Error('TEST MODE browser visual click requires program-owned OCR geometry or a Desktop-style browser V# candidate')
-      }
-      const ocrExpectedVisualText = ocrOwnedPoint && boundPreview?.ocrRelation === 'center'
-        ? boundPreview.ocrMatchedText || boundPreview.ocrText
-        : undefined
       if (!diagnosticPointerAction && !hasCandidate && navigationLikeBusinessAction(args.stepName, args.targetHint)
-        && (typeof args.expectedVisualText !== 'string' || args.expectedVisualText.trim().length < 4)
-        && !ocrExpectedVisualText) {
-        throw new Error('visual navigation requires visible target text. Prefer ocrText so Patrol can use CURRENT screenshot OCR geometry and verify the destination.')
+        && (typeof args.expectedVisualText !== 'string' || args.expectedVisualText.trim().length < 4)) {
+        throw new Error('free-XY navigation/card visual clicks require expectedVisualText copied from the model-visible CURRENT screenshot; prefer a targeted Action Map candidateId when the target is a normal visible link/card/control')
       }
       if (args.expectedText !== undefined) assertSafePersistentText(args.expectedText, 'expectedText')
       if (args.conditionExpectedText !== undefined) assertSafePersistentText(args.conditionExpectedText, 'conditionExpectedText')
@@ -344,18 +147,11 @@ export function registerPatrolVisualClickTool(
         await store.load(args.inspectionId)
         const probed = await runner.dispatch('browser_visual_click', compactObject({
           frameId,
-          visualActionMapId: actionMapOwnedPoint ? boundPreview?.actionMapId : undefined,
-          visualCandidateId: actionMapOwnedPoint ? boundPreview?.visualCandidateId : undefined,
-          pixelCandidateId: hasPixelCandidate ? pixelCandidateId : undefined,
           candidateId: hasCandidate ? candidateId : undefined,
-          imageX: hasImagePoint ? imageX : undefined,
-          imageY: hasImagePoint ? imageY : undefined,
-          imageWidth: hasImagePoint && typeof args.imageWidth === 'number' ? args.imageWidth : undefined,
-          imageHeight: hasImagePoint && typeof args.imageHeight === 'number' ? args.imageHeight : undefined,
-          xRatio: actionMapOwnedPoint ? undefined : hasRatioPoint || boundPreview ? pointX : undefined,
-          yRatio: actionMapOwnedPoint ? undefined : hasRatioPoint || boundPreview ? pointY : undefined,
+          xRatio: hasPoint ? pointX : undefined,
+          yRatio: hasPoint ? pointY : undefined,
           targetHint: args.targetHint,
-          expectedVisualText: args.expectedVisualText ?? ocrExpectedVisualText,
+          expectedVisualText: args.expectedVisualText,
           visualAuthority: true,
           pointerAction,
           tabId: args.tabId,
@@ -411,15 +207,9 @@ export function registerPatrolVisualClickTool(
           }
         }
         return [
-          actionMapOwnedPoint
-            ? `Visual pointer diagnostic ${pointerAction} executed on bound browser Action Map candidate ${boundPreview?.visualCandidateId}; the SAME frame/map/V# identity was revalidated inside the browser extension before trusted input.`
-            : hasPixelCandidate
-              ? `Visual pointer diagnostic ${pointerAction} executed on Browser Pixel Action Map candidate ${pixelCandidateId}; screenshot-pixel geometry supplied the bbox center.`
-            : hasCandidate
-              ? `Visual pointer diagnostic ${pointerAction} executed on legacy DOM action-map candidate ${candidateId}; browser geometry supplied the exact control center.`
-            : hasImagePoint
-              ? `Visual pointer diagnostic ${pointerAction} executed from CURRENT model-raster pixel imageX=${imageX.toFixed(1)}, imageY=${imageY.toFixed(1)}; Patrol performed the raster-to-viewport mapping.`
-              : `Visual pointer diagnostic ${pointerAction} executed at legacy normalized frame coordinate xRatio=${pointX.toFixed(4)}, yRatio=${pointY.toFixed(4)}.`,
+          hasCandidate
+            ? `Visual pointer diagnostic ${pointerAction} executed on vision-selected action-map candidate ${candidateId}; browser geometry supplied the exact control center.`
+            : `Visual pointer diagnostic ${pointerAction} executed at exact frame coordinate xRatio=${pointX.toFixed(4)}, yRatio=${pointY.toFixed(4)} (X=${Math.round(pointX * 1000)}, Y=${Math.round(pointY * 1000)} on the XY/1000 guide).`,
           pointerAction === 'mark'
             ? 'A temporary red crosshair was drawn on the page for visual calibration; no click was issued.'
             : pointerAction === 'hover'
@@ -434,10 +224,7 @@ export function registerPatrolVisualClickTool(
       const definition = await loadEditable(store, args.inspectionId, options.maxSteps)
       const expectation = optionalExpectation(args.expectedText, args.expectationMode, args.caseSensitive)
       const navigationAction = navigationLikeBusinessAction(args.stepName, args.targetHint)
-      const isVisualNavigation = navigationAction && (actionMapOwnedPoint
-        || hasCandidate
-        || hasPixelCandidate
-        || Boolean(ocrExpectedVisualText)
+      const isVisualNavigation = navigationAction && (hasCandidate
         || (typeof args.expectedVisualText === 'string' && args.expectedVisualText.trim().length >= 4))
       const tabBaseline = isVisualNavigation
         ? await captureBrowserTabBaseline(runner, exec)
@@ -452,18 +239,11 @@ export function registerPatrolVisualClickTool(
       const visualAuthority = true
       const clicked = await runner.dispatch('browser_visual_click', compactObject({
         frameId,
-        visualActionMapId: actionMapOwnedPoint ? boundPreview?.actionMapId : undefined,
-        visualCandidateId: actionMapOwnedPoint ? boundPreview?.visualCandidateId : undefined,
-        pixelCandidateId: hasPixelCandidate ? pixelCandidateId : undefined,
         candidateId: hasCandidate ? candidateId : undefined,
-        imageX: hasImagePoint ? imageX : undefined,
-        imageY: hasImagePoint ? imageY : undefined,
-        imageWidth: hasImagePoint && typeof args.imageWidth === 'number' ? args.imageWidth : undefined,
-        imageHeight: hasImagePoint && typeof args.imageHeight === 'number' ? args.imageHeight : undefined,
-        xRatio: actionMapOwnedPoint ? undefined : hasRatioPoint || boundPreview ? pointX : undefined,
-        yRatio: actionMapOwnedPoint ? undefined : hasRatioPoint || boundPreview ? pointY : undefined,
+        xRatio: hasPoint ? pointX : undefined,
+        yRatio: hasPoint ? pointY : undefined,
         targetHint: args.targetHint,
-        expectedVisualText: args.expectedVisualText ?? ocrExpectedVisualText,
+        expectedVisualText: args.expectedVisualText,
         visualAuthority,
         pointerAction: 'left-click',
         tabId: args.tabId,
@@ -473,19 +253,11 @@ export function registerPatrolVisualClickTool(
           'Visual click failed before Patrol could confirm a physical click, so this attempt does NOT consume the visual physical-click budget. The same frameId may be retried if CURRENT URL/scroll/zoom/viewport are still unchanged.',
           clicked.error ?? clicked.text ?? 'Unknown browser visual click error',
           'Reuse this frameId freely while the CURRENT page geometry still matches it; capture a new patrol_observe(includeImage=true) only after navigation, scroll, zoom, viewport/layout changes, or when a new screenshot is actually useful.',
-          actionMapOwnedPoint
-            ? 'The click used the program-computed V# bbox center from the browser-local Desktop-style Action Map. Rebuild the map from a fresh CURRENT full frame if the target moved; never nudge coordinates.'
-            : ocrOwnedPoint
-              ? 'The click used fresh CURRENT screenshot OCR geometry. Re-run the same visible text against a fresh CURRENT screenshot.'
-              : boundPreview
-                ? 'The click reused a legacy preview point; new TEST teaching should rebuild a V# Action Map instead.'
-            : hasPixelCandidate
-              ? 'If this B# was wrong, capture a fresh focused Browser Pixel Action Map and choose a different B# whose red bbox/crosshair lies inside the intended target. Do not nudge viewport coordinates manually.'
+          boundPreview
+            ? 'The click reused the exact visually marked point; capture a fresh CURRENT frame and mark a different point instead of nudging this preview token.'
             : hasCandidate
-              ? 'If this Action Map candidate is wrong, capture a fresh CURRENT screenshot and use the direct imageX/imageY path instead of repeatedly guessing A# labels.'
-              : hasImagePoint
-                ? 'If this raster pixel is wrong, capture a fresh CURRENT screenshot (or a focused crop for a tiny control) and choose the target center again in image pixels; do not nudge CSS/viewport coordinates manually.'
-                : 'If this legacy ratio is wrong, capture a fresh CURRENT screenshot and switch to imageX/imageY so Patrol owns the only coordinate conversion.',
+              ? 'If this Action Map candidate is wrong, capture a fresh targeted Action Map and choose a different A#. Use free XY only when no CURRENT candidate covers the intended target.'
+              : 'If this free XY point is wrong, capture a fresh targeted Action Map and choose a candidateId instead of repeating nearby guessed coordinates.',
         ].filter(Boolean).join('\n')
       }
       outcomes.recordVisualPhysicalClick(args)
@@ -501,7 +273,6 @@ export function registerPatrolVisualClickTool(
 
       const explicitExpectedVisualText = typeof args.expectedVisualText === 'string' ? args.expectedVisualText.trim() : ''
       const effectiveExpectedVisualText = explicitExpectedVisualText
-        || ocrExpectedVisualText
         || (hasCandidate ? objectString(clicked.value, 'actionCandidateExpectedText') : undefined)
         || (hasCandidate ? objectString(clicked.value, 'targetText') : undefined)
         || (hasCandidate ? objectString(clicked.value, 'targetAriaLabel') : undefined)
@@ -634,8 +405,8 @@ export function registerPatrolVisualClickTool(
         return 'Visual click reached a verified state but returned incomplete replay geometry, so it was NOT persisted. Capture a fresh visual observation and reteach the target.'
       }
 
-      const effectiveXRatio = objectNumber(clicked.value, 'xRatio') ?? ((hasRatioPoint || boundPreview) ? pointX : undefined)
-      const effectiveYRatio = objectNumber(clicked.value, 'yRatio') ?? ((hasRatioPoint || boundPreview) ? pointY : undefined)
+      const effectiveXRatio = objectNumber(clicked.value, 'xRatio') ?? (hasPoint ? pointX : undefined)
+      const effectiveYRatio = objectNumber(clicked.value, 'yRatio') ?? (hasPoint ? pointY : undefined)
       if (effectiveXRatio === undefined || effectiveYRatio === undefined
         || !Number.isFinite(effectiveXRatio) || !Number.isFinite(effectiveYRatio)) {
         outcomes.recordUnverifiedPhysicalClick(args)
@@ -693,13 +464,13 @@ export function registerPatrolVisualClickTool(
         expectedTitle: objectString(clicked.value, 'targetTitle'),
         expectedAriaLabel: objectString(clicked.value, 'targetAriaLabel'),
         targetHint: args.targetHint.trim(),
-        expectedVisualText: effectiveExpectedVisualText?.trim(),
+        expectedVisualText: args.expectedVisualText?.trim(),
         targetTextHint: objectString(clicked.value, 'targetText'),
         targetIdHint: objectString(clicked.value, 'targetId'),
         targetClassHint: objectString(clicked.value, 'targetClassName'),
       })
       const condition = optionalCondition(args.conditionSourceStepId, args.conditionExpectedText, args.conditionMode)
-      const targetNote = `视觉目标：${args.targetHint.trim()}${actionMapOwnedPoint ? `；Browser Action Map：${boundPreview?.actionMapId || ''}/${boundPreview?.visualCandidateId || ''}` : ocrOwnedPoint ? `；OCR视觉锚点：${boundPreview?.ocrMatchedText || boundPreview?.ocrText || ''}${boundPreview?.ocrRelation === 'close-right' ? '（右侧关闭）' : ''}` : hasPixelCandidate ? `；旧像素视觉编号：${pixelCandidateId}` : hasCandidate ? `；旧视觉编号：${candidateId}` : ''}`
+      const targetNote = `视觉目标：${args.targetHint.trim()}${hasCandidate ? `；视觉编号：${candidateId}` : ''}`
       const providedNotes = [targetNote, args.notes?.trim()].filter(Boolean).join('\n')
       const step: ToolStep = {
         id: nextStepId(definition.steps),
@@ -729,25 +500,13 @@ export function registerPatrolVisualClickTool(
 
       return [
         `Executed and recorded ${step.id} (browser_visual_click) after CURRENT model-visible visual-state verification.`,
-        actionMapOwnedPoint
-          ? `Browser Desktop-style Action Map resolved ${boundPreview?.visualCandidateId || 'V#'} from ${boundPreview?.actionMapId || ''} to program-owned bbox center xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; the model selected only V#, never the final coordinate.`
-          : ocrOwnedPoint
-            ? `Browser Windows OCR resolved ${JSON.stringify(boundPreview?.ocrMatchedText || boundPreview?.ocrText || '')} with relation=${boundPreview?.ocrRelation || 'center'} to xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; no model coordinate guess was used.`
-            : hasPixelCandidate
-            ? `Legacy Browser Pixel Action Map candidate ${pixelCandidateId} resolved to xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}.`
-            : hasCandidate
-              ? `Legacy visual action-map candidate ${candidateId} resolved to xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}.`
-              : `Visual point saved for replay: xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; model-requested=(${pointX.toFixed(4)}, ${pointY.toFixed(4)}); capture=${captureWidth ?? viewportWidth}x${captureHeight ?? viewportHeight} CSS px at (${captureClientLeft ?? 0}, ${captureClientTop ?? 0}).`,
+        hasCandidate
+          ? `Visual action-map candidate ${candidateId} resolved by CURRENT browser geometry to xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; this exact center was saved for replay. The model selected the labeled box, not a free pixel coordinate.`
+          : `Visual point saved for replay: xRatio=${effectiveXRatio.toFixed(4)}, yRatio=${effectiveYRatio.toFixed(4)}; model-requested=(${pointX.toFixed(4)}, ${pointY.toFixed(4)}); capture=${captureWidth ?? viewportWidth}x${captureHeight ?? viewportHeight} CSS px at (${captureClientLeft ?? 0}, ${captureClientTop ?? 0}).`,
         objectBoolean(clicked.value, 'visualAuthority') === true
-          ? (actionMapOwnedPoint
-              ? 'Visual grounding used a browser-local copy of the proven Desktop Action Map geometry: screenshot pixels generated V# candidates and the program-owned bbox center was sent through trusted Chrome debugger mouse input. Desktop runtime/state was not used.'
-              : ocrOwnedPoint
-                ? 'Visual grounding used fresh screenshot OCR geometry.'
-                : hasPixelCandidate
-                ? 'Legacy B# visual grounding was used.'
-                : hasCandidate
-                  ? 'Legacy A# action-map grounding was used.'
-                  : 'TEST visual-grounding used the exact model-selected screenshot point; DOM/Shadow-DOM did not relocate it before physical input.')
+          ? (hasCandidate
+              ? 'Visual grounding used the model-selected action-map label; DOM/CDP contributed only the CURRENT interactive rectangle geometry and did not choose the business target.'
+              : 'TEST visual-grounding used the exact model-selected screenshot point; DOM/Shadow-DOM did not relocate it before physical input.')
           : objectBoolean(clicked.value, 'visualSnapped') === true
             ? `Replay coordinate was corrected against CURRENT learned evidence by ${objectNumber(clicked.value, 'snapDistance')?.toFixed(1) ?? '?'} CSS px.`
             : 'Replay used the recorded visual geometry without correction.',
@@ -757,105 +516,11 @@ export function registerPatrolVisualClickTool(
             ? `No trustworthy semantic label was learned; replay tries discovered selector ${JSON.stringify(selectorHint)} before guarded visual geometry.`
             : 'No trustworthy DOM binding was available; replay keeps guarded normalized visual geometry as fallback.',
         `Verification: ${verificationMethod}, ${verificationEvidence}, attempts=${verificationAttempts}.`,
-        objectBoolean(clicked.value, 'targetFocusedEditable') === true
-          ? 'The visual click verified focus on an editable control. For PUBLIC text, prefer patrol_type_focused_text(clear=true) so typing follows the visually selected focus instead of re-resolving another selector.'
-          : '',
         clicked.text,
       ].filter(Boolean).join('\n')
     },
   })
-
-  const browserOcrTextTool = defineTool({
-    name: 'patrol_browser_click_ocr_text',
-    description: 'Browser counterpart of desktop_click_ocr_text. For a CURRENT visible text control/link/button/menu/chapter, capture a fresh browser screenshot internally, use Windows OCR line geometry, and click the OCR bbox center with trusted Chrome mouse input. This is the simple PRIMARY browser visual path for text; no selector, A#/B#, imageX/imageY, or model coordinate guess is required.',
-    parameters: {
-      inspectionId: { type: 'string', required: true },
-      stepName: { type: 'string', required: true },
-      text: { type: 'string', required: true },
-      match: { type: 'string', enum: ['exact', 'contains'] },
-      index: { type: 'integer' },
-      targetHint: { type: 'string', description: 'Optional business label. Defaults to the visible OCR text.' },
-      tabId: { type: 'integer' },
-      expectedText: { type: 'string' },
-      expectationMode: { type: 'string', enum: ['contains', 'not-contains'] },
-      caseSensitive: { type: 'boolean' },
-      conditionSourceStepId: { type: 'string' },
-      conditionExpectedText: { type: 'string' },
-      conditionMode: { type: 'string', enum: ['contains', 'not-contains'] },
-      notes: { type: 'string' },
-    },
-    output: TEXT_OUTPUT,
-    async execute(args, exec: ToolRunContext) {
-      return await (tool as any).execute(compactObject({
-        inspectionId: args.inspectionId,
-        stepName: args.stepName,
-        ocrText: args.text,
-        ocrMatch: args.match ?? 'exact',
-        ...(Number.isInteger(args.index) ? { ocrIndex: args.index } : {}),
-        targetHint: typeof args.targetHint === 'string' && args.targetHint.trim() ? args.targetHint.trim() : args.text,
-        visualAuthority: true,
-        tabId: args.tabId,
-        expectedText: args.expectedText,
-        expectationMode: args.expectationMode,
-        caseSensitive: args.caseSensitive,
-        conditionSourceStepId: args.conditionSourceStepId,
-        conditionExpectedText: args.conditionExpectedText,
-        conditionMode: args.conditionMode,
-        notes: args.notes,
-      }), exec)
-    },
-  })
-
-  const browserVisualCandidateTool = defineTool({
-    name: 'patrol_browser_click_visual_candidate',
-    description: 'Browser counterpart of desktop_click_visual_candidate. Click exactly one V# selected from patrol_browser_visual_action_map. Supply only the SAME frameId + actionMapId + candidateId; Patrol resolves the program-computed bbox center, validates CURRENT page geometry, sends trusted Chrome mouse input, verifies the business result, and records the reusable browser_visual_click step. Never supply x/y.',
-    parameters: {
-      inspectionId: { type: 'string', required: true },
-      stepName: { type: 'string', required: true },
-      frameId: { type: 'string', required: true },
-      actionMapId: { type: 'string', required: true },
-      candidateId: { type: 'string', required: true },
-      targetHint: { type: 'string', description: 'Optional business label. Defaults to stepName.' },
-      expectedVisualText: { type: 'string', description: 'For navigation/card/link targets, copy the exact visible target text when one exists so the destination can be verified.' },
-      tabId: { type: 'integer' },
-      expectedText: { type: 'string' },
-      expectationMode: { type: 'string', enum: ['contains', 'not-contains'] },
-      caseSensitive: { type: 'boolean' },
-      conditionSourceStepId: { type: 'string' },
-      conditionExpectedText: { type: 'string' },
-      conditionMode: { type: 'string', enum: ['contains', 'not-contains'] },
-      notes: { type: 'string' },
-    },
-    output: TEXT_OUTPUT,
-    async execute(args, exec: ToolRunContext) {
-      return await (tool as any).execute(compactObject({
-        inspectionId: args.inspectionId,
-        stepName: args.stepName,
-        frameId: args.frameId,
-        actionMapId: args.actionMapId,
-        visualCandidateId: args.candidateId,
-        targetHint: typeof args.targetHint === 'string' && args.targetHint.trim() ? args.targetHint.trim() : args.stepName,
-        expectedVisualText: args.expectedVisualText,
-        visualAuthority: true,
-        tabId: args.tabId,
-        expectedText: args.expectedText,
-        expectationMode: args.expectationMode,
-        caseSensitive: args.caseSensitive,
-        conditionSourceStepId: args.conditionSourceStepId,
-        conditionExpectedText: args.conditionExpectedText,
-        conditionMode: args.conditionMode,
-        notes: args.notes,
-      }), exec)
-    },
-  })
-
-  const disposers = [
-    ctx.tools.register(actionMapTool),
-    ctx.tools.register(browserOcrTextTool),
-    ctx.tools.register(browserVisualCandidateTool),
-    ...(options.registerCompatibilityTool === false ? [] : [ctx.tools.register(tool)]),
-  ]
-  return () => { for (const dispose of disposers) dispose() }
+  return ctx.tools.register(tool)
 }
 
 async function capturePageState(runner: PatrolRunner, exec: ToolRunContext, tabId: number | undefined): Promise<PageState | undefined> {
@@ -916,7 +581,7 @@ function visualTextContains(haystack: string, needle: string): boolean {
 
 function inPageControlHint(targetHint: string | undefined): boolean {
   const hint = normalizePageText(targetHint ?? '')
-  return /点赞|投币|收藏|评论|回复|搜索框|搜索栏|输入框|编辑框|文本框|地址栏|按钮|发布|发表|发送|提交|like|favorite|comment|reply|search\s*(?:box|bar|input|button)|textbox|input|button|post|send|submit/.test(hint)
+  return /点赞|投币|收藏|评论|回复|输入框|编辑框|发布|发表|发送|提交|like|favorite|comment|reply|post|send|submit/.test(hint)
 }
 
 function stateChangeEvidence(before: PageState, after: PageState): string | undefined {
@@ -951,8 +616,6 @@ function visualTargetMismatch(targetHint: string | undefined, value: unknown): s
   }
   const haystack = normalizePageText([
     objectString(value, 'selectorHint') ?? '',
-    objectString(value, 'targetTag') ?? '',
-    objectString(value, 'targetRole') ?? '',
     objectString(value, 'targetText') ?? '',
     objectString(value, 'targetTitle') ?? '',
     objectString(value, 'targetAriaLabel') ?? '',

@@ -83,18 +83,17 @@ export function registerPatrolObservationTools(
 ): () => void {
   const observe = defineTool({
     name: 'patrol_observe',
-    description: 'Read-only CURRENT-page observation for browser vision. New TEST workflow mirrors Desktop patrol while remaining browser-only: visible text uses patrol_browser_click_ocr_text; unlabeled controls use this tool with includeImage=true to obtain one CLEAN full CURRENT screenshot, then patrol_browser_visual_action_map builds a local V# map from the SAME frame and patrol_browser_click_visual_candidate clicks the program bbox center. Do not use focused B#/A#/manual XY in new TEST teaching. Does not record a Runbook step.',
+    description: 'Read-only CURRENT-page observation. Captures a screenshot for freshness/OCR and can attach that exact CURRENT image with includeImage=true whenever the model decides vision is useful. For ordinary browser visual clicking, pass a concrete targetHint together with includeImage=true: Patrol automatically builds a targeted browser Action Map so the model chooses A# while browser code owns the verified safe-point geometry. Explicit actionMap=true remains supported. There is no fixed screenshot-count limit; before a new visual attachment Patrol offloads older model-visible image blocks through Harness image/offload, trims oversized TEXT tool results separately, and keeps the raster DPR-aware/bounded for local-model stability. Does not record a Runbook step.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       tabId: { type: 'integer' },
-      includeImage: { type: 'boolean', description: 'Attach one CLEAN full CURRENT browser screenshot. Use it to visually find a coarse region for patrol_browser_visual_action_map; do not derive the final click coordinate yourself.' },
-      pixelActionMap: { type: 'boolean', description: 'LEGACY compatibility diagnostic only. Do not use B# for new TEST teaching; visible text uses patrol_browser_click_ocr_text and unlabeled controls use the separate V# browser Action Map workflow.' },
-      actionMap: { type: 'boolean', description: 'LEGACY DOM A# compatibility diagnostic only. Do not use for new TEST visual teaching.' },
-      targetHint: { type: 'string', description: 'Concrete CURRENT business target for observation context. Visible text clicks should normally use patrol_browser_click_ocr_text; unlabeled targets use this screenshot as the coarse-region source for patrol_browser_visual_action_map.' },
+      includeImage: { type: 'boolean', description: 'Attach the CURRENT screenshot image to model context. Default false; use only when OCR/DOM evidence is insufficient.' },
+      actionMap: { type: 'boolean', description: 'Overlay stable A1/A2/... boxes around CURRENT interactive controls. Explicit actionMap=true requires targetHint. When includeImage=true already carries a concrete targetHint, Patrol automatically enables this targeted Action Map even if actionMap is omitted.' },
+      targetHint: { type: 'string', description: 'Concrete CURRENT business target, e.g. “百度搜索栏”, “龙之信条2 百度百科结果”, “10.192.3.174 行的 RDP” or “评论输入框”. With includeImage=true it automatically requests a targeted Action Map; structured row targets are filtered by row identity + action before labels are rendered.' },
       focusXRatio: { type: 'number', description: 'Optional coarse X center (0..1) for a focused visual crop. Use after a full-frame visual estimate when the target is small or a calibration mark missed.' },
       focusYRatio: { type: 'number', description: 'Optional coarse Y center (0..1) for a focused visual crop. Requires includeImage=true and focusXRatio.' },
-      focusWidthRatio: { type: 'number', description: 'Legacy/manual focused crop width. New TEST text clicking should use OCR geometry instead of focused crops.' },
-      focusHeightRatio: { type: 'number', description: 'Legacy/manual focused crop height. New TEST text clicking should use OCR geometry instead of focused crops.' },
+      focusWidthRatio: { type: 'number', description: 'Focused crop width as a fraction of the CURRENT visual viewport. Default 0.30; clamped to 0.12..0.72.' },
+      focusHeightRatio: { type: 'number', description: 'Focused crop height as a fraction of the CURRENT visual viewport. Default 0.34; clamped to 0.12..0.72.' },
     },
     output: {
       schema: {
@@ -119,9 +118,6 @@ export function registerPatrolObservationTools(
           captureHeight: { type: 'number' },
           captureMode: { type: 'string' },
           coordinateGuide: { type: 'boolean' },
-          pixelActionMap: { type: 'boolean' },
-          pixelCandidateCount: { type: 'integer' },
-          pixelCandidateSummary: { type: 'string' },
           actionMap: { type: 'boolean' },
           actionMapTargeted: { type: 'boolean' },
           actionMapTargetHint: { type: 'string' },
@@ -175,23 +171,21 @@ export function registerPatrolObservationTools(
           `Fresh screenshot saved: ${value.path}`,
           ...(value.visualFrameId ? [`Visual click frame READY: ${value.visualFrameId}; viewport=${value.viewportWidth ?? '?'}x${value.viewportHeight ?? '?'}; capture=${value.captureWidth ?? value.viewportWidth ?? '?'}x${value.captureHeight ?? value.viewportHeight ?? '?'} at (${value.captureClientLeft ?? 0}, ${value.captureClientTop ?? 0}); scroll=(${value.scrollX ?? '?'}, ${value.scrollY ?? '?'})`] : []),
           `Evidence: ${hasImage ? 'MODEL-VISIBLE image attached + compact OCR/DOM' : 'compact OCR/DOM only'}`,
-          ...(hasImage && value.pixelActionMap === true ? [
-            `LEGACY BROWSER PIXEL ACTION MAP: ${value.pixelCandidateCount ?? 0} B# candidate(s) are present. New TEST teaching must not use B#; use patrol_browser_click_ocr_text for visible text or the separate V# browser Action Map workflow for unlabeled controls.`,
-            ...(value.pixelCandidateSummary ? [`CURRENT B# pixel geometry (for diagnostics only; choose by image):\n${value.pixelCandidateSummary}`] : []),
-          ] : []),
-          ...(hasImage && value.focusedVisual !== true ? [
-            `CLEAN FULL BROWSER VISUAL FRAME: this CURRENT raster is ${value.modelRasterWidth ?? value.image?.width ?? '?'}x${value.modelRasterHeight ?? value.image?.height ?? '?'} model pixels. For an unlabeled target, estimate only a COARSE region center and call patrol_browser_visual_action_map; then read its V# image and click with patrol_browser_click_visual_candidate. Never provide the final x/y yourself.`,
+          ...(hasImage && value.coordinateGuide === true ? [
+            value.focusedVisual === true
+              ? `FOCUSED VISUAL FRAME: this image is a zoomed CURRENT-page crop centered near full-frame (${Number(value.focusCenterXRatio ?? 0).toFixed(3)}, ${Number(value.focusCenterYRatio ?? 0).toFixed(3)}), covering about ${Math.round(Number(value.focusWidthRatio ?? 0) * 100)}% x ${Math.round(Number(value.focusHeightRatio ?? 0) * 100)}% of the viewport. The attached crop itself has an XY/1000 overlay. For patrol_visual_click_target use the target position INSIDE THIS CROP: xRatio=X/1000, yRatio=Y/1000. Do NOT reuse the coarse full-frame ratio as the click ratio.`
+              : `VISUAL COORDINATE GUIDE: the attached raster is ${value.modelRasterWidth ?? value.image?.width ?? '?'}x${value.modelRasterHeight ?? value.image?.height ?? '?'} px and contains an XY/1000 overlay. Read the target from that overlay: xRatio=X/1000, yRatio=Y/1000. Never infer coordinates from OS screen size, CSS viewport size, or the chat UI preview width.`,
           ] : []),
           ...(hasImage && value.actionMapStrictTargetMiss === true ? [
-            `LEGACY A# TARGET MISS for ${JSON.stringify(value.actionMapTargetHint || args.targetHint || '')}. Do not recover by guessing A#/XY in new TEST teaching; use screenshot OCR geometry (ocrText) when visible text exists.`,
+            `STRICT TARGET MISS for ${JSON.stringify(value.actionMapTargetHint || args.targetHint || '')}: no safe CURRENT Action Map candidate matched the explicit text/close target. Do NOT guess a nearby A# or free XY. Refresh/re-focus the CURRENT page and request the same concrete target again.`,
           ] : []),
           ...(hasImage && value.actionMap === true ? [
             value.actionMapTargeted === true
-              ? `LEGACY TARGETED A# MAP for ${JSON.stringify(value.actionMapTargetHint || args.targetHint || '')}: ${value.actionCandidateCount ?? 0} candidate(s). New TEST teaching should use ocrText for visible text instead.`
-              : `LEGACY A# MAP: ${value.actionCandidateCount ?? 0} CURRENT interactive control(s). This is compatibility-only; do not use candidateId for new TEST teaching.`,
+              ? `TARGETED VISUAL ACTION MAP READY for ${JSON.stringify(value.actionMapTargetHint || args.targetHint || '')}: ${value.actionCandidateCount ?? 0} matching CURRENT control(s) are outlined with A1/A2/... labels. For structured rows such as “IP + RDP”, unrelated rows were removed before labels were assigned. Choose only among these labels; do not guess a global A# from an unfiltered page.`
+              : `VISUAL ACTION MAP READY: ${value.actionCandidateCount ?? 0} CURRENT interactive control(s) are outlined with A1/A2/... labels. For small buttons/icons, visually choose the label covering the intended control and call patrol_visual_click_target with candidateId=that label. Do NOT estimate xRatio/yRatio when a correct action-map candidate exists.`,
             ...(value.actionCandidateSummary ? [`CURRENT A# bindings from browser geometry:\n${value.actionCandidateSummary}`] : []),
             ...(hasActionMapZoom ? [
-              `LEGACY A# zoom image attached (${value.actionMapZoomCount ?? value.actionCandidateCount ?? 0} candidates). Do not use it for new TEST teaching.`,
+              `ACTION MAP TARGET ZOOM attached as a SECOND image: ${value.actionMapZoomCount ?? value.actionCandidateCount ?? 0} candidate crop(s) are magnified in A# cards. Use the zoom image to decide WHICH A# is the intended control; the green crosshair in each card is the exact browser safe point. NEVER derive xRatio/yRatio from the zoom sheet because its pixels are not page coordinates.`,
             ] : []),
           ] : []),
           ...(args.includeImage === true && !hasImage ? ['VISUAL CLICK DISABLED: includeImage=true did not produce a model-visible image; do not guess screenshot coordinates.'] : []),
@@ -220,7 +214,6 @@ export function registerPatrolObservationTools(
         inspectionId: args.inspectionId,
         tabId: args.tabId,
         includeImage: args.includeImage === true,
-        pixelActionMap: args.pixelActionMap === true,
         actionMap: args.actionMap === true,
         ...(args.targetHint === undefined ? {} : { targetHint: args.targetHint }),
         ...(args.focusXRatio === undefined ? {} : { focusXRatio: args.focusXRatio }),
@@ -232,9 +225,7 @@ export function registerPatrolObservationTools(
         || args.focusWidthRatio !== undefined || args.focusHeightRatio !== undefined
       const requestedActionMapTargetHint = typeof args.targetHint === 'string' ? args.targetHint.trim() : ''
       const actionMapRequested = args.actionMap === true
-      // A focused crop must never silently turn into the old B# workflow.
-      // Legacy B# is available only when explicitly requested.
-      const pixelActionMapRequested = args.pixelActionMap === true && !actionMapRequested
+        || (args.includeImage === true && requestedActionMapTargetHint.length >= 2)
       if (args.actionMap === true && args.includeImage !== true) {
         throw new Error('visual action-map observation requires includeImage=true')
       }
@@ -270,8 +261,7 @@ export function registerPatrolObservationTools(
         ...(args.includeImage === true ? {
           maxWidth: VISUAL_SCREENSHOT_MAX_WIDTH,
           quality: VISUAL_SCREENSHOT_JPEG_QUALITY,
-          coordinateGuide: false,
-          pixelActionMap: pixelActionMapRequested,
+          coordinateGuide: !actionMapRequested,
           actionMap: actionMapRequested,
           ...(actionMapRequested ? { actionMapTargetHint: requestedActionMapTargetHint } : {}),
           ...(focusRequested ? {
@@ -358,9 +348,6 @@ export function registerPatrolObservationTools(
       const captureHeight = objectNumber(shot.value, 'captureHeight')
       const captureMode = objectString(shot.value, 'captureMode')
       const coordinateGuide = objectBoolean(shot.value, 'coordinateGuide') === true
-      const pixelActionMap = objectBoolean(shot.value, 'pixelActionMap') === true
-      const pixelCandidateCount = objectNumber(shot.value, 'pixelCandidateCount')
-      const pixelCandidateSummary = objectString(shot.value, 'pixelCandidateSummary')
       const actionMap = objectBoolean(shot.value, 'actionMap') === true
       const actionMapTargeted = objectBoolean(shot.value, 'actionMapTargeted') === true
       const actionMapTargetHint = objectString(shot.value, 'actionMapTargetHint')
@@ -403,9 +390,6 @@ export function registerPatrolObservationTools(
         ...(captureHeight === undefined ? {} : { captureHeight }),
         ...(captureMode === undefined ? {} : { captureMode }),
         coordinateGuide,
-        pixelActionMap,
-        ...(pixelCandidateCount === undefined ? {} : { pixelCandidateCount }),
-        ...(pixelCandidateSummary === undefined ? {} : { pixelCandidateSummary }),
         actionMap,
         actionMapTargeted,
         actionMapTargetMiss,

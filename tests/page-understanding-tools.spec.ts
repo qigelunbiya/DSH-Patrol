@@ -3,7 +3,7 @@ import { analyzePageEvidence, createPatrolPlanningGuard, createPatrolTestModePla
 import { createPatrolClickOutcomeTracker } from '../src/click-retry-state.js'
 
 describe('Patrol page understanding planner', () => {
-  it('routes TEST visual teaching through the dedicated browser OCR/V# tools instead of the legacy generic click entry', () => {
+  it('lets TEST MODE choose vision directly without DOM/analyze authorization', () => {
     const guard = createPatrolTestModePlanningGuard(createPatrolClickOutcomeTracker())
     expect(guard({
       name: 'patrol_observe',
@@ -19,18 +19,6 @@ describe('Patrol page understanding planner', () => {
         xRatio: 0.37,
         yRatio: 0.5,
       },
-    })).toMatch(/不要直接调用 patrol_visual_click_target.*patrol_browser_click_ocr_text.*patrol_browser_visual_action_map.*patrol_browser_click_visual_candidate/s)
-    expect(guard({
-      name: 'patrol_browser_click_ocr_text',
-      arguments: { inspectionId: 'test-live', stepName: '点击百度一下', text: '百度一下' },
-    })).toBeUndefined()
-    expect(guard({
-      name: 'patrol_browser_visual_action_map',
-      arguments: { inspectionId: 'test-live', centerXRatio: 0.5, centerYRatio: 0.5 },
-    })).toBeUndefined()
-    expect(guard({
-      name: 'patrol_browser_click_visual_candidate',
-      arguments: { inspectionId: 'test-live', stepName: '点击搜索框', frameId: 'browser-visual-current', actionMapId: 'browser-vmap-1', candidateId: 'V1' },
     })).toBeUndefined()
   })
 
@@ -72,7 +60,7 @@ describe('Patrol page understanding planner', () => {
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).not.toMatch(/DOM 永远优先|视觉像素只允许作为最后兜底/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/用户最近一条明确指令/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/用户未指定方法时.*不规定固定优先级/)
-    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/只用视觉.*patrol_browser_click_ocr_text.*patrol_browser_visual_action_map.*patrol_browser_click_visual_candidate/s)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/只用视觉.*visualAuthority=true/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/明确禁止视觉.*不得 includeImage=true/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).not.toMatch(/TEST MODE 是 UI-TARS 风格 visual-grounding/)
   })
@@ -141,7 +129,7 @@ describe('Patrol page understanding planner', () => {
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/不再使用视觉点击次数、失败次数或物理点击预算做 HARD STOP/)
   })
 
-  it('refuses coarse/A# row vision and points visual-only structured rows to OCR or local V# maps', () => {
+  it('refuses coarse free-point vision for a row-identified RDP target but allows action-map candidates', () => {
     const guard = createPatrolPlanningGuard(createPatrolClickOutcomeTracker())
     const blocked = guard({
       name: 'patrol_visual_click_target',
@@ -156,33 +144,30 @@ describe('Patrol page understanding planner', () => {
     })
     expect(blocked).toMatch(/structured-row precision guard/)
     expect(blocked).toMatch(/patrol_click_target/)
-    expect(blocked).toMatch(/patrol_browser_click_ocr_text/)
-    expect(blocked).toMatch(/patrol_browser_visual_action_map/)
-    expect(blocked).toMatch(/patrol_browser_click_visual_candidate/)
-    expect(blocked).toMatch(/不得回到 A#\/B#\/XY/)
-  })
-
-  it('blocks legacy A#/B# visual observations in TEST planning before they waste model turns', () => {
-    const guard = createPatrolTestModePlanningGuard(createPatrolClickOutcomeTracker())
-    expect(guard({
-      name: 'patrol_observe',
-      arguments: {
-        inspectionId: 'ocr-first',
-        includeImage: true,
-        pixelActionMap: true,
-        targetHint: '7.发售版本',
-      },
-    })).toMatch(/旧 A#\/B# Action Map.*patrol_browser_click_ocr_text.*patrol_browser_visual_action_map.*patrol_browser_click_visual_candidate/s)
+    expect(blocked).toMatch(/actionMap=true/)
 
     expect(guard({
-      name: 'patrol_observe',
+      name: 'patrol_visual_click_target',
       arguments: {
-        inspectionId: 'ocr-first',
-        includeImage: true,
-        actionMap: true,
-        targetHint: '百度百科结果',
+        inspectionId: 'rdp-row',
+        stepName: '点击 10.192.3.174 这一行的 RDP',
+        targetHint: '10.192.3.174 行的 RDP',
+        frameId: 'browser-visual-current',
+        candidateId: 'A7',
       },
-    })).toMatch(/旧 A#\/B# Action Map/)
+    })).toMatch(/用户未指定操作方法时.*patrol_click_target/)
+
+    expect(guard({
+      name: 'patrol_visual_click_target',
+      arguments: {
+        inspectionId: 'rdp-row',
+        stepName: '点击 10.192.3.174 这一行的 RDP',
+        targetHint: '10.192.3.174 行的 RDP',
+        frameId: 'browser-visual-current',
+        candidateId: 'A1',
+        visualAuthority: true,
+      },
+    })).toBeUndefined()
   })
 
   it('binds a row identity to the action selector instead of clicking an ambiguous RDP label', () => {
@@ -262,11 +247,8 @@ describe('Patrol page understanding planner', () => {
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/Windows OCR\/本地 OCR/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/一次性 fallbackToken/)
     expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/没有 fallbackToken 时禁止模型视觉验证码/)
-    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/patrol_browser_click_ocr_text/)
-    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/patrol_browser_visual_action_map/)
-    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/patrol_browser_click_visual_candidate/)
-    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/V#/)
-    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/旧 A#\/B#\/focused\/manual-coordinate/)
-    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/Browser 与 Desktop visual state 必须隔离/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/patrol_visual_click_target/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/visualFrameId/)
+    expect(PATROL_PAGE_UNDERSTANDING_PROMPT).toMatch(/browser_visual_click/)
   })
 })

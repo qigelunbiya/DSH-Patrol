@@ -3,7 +3,7 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { classifyAuthChallenge } from './challenge-tool.js'
 import { captchaModeAllowsImageCodeScreenshotOcr, currentCaptchaMode } from './captcha-mode.js'
-import { findScreenshotOcrTextMatches, recognizeScreenshotText } from './screenshot-ocr.js'
+import { recognizeScreenshotText } from './screenshot-ocr.js'
 
 const reqStr = { type: 'string', required: true }
 const reqInt = { type: 'integer', required: true }
@@ -16,22 +16,6 @@ const optStr = { type: 'string' }
 const optInt = { type: 'integer' }
 const optNum = { type: 'number' }
 const optBool = { type: 'boolean' }
-
-const OCR_LINE = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    text: reqStr,
-    confidence: optNum,
-    language: str,
-    x: reqNum,
-    y: reqNum,
-    width: reqNum,
-    height: reqNum,
-    centerX: reqNum,
-    centerY: reqNum,
-  },
-}
 
 const TAB = {
   type: 'object',
@@ -115,7 +99,6 @@ export function registerTools(ctx, bridge, config = {}) {
               properties: {
                 name: str,
                 version: str,
-                runtimeBuild: str,
                 capabilities: { type: 'array', items: { type: 'string' } },
               },
             },
@@ -232,266 +215,17 @@ export function registerTools(ctx, bridge, config = {}) {
       },
     }),
     defineTool({
-      name: 'browser_resolve_ocr_visual_target',
-      description: 'Internal Patrol browser-vision primitive. Captures a fresh CURRENT browser screenshot, runs Windows system OCR with line bounding boxes, and resolves either the exact text center or a verified close/remove control immediately to the right of an OCR text anchor. It never clicks.',
-      parameters: {
-        text: reqStr,
-        match: { type: 'string', enum: ['exact', 'contains'] },
-        index: optInt,
-        relation: { type: 'string', enum: ['center', 'close-right'] },
-        targetHint: reqStr,
-        tabId: optInt,
-      },
-      output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            ok: reqBool,
-            frameId: reqStr,
-            imageX: reqNum,
-            imageY: reqNum,
-            imageWidth: reqNum,
-            imageHeight: reqNum,
-            xRatio: reqNum,
-            yRatio: reqNum,
-            relation: reqStr,
-            query: reqStr,
-            matchedText: reqStr,
-            matchCount: reqInt,
-            ocrStatus: reqStr,
-            ocrLine: OCR_LINE,
-          },
-        },
-        render: (_args, value) => [{ type: 'text', text: `OCR visual target resolved ${JSON.stringify(value.matchedText)} at image pixel (${Math.round(value.imageX)}, ${Math.round(value.imageY)}) via ${value.relation}; no click was sent.` }],
-      },
-      presentCall: args => generic('Resolve OCR visual target', { text: args.text, match: args.match, relation: args.relation }),
-      execute: async (args, exec) => {
-        const shot = requireOk(await run(bridge, exec, 'screenshot', {
-          tabId: args.tabId,
-          format: 'jpeg',
-          maxWidth: 1600,
-          quality: 90,
-          coordinateGuide: false,
-          actionMap: false,
-          pixelActionMap: false,
-        }, timeoutMs), 'OCR visual screenshot')
-        const frameId = typeof shot.visualFrameId === 'string' ? shot.visualFrameId : ''
-        const imageWidth = Number(shot.modelRasterWidth)
-        const imageHeight = Number(shot.modelRasterHeight)
-        if (!frameId || !Number.isFinite(imageWidth) || !Number.isFinite(imageHeight) || imageWidth <= 0 || imageHeight <= 0) {
-          throw new Error('OCR visual screenshot did not return a frame-bound raster')
-        }
-
-        const ocr = await inspectScreenshotOcr(bridge, exec, args.tabId, shot.ocrDataUrl ?? shot.dataUrl, timeoutMs)
-        if (ocr.status !== 'recognized' || !Array.isArray(ocr.lines) || ocr.lines.length === 0) {
-          throw new Error(`browser OCR visual target cannot run because CURRENT screenshot OCR status=${ocr.status}`)
-        }
-        const matches = findScreenshotOcrTextMatches(ocr.lines, args.text, args.match === 'contains' ? 'contains' : 'exact', false)
-        if (matches.length === 0) {
-          const sample = ocr.lines.slice(0, 24).map(line => line.text).filter(Boolean).join(' | ')
-          throw new Error(`CURRENT screenshot OCR did not find ${JSON.stringify(args.text)}; visible OCR sample=${JSON.stringify(sample.slice(0, 900))}`)
-        }
-        let matchIndex = args.index
-        if (matchIndex === undefined) {
-          if (matches.length !== 1) {
-            const sample = matches.slice(0, 10).map((line, index) => `#${index} ${JSON.stringify(line.text)} @ (${line.centerX.toFixed(3)},${line.centerY.toFixed(3)})`).join(' | ')
-            throw new Error(`CURRENT screenshot OCR target is ambiguous (${matches.length} matches): ${sample}. Supply index only after visually/OCR-distinguishing the intended occurrence.`)
-          }
-          matchIndex = 0
-        }
-        if (!Number.isInteger(matchIndex) || matchIndex < 0 || matchIndex >= matches.length) {
-          throw new Error(`OCR visual target index ${args.index} is out of range; matches=${matches.length}`)
-        }
-        const line = matches[matchIndex]
-        const relation = args.relation === 'close-right' ? 'close-right' : 'center'
-        let imageX = line.centerX * imageWidth
-        let imageY = line.centerY * imageHeight
-
-        if (relation === 'close-right') {
-          const right = (line.x + line.width) * imageWidth
-          const centerY = line.centerY * imageHeight
-          const lineHeight = Math.max(10, line.height * imageHeight)
-          const offsets = [...new Set([
-            -Math.max(4, lineHeight * 0.25),
-            -Math.max(7, lineHeight * 0.50),
-            Math.max(4, lineHeight * 0.28),
-            Math.max(7, lineHeight * 0.48),
-            Math.max(10, lineHeight * 0.72),
-            Math.max(14, lineHeight * 1.0),
-            Math.max(20, lineHeight * 1.4),
-            Math.max(28, lineHeight * 1.9),
-          ].map(value => Math.round(value)))]
-          const yOffsets = [0, -0.18, 0.18]
-          let resolved
-          const failures = []
-          for (const offset of offsets) {
-            for (const yFactor of yOffsets) {
-              const candidateX = Math.max(1, Math.min(imageWidth - 2, right + offset))
-              const candidateY = Math.max(1, Math.min(imageHeight - 2, centerY + lineHeight * yFactor))
-              try {
-                const probe = requireOk(await run(bridge, exec, 'visualClick', {
-                  frameId,
-                  imageX: candidateX,
-                  imageY: candidateY,
-                  imageWidth,
-                  imageHeight,
-                  targetHint: args.targetHint,
-                  visualAuthority: true,
-                  pointerAction: 'probe',
-                  tabId: args.tabId,
-                }, timeoutMs), 'OCR anchored close probe')
-                if (probe?.targetTag || probe?.targetText || probe?.targetAriaLabel || probe?.targetClassName) {
-                  resolved = { imageX: candidateX, imageY: candidateY }
-                  break
-                }
-              } catch (error) {
-                failures.push(String(error?.message ?? error))
-              }
-            }
-            if (resolved) break
-          }
-          if (!resolved) {
-            throw new Error(`OCR found anchor ${JSON.stringify(line.text)} but no verified close/remove control was found immediately to its right before physical input. ${failures.slice(-2).join(' | ')}`)
-          }
-          imageX = resolved.imageX
-          imageY = resolved.imageY
-        }
-
-        return {
-          ok: true,
-          frameId,
-          imageX,
-          imageY,
-          imageWidth,
-          imageHeight,
-          xRatio: imageX / imageWidth,
-          yRatio: imageY / imageHeight,
-          relation,
-          query: args.text,
-          matchedText: line.text,
-          matchCount: matches.length,
-          ocrStatus: ocr.status,
-          ocrLine: line,
-        }
-      },
-    }),
-
-    defineTool({
-      name: 'browser_visual_action_map',
-      description: 'Internal browser-only Desktop-style visual Action Map builder. It uses the clean raster already bound to a CURRENT browser visual frame, crops a coarse region, runs the browser-local copy of the proven Desktop edge/component algorithm, and saves a V1/V2/... map image. It never clicks and never calls desktop-runtime.',
-      parameters: {
-        frameId: reqStr,
-        centerXRatio: reqNum,
-        centerYRatio: reqNum,
-        widthRatio: optNum,
-        heightRatio: optNum,
-        maxCandidates: optInt,
-        tabId: optInt,
-      },
-      output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            ok: reqBool,
-            frameId: reqStr,
-            actionMapId: reqStr,
-            path: reqStr,
-            width: reqNum,
-            height: reqNum,
-            candidateCount: reqInt,
-            candidateSummary: str,
-            method: reqStr,
-          },
-        },
-        render: (_args, value) => [{ type: 'text', text: `Browser visual Action Map ${value.actionMapId}: ${value.candidateCount} candidate(s). Read ${value.path} and choose V#.` }],
-      },
-      presentCall: args => generic('Build browser visual Action Map', { frameId: args.frameId, centerXRatio: args.centerXRatio, centerYRatio: args.centerYRatio }),
-      execute: async (args, exec) => {
-        const value = requireOk(await run(bridge, exec, 'browserVisualActionMap', {
-          frameId: args.frameId,
-          centerXRatio: args.centerXRatio,
-          centerYRatio: args.centerYRatio,
-          widthRatio: args.widthRatio,
-          heightRatio: args.heightRatio,
-          maxCandidates: args.maxCandidates,
-          tabId: args.tabId,
-        }, timeoutMs), 'browserVisualActionMap')
-        const workspaceRoot = exec?.agent?.session?.header?.cwd
-        const path = bridge.saveScreenshot(value.dataUrl, workspaceRoot)
-        return clean({
-          ok: true,
-          frameId: value.frameId,
-          actionMapId: value.actionMapId,
-          path,
-          width: value.width,
-          height: value.height,
-          candidateCount: value.candidateCount,
-          candidateSummary: value.candidateSummary,
-          method: value.method,
-        })
-      },
-    }),
-    defineTool({
-      name: 'browser_resolve_visual_candidate',
-      description: 'Internal no-click resolver for a V# candidate from browser_visual_action_map. It validates that the same frame/map/tab/URL/scroll/viewport are still CURRENT and returns the program-computed bbox-center ratio.',
-      parameters: {
-        frameId: reqStr,
-        actionMapId: reqStr,
-        candidateId: reqStr,
-        tabId: optInt,
-      },
-      output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            ok: reqBool,
-            frameId: reqStr,
-            actionMapId: reqStr,
-            candidateId: reqStr,
-            xRatio: reqNum,
-            yRatio: reqNum,
-            coordinateMapping: reqStr,
-            method: reqStr,
-          },
-        },
-        render: (_args, value) => [{ type: 'text', text: `Resolved ${value.candidateId} from ${value.actionMapId} to program-owned bbox center.` }],
-      },
-      presentCall: args => generic('Resolve browser visual candidate', { actionMapId: args.actionMapId, candidateId: args.candidateId }),
-      execute: async (args, exec) => {
-        const value = requireOk(await run(bridge, exec, 'browserResolveVisualCandidate', {
-          frameId: args.frameId,
-          actionMapId: args.actionMapId,
-          candidateId: args.candidateId,
-          tabId: args.tabId,
-        }, timeoutMs), 'browserResolveVisualCandidate')
-        return clean({
-          ok: true,
-          frameId: value.frameId,
-          actionMapId: value.actionMapId,
-          candidateId: value.candidateId,
-          xRatio: value.xRatio,
-          yRatio: value.yRatio,
-          coordinateMapping: value.coordinateMapping,
-          method: value.method,
-        })
-      },
-    }),
-    defineTool({
       name: 'browser_visual_click',
       description: 'Internal Patrol primitive for vision-first browser teaching. Live teaching clicks the exact fresh screenshot point; successful hits learn semantic/DOM identity for replay. Replay tries learned semantic identity, then selector, then guarded URL/scroll/viewport geometry.',
       parameters: {
-        xRatio: optNum, yRatio: optNum, imageX: optNum, imageY: optNum, imageWidth: optNum, imageHeight: optNum,
-        frameId: optStr, visualActionMapId: optStr, visualCandidateId: optStr, candidateId: optStr, pixelCandidateId: optStr, selectorHint: optStr, urlIdentity: optStr,
+        xRatio: optNum, yRatio: optNum, frameId: optStr, candidateId: optStr, selectorHint: optStr, urlIdentity: optStr,
         scrollX: optNum, scrollY: optNum, viewportWidth: optNum, viewportHeight: optNum, viewportScale: optNum,
         captureClientLeft: optNum, captureClientTop: optNum, captureWidth: optNum, captureHeight: optNum, captureMode: optStr,
         expectedTag: optStr, expectedRole: optStr, expectedTitle: optStr, expectedAriaLabel: optStr,
         targetHint: optStr, expectedVisualText: optStr, targetTextHint: optStr, targetIdHint: optStr, targetClassHint: optStr,
         learnedLocatorText: optStr, learnedLocatorRole: optStr, learnedLocatorTag: optStr,
         learnedSelectorQuality: optStr, learnedBindingSource: optStr, teachingControlMode: optStr, visualAuthority: optBool,
-        pointerAction: { type: 'string', enum: ['left-click', 'right-click', 'hover', 'mark', 'probe'] }, tabId: optInt,
+        pointerAction: { type: 'string', enum: ['left-click', 'right-click', 'hover', 'mark'] }, tabId: optInt,
       },
       output: {
         schema: {
@@ -503,26 +237,19 @@ export function registerTools(ctx, bridge, config = {}) {
             targetTag: str, targetRole: str, targetText: str, targetTitle: str, targetAriaLabel: str,
             targetId: str, targetClassName: str, targetStateChanged: bool, targetFocusedEditable: bool, stateEvidence: str, transport: str,
             requestedClickX: optNum, requestedClickY: optNum, resolvedClickX: optNum, resolvedClickY: optNum,
-            requestedImageX: optNum, requestedImageY: optNum, modelRasterWidth: optNum, modelRasterHeight: optNum, coordinateSource: str,
             visualSnapped: bool, snapDistance: optNum, selectorReplaySafe: bool, selectorQuality: str, bindingActionable: bool, bindingSource: str, visualAuthority: bool,
             cdpPiercedTarget: bool, cdpPiercedActivator: bool, cdpPiercedFollowupEditor: bool, postVisualEditorFocus: bool, cdpPiercedAction: bool, unexpectedNavigation: bool, physicalClickUncertain: bool,
-            pointerAction: str, visualActionMapId: str, visualCandidateId: str, visualCandidateBBox: str,
-            visualCandidateCenterXRatio: optNum, visualCandidateCenterYRatio: optNum,
-            candidateId: str, pixelCandidateId: str, pixelCandidateBBox: str,
-            pixelCandidateCenterX: optNum, pixelCandidateCenterY: optNum,
+            pointerAction: str, candidateId: str,
             actionCandidateKind: str, actionCandidateHref: str, actionCandidateSafePoint: str, actionCandidateExpectedText: str, actionCandidateFingerprint: str,
             openedTabId: int, openedTabUrl: str,
           },
         },
         render: (_args, value) => [{ type: 'text', text: `Visual browser click executed at (${Number(value.xRatio).toFixed(4)}, ${Number(value.yRatio).toFixed(4)}) via ${value.transport || 'visual'}${value.selectorHint ? `; reusable selector=${value.selectorHint}` : ''}.` }],
       },
-      presentCall: args => generic('Visual browser click', { visualActionMapId: args.visualActionMapId, visualCandidateId: args.visualCandidateId, pixelCandidateId: args.pixelCandidateId, candidateId: args.candidateId, imageX: args.imageX, imageY: args.imageY, xRatio: args.xRatio, yRatio: args.yRatio, frameId: args.frameId, selectorHint: args.selectorHint }),
+      presentCall: args => generic('Visual browser click', { candidateId: args.candidateId, xRatio: args.xRatio, yRatio: args.yRatio, frameId: args.frameId, selectorHint: args.selectorHint }),
       execute: async (args, exec) => {
         const value = requireOk(await run(bridge, exec, 'visualClick', clean({
-          xRatio: args.xRatio, yRatio: args.yRatio,
-          imageX: args.imageX, imageY: args.imageY, imageWidth: args.imageWidth, imageHeight: args.imageHeight,
-          frameId: args.frameId, visualActionMapId: args.visualActionMapId, visualCandidateId: args.visualCandidateId,
-          candidateId: args.candidateId, pixelCandidateId: args.pixelCandidateId, selectorHint: args.selectorHint,
+          xRatio: args.xRatio, yRatio: args.yRatio, frameId: args.frameId, candidateId: args.candidateId, selectorHint: args.selectorHint,
           urlIdentity: args.urlIdentity, scrollX: args.scrollX, scrollY: args.scrollY,
           viewportWidth: args.viewportWidth, viewportHeight: args.viewportHeight, viewportScale: args.viewportScale,
           captureClientLeft: args.captureClientLeft, captureClientTop: args.captureClientTop,
@@ -548,18 +275,6 @@ export function registerTools(ctx, bridge, config = {}) {
           stateEvidence: value.stateEvidence, transport: value.transport,
           requestedClickX: value.requestedClickX, requestedClickY: value.requestedClickY,
           resolvedClickX: value.resolvedClickX, resolvedClickY: value.resolvedClickY,
-          requestedImageX: value.requestedImageX, requestedImageY: value.requestedImageY,
-          modelRasterWidth: value.modelRasterWidth, modelRasterHeight: value.modelRasterHeight,
-          coordinateSource: value.coordinateSource,
-          visualActionMapId: value.visualActionMapId,
-          visualCandidateId: value.visualCandidateId,
-          visualCandidateBBox: value.visualCandidateBBox,
-          visualCandidateCenterXRatio: value.visualCandidateCenterXRatio,
-          visualCandidateCenterYRatio: value.visualCandidateCenterYRatio,
-          pixelCandidateId: value.pixelCandidateId,
-          pixelCandidateBBox: value.pixelCandidateBBox,
-          pixelCandidateCenterX: value.pixelCandidateCenterX,
-          pixelCandidateCenterY: value.pixelCandidateCenterY,
           visualSnapped: value.visualSnapped, snapDistance: value.snapDistance,
           selectorReplaySafe: value.selectorReplaySafe, selectorQuality: value.selectorQuality,
           bindingActionable: value.bindingActionable, bindingSource: value.bindingSource, visualAuthority: value.visualAuthority,
@@ -689,7 +404,6 @@ export function registerTools(ctx, bridge, config = {}) {
         maxWidth: optInt,
         quality: optInt,
         coordinateGuide: optBool,
-        pixelActionMap: optBool,
         actionMap: optBool,
         actionMapTargetHint: optStr,
         focusXRatio: optNum,
@@ -711,8 +425,6 @@ export function registerTools(ctx, bridge, config = {}) {
               enum: ['recognized', 'empty', 'unsupported-platform', 'verification-suppressed', 'classification-unavailable', 'unavailable'],
             },
             ocrText: str,
-            ocrLineCount: optInt,
-            ocrLines: { type: 'array', items: OCR_LINE },
             verificationKind: str,
             verificationSubtype: str,
             verificationOcrAllowed: bool,
@@ -733,9 +445,6 @@ export function registerTools(ctx, bridge, config = {}) {
             targetPixelWidth: optNum,
             captureDevicePixelRatio: optNum,
             coordinateGuide: bool,
-            pixelActionMap: bool,
-            pixelCandidateCount: optInt,
-            pixelCandidateSummary: str,
             actionMap: bool,
             actionMapTargeted: bool,
             actionMapTargetHint: str,
@@ -766,7 +475,6 @@ export function registerTools(ctx, bridge, config = {}) {
           maxWidth: args.maxWidth,
           quality: args.quality,
           coordinateGuide: args.coordinateGuide,
-          pixelActionMap: args.pixelActionMap,
           actionMap: args.actionMap,
           actionMapTargetHint: args.actionMapTargetHint,
           focusXRatio: args.focusXRatio,
@@ -786,8 +494,6 @@ export function registerTools(ctx, bridge, config = {}) {
           bytes: value.bytes ?? 0,
           ocrStatus: ocr.status,
           ocrText: ocr.text,
-          ocrLineCount: Array.isArray(ocr.lines) ? ocr.lines.length : 0,
-          ocrLines: Array.isArray(ocr.lines) ? ocr.lines : undefined,
           verificationKind: ocr.verificationKind,
           verificationSubtype: ocr.verificationSubtype,
           verificationOcrAllowed: ocr.verificationOcrAllowed,
@@ -808,9 +514,6 @@ export function registerTools(ctx, bridge, config = {}) {
           targetPixelWidth: value.targetPixelWidth,
           captureDevicePixelRatio: value.captureDevicePixelRatio,
           coordinateGuide: value.coordinateGuide,
-          pixelActionMap: value.pixelActionMap,
-          pixelCandidateCount: value.pixelCandidateCount,
-          pixelCandidateSummary: value.pixelCandidateSummary,
           actionMap: value.actionMap,
           actionMapTargeted: value.actionMapTargeted,
           actionMapTargetHint: value.actionMapTargetHint,
@@ -882,8 +585,6 @@ async function inspectScreenshotOcr(bridge, exec, tabId, dataUrl, timeoutMs) {
     return {
       status: result.status,
       ...(result.text ? { text: result.text } : {}),
-      ...(Array.isArray(result.lines) ? { lines: result.lines } : {}),
-      ...(Array.isArray(result.languagesTried) ? { languagesTried: result.languagesTried } : {}),
       ...(imageCodeOcrAllowed ? {
         verificationKind: classified.kind,
         verificationSubtype: classified.subtype,
@@ -922,19 +623,12 @@ function renderBrowserStatus(value) {
   const visualClick = capabilities.includes('visualClick')
     ? 'visualClick=yes'
     : 'visualClick=MISSING'
-  const visualActionMap = capabilities.includes('visualActionMapV1')
-    ? 'visualActionMap=yes'
-    : 'visualActionMap=MISSING'
-  const runtimeBuild = typeof extension.runtimeBuild === 'string' && extension.runtimeBuild
-    ? `runtimeBuild=${extension.runtimeBuild}`
-    : 'runtimeBuild=UNKNOWN'
   const warnings = []
   if (imageCode !== 'captureImageCode=yes') warnings.push('runtime/extension capability mismatch: restart Harness before CAPTCHA visual capture')
   if (semanticClick !== 'semanticClick=yes') warnings.push('atomic semantic transport unavailable; patrol_click_target will use its verified unique-selector fallback')
   if (visualClick !== 'visualClick=yes') warnings.push('browser visual-click fallback unavailable; restart Harness after updating the Patrol extension')
-  if (visualActionMap !== 'visualActionMap=yes') warnings.push('browser V# Action Map unavailable; Patrol should refresh the managed extension before visual teaching')
   const suffix = warnings.length > 0 ? `; ${warnings.join('; ')}` : ''
-  return `${base} ${runtimeBuild}; ${imageCode}; ${semanticClick}; ${visualClick}; ${visualActionMap}; capabilities=[${capabilities.join(', ')}]${suffix}.`
+  return `${base} ${imageCode}; ${semanticClick}; ${visualClick}; capabilities=[${capabilities.join(', ')}]${suffix}.`
 }
 
 function renderScreenshotResult(value) {
@@ -956,11 +650,8 @@ function renderScreenshotResult(value) {
   } else {
     lines.push(`Built-in screenshot OCR status: ${value.ocrStatus}.`)
   }
-  if (value.pixelCandidateSummary) {
-    lines.push('Browser Pixel Action Map candidates (CURRENT raster; B# is pure-image geometry, not DOM):', value.pixelCandidateSummary)
-  }
   if (value.actionCandidateSummary) {
-    lines.push('DOM Action Map candidate binding summary (CURRENT frame):', value.actionCandidateSummary)
+    lines.push('Action Map candidate binding summary (CURRENT frame):', value.actionCandidateSummary)
   }
   if (value.actionMapStrictTargetMiss === true) {
     lines.push('STRICT TARGET MISS: no safe Action Map candidate matched the requested explicit text/close target. Do not guess a nearby A# or free XY; refine/refresh the visual observation.')

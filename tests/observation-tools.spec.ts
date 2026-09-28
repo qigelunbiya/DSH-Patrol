@@ -112,7 +112,7 @@ describe('current-page observation evidence fallback', () => {
     expect(value.actionMapTargetHint).toBe('10.192.3.174 行的 RDP')
   })
 
-  it('returns a clean full CURRENT browser screenshot for coarse V# region selection', async () => {
+  it('automatically requests a targeted Action Map when visual observation has a concrete targetHint', async () => {
     const harness = setupObservationHarness({ readImage: 'success', captcha: false })
     const value = await harness.tool.execute({
       inspectionId: 'demo',
@@ -121,53 +121,12 @@ describe('current-page observation evidence fallback', () => {
     }, harness.exec)
 
     expect(harness.screenshotArgs.at(-1)).toMatchObject({
-      actionMap: false,
+      actionMap: true,
+      actionMapTargetHint: '百度搜索栏',
       coordinateGuide: false,
     })
-    expect(harness.screenshotArgs.at(-1)).not.toHaveProperty('actionMapTargetHint')
-    expect(value.actionMap).toBe(false)
-    expect(value.modelRasterWidth).toBe(1024)
-    expect(value.modelRasterHeight).toBe(576)
-  })
-
-  it('does not silently auto-enable legacy B# maps for focused observations', async () => {
-    const harness = setupObservationHarness({ readImage: 'success', captcha: false })
-    const value = await harness.tool.execute({
-      inspectionId: 'demo',
-      includeImage: true,
-      targetHint: '我的任务右侧的×',
-      focusXRatio: 0.72,
-      focusYRatio: 0.16,
-      focusWidthRatio: 0.24,
-      focusHeightRatio: 0.22,
-    }, harness.exec)
-
-    expect(harness.screenshotArgs.at(-1)).toMatchObject({
-      pixelActionMap: false,
-      actionMap: false,
-      coordinateGuide: false,
-      focusXRatio: 0.72,
-      focusYRatio: 0.16,
-    })
-    expect(value.pixelActionMap).toBe(false)
-  })
-
-  it('keeps explicit legacy B# map available only when deliberately requested', async () => {
-    const harness = setupObservationHarness({ readImage: 'success', captcha: false })
-    const value = await harness.tool.execute({
-      inspectionId: 'demo',
-      includeImage: true,
-      targetHint: 'legacy diagnostic',
-      pixelActionMap: true,
-    }, harness.exec)
-
-    expect(harness.screenshotArgs.at(-1)).toMatchObject({
-      pixelActionMap: true,
-      actionMap: false,
-      coordinateGuide: false,
-    })
-    expect(value.pixelActionMap).toBe(true)
-    expect(value.pixelCandidateSummary).toContain('B1')
+    expect(value.actionMap).toBe(true)
+    expect(value.actionMapTargeted).toBe(true)
   })
 
   it('attaches a second magnified candidate sheet for small targeted Action Maps', async () => {
@@ -349,11 +308,6 @@ function setupObservationHarness(options: {
             captureMode: 'cdp-css-visual-viewport',
             scrollX: 0,
             scrollY: 0,
-            pixelActionMap: args.pixelActionMap === true,
-            ...(args.pixelActionMap === true ? {
-              pixelCandidateCount: 3,
-              pixelCandidateSummary: 'B1 | bbox=10,10,12,12 | center=16,16\nB2 | bbox=40,10,18,18 | center=49,19\nB3 | bbox=70,10,14,14 | center=77,17',
-            } : {}),
             actionMap: args.actionMap === true,
             actionMapTargeted: args.actionMap === true && typeof args.actionMapTargetHint === 'string' && args.actionMapTargetHint.length > 0,
             ...(typeof args.actionMapTargetHint === 'string' ? { actionMapTargetHint: args.actionMapTargetHint } : {}),
@@ -363,13 +317,7 @@ function setupObservationHarness(options: {
               actionMapZoomCount: 1,
               actionMapZoomPath: 'C:\\workspace\\action-map-zoom.jpg',
             } : {}),
-            ...(args.format === 'jpeg' && options.omitRasterBudget !== true ? {
-              targetPixelWidth: 1024,
-              compactVisual: true,
-              modelRasterWidth: 1024,
-              modelRasterHeight: 576,
-              coordinateGuide: args.coordinateGuide === true,
-            } : {}),
+            ...(args.format === 'jpeg' && options.omitRasterBudget !== true ? { targetPixelWidth: 1024, compactVisual: true } : {}),
           },
         }
       }

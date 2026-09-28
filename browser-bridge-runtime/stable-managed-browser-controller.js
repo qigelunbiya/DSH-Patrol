@@ -49,7 +49,6 @@ export function createManagedBrowserController(options = {}) {
   let browserVersion
   let extensionId
   let extensionLoadMode = 'runtime'
-  let runtimeHealthy = false
   let attachedBrowser
   const watchedPages = new WeakSet()
   const pendingCertificatePages = new WeakSet()
@@ -66,7 +65,6 @@ export function createManagedBrowserController(options = {}) {
         browserVersion,
         extensionId,
         extensionLoadMode,
-        runtimeHealthy,
         lifecycle: 'single-process',
         error: lastError,
       }
@@ -133,30 +131,24 @@ export function createManagedBrowserController(options = {}) {
       }
 
       extensionId = await ensureRuntimeExtension(browser)
-      runtimeHealthy = false
       options.onExtensionReady?.(extensionId)
       const worker = await waitForExtensionWorker(browser, extensionId, startTimeoutMs)
       await configureWorker(worker)
       await waitForBridge(bridge, connectTimeoutMs, extensionId)
-      let runtimeProbe = await probeRuntimeHealth()
 
-      if (missingRequiredCapability() || missingRecommendedCapability() || !runtimeProbe.ok) {
-        const requiredBeforeRefresh = missingRequiredCapability() || !runtimeProbe.ok
+      if (missingRequiredCapability() || missingRecommendedCapability()) {
+        const requiredBeforeRefresh = missingRequiredCapability()
         logger.warn?.(
-          !runtimeProbe.ok
-            ? `[dsh-patrol/managed-browser] visual Action Map runtime route is stale/unavailable (${runtimeProbe.error || 'runtimeInfo failed'}); refreshing the extension in place without closing Chromium`
-            : requiredBeforeRefresh
-              ? '[dsh-patrol/managed-browser] connected extension is stale; attempting one in-place extension refresh without closing Chromium'
-              : '[dsh-patrol/managed-browser] visual-click extension layer is stale; attempting a best-effort in-place refresh without closing Chromium',
+          requiredBeforeRefresh
+            ? '[dsh-patrol/managed-browser] connected extension is stale; attempting one in-place extension refresh without closing Chromium'
+            : '[dsh-patrol/managed-browser] visual-click extension layer is stale; attempting a best-effort in-place refresh without closing Chromium',
         )
         try {
           extensionId = await refreshRuntimeExtensionInPlace(browser, extensionId)
-          runtimeHealthy = false
           options.onExtensionReady?.(extensionId)
           const refreshedWorker = await waitForExtensionWorker(browser, extensionId, startTimeoutMs)
           await configureWorker(refreshedWorker)
           await waitForBridge(bridge, connectTimeoutMs, extensionId)
-          runtimeProbe = await probeRuntimeHealth()
         } catch (error) {
           if (requiredBeforeRefresh) throw error
           logger.warn?.(`[dsh-patrol/managed-browser] optional trusted visual-click refresh failed; basic DOM patrol remains available: ${errorMessage(error)}`)
@@ -164,12 +156,8 @@ export function createManagedBrowserController(options = {}) {
         if (missingRequiredCapability()) {
           throw new Error('Patrol extension connected but is still missing required visual calibration capabilities after in-place refresh')
         }
-        if (!runtimeProbe.ok) {
-          throw new Error(`Patrol extension refreshed but browserVisualActionMap is still unavailable: ${runtimeProbe.error || 'runtimeInfo reported visualActionMapReady=false'}`)
-        }
       }
 
-      runtimeHealthy = runtimeProbe.ok
       lastError = undefined
       writeCurrentState()
       logger.info?.(`[dsh-patrol/managed-browser] ready; pid=${browser?.process?.()?.pid ?? 'unknown'}; extension=${extensionId}; mode=runtime; browser kept persistent`)
@@ -192,7 +180,6 @@ export function createManagedBrowserController(options = {}) {
       && bridge.connected === true
       && originMatches(bridge, extensionId)
       && extensionHelloReceived(bridge)
-      && runtimeHealthy
       && !missingRequiredCapability()
   }
 
@@ -226,34 +213,10 @@ export function createManagedBrowserController(options = {}) {
       throw new Error('Patrol extension is stale and this Chromium build does not expose runtime extension refresh APIs')
     }
     try {
-      runtimeHealthy = false
-      bridge.resetConnection?.('Refreshing stale Patrol browser extension runtime')
       if (currentId) await activeBrowser.uninstallExtension(currentId)
       return await activeBrowser.installExtension(extensionPath)
     } catch (error) {
       throw extensionApiError(error)
-    }
-  }
-
-  async function probeRuntimeHealth() {
-    if (typeof bridge.request !== 'function') return { ok: true, legacyBridge: true }
-    try {
-      const value = await bridge.request('runtimeInfo', {}, { timeoutMs: Math.min(3000, connectTimeoutMs) })
-      if (!value || typeof value !== 'object') {
-        return { ok: false, error: 'runtimeInfo returned an invalid response' }
-      }
-      if (value.visualActionMapReady !== true) {
-        return {
-          ok: false,
-          error: `runtimeInfo visualActionMapReady=${String(value.visualActionMapReady)} build=${String(value.runtimeBuild || 'unknown')}`,
-        }
-      }
-      return {
-        ok: true,
-        runtimeBuild: typeof value.runtimeBuild === 'string' ? value.runtimeBuild : '',
-      }
-    } catch (error) {
-      return { ok: false, error: errorMessage(error) }
     }
   }
 
@@ -273,7 +236,6 @@ export function createManagedBrowserController(options = {}) {
       if (browser !== active) return
       browser = undefined
       attachedBrowser = undefined
-      runtimeHealthy = false
       removeStateFile(statePath)
       logger.warn?.('[dsh-patrol/managed-browser] managed browser process disconnected; the next Patrol action may launch a replacement')
     })
