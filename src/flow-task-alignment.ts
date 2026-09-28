@@ -92,9 +92,10 @@ export function semanticChecklistCoverageWarnings(
   const checklist = definition.metadata.taskChecklist ?? []
   if (checklist.length === 0) return []
   const alignment = alignChecklistSteps(checklist, steps)
-  return alignment.missingItems.length === 0
+  const actionableMissing = alignment.missingItems.filter(item => checklistActionForText(item) !== 'other')
+  return actionableMissing.length === 0
     ? []
-    : [`任务清单缺少可复用步骤：${alignment.missingItems.join('；')}。`]
+    : [`任务清单缺少可复用步骤：${actionableMissing.join('；')}。`]
 }
 
 export function bindChecklistTasksSemantically(definition: InspectionDefinition): void {
