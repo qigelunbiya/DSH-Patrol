@@ -168,6 +168,26 @@ function pruneAdvanced(
     || (before !== undefined && after !== undefined && after > before)
 }
 
+export function isContextLengthExceededFailure(failure: FailureLike): boolean {
+  const message = failure.message?.toLowerCase() ?? ''
+  return message.includes('requested token count exceeds')
+    || message.includes('maximum context length')
+    || message.includes('context length exceeded')
+    || message.includes('context_length_exceeded')
+    || message.includes('too many tokens')
+}
+
+function annotateContextOverflowFailure(failure: FailureLike, recovered: boolean): void {
+  if (failure.message?.includes('[DSH Patrol context recovery]') === true) return
+  failure.message = [
+    failure.message ?? failure.code ?? 'model request exceeded context length',
+    '[DSH Patrol context recovery] 本次失败是请求上下文长度超限，不是浏览器/桌面巡检操作失败。',
+    recovered
+      ? 'Patrol 已丢弃历史图片并裁剪旧 tool-result 历史；将只重试当前尚未完成的模型请求，不会重放已成功的点击/输入。'
+      : 'Patrol 已尝试无模型裁剪，但没有得到可确认的请求缩减；为避免盲目重复 400 请求，本次停止自动重试。',
+  ].join('\n')
+}
+
 function annotatePressureFailure(
   failure: FailureLike,
   options: { oom: boolean; sameStepRecentOom: boolean; retryAttempt: number; retryDelayMs?: number },
@@ -277,6 +297,7 @@ export function registerPatrolContextPressureGuard(ctx: Context): () => void {
   const cumulativeModelSteps = new WeakMap<object, number>()
   const lastStepPrune = new WeakMap<object, number>()
   const lastStepCompact = new WeakMap<object, number>()
+  const contextOverflowRecovery = new WeakMap<object, string>()
 
   const keyOf = (turn: number, step: number) => `${turn}:${step}`
 
@@ -391,10 +412,63 @@ export function registerPatrolContextPressureGuard(ctx: Context): () => void {
 
       const oom = isCudaOutOfMemoryFailure(payload.failure)
       const authUnavailable = isQwenLocalAuthUnavailableFailure(payload.failure)
-      if (!oom && !authUnavailable) return next()
+      const contextOverflow = isContextLengthExceededFailure(payload.failure)
+      if (!oom && !authUnavailable && !contextOverflow) return next()
 
       const agentKey = agent as unknown as object
       const stepKey = keyOf(payload.turn, payload.step)
+
+      if (contextOverflow) {
+        if (contextOverflowRecovery.get(agentKey) === stepKey) {
+          annotateContextOverflowFailure(payload.failure, false)
+          ctx.logger.warn(
+            `[dsh-patrol/context-pressure] context-length recovery already attempted for turn=${payload.turn} step=${payload.step}; refusing a blind retry loop`,
+          )
+          return undefined
+        }
+        contextOverflowRecovery.set(agentKey, stepKey)
+
+        // This is a deterministic 400 request-size failure, not an unavailable
+        // model. Reduce the already-built durable request immediately. Unlike
+        // CUDA/auth recovery, model-backed compaction is safe to try here after
+        // model-free pruning because the upstream model itself is still healthy.
+        const imageReduced = offloadImages(ctx, agent, 0, 'post-context-overflow Patrol image offload')
+        const pruner = readToolResultPruner(ctx)
+        let textReduced = pruneOnce(ctx, pruner, agent, 'post-context-overflow Patrol text history prune')
+        let compacted = false
+        const compaction = readCompaction(ctx)
+        if (compaction !== undefined && !payload.signal.aborted) {
+          const before = replaceGeneration(agent.session)
+          try {
+            const result = await compaction.compactIfNeeded(agent, 'context-overflow', payload.signal)
+            const after = replaceGeneration(agent.session)
+            compacted = result !== null || (before !== undefined && after !== undefined && after > before)
+            if (!payload.signal.aborted) {
+              textReduced = pruneOnce(ctx, pruner, agent, 'post-context-compaction Patrol text history prune') || textReduced
+            }
+          } catch (error: unknown) {
+            ctx.logger.warn(
+              `[dsh-patrol/context-pressure] context-overflow compaction failed: ${error instanceof Error ? error.message : String(error)}`,
+            )
+          }
+        }
+
+        const reduced = imageReduced || textReduced || compacted
+        annotateContextOverflowFailure(payload.failure, reduced)
+        const tokenMeter = readTokenMeter(ctx)
+        const tokens = measuredTokens(tokenMeter, agent.session)
+        const retainedImages = countRetainedToolResultImages(agent.session)
+        ctx.logger.warn(
+          `[dsh-patrol/context-pressure] context overflow route=${route.provider}/${route.model}`
+          + ` turn=${payload.turn} step=${payload.step} reduced=${reduced}`
+          + ` textTokens=${tokens ?? 'unknown'} retainedToolImages=${retainedImages}`,
+        )
+        if (reduced && !payload.signal.aborted) {
+          ctx.logger.warn('[dsh-patrol/context-pressure] retrying only the failed oversized model request after durable request reduction')
+          return { kind: 'retry' as const }
+        }
+        return undefined
+      }
       let steps = recoveryByAgent.get(agentKey)
       if (steps === undefined) {
         steps = new Map()

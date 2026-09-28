@@ -657,6 +657,31 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
     }
     return compact([...new Set(contexts.filter(Boolean))].join(' | ')).slice(0, 900)
   }
+  const nearbyControlContext = element => {
+    const contexts = []
+    const add = node => {
+      if (!(node instanceof Element)) return
+      const text = compact([
+        node.getAttribute?.('aria-label'),
+        node.getAttribute?.('title'),
+        node.innerText,
+        node.textContent,
+      ].filter(Boolean).join(' '))
+      if (text && text.length <= 220) contexts.push(text)
+    }
+    let node = element
+    for (let depth = 0; node instanceof Element && depth < 4; depth += 1) {
+      add(node.previousElementSibling)
+      add(node.nextElementSibling)
+      const parent = node.parentElement
+      if (parent instanceof Element) {
+        add(parent.previousElementSibling)
+        add(parent.nextElementSibling)
+      }
+      node = parent
+    }
+    return compact([...new Set(contexts.filter(Boolean))].join(' | ')).slice(0, 520)
+  }
   const microActionOwnerContext = element => {
     let node = element?.parentElement
     for (let depth = 0; node instanceof Element && depth < 5; depth += 1) {
@@ -679,6 +704,7 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
     return ''
   }
   const closeIntent = /(?:关闭|移除|删除|清除|取消|close|remove|delete|clear|dismiss|[×✕✖]|(?:^|[\s:_-])x(?:$|[\s:_-]))/i.test(String(targetHint || ''))
+  const iconIntent = /(?:三角|倒三角|箭头|下拉|展开|折叠|收起|筛选.*(?:图标|按钮)|(?:dropdown|caret|chevron|arrow|filter).*(?:icon|button)?)/i.test(String(targetHint || ''))
   const closeBusinessCore = normalize(String(targetHint || '')
     .replace(/(?:点击|帮我|请|关闭|移除|删除|清除|取消|筛选|搜索|标签|配置项|右侧|左侧|旁边|里面|其中|图标|按钮|控件|的|close|remove|delete|clear|dismiss|[x×✕✖])/gi, ' '))
   const genericBusinessCore = normalize(String(targetHint || '')
@@ -814,8 +840,21 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
     const tabIndex = tabIndexAttr === null || tabIndexAttr === undefined || String(tabIndexAttr).trim() === ''
       ? Number.NaN
       : Number(tabIndexAttr)
+    const parent = element.parentElement
+    const parentStyle = parent instanceof Element ? getComputedStyle(parent) : undefined
+    const parentPointerAction = parent instanceof Element && (
+      parentStyle?.cursor === 'pointer'
+      || typeof parent.onclick === 'function'
+      || parent.hasAttribute?.('onclick')
+      || parent.matches?.('button,[role="button"],[role="combobox"]')
+    )
+    const compactIconPointer = !strongAction && !editable && !microCloseAction
+      && (pointerAction || parentPointerAction)
+      && width >= 8 && height >= 8
+      && width <= 72 && height <= 72
+      && width * height <= 4_096
     const weakPointerOnly = !strongAction && !editable
-      && (labeledPointer || (Number.isFinite(tabIndex) && tabIndex >= 0 && pointerAction))
+      && (labeledPointer || (Number.isFinite(tabIndex) && tabIndex >= 0 && pointerAction) || compactIconPointer)
     if (!(strongAction || editable || weakPointerOnly || microCloseAction)) continue
 
     // A broad pointer-styled card wrapper must never compete with the real
@@ -843,10 +882,12 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
     if (area < 24000) score += 60
     if (area < 8000) score += 40
     if (weakPointerOnly) score -= 220
+    if (compactIconPointer) score += iconIntent ? 980 : 180
     if (microCloseAction) score += 980
 
     const rowContext = logicalRowContext(element)
     const localContext = localCandidateContext(element)
+    const nearbyContext = compactIconPointer ? nearbyControlContext(element) : ''
     const ownerContext = microCloseAction ? microActionOwnerContext(element) : ''
     const candidateText = compact(element.innerText || element.textContent || '').slice(0, 120)
     const candidateTitle = compact(element.getAttribute?.('title') || '')
@@ -859,6 +900,7 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
       candidatePlaceholder,
       candidateName,
       candidateText,
+      nearbyContext,
       element instanceof HTMLInputElement ? element.value : '',
       element.id,
       [...(element.classList || [])].join(' '),
@@ -871,6 +913,7 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
       ariaLabel: candidateAriaLabel,
       actionText,
       localContext,
+      nearbyContext,
       ownerContext,
       rowContext: rowContext.text,
       rowKey: rowContext.key,
@@ -892,9 +935,11 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
             ? 'button'
             : editable
               ? 'editable'
-              : weakPointerOnly
-                ? 'pointer-wrapper'
-                : 'interactive',
+              : compactIconPointer
+                ? 'icon-control'
+                : weakPointerOnly
+                  ? 'pointer-wrapper'
+                  : 'interactive',
       microActionKind: microCloseAction ? 'close' : '',
       score,
     })
@@ -941,6 +986,7 @@ function interactionMainWorldCollectVisualActionCandidates(capture, targetHint =
       const evidence = normalize([
         candidate.actionText,
         candidate.localContext,
+        candidate.nearbyContext,
         candidate.rowContext,
         candidate.href,
         candidate.id,

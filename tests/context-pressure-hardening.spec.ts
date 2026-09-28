@@ -4,6 +4,7 @@ import {
   PATROL_QWEN_HARDENED_COMPACT_LIMIT,
   PATROL_QWEN_HARDENED_PRUNE_LIMIT,
   PATROL_QWEN_NO_METER_COMPACT_STEP,
+  isContextLengthExceededFailure,
   registerPatrolContextPressureGuard,
 } from '../src/context-pressure-hardening.js'
 
@@ -297,6 +298,82 @@ describe('mounted Patrol local-Qwen hardening', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('recognizes the exact upstream 262144 context-length failure reported by long Patrol sessions', () => {
+    expect(isContextLengthExceededFailure({
+      code: 'bad_response_status_code',
+      status: 400,
+      message: 'Requested token count exceeds the model\'s maximum context length of 262144 tokens. You requested a total of 262534 tokens: 229766 tokens from the input messages and 32768 tokens for the completion.',
+    })).toBe(true)
+  })
+
+  it('prunes and retries only the failed model request after deterministic context overflow', async () => {
+    const ctx = new Context()
+    const current = agent()
+    const pruneSession = vi.fn(() => {
+      current.session.surface.replaceGeneration += 1
+      return { pruned: [{ callId: 'old-observe' }], charsRemoved: 24_000 }
+    })
+    const compactIfNeeded = vi.fn(async () => null)
+    ctx.provide('tokenMeter', { measure: () => ({ totalTokens: 220_000 }) })
+    ctx.provide('toolResultPruner', { pruneSession })
+    ctx.provide('compaction', { compactIfNeeded })
+    registerPatrolContextPressureGuard(ctx)
+
+    await ctx.waterfall(
+      'agent/pre-step',
+      payload(current, 9, 7) as never,
+      async () => ({ kind: 'enter' as const, messages: [] }),
+    )
+    pruneSession.mockClear()
+    compactIfNeeded.mockClear()
+
+    const failure = {
+      status: 400,
+      code: 'bad_response_status_code',
+      message: 'Requested token count exceeds the model\'s maximum context length of 262144 tokens. You requested a total of 262534 tokens: 229766 tokens from the input messages and 32768 tokens for the completion.',
+    }
+    const downstream = vi.fn(async () => ({ kind: 'throw' as const }))
+    const result = await ctx.waterfall(
+      'agent/request-error',
+      {
+        agent: current,
+        turn: 7,
+        step: 9,
+        provider: 'cliproxy',
+        failure,
+        signal: new AbortController().signal,
+      } as never,
+      downstream,
+    )
+
+    expect(result).toMatchObject({ kind: 'retry' })
+    expect(pruneSession).toHaveBeenCalled()
+    expect(compactIfNeeded).toHaveBeenCalledWith(current, 'context-overflow', expect.any(AbortSignal))
+    expect(downstream).not.toHaveBeenCalled()
+    expect(failure.message).toContain('[DSH Patrol context recovery]')
+    expect(failure.message).toContain('不会重放已成功的点击/输入')
+
+    const second = await ctx.waterfall(
+      'agent/request-error',
+      {
+        agent: current,
+        turn: 7,
+        step: 9,
+        provider: 'cliproxy',
+        failure: {
+          status: 400,
+          code: 'bad_response_status_code',
+          message: 'Requested token count exceeds the model\'s maximum context length of 262144 tokens.',
+        },
+        signal: new AbortController().signal,
+      } as never,
+      downstream,
+    )
+    expect(second).toBeUndefined()
+    expect(downstream).not.toHaveBeenCalled()
+    await ctx.fiber.dispose()
   })
 
   it('does not delegate a raw CUDA OOM to generic retries when no model-free reduction occurred', async () => {
