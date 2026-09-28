@@ -6,6 +6,14 @@ const source = readFileSync(
   join(process.cwd(), 'browser-extension', 'interaction-hardening.js'),
   'utf8',
 )
+const backgroundSource = readFileSync(
+  join(process.cwd(), 'browser-extension', 'background.js'),
+  'utf8',
+)
+const controllerSource = readFileSync(
+  join(process.cwd(), 'browser-bridge-runtime', 'stable-managed-browser-controller.js'),
+  'utf8',
+)
 
 describe('browser Action Map compact icon controls', () => {
   it('admits small unlabeled pointer controls without changing broad-wrapper rules', () => {
@@ -15,6 +23,12 @@ describe('browser Action Map compact icon controls', () => {
     expect(source).toContain('width * height <= 4_096')
     expect(source).toContain("'icon-control'")
     expect(source).toContain('hasStrongActionDescendant(element)')
+  })
+
+  it('forces a best-effort in-place extension refresh when the icon-candidate capability is stale', () => {
+    expect(backgroundSource).toContain("'compactIconActionMapV1'")
+    expect(controllerSource).toContain("!capabilities.includes('compactIconActionMapV1')")
+    expect(controllerSource).toContain('attempting a best-effort in-place refresh without closing Chromium')
   })
 
   it('uses nearby labels to ground triangle/dropdown/filter icon candidates', () => {
