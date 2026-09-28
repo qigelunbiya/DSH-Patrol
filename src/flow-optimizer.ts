@@ -280,7 +280,7 @@ function checklistMatchesAction(text: string, action: ChecklistAction): boolean 
   if (action === 'click') return /(点击|点开|进入|选择|发送|关闭|删除|粘贴|打开.*(?:入口|菜单|工单|详情)|click|select|send|close|delete|paste|open .*?(?:menu|item|detail))/i.test(text)
   if (action === 'type') return /(输入|填写|填入|复制到剪贴板|放入剪贴板|type|enter|fill|clipboard)/i.test(text)
   if (action === 'read') return /(读取|整理|查看.*(?:信息|列表|内容)|识别|OCR|read|summar|inspect.*(?:list|content|info)|ocr)/i.test(text)
-  if (action === 'wait') return /(等待|等到|直到|直至|wait(?:\s+(?:for|until))?)/i.test(text)
+  if (action === 'wait') return /(等待|等到|直到|直至|滚动|滑动|向上滑|向下滑|wait(?:\s+(?:for|until))?|scroll)/i.test(text)
   return /(截图|screenshot|capture)/i.test(text)
 }
 
@@ -318,7 +318,7 @@ function flowActionForStep(step: ToolStep): ChecklistAction | undefined {
     || step.tool === 'desktop_set_clipboard_text'
     || step.tool === 'desktop_set_clipboard_files') return 'type'
   if (step.tool === 'browser_read_page' || step.tool === 'desktop_snapshot' || step.tool === 'desktop_ocr') return 'read'
-  if (step.tool === 'browser_wait' || step.tool === 'desktop_wait' || step.tool === 'desktop_wait_for_target') return 'wait'
+  if (step.tool === 'browser_wait' || step.tool === 'browser_scroll' || step.tool === 'desktop_wait' || step.tool === 'desktop_wait_for_target') return 'wait'
   if (step.tool === 'browser_screenshot' || step.tool === 'desktop_screenshot') return 'screenshot'
   return undefined
 }
