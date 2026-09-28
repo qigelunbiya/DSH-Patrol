@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cloneForReadOnlyReplay, normalizeFlowReference, resolveBatchFlowReferences, resolveFlowReference } from '../src/flow-reference-tools.js'
+import { PATROL_FLOW_REFERENCE_PROMPT, cloneForReadOnlyReplay, normalizeFlowReference, resolveBatchFlowReferences, resolveFlowReference } from '../src/flow-reference-tools.js'
 import type { InspectionDefinition } from '../src/types.js'
 
 function flow(id: string, name: string, updatedAt = '2026-09-04T00:00:00.000Z', workspaceRoot = 'E:\\temp\\test'): InspectionDefinition {
@@ -25,6 +25,15 @@ function flow(id: string, name: string, updatedAt = '2026-09-04T00:00:00.000Z', 
     metadata: { createdAt: updatedAt, updatedAt, workspaceRoot },
   }
 }
+
+describe('flow repair prompt', () => {
+  it('prefers non-destructive successful-trace reconciliation over manual delete/rebuild loops', () => {
+    expect(PATROL_FLOW_REFERENCE_PROMPT).toContain('patrol_reconcile_successful_steps')
+    expect(PATROL_FLOW_REFERENCE_PROMPT).toMatch(/只补不删/)
+    expect(PATROL_FLOW_REFERENCE_PROMPT).toMatch(/禁止先删除已有步骤/)
+    expect(PATROL_FLOW_REFERENCE_PROMPT).toMatch(/不要为了把新步骤写进流程而直接调用 patrol_wait、patrol_scroll、patrol_screenshot、patrol_click/)
+  })
+})
 
 describe('flow reference resolver', () => {
   it('normalizes @ prefix, NFKC and surrounding/repeated whitespace', () => {
