@@ -1,4 +1,4 @@
-import { alignChecklistSteps, bindChecklistTasksSemantically, semanticChecklistCoverageWarnings } from './flow-task-alignment.js'
+import { alignChecklistRequirements, bindChecklistTasksSemantically, semanticChecklistCoverageWarnings } from './flow-task-alignment.js'
 import type { InspectionDefinition, InspectionStep, ToolStep } from './types.js'
 
 export interface FlowCompactionResult {
@@ -123,7 +123,7 @@ export function compactTeachingFlow(definition: InspectionDefinition): FlowCompa
   ].sort((left, right) => right - left).slice(0, screenshotRequired))
   const resetFloor = findSafeResetFloor(original, referenced)
   const checklist = definition.metadata.taskChecklist ?? []
-  const checklistAlignment = alignChecklistSteps(checklist, original)
+  const checklistAlignment = alignChecklistRequirements(checklist, original)
   const protectedChecklistStepIds = new Set(
     checklistAlignment.matches
       .map(match => original[match.stepIndex]?.id)
