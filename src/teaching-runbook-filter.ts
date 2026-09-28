@@ -90,11 +90,12 @@ export function filterDraftRunbookInPlace(definition: InspectionDefinition): voi
     // Structural edit tools persist through saveRunbookEdit() and therefore do
     // not enter successfulTeachingTrace. Never erase such user-authored graph
     // rows when the next live teaching action is saved.
-    const teachingTraceIds = new Set(
-      (definition.metadata.successfulTeachingTrace ?? []).map(step => step.id),
-    )
-    for (const entry of eligibleEntries) {
-      if (!teachingTraceIds.has(entry.step.id)) keepIndexes.add(entry.originalIndex)
+    const teachingTrace = definition.metadata.successfulTeachingTrace ?? []
+    if (teachingTrace.length > 0) {
+      const teachingTraceIds = new Set(teachingTrace.map(step => step.id))
+      for (const entry of eligibleEntries) {
+        if (!teachingTraceIds.has(entry.step.id)) keepIndexes.add(entry.originalIndex)
+      }
     }
 
     keepRequiredArtifacts(definition, original, keepIndexes)
