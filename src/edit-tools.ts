@@ -1193,7 +1193,9 @@ function resolveStructuralInsertPosition(
     if ((requestedBefore === undefined) === (requestedAfter === undefined)) {
       throw new Error('structural insert requires exactly one of beforeStepId or afterStepId when an explicit anchor is supplied')
     }
-    return requestedBefore !== undefined ? { before: requestedBefore } : { after: requestedAfter }
+    if (requestedBefore !== undefined) return { before: requestedBefore }
+    if (requestedAfter !== undefined) return { after: requestedAfter }
+    throw new Error('structural insert explicit anchor resolution failed')
   }
 
   if (taskChecklistItem === undefined) {
