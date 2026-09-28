@@ -244,15 +244,32 @@ describe('editable Patrol runbooks', () => {
 
   it('refuses checklist-based structural insertion when the business item is already covered', async () => {
     const { store, tool, exec } = await setup()
-    const definition = readyDefinition()
-    definition.status = 'draft'
-    definition.metadata.taskChecklist = ['输入用户名', '输入密码', '点击登录']
-    if (definition.steps[0]?.kind === 'tool') definition.steps[0].taskHint = '输入用户名'
-    if (definition.steps[1]?.kind === 'tool') definition.steps[1].taskHint = '输入密码'
+    const now = '2026-09-28T05:40:00.000Z'
+    const definition: InspectionDefinition = {
+      schemaVersion: '0.2',
+      id: 'already-covered-flow',
+      name: 'Already covered flow',
+      description: 'test',
+      status: 'draft',
+      target: { type: 'browser', url: 'https://example.test' },
+      expectedResult: 'done',
+      artifacts: [],
+      auth: { mode: 'none' },
+      schedule: null,
+      steps: [
+        { id: 'step-001', kind: 'tool', name: '访问登录页', tool: 'browser_navigate', arguments: { url: 'https://example.test', action: 'navigate' }, taskHint: '访问登录页', recordedAt: now },
+        { id: 'step-002', kind: 'tool', name: '点击登录', tool: 'browser_click', arguments: { selector: '#submit' }, locator: { text: '登录' }, taskHint: '点击登录', recordedAt: now },
+      ],
+      metadata: {
+        createdAt: now,
+        updatedAt: now,
+        taskChecklist: ['访问登录页', '点击登录'],
+      },
+    }
     await store.create(definition)
 
     await expect(tool('patrol_insert_click_step').execute({
-      inspectionId: 'editable-login',
+      inspectionId: 'already-covered-flow',
       stepName: '重复登录',
       selector: '#submit',
       taskChecklistItem: '点击登录',
