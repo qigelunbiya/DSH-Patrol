@@ -1,3 +1,4 @@
+import { alignChecklistSteps, bindChecklistTasksSemantically, semanticChecklistCoverageWarnings } from './flow-task-alignment.js'
 import type { InspectionDefinition, InspectionStep, ToolStep } from './types.js'
 
 export interface FlowCompactionResult {
@@ -121,6 +122,13 @@ export function compactTeachingFlow(definition: InspectionDefinition): FlowCompa
     ...findLastToolIndices(original, 'desktop_screenshot', screenshotRequired),
   ].sort((left, right) => right - left).slice(0, screenshotRequired))
   const resetFloor = findSafeResetFloor(original, referenced)
+  const checklist = definition.metadata.taskChecklist ?? []
+  const checklistAlignment = alignChecklistSteps(checklist, original)
+  const protectedChecklistStepIds = new Set(
+    checklistAlignment.matches
+      .map(match => original[match.stepIndex]?.id)
+      .filter((id): id is string => typeof id === 'string'),
+  )
 
   const kept = original.filter((step, index) => shouldKeepStep(
     original,
@@ -130,6 +138,7 @@ export function compactTeachingFlow(definition: InspectionDefinition): FlowCompa
     pageReadIndexes,
     screenshotIndexes,
     resetFloor,
+    protectedChecklistStepIds,
   ))
 
   rewriteSteps(definition, kept, false)
@@ -150,10 +159,12 @@ function shouldKeepStep(
   pageReadIndexes: ReadonlySet<number>,
   screenshotIndexes: ReadonlySet<number>,
   resetFloor: number,
+  protectedChecklistStepIds: ReadonlySet<string>,
 ): boolean {
-  if (index < resetFloor) return false
   if (step.kind === 'checkpoint') return true
   if (step.teaching?.status === 'unverified') return false
+  if (protectedChecklistStepIds.has(step.id)) return true
+  if (index < resetFloor) return false
   if (referenced.has(step.id)) return true
   if (step.expectation !== undefined) return true
 
@@ -232,36 +243,17 @@ function checklistCoverageWarnings(definition: InspectionDefinition, steps: read
   if (checklist.length === 0) return []
   const required = checklistActionCounts(checklist)
   const actual = flowActionCounts(steps)
-  const warnings: string[] = []
+  const warnings: string[] = [...semanticChecklistCoverageWarnings(definition, steps)]
   for (const key of Object.keys(required) as ChecklistAction[]) {
     if (actual[key] < required[key]) {
       warnings.push(`任务清单要求 ${required[key]} 个${actionLabel(key)}，当前流程仅有 ${actual[key]} 个。`)
     }
   }
-  return warnings
+  return [...new Set(warnings)]
 }
 
 export function bindChecklistTasks(definition: InspectionDefinition): void {
-  const checklist = definition.metadata.taskChecklist ?? []
-  if (checklist.length === 0) return
-
-  const tasksByAction = Object.fromEntries(
-    (['navigate', 'click', 'type', 'read', 'screenshot', 'wait'] as ChecklistAction[]).map(action => [
-      action,
-      checklist.filter(item => checklistMatchesAction(item, action)),
-    ]),
-  ) as Record<ChecklistAction, string[]>
-  const cursors: Record<ChecklistAction, number> = { navigate: 0, click: 0, type: 0, read: 0, screenshot: 0, wait: 0 }
-
-  definition.steps = definition.steps.map(step => {
-    if (step.kind !== 'tool') return step
-    const action = flowActionForStep(step)
-    if (action === undefined) return step
-    const task = tasksByAction[action][cursors[action]]
-    cursors[action] += 1
-    if (step.taskHint !== undefined || task === undefined) return step
-    return { ...step, taskHint: task }
-  })
+  bindChecklistTasksSemantically(definition)
 }
 
 function checklistActionCounts(checklist: readonly string[]): Record<ChecklistAction, number> {
