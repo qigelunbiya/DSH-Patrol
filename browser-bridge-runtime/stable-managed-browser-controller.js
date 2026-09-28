@@ -301,6 +301,7 @@ export function createManagedBrowserController(options = {}) {
         || !capabilities.includes('trustedSemanticClick')
         || !capabilities.includes('clickOpenedTabAdoption')
         || !capabilities.includes('compactVisualCapture')
+        || !capabilities.includes('compactIconActionMapV1')
       )
   }
 
