@@ -99,6 +99,11 @@ describe('current Patrol behavior prompt', () => {
     expect(PATROL_BEHAVIOR_PROMPT).toContain('不能替代下一次重放所需动作')
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/不得因为点击困难就偷偷用 patrol_navigate 直达目标 URL/s)
     expect(PATROL_BEHAVIOR_PROMPT).toMatch(/CURRENT 页面已经出现下一项的明确目标.*立即执行/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/taskChecklist.*最佳已验证路线/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/重复 Enter、Esc、点错结果、返回重搜.*不得继续堆在流程图里/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/输入中山市并执行搜索.*输入 \+ 提交搜索/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/下滑找到伶仃洋并点击.*滚动 \+ 点击/s)
+    expect(PATROL_BEHAVIOR_PROMPT).toMatch(/browser_type_focused 与 browser_type.*真实输入步骤/s)
   })
 
   it('requires semantic grouping before writing weekly-report templates', () => {
