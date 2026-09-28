@@ -105,6 +105,45 @@ describe('Patrol flow session tools', () => {
     expect(saved.steps.map(step => step.id)).toEqual(['step-001', 'step-002', 'step-003'])
   })
 
+  it('accepts historical successfulTeachingTrace ids after reconciliation renumbered the current Runbook', async () => {
+    const { store, definitions } = await setup()
+    const draft = await store.load('conversation-flow')
+    const traceNavigate = {
+      id: 'step-001',
+      kind: 'tool' as const,
+      name: '访问入口',
+      tool: 'browser_navigate',
+      arguments: { url: 'https://example.test' },
+      recordedAt: '2026-09-04T00:00:01.000Z',
+    }
+    const traceClick = {
+      id: 'step-003',
+      kind: 'tool' as const,
+      name: '点击目标',
+      tool: 'browser_click',
+      arguments: { selector: '#target' },
+      teaching: { status: 'verified' as const, method: 'state-change' as const, evidence: 'opened target' },
+      recordedAt: '2026-09-04T00:00:03.000Z',
+    }
+    draft.steps = [
+      traceNavigate,
+      { ...traceClick, id: 'step-012' },
+      { id: 'step-013', kind: 'tool', name: 'Final read', tool: 'browser_read_page', arguments: {}, artifact: 'page-text', recordedAt: '2026-09-04T00:00:04.000Z' },
+    ]
+    draft.metadata.successfulTeachingTrace = [traceNavigate, traceClick]
+    await store.saveRunbookEdit(draft)
+
+    const finalize = definitions.find(item => item.name === 'patrol_finalize_flow')
+    const text = await finalize.execute({
+      inspectionId: 'conversation-flow',
+      successfulStepIds: ['step-001', 'step-003'],
+    })
+
+    expect(text).toContain('reusable steps')
+    const saved = await store.load('conversation-flow')
+    expect(saved.steps.some(step => step.name === '点击目标')).toBe(true)
+  })
+
   it('rewrites a corrected flow instead of preserving appended retry tails', async () => {
     const { store, definitions } = await setup()
     const draft = await store.load('conversation-flow')
