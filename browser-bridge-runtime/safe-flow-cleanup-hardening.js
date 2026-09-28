@@ -1,59 +1,105 @@
-import { compactFlowConservatively } from './safe-flow-cleanup.js'
+import { assessChecklistCoverage, compactFlowConservatively } from './safe-flow-cleanup.js'
 
 /**
- * Dashboard cleanup adds one stricter DRAFT-only pass on top of the conservative
- * reusable-flow cleaner. A DRAFT is a teaching trace, so navigation retries and
- * blind scroll probes are not allowed to survive merely because the model gave
- * them a generated expectation/note.
+ * Dashboard "清理试错" hardening.
+ *
+ * The cleanup is transactional with respect to the user's task checklist:
+ * heuristics may remove retry-shaped navigation/scroll noise, but if the
+ * resulting graph loses ANY checklist item that was covered before cleanup,
+ * the original graph is restored and the destructive cleanup is blocked.
  */
 export function compactDashboardFlow(definition) {
+  const originalSnapshot = clone(definition)
+  const originalSteps = Array.isArray(definition?.steps) ? definition.steps.slice() : []
+  const beforeCoverage = assessChecklistCoverage(definition, originalSteps)
+
   const first = compactFlowConservatively(definition)
-  if (String(definition?.status || '').toLowerCase() !== 'draft' || !Array.isArray(definition?.steps)) {
-    return first
+  if (String(definition?.status || '').toLowerCase() === 'draft' && Array.isArray(definition?.steps)) {
+    const currentCoverage = assessChecklistCoverage(definition, definition.steps)
+    const protectedIndexes = new Set(currentCoverage.matches.map(item => item.stepIndex))
+    const targetOrigin = navigationOrigin(definition?.target?.url)
+    let firstNavigationSeen = false
+
+    const before = definition.steps.slice()
+    const kept = before.filter((step, index) => {
+      if (!step || step.kind !== 'tool') return true
+      if (protectedIndexes.has(index)) return true
+
+      if (step.tool === 'browser_navigate') {
+        const action = typeof step.arguments?.action === 'string' ? step.arguments.action : 'navigate'
+        const url = typeof step.arguments?.url === 'string' ? step.arguments.url : ''
+        const origin = navigationOrigin(url)
+
+        if (!firstNavigationSeen && action === 'navigate') {
+          firstNavigationSeen = true
+          return true
+        }
+
+        // A different-origin navigation is a strong business phase boundary
+        // (for example Google -> Odoo) and must never be treated as a guessed
+        // same-site recovery merely because it is not the first navigation.
+        if (origin && targetOrigin && origin !== targetOrigin) return true
+        if (step.when !== undefined || hasUserNotes(step)) return true
+
+        // Unprotected reload/back/forward and same-origin later navigations are
+        // recovery candidates. They survive only when the checklist alignment
+        // or explicit user-authored notes/conditions prove business intent.
+        return false
+      }
+
+      if (step.tool === 'browser_scroll') {
+        const selector = typeof step.arguments?.selector === 'string' ? step.arguments.selector.trim() : ''
+        if (selector || step.when !== undefined || hasUserNotes(step)) return true
+        return false
+      }
+
+      return true
+    })
+
+    if (kept.length !== before.length) renumberSteps(definition, kept)
   }
 
-  const before = definition.steps.slice()
-  let firstNavigationSeen = false
-  const kept = before.filter(step => {
-    if (!step || step.kind !== 'tool') return true
-
-    if (step.tool === 'browser_navigate') {
-      if (!firstNavigationSeen) {
-        firstNavigationSeen = true
-        return true
-      }
-      // During teaching, subsequent navigations are almost always recovery from
-      // a failed click (guess URL, return home, re-enter target). A real reusable
-      // workflow should express those transitions as the successful click that
-      // caused them. Preserve only explicitly user-authored/conditional revisits.
-      if (step.when !== undefined || hasUserNotes(step)) return true
-      return false
-    }
-
-    if (step.tool === 'browser_scroll') {
-      const selector = typeof step.arguments?.selector === 'string' ? step.arguments.selector.trim() : ''
-      // A selector-less scroll is viewport exploration, not a deterministic
-      // business action. Keep scoped/conditional/user-authored scrolls only.
-      if (!selector && step.when === undefined && !hasUserNotes(step)) return false
-    }
-
-    return true
-  })
-
-  if (kept.length === before.length) return first
-  renumberSteps(definition, kept)
-
-  // The first conservative pass assessed the pre-hardening step set. Because
-  // this DRAFT-only pass can remove additional navigation/scroll actions, run
-  // the conservative assessor once more so metadata.flowHealth reflects the
-  // JSON that is actually persisted and returned to the Dashboard.
   const reassessed = compactFlowConservatively(definition)
+  const afterCoverage = assessChecklistCoverage(definition, definition.steps)
+  const lostItems = coveredItemsLost(beforeCoverage, afterCoverage)
+
+  if (lostItems.length > 0) {
+    restoreDefinition(definition, originalSnapshot)
+    return {
+      originalSteps: originalSteps.length,
+      removedSteps: 0,
+      finalSteps: originalSteps.length,
+      flowHealth: definition.metadata?.flowHealth,
+      checklistCoverage: beforeCoverage,
+      blocked: true,
+      warnings: [
+        'Cleanup was rolled back because it would remove user-required business steps.',
+        `Protected checklist item(s): ${lostItems.join('；')}`,
+      ],
+    }
+  }
+
   return {
     originalSteps: first.originalSteps,
     removedSteps: first.originalSteps - definition.steps.length,
     finalSteps: definition.steps.length,
     flowHealth: reassessed.flowHealth,
+    checklistCoverage: afterCoverage,
+    blocked: false,
+    warnings: [],
   }
+}
+
+function coveredItemsLost(before, after) {
+  const beforeMissing = new Set(before?.missingItems || [])
+  const afterMissing = new Set(after?.missingItems || [])
+  const lost = []
+  for (const match of before?.matches || []) {
+    const item = String(match?.checklistItem || '')
+    if (!item || beforeMissing.has(item)) continue
+    if (afterMissing.has(item)) lost.push(item)
+  }
+  return [...new Set(lost)]
 }
 
 function renumberSteps(definition, steps) {
@@ -78,4 +124,23 @@ function hasUserNotes(step) {
     .map(line => line.trim())
     .filter(Boolean)
     .some(line => !/^(执行方法|execution method)[:：]/i.test(line))
+}
+
+function navigationOrigin(value) {
+  const text = typeof value === 'string' ? value.trim() : ''
+  if (!text) return ''
+  try {
+    return new URL(text).origin
+  } catch {
+    return ''
+  }
+}
+
+function clone(value) {
+  return JSON.parse(JSON.stringify(value))
+}
+
+function restoreDefinition(target, snapshot) {
+  for (const key of Object.keys(target || {})) delete target[key]
+  Object.assign(target, clone(snapshot))
 }
