@@ -239,6 +239,79 @@ describe('editable Patrol runbooks', () => {
       && step.arguments.timeoutMs === 3000)).toBe(true)
   })
 
+  it('reconciles missing successful teaching steps in one non-destructive edit without touching the current page', async () => {
+    const { store, tool, exec, dispatchCalls } = await setup()
+    const now = '2026-09-28T00:00:00.000Z'
+    const navigate = {
+      id: 'step-001',
+      kind: 'tool' as const,
+      name: '访问 Google',
+      tool: 'browser_navigate',
+      arguments: { url: 'https://google.com' },
+      recordedAt: now,
+    }
+    const scroll = {
+      id: 'step-002',
+      kind: 'tool' as const,
+      name: '向下滑动查找目标',
+      tool: 'browser_scroll',
+      arguments: { direction: 'down', amount: 600 },
+      recordedAt: '2026-09-28T00:00:01.000Z',
+    }
+    const click = {
+      id: 'step-003',
+      kind: 'tool' as const,
+      name: '点击目标链接',
+      tool: 'browser_click',
+      arguments: { selector: '#target' },
+      teaching: { status: 'verified' as const, method: 'state-change' as const, evidence: 'navigated' },
+      recordedAt: '2026-09-28T00:00:02.000Z',
+    }
+    const manual = {
+      id: 'step-010',
+      kind: 'tool' as const,
+      name: '人工结构补充',
+      tool: 'browser_wait',
+      arguments: { timeoutMs: 250 },
+      recordedAt: '2026-09-28T00:00:10.000Z',
+    }
+    const definition: InspectionDefinition = {
+      schemaVersion: '0.2',
+      id: 'trace-reconcile-edit',
+      name: 'Trace reconcile edit',
+      description: 'test',
+      status: 'draft',
+      target: { type: 'browser', url: 'https://google.com' },
+      expectedResult: 'done',
+      artifacts: [],
+      auth: { mode: 'none' },
+      schedule: null,
+      steps: [navigate, manual, click],
+      metadata: {
+        createdAt: now,
+        updatedAt: now,
+        taskChecklist: ['访问 Google', '向下滑动查找目标', '点击目标链接'],
+        successfulTeachingTrace: [navigate, scroll, click],
+      },
+    }
+    await store.create(definition)
+
+    const result = await tool('patrol_reconcile_successful_steps').execute({
+      inspectionId: 'trace-reconcile-edit',
+    }, exec)
+
+    expect(result).toContain('restored 1 missing step')
+    expect(result).toContain('Persistence check: PASSED')
+    const updated = await store.load('trace-reconcile-edit')
+    expect(updated.steps.map(step => step.name)).toEqual([
+      '访问 Google',
+      '向下滑动查找目标',
+      '人工结构补充',
+      '点击目标链接',
+    ])
+    expect(dispatchCalls()).toBe(0)
+  })
+
   it('inserts page reads with flat parameters and keeps the advanced generic insert as a compatibility fallback', async () => {
     const { store, tool, exec, dispatchCalls } = await setup()
     const definition = readyDefinition()

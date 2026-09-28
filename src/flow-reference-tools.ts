@@ -22,7 +22,8 @@ export const PATROL_FLOW_REFERENCE_PROMPT = `DSH Patrol existing-flow reference 
 - 多个 @flow:<inspectionId> 可以作为 patrol_run_batch 的 flows。UI 多选同样会提交稳定 inspectionId，因此批量执行前必须先完整解析并预检全部流程，任何缺失/歧义/空流程都必须在第一个流程启动前报错。
 - 绝对禁止为了“运行已有 DRAFT 流程”而依次调用 patrol_navigate、patrol_login_state、patrol_screenshot、patrol_read_page、patrol_click、patrol_type_* 等教学/记录工具。这些工具在 DRAFT 上的职责是编辑/教学，会追加步骤；它们不是已有流程的 replay API。
 - patrol_select_flow 只表示选择/查看上下文，不代表开始教学，也不代表执行。用户只是要运行已有流程时不需要先 select；解析后直接 patrol_run_flow 或 patrol_run_batch。
-- 只有用户明确说“修改流程、继续教学、重教、调整步骤、修复 Runbook”时，才允许修改 Runbook。对“在已有步骤前/后新增等待、截图、点击、读取等步骤”的请求，优先使用 patrol_insert_browser_step 做结构化插入；它不依赖 CURRENT 页面。不要为了把新步骤写进流程而直接调用 patrol_wait、patrol_screenshot、patrol_click 等教学工具，因为这些工具会先操作 CURRENT 页面再追加到尾部，页面不在目标位置时会产生错误试教。
+- 只有用户明确说“修改流程、继续教学、重教、调整步骤、修复 Runbook”时，才允许修改 Runbook。若用户说“刚刚巡检成功但流程图缺步骤/把刚刚成功的步骤补回来”，第一选择必须是 patrol_reconcile_successful_steps：它从 append-only 成功教学轨迹恢复缺失步骤，只补不删、不依赖 CURRENT 页面，也不需要模型猜未来 step id。调用后只需 patrol_show 一次核对，再 patrol_validate；禁止先删除已有步骤、反复 move/delete，或按聊天记忆手工重建整条路线。
+- 只有某个动作从未成功执行、成功轨迹里确实不存在时，才使用 patrol_insert_* 做真正的结构化新增；对“在已有步骤前/后新增等待、截图、点击、读取等步骤”的请求，优先 dedicated patrol_insert_*（或兼容 patrol_insert_browser_step），它们不依赖 CURRENT 页面。不要为了把新步骤写进流程而直接调用 patrol_wait、patrol_scroll、patrol_screenshot、patrol_click 等现场教学工具，因为这些工具会操作 CURRENT 页面并记录新的 live teaching 动作，页面不在目标位置时会产生错误试教。
 - 编辑已有流程时，patrol_run_flow / patrol_run_batch 只用于用户明确发起的正式巡检，禁止把它们当成内部调试器。完成结构修改后使用 patrol_validate 做端到端校验；validation/teaching 运行属于内部编辑诊断，不进入正式“巡检记录”。如果校验失败，只修复失败原因并再次 patrol_validate，不要为了探测状态反复创建正式巡检。
 - 已登录会话下的登录前置步骤可能被 replay 自动跳过；密码/短信验证码如果是 browser_type_transient_ref 也属于登录前置的一部分，不要因为当前页面已经登录就擅自重写整个流程。
 - Dashboard 的“运行”按钮会把稳定 inspectionId 直接提交到对话；收到这类请求后直接 patrol_run_flow，不要再次改写流程。

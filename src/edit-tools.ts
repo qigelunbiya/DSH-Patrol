@@ -18,6 +18,7 @@ import {
   untrustedPageData,
 } from './security.js'
 import { PatrolRunner } from './runner.js'
+import { restoreMissingSuccessfulTeachingSteps } from './successful-teaching-trace.js'
 import { PatrolStore } from './store.js'
 import type {
   AuthMode,
@@ -876,6 +877,48 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
     },
   })
 
+  const reconcileSuccessfulSteps = defineTool({
+    name: 'patrol_reconcile_successful_steps',
+    description: 'Repair a DRAFT Runbook from Patrol\'s append-only successful live-teaching trace. Use this FIRST when the user says a successful patrol step is missing from the flow graph. It restores only missing previously-successful steps in their original teaching order, never executes the CURRENT browser/desktop, never guesses selectors/coordinates, and never deletes or reorders existing Runbook steps. This is the fast non-destructive alternative to repeated patrol_insert_* / patrol_delete_step loops.',
+    parameters: {
+      inspectionId: { type: 'string', required: true },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args) {
+      await assertNoPendingRun(store, args.inspectionId)
+      const definition = await loadDraft(store, args.inspectionId)
+      const result = restoreMissingSuccessfulTeachingSteps(definition)
+      if (result.restored === 0) {
+        return [
+          `Successful-trace reconciliation made no Runbook changes for ${definition.id}.`,
+          `Trace steps: ${result.traceSteps}; already present: ${result.alreadyPresent}.`,
+          ...result.warnings,
+          'Do not delete/rewrite existing steps just to make the graph look different. If a genuinely new action was never executed successfully, teach or structurally insert only that specific new action.',
+        ].join('\n')
+      }
+
+      assertConditionOrder(definition)
+      markEdited(definition)
+      await persistRunbookEdit(store, definition)
+
+      const persisted = await store.load(definition.id)
+      const missingAfterSave = result.restoredStepIds.filter(stepId =>
+        !persisted.steps.some(step => step.id === stepId),
+      )
+      if (missingAfterSave.length > 0) {
+        throw new Error(`successful-trace reconciliation persistence check failed for: ${missingAfterSave.join(', ')}`)
+      }
+
+      return [
+        `Successful-trace reconciliation restored ${result.restored} missing step(s) for ${definition.id} without deleting or reordering existing steps.`,
+        `Trace steps: ${result.traceSteps}; already present: ${result.alreadyPresent}; restored ids: ${result.restoredStepIds.join(', ')}.`,
+        ...result.warnings,
+        'Persistence check: PASSED (Runbook reloaded from storage).',
+        'Call patrol_show once to inspect the saved graph, then patrol_validate. Do not manually delete/rebuild the route unless validation identifies a specific genuinely obsolete step.',
+      ].join('\n')
+    },
+  })
+
   const validate = defineTool({
     name: 'patrol_validate',
     description: 'Run a complete DRAFT runbook end-to-end without making it READY. If a human checkpoint is reached, use patrol_resume_validation after the user completes it.',
@@ -942,6 +985,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
     reteachCheckpoint,
     removeSteps,
     moveStep,
+    reconcileSuccessfulSteps,
     validate,
     resumeValidation,
     confirmEdit,
