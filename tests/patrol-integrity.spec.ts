@@ -111,6 +111,10 @@ describe('Patrol reusable-flow integrity', () => {
     expect(PATROL_INTEGRITY_PROMPT).toMatch(/不得用模型猜测的内部 URL 替代该业务点击/s)
     expect(PATROL_INTEGRITY_PROMPT).toMatch(/action=back\/forward\/reload/s)
     expect(PATROL_INTEGRITY_PROMPT).toMatch(/patrol_finalize_flow/s)
+    expect(PATROL_INTEGRITY_PROMPT).toMatch(/taskChecklist 是用户业务合同/s)
+    expect(PATROL_INTEGRITY_PROMPT).toMatch(/禁止删除、改名、重排清单项来迁就残缺流程/s)
+    expect(PATROL_INTEGRITY_PROMPT).toMatch(/物理点击已执行但 NOT recorded/s)
+    expect(PATROL_INTEGRITY_PROMPT).toMatch(/逐项语义覆盖 taskChecklist/s)
   })
 
   it('registers its prompt later than test mode and installs an always-on tool guard', async () => {
