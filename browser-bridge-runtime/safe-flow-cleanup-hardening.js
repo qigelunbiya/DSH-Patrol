@@ -91,13 +91,12 @@ export function compactDashboardFlow(definition) {
 }
 
 function coveredItemsLost(before, after) {
-  const beforeMissing = new Set(before?.missingItems || [])
-  const afterMissing = new Set(after?.missingItems || [])
+  const afterCovered = new Set((after?.matches || []).map(match => match.checklistIndex))
   const lost = []
   for (const match of before?.matches || []) {
+    if (afterCovered.has(match.checklistIndex)) continue
     const item = String(match?.checklistItem || '')
-    if (!item || beforeMissing.has(item)) continue
-    if (afterMissing.has(item)) lost.push(item)
+    if (item) lost.push(item)
   }
   return [...new Set(lost)]
 }
