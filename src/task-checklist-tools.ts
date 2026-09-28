@@ -77,7 +77,7 @@ export function registerPatrolTaskChecklistTools(ctx: Context, store: PatrolStor
 
   const updateChecklist = defineTool({
     name: 'patrol_update_task_checklist',
-    description: 'Replace the persisted human-readable business task checklist for an existing DRAFT inspection without changing Runbook steps. Use this during explicit flow editing whenever the human checklist must stay in sync with structural Runbook changes. READY flows must first enter edit mode with patrol_begin_edit.',
+    description: 'Update the persisted human-readable business task checklist for an existing DRAFT inspection without changing Runbook steps. Additive edits are allowed directly. Removing, replacing, or reordering an existing business requirement is a USER SCOPE CHANGE and requires scopeChangeConfirmed=true, which may be set only when the CURRENT user explicitly changed/removed/reordered the business requirement. Never shrink or rewrite the checklist merely to make flow cleanup/finalize/rewrite/validation pass. READY flows must first enter edit mode with patrol_begin_edit.',
     parameters: {
       inspectionId: { type: 'string', required: true },
       items: {
@@ -85,6 +85,10 @@ export function registerPatrolTaskChecklistTools(ctx: Context, store: PatrolStor
         required: true,
         items: { type: 'string' },
         description: 'Complete ordered human-readable task checklist after the requested edit. Supply the full replacement list, not only the changed item.',
+      },
+      scopeChangeConfirmed: {
+        type: 'boolean',
+        description: 'Required true only when the CURRENT user explicitly changed, removed, renamed, or reordered an existing business requirement. Never set this just to make a generated Runbook pass validation/optimization.',
       },
     },
     output: TEXT_OUTPUT,
@@ -113,6 +117,17 @@ export function registerPatrolTaskChecklistTools(ctx: Context, store: PatrolStor
           `Inspection ${definition.id} already has the requested ${items.length}-item task checklist; no change was needed.`,
           ...items.map((item, index) => `${index + 1}. ${item}`),
         ].join('\n')
+      }
+
+      const additive = checklistContainsOrderedSubsequence(items, previous)
+      if (!additive && args.scopeChangeConfirmed !== true) {
+        throw new Error([
+          `task checklist update for ${definition.id} would remove, replace, or reorder an existing user business requirement`,
+          'This is a business-scope change, not flow cleanup.',
+          'Do NOT change the checklist to make patrol_finalize_flow, patrol_rewrite_flow_path, cleanup, or validation pass.',
+          'Repair the Runbook so it satisfies the existing checklist.',
+          'Only when the CURRENT user explicitly changed the business requirements may you retry with scopeChangeConfirmed=true.',
+        ].join(' '))
       }
 
       definition.metadata.taskChecklist = items
@@ -158,6 +173,19 @@ function sameChecklist(left: readonly string[], right: readonly string[]): boole
   return left.every((item, index) => normalizeChecklistItem(item) === normalizeChecklistItem(right[index] ?? ''))
 }
 
+function checklistContainsOrderedSubsequence(
+  next: readonly string[],
+  previous: readonly string[],
+): boolean {
+  if (previous.length === 0) return true
+  let cursor = 0
+  for (const item of next) {
+    if (normalizeChecklistItem(item) === normalizeChecklistItem(previous[cursor] ?? '')) cursor += 1
+    if (cursor === previous.length) return true
+  }
+  return false
+}
+
 function normalizeChecklistItem(value: string): string {
-  return value.replace(/\s+/g, ' ').trim()
+  return value.normalize('NFKC').replace(/\s+/g, ' ').trim()
 }
