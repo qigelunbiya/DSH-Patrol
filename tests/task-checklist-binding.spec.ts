@@ -77,6 +77,37 @@ describe('task checklist step binding', () => {
     expect((value.steps[1] as ToolStep).taskHint).toBe('点击搜索按钮执行搜索')
   })
 
+  it('treats focused typing plus Enter as the two atomic actions of one compound search task', () => {
+    const typed = step('step-001', '输入中山市', 'browser_type_focused', { text: '中山市', clear: true })
+    const submit = step('step-002', '按 Enter 执行搜索', 'browser_press', { key: 'Enter' })
+    const value = definition([typed, submit], ['输入中山市并执行搜索'])
+
+    compactTeachingFlow(value)
+
+    expect(value.steps).toHaveLength(2)
+    expect(value.metadata.flowHealth?.warnings ?? []).toEqual([])
+    expect(value.steps.map(item => item.kind === 'tool' ? item.taskHint : undefined)).toEqual([
+      '输入中山市并执行搜索',
+      '输入中山市并执行搜索',
+    ])
+  })
+
+  it('requires and binds both scroll and click for a compound find-and-click checklist item', () => {
+    const scroll = step('step-001', '向下滑动页面查找伶仃洋', 'browser_scroll', { direction: 'down', amount: 500 })
+    const click = step('step-002', '点击伶仃洋链接', 'browser_visual_click', { targetHint: '伶仃洋链接' })
+    click.teaching = { status: 'verified', method: 'state-change', evidence: 'navigated to 伶仃洋' }
+    const value = definition([scroll, click], ['在维基百科页面下滑找到伶仃洋并点击'])
+
+    compactTeachingFlow(value)
+
+    expect(value.steps).toHaveLength(2)
+    expect(value.metadata.flowHealth?.warnings ?? []).toEqual([])
+    expect(value.steps.map(item => item.kind === 'tool' ? item.taskHint : undefined)).toEqual([
+      '在维基百科页面下滑找到伶仃洋并点击',
+      '在维基百科页面下滑找到伶仃洋并点击',
+    ])
+  })
+
   it('binds browser scroll steps to explicit scroll/slide checklist items', () => {
     const scroll = step('step-001', '向下滑动查找伶仃洋', 'browser_scroll', {
       direction: 'down',

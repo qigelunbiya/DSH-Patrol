@@ -550,6 +550,9 @@ async function verifyAutomaticStateChange(runner: PatrolRunner, exec: ToolRunCon
         evidence: `unexpected navigation for in-page control ${JSON.stringify(targetHint ?? '')}: ${safeStateUrl(before.url)} -> ${safeStateUrl(after.url)}`,
       }
     }
+    const targetEvidence = targetSpecificStateChangeEvidence(before, after, targetHint)
+    if (targetEvidence !== undefined) return { ok: true, attempts: index + 1, evidence: targetEvidence }
+
     if (before.url && after.url && before.url !== after.url && expectedVisualText) {
       const destinationEvidence = normalizePageText(`${after.title} ${after.text}`)
       const wanted = normalizePageText(expectedVisualText)
@@ -576,7 +579,82 @@ function visualTextContains(haystack: string, needle: string): boolean {
   const compact = (value: string) => value.replace(/[^\p{L}\p{N}]+/gu, '')
   const left = compact(haystack)
   const right = compact(needle)
-  return right.length >= 4 && (left.includes(right) || (left.length >= 8 && right.includes(left)))
+  if (!left || !right) return false
+  if (left.includes(right)) return true
+
+  // Short CJK business labels such as "伶仃洋" and "中山市" are common and
+  // should not fail merely because the historical verifier required >=4
+  // characters. Longer destination labels may also differ only by
+  // simplified/traditional glyphs around otherwise identical text.
+  const leftHan = Array.from(left).filter(char => /\p{Script=Han}/u.test(char)).join('')
+  const rightHan = Array.from(right).filter(char => /\p{Script=Han}/u.test(char)).join('')
+  if (rightHan.length >= 2) {
+    if (leftHan.includes(rightHan)) return true
+    const size = rightHan.length <= 4 ? 2 : 3
+    const grams = ngrams(rightHan, size)
+    if (grams.length > 0) {
+      const matched = grams.filter(gram => leftHan.includes(gram)).length
+      const threshold = rightHan.length <= 4 ? 1 : Math.max(2, Math.ceil(grams.length * 0.4))
+      if (matched >= threshold) return true
+    }
+  }
+
+  return right.length >= 4 && left.length >= 8 && right.includes(left)
+}
+
+function ngrams(value: string, size: number): string[] {
+  if (size <= 0 || value.length < size) return []
+  const out: string[] = []
+  for (let index = 0; index + size <= value.length; index += 1) out.push(value.slice(index, index + size))
+  return out
+}
+
+function targetSpecificStateChangeEvidence(
+  before: PageState,
+  after: PageState,
+  targetHint: string | undefined,
+): string | undefined {
+  if (before.url !== after.url) return undefined
+  const hint = normalizePageText(targetHint ?? '')
+  if (!hint) return undefined
+
+  // For close/remove chips and similar in-page controls, disappearance of the
+  // business subject is stronger evidence than unrelated global DOM churn.
+  if (/(关闭|移除|删除|取消|close|remove|delete|dismiss|\bx\b)/i.test(hint)) {
+    const subject = businessSubjectFromHint(hint)
+    if (subject) {
+      const beforeText = normalizePageText(before.text)
+      const afterText = normalizePageText(after.text)
+      if (beforeText.includes(subject) && !afterText.includes(subject)) {
+        return `target-specific text disappeared after click: ${JSON.stringify(subject)}`
+      }
+      const beforeCount = matchingSignatureCount(before.elementSignatures, subject)
+      const afterCount = matchingSignatureCount(after.elementSignatures, subject)
+      if (beforeCount > 0 && afterCount < beforeCount) {
+        return `target-specific interactive evidence decreased after click: ${JSON.stringify(subject)} (${beforeCount} -> ${afterCount})`
+      }
+    }
+  }
+  return undefined
+}
+
+function businessSubjectFromHint(hint: string): string {
+  const stripped = hint
+    .replace(/(点击|按钮|链接|目标|筛选|过滤|标签|条件|关闭|移除|删除|取消|图标|叉号|叉|close|remove|delete|dismiss|button|filter|chip|icon|\bx\b)/gi, ' ')
+    .replace(/[“”"'()（）【】\[\],，。:：;；/\\|]+/g, ' ')
+    .replace(/\b(?:the|a|an|of|for)\b/gi, ' ')
+  const candidates = stripped
+    .split(/\s+/)
+    .map(item => item.replace(/^(?:的|把|将)+|(?:的|这个|该)+$/g, '').trim())
+    .filter(item => item.length >= 2)
+    .sort((left, right) => right.length - left.length)
+  return normalizePageText(candidates[0] ?? '')
+}
+
+function matchingSignatureCount(signatures: ReadonlySet<string>, subject: string): number {
+  let count = 0
+  for (const signature of signatures) if (normalizePageText(signature).includes(subject)) count += 1
+  return count
 }
 
 function inPageControlHint(targetHint: string | undefined): boolean {

@@ -66,6 +66,21 @@ describe('successful teaching trace', () => {
     expect(next.metadata.successfulTeachingTrace?.map(item => item.id)).toEqual(['step-003'])
   })
 
+  it('reconciles only the latest checklist-committed retry instead of restoring every successful attempt', () => {
+    const first = step('step-001', '执行搜索', 'browser_press', { key: 'Enter' }, 1)
+    const retry = step('step-002', '执行搜索', 'browser_press', { key: 'Enter' }, 2)
+    const value = definition([])
+    value.metadata.taskChecklist = ['执行搜索']
+    value.metadata.successfulTeachingTrace = [first, retry]
+
+    const restored = restoreMissingSuccessfulTeachingSteps(value)
+
+    expect(restored.restored).toBe(1)
+    expect(value.steps).toHaveLength(1)
+    expect(value.steps[0]?.name).toBe('执行搜索')
+    expect(value.steps[0]?.recordedAt).toBe(retry.recordedAt)
+  })
+
   it('restores a missing successful route in original trace order without deleting existing manual steps', () => {
     const nav = step('step-001', '访问 Google', 'browser_navigate', { url: 'https://google.com' }, 1)
     const result = step('step-002', '点击维基百科结果', 'browser_click', { selector: '#wiki' }, 2)

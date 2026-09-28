@@ -445,6 +445,169 @@ describe('browser visual fallback click teaching', () => {
     expect((await store.load('visual-click')).steps).toHaveLength(1)
   })
 
+  it('records navigation for a short three-character CJK Action Map label such as 伶仃洋', async () => {
+    let reads = 0
+    const { store, tool, exec } = await setup(async (name, args) => {
+      if (name === 'browser_read_page') {
+        reads += 1
+        const before = reads === 1
+        return {
+          ok: true,
+          text: before ? '中山市 页面' : '伶仃洋 页面',
+          value: {
+            ok: true,
+            url: before ? 'https://zh.wikipedia.org/wiki/中山市' : 'https://zh.wikipedia.org/wiki/伶仃洋',
+            title: before ? '中山市 - 维基百科' : '伶仃洋 - 维基百科，自由的百科全书',
+            text: before ? '中山市 地理 伶仃洋' : '伶仃洋 珠江口',
+          },
+        }
+      }
+      if (name === 'browser_snapshot') {
+        const before = reads <= 1
+        return {
+          ok: true,
+          text: 'snapshot',
+          value: {
+            ok: true,
+            url: before ? 'https://zh.wikipedia.org/wiki/中山市' : 'https://zh.wikipedia.org/wiki/伶仃洋',
+            title: before ? '中山市 - 维基百科' : '伶仃洋 - 维基百科，自由的百科全书',
+            elements: [],
+          },
+        }
+      }
+      if (name === 'browser_visual_click') {
+        expect(args).toMatchObject({ candidateId: 'A1', targetHint: '伶仃洋链接' })
+        return {
+          ok: true,
+          text: 'clicked 伶仃洋',
+          value: {
+            ok: true,
+            candidateId: 'A1',
+            actionCandidateExpectedText: '伶仃洋',
+            xRatio: 0.35,
+            yRatio: 0.62,
+            selectorHint: 'top-frame::a[href="/wiki/伶仃洋"]',
+            selectorReplaySafe: true,
+            selectorQuality: 'strong',
+            bindingActionable: true,
+            bindingSource: 'visual-action-map-post-click-learning',
+            visualAuthority: true,
+            urlIdentity: 'https://zh.wikipedia.org/wiki/中山市',
+            viewportWidth: 1280,
+            viewportHeight: 720,
+            captureClientLeft: 0,
+            captureClientTop: 0,
+            captureWidth: 1280,
+            captureHeight: 720,
+            captureMode: 'cdp-css-visual-viewport',
+            scrollX: 0,
+            scrollY: 500,
+            targetTag: 'a',
+            targetRole: 'link',
+            targetText: '伶仃洋',
+            targetStateChanged: false,
+          },
+        }
+      }
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    const result = await tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '点击伶仃洋链接',
+      targetHint: '伶仃洋链接',
+      frameId: 'browser-visual-current',
+      candidateId: 'A1',
+    }, exec)
+
+    expect(result).toContain('Executed and recorded')
+    const saved = await store.load('visual-click')
+    expect(saved.steps).toHaveLength(1)
+    expect(saved.steps[0]?.name).toBe('点击伶仃洋链接')
+  })
+
+  it('records a close-filter visual click when the target-specific chip text disappears', async () => {
+    let reads = 0
+    const { store, tool, exec } = await setup(async (name) => {
+      if (name === 'browser_read_page') {
+        reads += 1
+        const before = reads === 1
+        return {
+          ok: true,
+          text: before ? '我的任务 开放任务' : '开放任务',
+          value: {
+            ok: true,
+            url: 'http://odoo.test/web#action=400',
+            title: '我的任务',
+            text: before ? '我的任务 开放任务' : '开放任务',
+          },
+        }
+      }
+      if (name === 'browser_snapshot') {
+        const before = reads <= 1
+        return {
+          ok: true,
+          text: 'snapshot',
+          value: {
+            ok: true,
+            url: 'http://odoo.test/web#action=400',
+            title: '我的任务',
+            elements: before
+              ? [{ selector: '.facet-my-task .remove', tag: 'button', role: 'button', text: '我的任务 Remove' }]
+              : [{ selector: '.facet-open-task', tag: 'span', text: '开放任务' }],
+          },
+        }
+      }
+      if (name === 'browser_visual_click') {
+        return {
+          ok: true,
+          text: 'clicked filter close',
+          value: {
+            ok: true,
+            xRatio: 0.41,
+            yRatio: 0.08,
+            selectorHint: 'top-frame::.facet-my-task .remove',
+            selectorReplaySafe: true,
+            selectorQuality: 'strong',
+            bindingActionable: true,
+            bindingSource: 'visual-action-map-post-click-learning',
+            visualAuthority: true,
+            urlIdentity: 'http://odoo.test/web',
+            viewportWidth: 1280,
+            viewportHeight: 720,
+            captureClientLeft: 0,
+            captureClientTop: 0,
+            captureWidth: 1280,
+            captureHeight: 720,
+            captureMode: 'cdp-css-visual-viewport',
+            scrollX: 0,
+            scrollY: 0,
+            targetTag: 'button',
+            targetRole: 'button',
+            targetText: 'Remove',
+            targetTitle: 'Remove',
+            targetStateChanged: false,
+          },
+        }
+      }
+      throw new Error(`unexpected tool ${name}`)
+    })
+
+    const result = await tool.execute({
+      inspectionId: 'visual-click',
+      stepName: '关闭我的任务筛选',
+      targetHint: '我的任务筛选关闭 x 按钮',
+      frameId: 'browser-visual-current',
+      xRatio: 0.41,
+      yRatio: 0.08,
+    }, exec)
+
+    expect(result).toContain('target-specific')
+    const saved = await store.load('visual-click')
+    expect(saved.steps).toHaveLength(1)
+    expect(saved.steps[0]?.name).toBe('关闭我的任务筛选')
+  })
+
   it('supports mark/right-click visual calibration without recording a Runbook step', async () => {
     for (const pointerAction of ['mark', 'right-click'] as const) {
       const calls: Array<{ tool: string; args: JsonObject }> = []

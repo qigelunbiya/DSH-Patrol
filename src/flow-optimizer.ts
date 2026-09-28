@@ -1,4 +1,4 @@
-import { alignChecklistSteps, bindChecklistTasksSemantically, semanticChecklistCoverageWarnings } from './flow-task-alignment.js'
+import { alignChecklistRequirements, bindChecklistTasksSemantically, semanticChecklistCoverageWarnings } from './flow-task-alignment.js'
 import type { InspectionDefinition, InspectionStep, ToolStep } from './types.js'
 
 export interface FlowCompactionResult {
@@ -123,7 +123,7 @@ export function compactTeachingFlow(definition: InspectionDefinition): FlowCompa
   ].sort((left, right) => right - left).slice(0, screenshotRequired))
   const resetFloor = findSafeResetFloor(original, referenced)
   const checklist = definition.metadata.taskChecklist ?? []
-  const checklistAlignment = alignChecklistSteps(checklist, original)
+  const checklistAlignment = alignChecklistRequirements(checklist, original)
   const protectedChecklistStepIds = new Set(
     checklistAlignment.matches
       .map(match => original[match.stepIndex]?.id)
@@ -272,7 +272,7 @@ function checklistMatchesAction(text: string, action: ChecklistAction): boolean 
   if (action === 'click') return /(点击|点开|进入|选择|发送|关闭|删除|粘贴|打开.*(?:入口|菜单|工单|详情)|click|select|send|close|delete|paste|open .*?(?:menu|item|detail))/i.test(text)
   if (action === 'type') return /(输入|填写|填入|复制到剪贴板|放入剪贴板|type|enter|fill|clipboard)/i.test(text)
   if (action === 'read') return /(读取|整理|查看.*(?:信息|列表|内容)|识别|OCR|read|summar|inspect.*(?:list|content|info)|ocr)/i.test(text)
-  if (action === 'wait') return /(等待|等到|直到|直至|滚动|滑动|向上滑|向下滑|wait(?:\s+(?:for|until))?|scroll)/i.test(text)
+  if (action === 'wait') return /(等待|等到|直到|直至|滚动|滑动|上滑|下滑|向上滑|向下滑|wait(?:\s+(?:for|until))?|scroll)/i.test(text)
   return /(截图|screenshot|capture)/i.test(text)
 }
 
@@ -458,6 +458,7 @@ function isInteractionBoundary(step: InspectionStep): boolean {
 
 function isTypingTool(tool: string): boolean {
   return tool === 'browser_type'
+    || tool === 'browser_type_focused'
     || tool === 'browser_type_credential'
     || tool === 'browser_type_transient_ref'
     || tool === 'browser_type_totp_profile'

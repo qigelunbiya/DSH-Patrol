@@ -1,3 +1,4 @@
+import { alignChecklistRequirements } from './flow-task-alignment.js'
 import type { InspectionDefinition, InspectionStep, ToolStep } from './types.js'
 
 const TRACE_LIMIT = 512
@@ -60,7 +61,11 @@ export function captureSuccessfulTeachingTrace(
 export function restoreMissingSuccessfulTeachingSteps(
   definition: InspectionDefinition,
 ): SuccessfulTraceRestoreResult {
-  const trace = definition.metadata.successfulTeachingTrace ?? []
+  const rawTrace = definition.metadata.successfulTeachingTrace ?? []
+  const checklist = definition.metadata.taskChecklist ?? []
+  const trace = checklist.length === 0
+    ? rawTrace
+    : selectChecklistTrace(rawTrace, checklist)
   if (trace.length === 0) {
     return {
       traceSteps: 0,
@@ -155,6 +160,39 @@ export function restoreMissingSuccessfulTeachingSteps(
     restoredStepIds,
     warnings,
   }
+}
+
+function selectChecklistTrace(
+  trace: readonly InspectionStep[],
+  checklist: readonly string[],
+): InspectionStep[] {
+  const alignment = alignChecklistRequirements(checklist, trace)
+
+  // Historical traces may predate taskHint/semantic binding improvements. Only
+  // collapse retries when the persisted checklist can fully explain the trace;
+  // otherwise preserve the old conservative reconciliation behavior instead
+  // of dropping potentially required route/condition steps.
+  if (alignment.missing.some(item => item.action !== 'other')) return [...trace]
+
+  const selectedIndexes = new Set(alignment.matches.map(match => match.stepIndex))
+
+  // Keep condition dependencies even if they are not themselves checklist
+  // actions, then restore them in original trace order.
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const index of [...selectedIndexes]) {
+      const sourceId = trace[index]?.when?.sourceStepId
+      if (sourceId === undefined) continue
+      const sourceIndex = trace.findIndex(step => step.id === sourceId)
+      if (sourceIndex >= 0 && !selectedIndexes.has(sourceIndex)) {
+        selectedIndexes.add(sourceIndex)
+        changed = true
+      }
+    }
+  }
+
+  return trace.filter((_step, index) => selectedIndexes.has(index))
 }
 
 export function resolveSuccessfulTraceStepIds(
