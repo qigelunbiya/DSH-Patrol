@@ -38,7 +38,7 @@ export function resolvePatrolRuntimePolicy(env: Record<string, string | undefine
 }
 
 export const PATROL_TEST_MODE_OVERRIDE_PROMPT = `DSH Patrol TEST MODE 精简规则（优先完成真实巡检，避免首轮提示/工具选择过载）：
-- 用户最近一条自然语言消息是中文时，解释、进度、错误、恢复和总结继续使用简体中文。
+- 用户可见语言规则不会因 TEST MODE 放宽：用户最近一条自然语言消息是中文时，解释、进度、错误、恢复和总结继续使用简体中文。
 - TEST MODE 不启用 NORMAL 的 observe-before-mutate、策略次数/HARD STOP 或 direct-browser 全禁用；仍保留非法 selector、畸形 URL、敏感输入和验证码边界。拿到足够 CURRENT 证据后直接调用最合适的工具，不要长时间只分析不调用工具。
 - 新建流程时创建真实 inspectionId + taskChecklist 后立即执行；运行已有流程优先 patrol_run / patrol_run_flow。replay/validate 为只读；authenticated 会话可 fast-forward 登录前缀。用户只要求执行/重跑时不得擅自编辑；只有明确要求修改时才进入 patrol_begin_edit / patrol_insert_* / patrol_update_* / patrol_reteach_*。
 - 用户对浏览器操作方式的显式要求拥有最高优先级。未指定时保持 AUTO/HYBRID，可用 CURRENT DOM/semantic/selector/视觉中证据最可靠的方法。
