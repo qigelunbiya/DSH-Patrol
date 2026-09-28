@@ -116,6 +116,32 @@ describe('Patrol task checklist backfill', () => {
     ])
   })
 
+  it('refuses to shrink or reorder the user business checklist merely during flow optimization', async () => {
+    const original = ['访问 Google 首页', '点击搜索栏', '输入中山市', '点击维基百科结果', '访问任务管理系统', '点击我的任务 x']
+    const { store, update } = await setup(1, original)
+
+    await expect(update.execute({
+      inspectionId: 'legacy-draft',
+      items: ['访问 Google 首页', '点击搜索栏', '输入中山市', '访问任务管理系统'],
+    })).rejects.toThrow(/business-scope change|business requirement/i)
+
+    expect((await store.load('legacy-draft')).metadata.taskChecklist).toEqual(original)
+  })
+
+  it('allows destructive checklist replacement only with explicit scopeChangeConfirmed', async () => {
+    const original = ['访问首页', '点击旧菜单', '截图']
+    const { store, update } = await setup(1, original)
+
+    const result = await update.execute({
+      inspectionId: 'legacy-draft',
+      items: ['访问首页', '点击新菜单', '截图'],
+      scopeChangeConfirmed: true,
+    })
+
+    expect(result).toContain('Updated human task checklist')
+    expect((await store.load('legacy-draft')).metadata.taskChecklist).toEqual(['访问首页', '点击新菜单', '截图'])
+  })
+
   it('requires READY flows to enter edit mode before the checklist can be changed', async () => {
     const { store, update } = await setup(1, ['访问目标 URL'])
     const definition = await store.load('legacy-draft')
