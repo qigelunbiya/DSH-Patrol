@@ -34,19 +34,6 @@ export function captureSuccessfulTeachingTrace(
 
   const knownEvents = new Set(existing.map(teachingEventKey))
 
-  // When upgrading an already-existing DRAFT, seed the journal from its current
-  // durable graph once. This cannot recover historical steps that were already
-  // deleted by old builds, but it gives future edits a stable baseline.
-  if (existing.length === 0 && previous !== undefined) {
-    for (const step of previous.steps) {
-      if (!isSuccessfulTeachingStep(step)) continue
-      const key = teachingEventKey(step)
-      if (knownEvents.has(key)) continue
-      existing.push(cloneStep(step))
-      knownEvents.add(key)
-    }
-  }
-
   const previousEvents = new Set((previous?.steps ?? []).map(teachingEventKey))
   for (const step of definition.steps) {
     if (!isSuccessfulTeachingStep(step)) continue
