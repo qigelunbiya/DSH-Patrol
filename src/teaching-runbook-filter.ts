@@ -82,9 +82,17 @@ export function filterDraftRunbookInPlace(definition: InspectionDefinition): voi
       checklist,
       eligibleEntries.map(entry => entry.step),
     )
-    for (const match of alignment.matches) {
-      const entry = eligibleEntries[match.stepIndex]
-      if (entry !== undefined) keepIndexes.add(entry.originalIndex)
+    if (alignment.matches.length === 0) {
+      // Fail open for a completely unbound/stale checklist rather than
+      // destructively erasing the only successful action. As soon as any
+      // checklist requirement binds, the task-committed projection becomes
+      // authoritative and off-task attempts are removed.
+      for (const entry of eligibleEntries) keepIndexes.add(entry.originalIndex)
+    } else {
+      for (const match of alignment.matches) {
+        const entry = eligibleEntries[match.stepIndex]
+        if (entry !== undefined) keepIndexes.add(entry.originalIndex)
+      }
     }
 
     // Structural edit tools persist through saveRunbookEdit() and therefore do
