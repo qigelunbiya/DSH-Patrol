@@ -20,6 +20,7 @@ import {
 } from './security.js'
 import { PatrolRunner } from './runner.js'
 import { restoreMissingSuccessfulTeachingSteps } from './successful-teaching-trace.js'
+import { enterStructuralEditSession, leaveStructuralEditSession } from './structural-edit-session.js'
 import { PatrolStore } from './store.js'
 import type {
   AuthMode,
@@ -52,7 +53,7 @@ export function registerPatrolEditTools(
 function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolRunner): ToolDefinition[] {
   const beginEdit = defineTool({
     name: 'patrol_begin_edit',
-    description: 'Open an existing READY inspection for safe editing. The stored schedule is retained but scheduled execution pauses while the runbook is DRAFT.',
+    description: 'Enter explicit structural Runbook edit mode for an existing inspection, whether it is READY or already DRAFT. This isolates the saved flow from append-style live teaching so mid-flow corrections cannot accidentally create a duplicate tail. The stored schedule is retained and READY execution pauses while the Runbook is DRAFT.',
     parameters: { inspectionId: { type: 'string', required: true } },
     output: TEXT_OUTPUT,
     async execute(args) {
@@ -62,11 +63,13 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
         // Enter explicit edit persistence even when the flow is already DRAFT.
         // This clears any stale interactive-teaching lifecycle in production.
         await persistRunbookEdit(store, definition)
-        return `Inspection ${definition.id} is already DRAFT and is now isolated for explicit Runbook editing. For additive Runbook-only changes, use the dedicated patrol_insert_* structural tools; for parameter-only changes to existing wait/screenshot/read/navigate steps, use patrol_update_* structural tools. Neither path should touch the CURRENT browser. Use patrol_reteach_* only when a live selector/action must actually be relearned. Verify the saved graph with patrol_show, then run patrol_validate before patrol_confirm_edit.`
+        enterStructuralEditSession(definition.id)
+        return `Inspection ${definition.id} is already DRAFT and is now isolated for explicit Runbook editing. Append-style patrol_navigate/click/scroll/screenshot/type teaching is blocked in this mode. Use patrol_insert_* with beforeStepId/afterStepId or taskChecklistItem, patrol_update_*, patrol_move_step, patrol_remove_steps, or patrol_reteach_* for an existing step. Verify the saved graph with patrol_show, then run patrol_validate before patrol_confirm_edit.`
       }
       markEdited(definition)
       await persistRunbookEdit(store, definition)
-      return `Inspection ${definition.id} is now DRAFT for editing. Stored schedule: ${scheduleText(definition)}. Scheduled execution is paused until the runbook is validated and confirmed again.`
+      enterStructuralEditSession(definition.id)
+      return `Inspection ${definition.id} is now DRAFT for explicit structural editing. Append-style live teaching is isolated. Stored schedule: ${scheduleText(definition)}. Scheduled execution is paused until the runbook is validated and confirmed again.`
     },
   })
 
@@ -166,6 +169,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       tabId: { type: 'integer' },
       beforeStepId: { type: 'string' },
       afterStepId: { type: 'string' },
+      taskChecklistItem: { type: 'string', description: 'Exact persisted taskChecklist item for this missing business step. When supplied without beforeStepId/afterStepId, Patrol infers the correct middle insertion point from ordered checklist coverage and refuses ambiguous/already-covered placement.' },
       notes: { type: 'string' },
     },
     output: TEXT_OUTPUT,
@@ -180,6 +184,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
         inspectionId: args.inspectionId,
         beforeStepId: args.beforeStepId,
         afterStepId: args.afterStepId,
+        taskChecklistItem: args.taskChecklistItem,
         step: {
           kind: 'tool',
           name: args.stepName,
@@ -201,6 +206,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       tabId: { type: 'integer' },
       beforeStepId: { type: 'string' },
       afterStepId: { type: 'string' },
+      taskChecklistItem: { type: 'string', description: 'Exact persisted taskChecklist item for this missing business step. When supplied without beforeStepId/afterStepId, Patrol infers the correct middle insertion point from ordered checklist coverage and refuses ambiguous/already-covered placement.' },
       notes: { type: 'string' },
     },
     output: TEXT_OUTPUT,
@@ -212,6 +218,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
         inspectionId: args.inspectionId,
         beforeStepId: args.beforeStepId,
         afterStepId: args.afterStepId,
+        taskChecklistItem: args.taskChecklistItem,
         step: {
           kind: 'tool',
           name: args.stepName,
@@ -236,6 +243,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       capturePageText: { type: 'boolean' },
       beforeStepId: { type: 'string' },
       afterStepId: { type: 'string' },
+      taskChecklistItem: { type: 'string', description: 'Exact persisted taskChecklist item for this missing business step. When supplied without beforeStepId/afterStepId, Patrol infers the correct middle insertion point from ordered checklist coverage and refuses ambiguous/already-covered placement.' },
       notes: { type: 'string' },
     },
     output: TEXT_OUTPUT,
@@ -251,6 +259,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
         inspectionId: args.inspectionId,
         beforeStepId: args.beforeStepId,
         afterStepId: args.afterStepId,
+        taskChecklistItem: args.taskChecklistItem,
         step: {
           kind: 'tool',
           name: args.stepName,
@@ -274,6 +283,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       newTab: { type: 'boolean' },
       beforeStepId: { type: 'string' },
       afterStepId: { type: 'string' },
+      taskChecklistItem: { type: 'string', description: 'Exact persisted taskChecklist item for this missing business step. When supplied without beforeStepId/afterStepId, Patrol infers the correct middle insertion point from ordered checklist coverage and refuses ambiguous/already-covered placement.' },
       notes: { type: 'string' },
     },
     output: TEXT_OUTPUT,
@@ -287,6 +297,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
         inspectionId: args.inspectionId,
         beforeStepId: args.beforeStepId,
         afterStepId: args.afterStepId,
+        taskChecklistItem: args.taskChecklistItem,
         step: {
           kind: 'tool',
           name: args.stepName,
@@ -317,6 +328,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       locatorTag: { type: 'string' },
       beforeStepId: { type: 'string' },
       afterStepId: { type: 'string' },
+      taskChecklistItem: { type: 'string', description: 'Exact persisted taskChecklist item for this missing business step. When supplied without beforeStepId/afterStepId, Patrol infers the correct middle insertion point from ordered checklist coverage and refuses ambiguous/already-covered placement.' },
       notes: { type: 'string' },
     },
     output: TEXT_OUTPUT,
@@ -331,6 +343,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
         inspectionId: args.inspectionId,
         beforeStepId: args.beforeStepId,
         afterStepId: args.afterStepId,
+        taskChecklistItem: args.taskChecklistItem,
         step: {
           kind: 'tool',
           name: args.stepName,
@@ -355,6 +368,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       arguments: { type: 'json', required: true },
       beforeStepId: { type: 'string' },
       afterStepId: { type: 'string' },
+      taskChecklistItem: { type: 'string', description: 'Exact persisted taskChecklist item for this missing business step. When supplied without beforeStepId/afterStepId, Patrol infers the correct middle insertion point from ordered checklist coverage and refuses ambiguous/already-covered placement.' },
       expectedText: { type: 'string' },
       expectationMode: { type: 'string', enum: ['contains', 'not-contains'] },
       caseSensitive: { type: 'boolean' },
@@ -384,6 +398,7 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
         inspectionId: args.inspectionId,
         beforeStepId: args.beforeStepId,
         afterStepId: args.afterStepId,
+        taskChecklistItem: args.taskChecklistItem,
         step: {
           kind: 'tool',
           name: args.stepName,
@@ -967,7 +982,8 @@ function createEditDefinitions(ctx: Context, store: PatrolStore, runner: PatrolR
       assertRequiredArtifactsRepresented(definition)
       definition.status = 'ready'
       await persistRunbookEdit(store, definition)
-      return `Edited runbook ${definition.id} is READY again with ${definition.steps.length} steps. Stored schedule resumes automatically if it is enabled: ${scheduleText(definition)}.`
+      leaveStructuralEditSession(definition.id)
+      return `Edited runbook ${definition.id} is READY again with ${definition.steps.length} steps. Structural edit isolation is closed. Stored schedule resumes automatically if it is enabled: ${scheduleText(definition)}.`
     },
   })
 
@@ -1112,6 +1128,7 @@ interface StructuralToolInsertInput {
   inspectionId: string
   beforeStepId?: string | undefined
   afterStepId?: string | undefined
+  taskChecklistItem?: string | undefined
   step: Omit<ToolStep, 'id' | 'recordedAt'>
 }
 
@@ -1122,11 +1139,14 @@ async function insertStructuralToolStep(store: PatrolStore, input: StructuralToo
   if (input.step.notes !== undefined) assertSafePersistentText(input.step.notes, 'step notes')
   assertSafeForStorage(input.step.arguments)
 
-  const before = typeof input.beforeStepId === 'string' && input.beforeStepId.trim() !== '' ? input.beforeStepId.trim() : undefined
-  const after = typeof input.afterStepId === 'string' && input.afterStepId.trim() !== '' ? input.afterStepId.trim() : undefined
-  if ((before === undefined) === (after === undefined)) {
-    throw new Error('structural insert requires exactly one of beforeStepId or afterStepId')
-  }
+  const requestedBefore = typeof input.beforeStepId === 'string' && input.beforeStepId.trim() !== '' ? input.beforeStepId.trim() : undefined
+  const requestedAfter = typeof input.afterStepId === 'string' && input.afterStepId.trim() !== '' ? input.afterStepId.trim() : undefined
+  const checklistItem = typeof input.taskChecklistItem === 'string' && input.taskChecklistItem.trim() !== ''
+    ? input.taskChecklistItem.trim()
+    : undefined
+  const position = resolveStructuralInsertPosition(definition, requestedBefore, requestedAfter, checklistItem)
+  const before = position.before
+  const after = position.after
   const anchorId = before ?? after!
   const anchorIndex = definition.steps.findIndex(step => step.id === anchorId)
   if (anchorIndex < 0) throw new Error(`anchor step ${anchorId} not found`)
@@ -1134,6 +1154,7 @@ async function insertStructuralToolStep(store: PatrolStore, input: StructuralToo
   const inserted: ToolStep = {
     id: nextStepId(definition),
     ...input.step,
+    ...(checklistItem === undefined || input.step.taskHint !== undefined ? {} : { taskHint: checklistItem }),
     recordedAt: new Date().toISOString(),
   }
   const insertIndex = before !== undefined ? anchorIndex : anchorIndex + 1
@@ -1160,6 +1181,68 @@ async function insertStructuralToolStep(store: PatrolStore, input: StructuralToo
     'Persistence check: PASSED (Runbook reloaded from storage).',
     'Make all requested structural edits first; then call patrol_show once to verify the complete saved graph before patrol_validate.',
   ].join('\n')
+}
+
+function resolveStructuralInsertPosition(
+  definition: InspectionDefinition,
+  requestedBefore: string | undefined,
+  requestedAfter: string | undefined,
+  taskChecklistItem: string | undefined,
+): { before?: string; after?: string } {
+  if (requestedBefore !== undefined || requestedAfter !== undefined) {
+    if ((requestedBefore === undefined) === (requestedAfter === undefined)) {
+      throw new Error('structural insert requires exactly one of beforeStepId or afterStepId when an explicit anchor is supplied')
+    }
+    return requestedBefore !== undefined ? { before: requestedBefore } : { after: requestedAfter }
+  }
+
+  if (taskChecklistItem === undefined) {
+    throw new Error('structural insert requires beforeStepId, afterStepId, or taskChecklistItem; Runbook edits never append to the tail by default')
+  }
+
+  const checklist = definition.metadata.taskChecklist ?? []
+  const normalized = normalizeChecklistAnchorText(taskChecklistItem)
+  const checklistIndexes = checklist
+    .map((item, index) => ({ index, normalized: normalizeChecklistAnchorText(item) }))
+    .filter(item => item.normalized === normalized)
+    .map(item => item.index)
+
+  if (checklistIndexes.length === 0) {
+    throw new Error(`taskChecklistItem ${JSON.stringify(taskChecklistItem)} is not present in the persisted task checklist; supply an exact checklist item or an explicit beforeStepId/afterStepId`)
+  }
+  if (checklistIndexes.length > 1) {
+    throw new Error(`taskChecklistItem ${JSON.stringify(taskChecklistItem)} is ambiguous because it appears multiple times; supply beforeStepId or afterStepId explicitly`)
+  }
+
+  const checklistIndex = checklistIndexes[0]!
+  const alignment = alignChecklistSteps(checklist, definition.steps)
+  const alreadyCovered = alignment.matches.find(match => match.checklistIndex === checklistIndex)
+  if (alreadyCovered !== undefined) {
+    const step = definition.steps[alreadyCovered.stepIndex]
+    throw new Error(`task checklist item ${JSON.stringify(taskChecklistItem)} is already covered by ${step?.id ?? 'an existing step'}; update/reteach/move that step instead of inserting a duplicate`)
+  }
+
+  const previous = alignment.matches
+    .filter(match => match.checklistIndex < checklistIndex)
+    .sort((left, right) => right.checklistIndex - left.checklistIndex)[0]
+  const next = alignment.matches
+    .filter(match => match.checklistIndex > checklistIndex)
+    .sort((left, right) => left.checklistIndex - right.checklistIndex)[0]
+
+  if (next !== undefined) {
+    const anchor = definition.steps[next.stepIndex]
+    if (anchor !== undefined) return { before: anchor.id }
+  }
+  if (previous !== undefined) {
+    const anchor = definition.steps[previous.stepIndex]
+    if (anchor !== undefined) return { after: anchor.id }
+  }
+
+  throw new Error(`cannot infer a safe middle insertion point for task checklist item ${JSON.stringify(taskChecklistItem)}; supply beforeStepId or afterStepId explicitly. The tool will not append it to the tail.`)
+}
+
+function normalizeChecklistAnchorText(value: string): string {
+  return value.normalize('NFKC').toLocaleLowerCase().replace(/\s+/g, '').replace(/[，。；、,:：;()（）【】\[\]\"']/g, '')
 }
 
 async function recoverStructuralInsertPersistence(
