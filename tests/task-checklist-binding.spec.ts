@@ -63,6 +63,18 @@ describe('task checklist step binding', () => {
     ])
   })
 
+  it('binds browser scroll steps to explicit scroll/slide checklist items', () => {
+    const scroll = step('step-001', '向下滑动查找伶仃洋', 'browser_scroll', {
+      direction: 'down',
+      amount: 600,
+    })
+    const value = definition([scroll], ['向下滑动查找伶仃洋'])
+
+    bindChecklistTasks(value)
+
+    expect((value.steps[0] as ToolStep).taskHint).toBe('向下滑动查找伶仃洋')
+  })
+
   it('binds explicit semantic wait checklist items to desktop_wait_for_target', () => {
     const wait = step('step-001', '等待联系人出现', 'desktop_wait_for_target', {
       source: 'auto',
