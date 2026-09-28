@@ -115,6 +115,8 @@ describe('Patrol reusable-flow integrity', () => {
     expect(PATROL_INTEGRITY_PROMPT).toMatch(/禁止删除、改名、重排清单项来迁就残缺流程/s)
     expect(PATROL_INTEGRITY_PROMPT).toMatch(/物理点击已执行但 NOT recorded/s)
     expect(PATROL_INTEGRITY_PROMPT).toMatch(/逐项语义覆盖 taskChecklist/s)
+    expect(PATROL_INTEGRITY_PROMPT).toMatch(/无论该流程当前是 READY 还是 DRAFT.*patrol_begin_edit/s)
+    expect(PATROL_INTEGRITY_PROMPT).toMatch(/禁止 patrol_navigate.*patrol_visual_click_target.*往尾部累加新轮次/s)
   })
 
   it('registers its prompt later than test mode and installs an always-on tool guard', async () => {

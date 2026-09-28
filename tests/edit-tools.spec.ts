@@ -8,10 +8,12 @@ import { registerPatrolEditTools } from '../src/edit-tools.ts'
 import { PatrolLifecycleStore } from '../src/lifecycle-store.ts'
 import { PatrolRunner } from '../src/runner.ts'
 import { PatrolStore } from '../src/store.ts'
+import { clearStructuralEditSessionsForTest, isStructuralEditSession } from '../src/structural-edit-session.ts'
 import type { InspectionDefinition } from '../src/types.ts'
 
 const roots: string[] = []
 afterEach(async () => {
+  clearStructuralEditSessionsForTest()
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
@@ -176,6 +178,102 @@ describe('editable Patrol runbooks', () => {
     definition = await store.load('editable-login')
     expect(definition.status).toBe('ready')
     expect(definition.schedule?.enabled).toBe(true)
+  })
+
+  it('inserts a missing checklist business step into the middle instead of appending a new tail round', async () => {
+    const { store, tool, exec, dispatchCalls } = await setup()
+    const now = '2026-09-28T05:40:00.000Z'
+    const definition: InspectionDefinition = {
+      schemaVersion: '0.2',
+      id: 'middle-insert-flow',
+      name: 'Middle insert flow',
+      description: 'test',
+      status: 'draft',
+      target: { type: 'browser', url: 'https://www.google.com/' },
+      expectedResult: 'done',
+      artifacts: ['screenshot'],
+      auth: { mode: 'none' },
+      schedule: null,
+      steps: [
+        { id: 'step-001', kind: 'tool', name: '点击中山市维基百科搜索结果', tool: 'browser_click', arguments: { selector: '#wiki' }, taskHint: '点击中山市维基百科搜索结果', recordedAt: now },
+        { id: 'step-002', kind: 'tool', name: '向下滑动页面查找伶仃洋', tool: 'browser_scroll', arguments: { direction: 'down', amount: 400 }, taskHint: '进入维基百科页面后向下滑动', recordedAt: now },
+        { id: 'step-003', kind: 'tool', name: '截图伶仃洋页面', tool: 'browser_screenshot', arguments: { format: 'png' }, artifact: 'screenshot', taskHint: '截图', recordedAt: now },
+        { id: 'step-004', kind: 'tool', name: '访问任务管理系统', tool: 'browser_navigate', arguments: { url: 'http://10.192.1.121:8069/web', action: 'navigate' }, taskHint: '访问任务管理系统 URL', recordedAt: now },
+      ],
+      metadata: {
+        createdAt: now,
+        updatedAt: now,
+        taskChecklist: [
+          '点击中山市维基百科搜索结果',
+          '进入维基百科页面后向下滑动',
+          '找到并点击伶仃洋链接',
+          '截图',
+          '访问任务管理系统 URL',
+        ],
+      },
+    }
+    await store.create(definition)
+
+    await tool('patrol_begin_edit').execute({ inspectionId: 'middle-insert-flow' }, exec)
+    expect(isStructuralEditSession('middle-insert-flow')).toBe(true)
+
+    const result = await tool('patrol_insert_click_step').execute({
+      inspectionId: 'middle-insert-flow',
+      stepName: '点击伶仃洋链接',
+      selector: 'top-frame::p:nth-of-type(4) > a:nth-of-type(2)',
+      locatorText: '伶仃洋',
+      taskChecklistItem: '找到并点击伶仃洋链接',
+    }, exec)
+
+    expect(result).toContain('before step-003')
+    const updated = await store.load('middle-insert-flow')
+    expect(updated.steps.map(step => step.name)).toEqual([
+      '点击中山市维基百科搜索结果',
+      '向下滑动页面查找伶仃洋',
+      '点击伶仃洋链接',
+      '截图伶仃洋页面',
+      '访问任务管理系统',
+    ])
+    expect(updated.steps[2]).toMatchObject({
+      id: 'step-005',
+      tool: 'browser_click',
+      taskHint: '找到并点击伶仃洋链接',
+    })
+    expect(dispatchCalls()).toBe(0)
+  })
+
+  it('refuses checklist-based structural insertion when the business item is already covered', async () => {
+    const { store, tool, exec } = await setup()
+    const now = '2026-09-28T05:40:00.000Z'
+    const definition: InspectionDefinition = {
+      schemaVersion: '0.2',
+      id: 'already-covered-flow',
+      name: 'Already covered flow',
+      description: 'test',
+      status: 'draft',
+      target: { type: 'browser', url: 'https://example.test' },
+      expectedResult: 'done',
+      artifacts: [],
+      auth: { mode: 'none' },
+      schedule: null,
+      steps: [
+        { id: 'step-001', kind: 'tool', name: '访问登录页', tool: 'browser_navigate', arguments: { url: 'https://example.test', action: 'navigate' }, taskHint: '访问登录页', recordedAt: now },
+        { id: 'step-002', kind: 'tool', name: '点击登录', tool: 'browser_click', arguments: { selector: '#submit' }, locator: { text: '登录' }, taskHint: '点击登录', recordedAt: now },
+      ],
+      metadata: {
+        createdAt: now,
+        updatedAt: now,
+        taskChecklist: ['访问登录页', '点击登录'],
+      },
+    }
+    await store.create(definition)
+
+    await expect(tool('patrol_insert_click_step').execute({
+      inspectionId: 'already-covered-flow',
+      stepName: '重复登录',
+      selector: '#submit',
+      taskChecklistItem: '点击登录',
+    }, exec)).rejects.toThrow(/already covered|update\/reteach\/move/i)
   })
 
   it('inserts wait and screenshot steps with flat structural tools, reloads persistence, and never executes the current page', async () => {
@@ -521,6 +619,7 @@ describe('editable Patrol runbooks', () => {
     // interactive-teaching lifecycle when the user asks to optimize it.
     await store.beginTeachingRun('editable-login', definition.metadata.workspaceRoot)
     await tool('patrol_begin_edit').execute({ inspectionId: 'editable-login' }, exec)
+    expect(isStructuralEditSession('editable-login')).toBe(true)
 
     const waitResult = await tool('patrol_insert_wait_step').execute({
       inspectionId: 'editable-login',
@@ -546,6 +645,7 @@ describe('editable Patrol runbooks', () => {
 
     await tool('patrol_validate').execute({ inspectionId: 'editable-login' }, exec)
     await tool('patrol_confirm_edit').execute({ inspectionId: 'editable-login', confirmed: true }, exec)
+    expect(isStructuralEditSession('editable-login')).toBe(false)
 
     updated = await store.load('editable-login')
     expect(updated.status).toBe('ready')

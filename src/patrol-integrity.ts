@@ -1,5 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { createFlowMutationConsentController } from './flow-mutation-consent.js'
+import { structuralEditAppendGuard } from './structural-edit-session.js'
 
 /**
  * Integrity rules that remain active even when CAPTCHA/test diagnostics relax
@@ -23,6 +24,7 @@ export const PATROL_INTEGRITY_PROMPT = `DSH Patrol 可复用流程完整性规�
 - taskChecklist 是用户业务合同，不是为了让生成的流程通过校验而可自由改写的计数器。优化、清理、finalize、rewrite、validate 失败时，必须修 Runbook 去满足现有清单；禁止删除、改名、重排清单项来迁就残缺流程。patrol_update_task_checklist 的 scopeChangeConfirmed=true 只能在 CURRENT 用户明确改变、删除、改名或重排业务要求时使用；“流程图不完整/想优化/清除试错”本身不构成业务范围变更。
 - 如果 patrol_click_target / patrol_visual_click_target 明确表示“物理点击已执行但 NOT recorded”，该业务项在 Runbook 中仍视为未沉淀完成。若紧接着的 CURRENT observe/read 明确证明用户要求的业务结果已经发生，不得直接跳到后续任务并在最后声称流程完整；必须在证据还新鲜时立即修复这一个记录缺口：优先 patrol_reconcile_successful_steps；若成功轨迹没有该动作但已有 replay-safe selector/locator 证据，则用结构编辑/单步重教补入正确位置；若没有足够可重放证据，就明确保持该 checklist 项缺失并只重教这一项。不得通过缩小 taskChecklist 掩盖记录缺口，也不得重复整个流程。
 - patrol_finalize_flow / patrol_rewrite_flow_path / Dashboard 清除试错都必须以“逐项语义覆盖 taskChecklist”为完整性标准，而不只是比较导航/点击/输入数量。两个任意点击不能替代两个不同的用户业务点击；第二个站点导航、用户明确要求的 reload/scroll 也不能因为看起来像恢复动作就被自动删除。
+- 用户要求修改一个已有流程图（补步骤、改步骤、移动步骤、删除步骤、修正参数、清除重复）时，无论该流程当前是 READY 还是 DRAFT，都必须先用 patrol_begin_edit 进入显式结构编辑隔离。进入后禁止 patrol_navigate / patrol_scroll / patrol_visual_click_target / patrol_click_target / patrol_screenshot / patrol_type_* / patrol_desktop_action 等“执行并追加教学步骤”的工具往尾部累加新轮次；已有流程修改只能用 patrol_insert_* / patrol_update_* / patrol_move_step / patrol_remove_steps，或对已存在 step 使用 patrol_reteach_*。如果只是缺一个业务动作，必须插入到 taskChecklist 对应的前后步骤之间，不得先重新跑后半段流程再回头补图。
 - 页面发生跳转/iframe 重建不允许让触发跳转的动作丢失。Patrol 应对页面变化做有界验证并保留已验证的因果点击。
 - 不要直接调用会改变页面的 browser_*。browser_click 等是 DSH Patrol 内部执行 primitive；patrol_* 复合工具会在内部调用它们并负责唯一目标解析、验证、记录和重放。`
 
@@ -117,7 +119,10 @@ export function registerPatrolIntegrity(ctx: Context): () => void {
     const tools = (ctx as Context & { tools?: { guard?: (callback: (execution: any) => string | undefined) => (() => void) } }).tools
     if (typeof tools?.guard === 'function') {
       const integrityGuard = createPatrolTeachingIntegrityGuard()
-      disposeGuard = tools.guard(execution => mutationConsent.guard(execution) ?? integrityGuard(execution))
+      disposeGuard = tools.guard(execution =>
+        mutationConsent.guard(execution)
+        ?? structuralEditAppendGuard(execution)
+        ?? integrityGuard(execution))
     }
   } catch {
   }
