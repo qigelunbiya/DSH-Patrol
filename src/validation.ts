@@ -82,6 +82,25 @@ export function assertInspectionDefinition(value: unknown): asserts value is Ins
   const metadataRecord = metadata as Record<string, unknown>
   if (typeof metadataRecord.createdAt !== 'string' || typeof metadataRecord.updatedAt !== 'string') throw new Error('inspection.metadata timestamps are required')
   if (metadataRecord.validatedAt !== undefined && typeof metadataRecord.validatedAt !== 'string') throw new Error('inspection.metadata.validatedAt must be a string')
+  if (metadataRecord.successfulTeachingTrace !== undefined) {
+    if (!Array.isArray(metadataRecord.successfulTeachingTrace)) {
+      throw new Error('inspection.metadata.successfulTeachingTrace must be an array')
+    }
+    if (metadataRecord.successfulTeachingTrace.length > 512) {
+      throw new Error('inspection.metadata.successfulTeachingTrace may contain at most 512 steps')
+    }
+    const traceIds = new Set<string>()
+    for (const rawStep of metadataRecord.successfulTeachingTrace) {
+      assertStep(rawStep)
+      if (traceIds.has(rawStep.id)) {
+        // Reused live ids can legitimately occur after an older build dropped a
+        // step and later teaching reused that id. recordedAt disambiguates the
+        // journal event, so duplicate step ids are allowed in the trace.
+        continue
+      }
+      traceIds.add(rawStep.id)
+    }
+  }
 
   const target = candidate.target as unknown
   if (target === null || typeof target !== 'object' || Array.isArray(target)) {
