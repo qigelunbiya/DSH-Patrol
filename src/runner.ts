@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
-import { CallId } from '@deepseek-ai/dsh-llm'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
+import { executeSingleTool, type PatrolToolResult } from './tool-compat.js'
 import { findAdaptiveClickRecovery, findAdaptiveSelectorRecovery, isSelectorUnavailable } from './adaptive-recovery.js'
 import { findUniqueHealingSelector, isPageReadStep, isScreenshotStep, isSafeBrowserTool, isSelectorBoundToCurrentSnapshot } from './browser.js'
 import { applyDesktopTargetDefaults, isSafeDesktopTool } from './desktop.js'
@@ -71,10 +71,10 @@ export class PatrolRunner {
     }
 
     this.authorize(exec.token)
-    let result: Awaited<ReturnType<typeof this.ctx.tools.execute>>
+    let result: PatrolToolResult
     try {
-      result = await this.ctx.tools.execute({
-        callId: CallId(`patrol-${randomUUID()}`),
+      result = await executeSingleTool(this.ctx, {
+        callId: `patrol-${randomUUID()}`,
         rootCallId: exec.rootCallId,
         name: tool,
         arguments: args,

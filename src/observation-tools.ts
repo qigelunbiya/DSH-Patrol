@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
-import { CallId } from '@deepseek-ai/dsh-llm'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
+import { executeSingleTool } from './tool-compat.js'
 import type { PatrolBootstrapObservationKind, PatrolObservationGate } from './observation-guard.js'
 import { PatrolRunner } from './runner.js'
 import { PatrolStore } from './store.js'
@@ -599,8 +599,8 @@ async function tryReadScreenshotAsImage(ctx: Context, exec: ToolRunContext, path
   }
 
   try {
-    const result = await ctx.tools.execute({
-      callId: CallId(`patrol-observe-${randomUUID()}`),
+    const result = await executeSingleTool(ctx, {
+      callId: `patrol-observe-${randomUUID()}`,
       rootCallId: exec.rootCallId,
       name: 'read_image',
       arguments: { file_path: path },
