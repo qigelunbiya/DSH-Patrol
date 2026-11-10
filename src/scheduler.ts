@@ -3,9 +3,9 @@ import type { Dirent } from 'node:fs'
 import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
-import { CallId } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { PatrolStore } from './store.js'
+import { executeSingleTool } from './tool-compat.js'
 
 const TEXT_OUTPUT = {
   schema: { type: 'string' as const },
@@ -108,8 +108,8 @@ export class PatrolScheduler {
 
     await withWorkspaceRunLock(this.store.root, async () => {
       const controller = new AbortController()
-      const result = await this.ctx.tools.execute({
-        callId: CallId(`patrol-schedule-${randomUUID()}`),
+      const result = await executeSingleTool(this.ctx, {
+        callId: `patrol-schedule-${randomUUID()}`,
         name: 'patrol_run',
         arguments: { inspectionId },
         signal: controller.signal,
